@@ -1,4 +1,4 @@
-import { PassThrough } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
 import Docker from "dockerode";
 import { DAEMON_PORT, NOVNC_PORT } from "@sessionboxer/protocol";
 import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
@@ -94,15 +94,15 @@ export class SandboxDocker {
     return net.IPAddress;
   }
 
-  /** Runs a command in the Sandbox as the agent user; rejects on non-zero exit. */
-  async exec(containerId: string, cmd: string[], workdir = "/workspace"): Promise<string> {
+  /** Runs a command in the Sandbox (as the agent user by default); rejects on non-zero exit. */
+  async exec(containerId: string, cmd: string[], workdir = "/workspace", user = "agent"): Promise<string> {
     const container = this.docker.getContainer(containerId);
     const exec = await container.exec({
       Cmd: cmd,
       WorkingDir: workdir,
       AttachStdout: true,
       AttachStderr: true,
-      User: "agent",
+      User: user,
     });
     const stream = await exec.start({ hijack: true, stdin: false });
     const chunks: Buffer[] = [];
@@ -119,6 +119,13 @@ export class SandboxDocker {
       throw new Error(`\`${cmd.join(" ")}\` exited ${inspect.ExitCode}: ${output.trim().slice(-2000)}`);
     }
     return output;
+  }
+
+  /** Extracts a tar stream into `dest` inside the Sandbox (ownership as recorded in the tar). */
+  async putArchive(containerId: string, tar: Readable, dest: string): Promise<void> {
+    const container = this.docker.getContainer(containerId);
+    const failed = new Promise<never>((_, reject) => tar.once("error", reject));
+    await Promise.race([container.putArchive(tar, { path: dest }), failed]);
   }
 
   /** Emits container ids whose Sandbox died on its own (not via a stop we requested). */

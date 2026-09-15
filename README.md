@@ -53,7 +53,8 @@ npm workspaces:
 
 ```
 apps/control-plane      Hono + WebSocket + dockerode + better-sqlite3 (host)
-apps/web                React/Vite UI: chat + live Desktop (noVNC); later xterm.js, Monaco
+apps/web                React/Vite UI: chat, live Desktop (noVNC), Files (Monaco), Terminal (xterm.js)
+apps/cli                `sessionboxer` command: serve the Control Plane, `new .`, ls/open/stop/resume/rm
 packages/sandbox-daemon runs in every Sandbox: ACP client for the Agent, JSON-RPC over WS for the Control Plane
 packages/computer-use-mcp  stdio MCP server mirroring Anthropic's computer toolset
 packages/protocol       shared zod types + JSON-RPC framing
@@ -68,7 +69,7 @@ Requires Docker, Node 22 and a token from `claude setup-token`.
 npm install
 npm run build:image        # sessionboxer/sandbox:dev, ~3 GB, rebuild after changing the daemon/MCP/image
 npm run build
-npm start                  # http://127.0.0.1:4000
+npm start                  # http://127.0.0.1:4000  (same as `npx sessionboxer serve`)
 ```
 
 Open the UI, paste the token under Settings (stored in `~/.sessionboxer/config.json`, mode 0600; `CLAUDE_CODE_OAUTH_TOKEN` in the Control Plane's environment overrides it), create a Session, prompt. Each Session is one container `sbx-<id>` on the private `sessionboxer` Docker network with no host ports; **Stop** keeps the container for **Resume** (Claude Code history is reloaded via ACP `session/load`), **Delete** removes it. Session metadata and the normalized event stream live in `~/.sessionboxer/db.sqlite`.
@@ -79,6 +80,19 @@ The Files pane lists the Workspace and edits files in Monaco through the Sandbox
 
 The Terminal pane runs `bash -l` shells in the Workspace, owned by the Sandbox Daemon (node-pty; `_sessionboxer/pty/list|open|attach|input|resize|close`, output and exit as notifications). The Control Plane exposes them as `GET|POST /api/sessions/:id/terminals`, `DELETE /api/sessions/:id/terminals/:ptyId` and one WebSocket per terminal at `/api/sessions/:id/terminals/:ptyId/ws` (binary frames are raw bytes both ways, text frames are JSON control messages: `attached`, `exit`, `error`, `resize`). The Daemon keeps the last 256 KiB of output per terminal, so a page reload reattaches with scrollback; exited shells stay listed for five minutes. Terminals die with the Sandbox on **Stop**; **Resume** opens a fresh one.
 
+**Workspace Sources.** *Empty*, *git clone* (`git clone [--branch ref] url` inside the Sandbox) or *copy a host directory*: the Control Plane tars the directory (the path must be absolute; it runs on your machine, so no bind mount) and streams it into `/workspace` with Docker `putArchive`. Inside a git work tree only tracked and untracked-but-not-ignored files are copied (`git ls-files -co --exclude-standard`, so `node_modules`, build output and secrets in `.gitignore` stay behind), plus `.git` when the directory is the repository root; any other directory is copied whole. Symlinks are copied as symlinks. The copy is one-way: nothing in the Sandbox writes back to the host.
+
+**CLI.** `npx sessionboxer` (from this checkout; `npm link -w @sessionboxer/cli` to have it on your PATH) talks to a running Control Plane (`SESSIONBOXER_URL`, default `http://127.0.0.1:4000`) and opens the browser on the new Session:
+
+```sh
+sessionboxer serve                          # run the Control Plane in the foreground
+sessionboxer new .                          # box the current directory
+sessionboxer new . -p "run the tests and fix what breaks"
+sessionboxer new --git https://github.com/org/repo.git --ref main
+sessionboxer new --empty -t scratch --no-open
+sessionboxer ls | open <id> | stop <id> | resume <id> | rm <id>
+```
+
 Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies `/api` to :4000).
 
 ## Milestones
@@ -88,7 +102,7 @@ Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies 
 - **M2, done**: live Desktop in the UI (noVNC proxied through the Control Plane, view-only while the Agent runs, explicit takeover).
 - **M3, done**: file tree + Monaco editor (Daemon fs RPC + Workspace watcher, external-change handling).
 - **M4, done**: terminal (Daemon PTYs over the existing connection, xterm.js pane with reattach).
-- **M5**: "copy host directory" Workspace Source, settings screens, `sessionboxer` CLI wrapper.
+- **M5, done**: "copy host directory" Workspace Source (git-aware tar into the Sandbox), `sessionboxer` CLI wrapper; Settings (token, git identity, Sandbox CPU/memory) had landed with M1.
 
 ## Running the M0 spike by hand
 

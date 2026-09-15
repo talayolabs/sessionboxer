@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { basename } from "node:path";
 import {
   DAEMON_METHODS,
   FsListResult,
@@ -23,6 +24,7 @@ import { claudeToken } from "./config.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import type { Db } from "./db.js";
 import type { SandboxDocker } from "./docker.js";
+import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 
 export class HttpError extends Error {
   constructor(
@@ -220,8 +222,14 @@ export class SessionManager {
     if (req.provider === "claude-code" && !claudeToken(settings)) {
       throw new HttpError(400, "No Claude token configured. Run `claude setup-token` and paste it in Settings.");
     }
-    if (req.workspaceSource.type === "copy") {
-      throw new HttpError(400, "Copying a host directory is not available yet (planned for M5).");
+    let workspaceSource: WorkspaceSource = req.workspaceSource;
+    if (workspaceSource.type === "copy") {
+      try {
+        workspaceSource = { type: "copy", path: await resolveHostDir(workspaceSource.path) };
+      } catch (e) {
+        if (e instanceof HostDirError) throw new HttpError(400, e.message);
+        throw e;
+      }
     }
     await this.docker.ensureImage();
 
@@ -229,10 +237,10 @@ export class SessionManager {
     const now = new Date().toISOString();
     const session: Session = {
       id,
-      title: req.title ?? titleFromPrompt(req.prompt) ?? `Session ${id.slice(0, 6)}`,
+      title: req.title ?? titleFromPrompt(req.prompt) ?? titleFromSource(workspaceSource) ?? `Session ${id.slice(0, 6)}`,
       provider: req.provider,
       status: "creating",
-      workspaceSource: req.workspaceSource,
+      workspaceSource,
       containerId: null,
       error: null,
       createdAt: now,
@@ -276,10 +284,18 @@ export class SessionManager {
   }
 
   private async seedWorkspace(containerId: string, source: WorkspaceSource): Promise<void> {
-    if (source.type !== "git") return;
-    const args = ["git", "clone", "--", source.url, "."];
-    if (source.ref) args.splice(2, 0, "--branch", source.ref);
-    await this.docker.exec(containerId, args);
+    if (source.type === "git") {
+      const args = ["git", "clone", "--", source.url, "."];
+      if (source.ref) args.splice(2, 0, "--branch", source.ref);
+      await this.docker.exec(containerId, args);
+    } else if (source.type === "copy") {
+      const dir = await resolveHostDir(source.path);
+      const entries = await planHostDir(dir);
+      if (entries && entries.length === 0) return;
+      this.log(`copying ${dir} (${entries ? `${entries.length} git entries` : "everything"}) into ${containerId.slice(0, 12)}`);
+      await this.docker.putArchive(containerId, packHostDir(dir, entries), "/workspace");
+      await this.docker.exec(containerId, ["chown", "-R", "agent:agent", "/workspace"], "/", "root");
+    }
   }
 
   async prompt(id: string, text: string): Promise<void> {
@@ -453,4 +469,10 @@ function titleFromPrompt(prompt: string | undefined): string | undefined {
   if (!prompt) return undefined;
   const line = prompt.trim().split("\n")[0] ?? "";
   return line.length > 60 ? `${line.slice(0, 57)}…` : line;
+}
+
+function titleFromSource(source: WorkspaceSource): string | undefined {
+  if (source.type === "copy") return basename(source.path) || undefined;
+  if (source.type === "git") return basename(source.url).replace(/\.git$/, "") || undefined;
+  return undefined;
 }

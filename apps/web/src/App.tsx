@@ -360,7 +360,7 @@ function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => v
         <select value={sourceType} onChange={(e) => setSourceType(e.target.value as WorkspaceSource["type"])}>
           <option value="empty">Empty directory</option>
           <option value="git">Clone a git URL</option>
-          <option value="copy">Copy a host directory (coming in M5)</option>
+          <option value="copy">Copy a host directory</option>
         </select>
       </label>
       {sourceType === "git" && (
@@ -377,7 +377,7 @@ function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => v
       )}
       {sourceType === "copy" && (
         <label>
-          Host path
+          Host path (absolute; git repos copy tracked + untracked-but-not-ignored files and .git)
           <input required value={copyPath} onChange={(e) => setCopyPath(e.target.value)} placeholder="/home/you/project" />
         </label>
       )}

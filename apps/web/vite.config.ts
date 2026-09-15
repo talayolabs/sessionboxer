@@ -12,5 +12,6 @@ export default defineConfig({
       "/api": { target: controlPlane, ws: true },
     },
   },
-  build: { outDir: "dist", emptyOutDir: true },
+  // Monaco's editor core and TypeScript worker are multi-MB chunks by nature.
+  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 3000 },
 });

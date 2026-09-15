@@ -6,7 +6,6 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "declaration": false,
     "sourceMap": true,
     "noUncheckedIndexedAccess": true
   }

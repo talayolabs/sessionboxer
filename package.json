@@ -8,14 +8,18 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build:protocol && npm run build --workspaces --if-present",
-    "build:protocol": "npm run build -w @sessionboxer/protocol",
-    "typecheck": "npm run build:protocol && npm run typecheck --workspaces --if-present",
+    "build": "tsc -b && npm run build -w @sessionboxer/web",
+    "build:protocol": "tsc -b packages/protocol",
+    "typecheck": "tsc -b && npm run typecheck -w @sessionboxer/web",
+    "clean": "tsc -b --clean",
     "build:image": "docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .",
     "start": "node apps/control-plane/dist/index.js",
     "spike:acp": "node scripts/spike-acp.mjs"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

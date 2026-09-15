@@ -69,9 +69,11 @@ Requires Docker, Node 22, optionally [Sysbox](https://github.com/nestybox/sysbox
 ```sh
 npm install
 npm run build:image        # sessionboxer/sandbox:dev, ~3 GB, rebuild after changing the daemon/MCP/image
-npm run build
+npm run build              # `tsc -b` (incremental, project references) for the Node packages + Vite for the web UI
 npm start                  # http://127.0.0.1:4000  (same as `npx sessionboxer serve`)
 ```
+
+`npm run typecheck` runs the same `tsc -b` plus a `--noEmit` pass over the web app; `npm run clean` drops the `tsc -b` outputs. The Node packages are TypeScript project references (root `tsconfig.json`), so a rebuild only recompiles what changed; the web app is built by Vite 8 (Rolldown), which bundles Monaco in a few seconds.
 
 Open the UI, paste the token(s) under Settings (stored in `~/.sessionboxer/config.json`, mode 0600; `CLAUDE_CODE_OAUTH_TOKEN` / `WINDSURF_API_KEY` in the Control Plane's environment override it), create a Session choosing its Provider, prompt. Only the chosen Provider's token is injected into that Sandbox. Each Session is one container `sbx-<id>` on the private `sessionboxer` Docker network with no host ports; **Stop** keeps the container for **Resume** (Claude Code history is reloaded via ACP `session/load`), **Delete** removes it. Session metadata and the normalized event stream live in `~/.sessionboxer/db.sqlite`.
 

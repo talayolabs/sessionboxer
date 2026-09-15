@@ -6,6 +6,8 @@ import {
   DAEMON_PORT,
   DaemonHelloParams,
   DaemonPromptParams,
+  FsPathParams,
+  FsWriteParams,
   isJsonRpcRequest,
   parseJsonRpc,
   type DaemonEvent,
@@ -13,12 +15,14 @@ import {
   type JsonRpcId,
 } from "@sessionboxer/protocol";
 import { AgentManager } from "./agent.js";
+import { WorkspaceFs } from "./workspace-fs.js";
 
 const EVENT_BUFFER_MAX = 5000;
 
 const env = process.env;
 const port = Number(env.SESSIONBOXER_DAEMON_PORT ?? DAEMON_PORT);
 const home = env.HOME ?? "/home/agent";
+const workspace = env.SESSIONBOXER_WORKSPACE ?? "/workspace";
 const log = (msg: string): void => {
   process.stderr.write(`[daemon ${new Date().toISOString()}] ${msg}\n`);
 };
@@ -42,7 +46,7 @@ function emit(body: DaemonEvent["body"]): void {
 const agent = new AgentManager(
   {
     command: env.SESSIONBOXER_ACP_COMMAND ?? "claude-agent-acp",
-    cwd: env.SESSIONBOXER_WORKSPACE ?? "/workspace",
+    cwd: workspace,
     mcpCommand: env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp",
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     log,
@@ -56,6 +60,14 @@ const agent = new AgentManager(
       for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
     },
   },
+);
+
+const workspaceFs = new WorkspaceFs(
+  workspace,
+  (changes) => {
+    for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.fsChanged, params: { changes } });
+  },
+  log,
 );
 
 function status(): DaemonStatus {
@@ -93,6 +105,14 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.cancel:
       await agent.cancel();
       return { ok: true };
+    case DAEMON_METHODS.fsList:
+      return workspaceFs.list(FsPathParams.parse(params).path);
+    case DAEMON_METHODS.fsRead:
+      return workspaceFs.read(FsPathParams.parse(params).path);
+    case DAEMON_METHODS.fsWrite: {
+      const p = FsWriteParams.parse(params);
+      return workspaceFs.write(p.path, p.content);
+    }
     default:
       throw Object.assign(new Error(`method not found: ${method}`), { code: -32601 });
   }
@@ -125,12 +145,14 @@ wss.on("connection", (ws) => {
 });
 
 log(`listening on :${port}, epoch ${epoch}`);
+workspaceFs.startWatching();
 // Warm the Agent up so the first prompt does not pay the spawn + initialize cost.
 agent.ensureStarted().catch((e: unknown) => log(`agent start failed: ${String(e)}`));
 
 const shutdown = (): void => {
   log("shutting down");
   agent.kill();
+  void workspaceFs.close();
   wss.close();
   process.exit(0);
 };

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PublicSettings, Session, SessionEvent, WorkspaceSource } from "@sessionboxer/protocol";
-import { api, subscribe } from "./api";
+import { api, emitFsChanged, subscribe } from "./api";
 import { Desktop } from "./Desktop";
+import { Files } from "./Files";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript";
 
@@ -108,6 +109,9 @@ export function App() {
               return [...prev, msg.event];
             });
             break;
+          case "fs_changed":
+            emitFsChanged(msg.sessionId, msg.changes);
+            break;
         }
       },
       () => {
@@ -189,13 +193,24 @@ export function App() {
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
+type Pane = "desktop" | "files" | "hidden";
+const PANES: Array<{ id: Exclude<Pane, "hidden">; label: string }> = [
+  { id: "desktop", label: "Desktop" },
+  { id: "files", label: "Files" },
+];
+
+function loadPane(): Pane {
+  const v = localStorage.getItem("sessionboxer.pane");
+  return v === "desktop" || v === "files" || v === "hidden" ? v : "desktop";
+}
+
 function SessionView({ session, items, run }: { session: Session; items: ReturnType<typeof buildTranscript>; run: Runner }) {
   const [text, setText] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
-  const [showDesktop, setShowDesktop] = useState(() => localStorage.getItem("sessionboxer.desktop") !== "hidden");
+  const [pane, setPane] = useState<Pane>(loadPane);
   useEffect(() => setTitle(session.title), [session.title]);
-  useEffect(() => localStorage.setItem("sessionboxer.desktop", showDesktop ? "shown" : "hidden"), [showDesktop]);
+  useEffect(() => localStorage.setItem("sessionboxer.pane", pane), [pane]);
 
   const canPrompt = session.status === "idle" || session.status === "running";
   const send = () => {
@@ -233,7 +248,20 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
           {sourceLabel}
         </span>
         <span className="spacer" />
-        <button onClick={() => setShowDesktop((v) => !v)}>{showDesktop ? "Hide desktop" : "Show desktop"}</button>
+        <div className="segmented" role="tablist" aria-label="Side pane">
+          {PANES.map((p) => (
+            <button
+              key={p.id}
+              role="tab"
+              aria-selected={pane === p.id}
+              className={pane === p.id ? "active" : ""}
+              title={pane === p.id ? `Hide ${p.label.toLowerCase()}` : `Show ${p.label.toLowerCase()}`}
+              onClick={() => setPane((cur) => (cur === p.id ? "hidden" : p.id))}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         {session.status === "running" && <button onClick={() => void run(() => api.cancel(session.id))}>Cancel turn</button>}
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
@@ -279,7 +307,8 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
             </button>
           </form>
         </div>
-        {showDesktop && <Desktop session={session} />}
+        {pane === "desktop" && <Desktop session={session} />}
+        {pane === "files" && <Files session={session} />}
       </div>
     </div>
   );

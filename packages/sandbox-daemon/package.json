@@ -7,7 +7,9 @@
   "bin": {
     "sessionboxer-daemon": "dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -15,6 +17,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
     "@sessionboxer/protocol": "0.0.0",
+    "chokidar": "^5.0.0",
     "ws": "^8.18.0",
     "zod": "^3.25.0"
   },

@@ -75,6 +75,8 @@ Open the UI, paste the token under Settings (stored in `~/.sessionboxer/config.j
 
 The Desktop pane is the Sandbox's screen streamed over `GET /api/sessions/:id/desktop` (RFB over WebSocket, bridged by the Control Plane to websockify inside the container). It is view-only while the Agent is `running`; **Take control** shares the Agent's mouse and keyboard until the next turn starts. An `idle` Sandbox is always interactive.
 
+The Files pane lists the Workspace and edits files in Monaco through the Sandbox Daemon (`_sessionboxer/fs/list|read|write`, proxied as `GET /api/sessions/:id/fs?path=`, `GET|PUT /api/sessions/:id/fs/file`). Paths are Workspace-relative and may not escape it, symlinks included. Saves are last-write-wins; the Daemon watches the Workspace (chokidar, ignoring `.git`, `node_modules`, `.venv`, `__pycache__`, `.cache`) and pushes `fs_changed` over the UI WebSocket, so an open editor reloads the Agent's edits, or warns when you also have unsaved changes. Binary files and files over 2 MB are not opened.
+
 Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies `/api` to :4000).
 
 ## Milestones
@@ -82,7 +84,7 @@ Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies 
 - **M0 spike (gate for ADR-0006), done**: build the image; run `claude-agent-acp` with `CLAUDE_CODE_OAUTH_TOKEN` and the computer-use MCP by hand; the Agent takes a screenshot, opens Firefox, clicks something. Result recorded in ADR-0006.
 - **M1, done**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding, event replay after Control Plane restart.
 - **M2, done**: live Desktop in the UI (noVNC proxied through the Control Plane, view-only while the Agent runs, explicit takeover).
-- **M3**: file tree + Monaco.
+- **M3, done**: file tree + Monaco editor (Daemon fs RPC + Workspace watcher, external-change handling).
 - **M4**: terminal.
 - **M5**: "copy host directory" Workspace Source, settings screens, `sessionboxer` CLI wrapper.
 

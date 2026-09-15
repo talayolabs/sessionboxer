@@ -124,3 +124,26 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .panel .row { display: flex; gap: 14px; }
 .panel .row label { flex: 1; }
 .panel .actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* Side pane switcher */
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.segmented button { border: 0; border-radius: 0; padding: 6px 12px; }
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button.active { background: var(--user); color: #fff; }
+button.small { padding: 2px 8px; font-size: 12px; }
+.pad { padding: 12px; }
+
+/* Files pane: tree + Monaco */
+.files { display: flex; flex: 0 0 55%; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }
+.file-tree { display: flex; flex-direction: column; flex: 0 0 240px; min-width: 0; border-right: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+.file-tree-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.file-tree-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 0; }
+.tree-row { display: flex; align-items: center; gap: 4px; padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; user-select: none; }
+.tree-row:hover { background: var(--agent); }
+.tree-row.active { background: var(--user); color: #fff; }
+.tree-caret { display: inline-block; width: 10px; color: var(--muted); }
+.editor { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.editor-toolbar { flex: none; display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+.editor-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: 13px; }
+.editor-body { position: relative; flex: 1; min-height: 0; }

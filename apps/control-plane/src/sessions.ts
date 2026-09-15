@@ -1,10 +1,14 @@
 import { randomBytes } from "node:crypto";
 import {
   DAEMON_METHODS,
+  FsListResult,
+  FsReadResult,
+  FsWriteResult,
   NOVNC_PORT,
   type CreateSessionRequest,
   type DaemonEvent,
   type DaemonStatus,
+  type FsChange,
   type Session,
   type SessionBroadcast,
   type SessionEvent,
@@ -13,7 +17,7 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { claudeToken } from "./config.js";
-import { DaemonClient } from "./daemon-client.js";
+import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import type { Db } from "./db.js";
 import type { SandboxDocker } from "./docker.js";
 
@@ -27,6 +31,7 @@ export class HttpError extends Error {
 }
 
 const CANCEL_GRACE_MS = 8000;
+const DAEMON_WAIT_MS = 15_000;
 
 export class SessionManager {
   private readonly clients = new Map<string, DaemonClient>();
@@ -73,6 +78,46 @@ export class SessionManager {
     }
     const host = await this.docker.address(s.containerId);
     return `ws://${host}:${NOVNC_PORT}/websockify`;
+  }
+
+  // --- Workspace files -----------------------------------------------------
+
+  /** The Daemon of a live Session, waiting a little for it to come up right after create/resume. */
+  private async liveClient(id: string): Promise<DaemonClient> {
+    const s = this.get(id);
+    if (s.status !== "idle" && s.status !== "running") {
+      throw new HttpError(409, `session ${id} is ${s.status}; files are only available while the Sandbox runs`);
+    }
+    const client = this.clients.get(id);
+    if (!client || !(await client.waitConnected(DAEMON_WAIT_MS))) {
+      throw new HttpError(503, "Sandbox Daemon is not connected yet; retry in a moment.");
+    }
+    return client;
+  }
+
+  private async fsCall(id: string, method: string, params: unknown): Promise<unknown> {
+    try {
+      const client = await this.liveClient(id);
+      return await client.request(method, params);
+    } catch (e) {
+      if (e instanceof DaemonRpcError) {
+        const status = e.code === -32001 ? 404 : e.code === -32002 ? 403 : e.code === -32602 ? 400 : 502;
+        throw new HttpError(status, e.message);
+      }
+      throw e;
+    }
+  }
+
+  async fsList(id: string, path: string): Promise<FsListResult> {
+    return FsListResult.parse(await this.fsCall(id, DAEMON_METHODS.fsList, { path }));
+  }
+
+  async fsRead(id: string, path: string): Promise<FsReadResult> {
+    return FsReadResult.parse(await this.fsCall(id, DAEMON_METHODS.fsRead, { path }));
+  }
+
+  async fsWrite(id: string, path: string, content: string): Promise<FsWriteResult> {
+    return FsWriteResult.parse(await this.fsCall(id, DAEMON_METHODS.fsWrite, { path, content }));
   }
 
   async boot(): Promise<void> {
@@ -259,6 +304,7 @@ export class SessionManager {
       onConnected: (status) => this.onDaemonConnected(id, status),
       onStatus: (status) => this.onDaemonStatus(id, status),
       onEvent: (event) => this.onDaemonEvent(id, event),
+      onFsChanged: (changes: FsChange[]) => this.broadcast({ type: "fs_changed", sessionId: id, changes }),
       onDisconnected: () => this.log(`daemon ${id} disconnected`),
       log: (msg) => this.log(`daemon ${id}: ${msg}`),
     });

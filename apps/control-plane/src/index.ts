@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
   CreateSessionRequest,
+  FsWriteParams,
   PromptRequest,
   UpdateSessionRequest,
   UpdateSettingsRequest,
@@ -86,6 +87,14 @@ api.post("/sessions/:id/cancel", async (c) => {
   return c.json({ ok: true });
 });
 api.post("/sessions/:id/stop", async (c) => c.json(await sessions.stop(c.req.param("id"))));
+
+// Workspace files, relative to the Workspace root (`path=` empty or missing for the root).
+api.get("/sessions/:id/fs", async (c) => c.json(await sessions.fsList(c.req.param("id"), c.req.query("path") ?? "")));
+api.get("/sessions/:id/fs/file", async (c) => c.json(await sessions.fsRead(c.req.param("id"), c.req.query("path") ?? "")));
+api.put("/sessions/:id/fs/file", async (c) => {
+  const req = FsWriteParams.parse(await c.req.json());
+  return c.json(await sessions.fsWrite(c.req.param("id"), req.path, req.content));
+});
 api.post("/sessions/:id/resume", async (c) => c.json(await sessions.resume(c.req.param("id"))));
 
 // noVNC endpoint for the UI: a plain RFB-over-WebSocket stream, proxied to the Sandbox.

@@ -3,21 +3,33 @@ import {
   DAEMON_METHODS,
   DAEMON_PORT,
   DaemonStatus,
+  FsChangedParams,
   isJsonRpcResponse,
   parseJsonRpc,
   type DaemonEvent,
   type DaemonHelloParams,
+  type FsChange,
   type JsonRpcId,
 } from "@sessionboxer/protocol";
 
 export interface DaemonClientHandlers {
   onEvent: (event: DaemonEvent) => void;
   onStatus: (status: DaemonStatus) => void;
+  onFsChanged: (changes: FsChange[]) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
   /** Cursor sent in `hello`, so the Daemon replays what we missed. */
   cursor: () => DaemonHelloParams;
   log: (msg: string) => void;
+}
+
+export class DaemonRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 const RECONNECT_MS = 1000;
@@ -38,6 +50,7 @@ export class DaemonClient {
   private nextId = 1;
   private readonly pending = new Map<JsonRpcId, Pending>();
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private waiters: Array<() => void> = [];
   connected = false;
 
   constructor(
@@ -53,6 +66,7 @@ export class DaemonClient {
     this.ws = ws;
     ws.on("open", () => {
       this.connected = true;
+      this.wake();
       this.request(DAEMON_METHODS.hello, this.handlers.cursor())
         .then((raw) => this.handlers.onConnected(DaemonStatus.parse(raw)))
         .catch((e: unknown) => this.handlers.log(`hello failed: ${String(e)}`));
@@ -88,14 +102,37 @@ export class DaemonClient {
       if (!p) return;
       this.pending.delete(msg.id);
       clearTimeout(p.timer);
-      if ("error" in msg) p.reject(new Error(msg.error.message));
+      if ("error" in msg) p.reject(new DaemonRpcError(msg.error.code, msg.error.message));
       else p.resolve(msg.result);
       return;
     }
     if ("method" in msg) {
       if (msg.method === DAEMON_METHODS.event) this.handlers.onEvent(msg.params as DaemonEvent);
       else if (msg.method === DAEMON_METHODS.status) this.handlers.onStatus(DaemonStatus.parse(msg.params));
+      else if (msg.method === DAEMON_METHODS.fsChanged) this.handlers.onFsChanged(FsChangedParams.parse(msg.params).changes);
     }
+  }
+
+  private wake(): void {
+    const w = this.waiters;
+    this.waiters = [];
+    for (const fn of w) fn();
+  }
+
+  /** Resolves once connected (true) or after `timeoutMs` / close (false). */
+  waitConnected(timeoutMs: number): Promise<boolean> {
+    if (this.connected) return Promise.resolve(true);
+    return new Promise((res) => {
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((f) => f !== fn);
+        res(false);
+      }, timeoutMs);
+      const fn = () => {
+        clearTimeout(timer);
+        res(this.connected);
+      };
+      this.waiters.push(fn);
+    });
   }
 
   request(method: string, params?: unknown): Promise<unknown> {

@@ -1,5 +1,9 @@
 import type {
   CreateSessionRequest,
+  FsChange,
+  FsListResult,
+  FsReadResult,
+  FsWriteResult,
   PublicSettings,
   Session,
   SessionBroadcast,
@@ -42,7 +46,22 @@ export const api = {
   cancel: (id: string) => request<{ ok: true }>(`/sessions/${id}/cancel`, { method: "POST" }),
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),
   resume: (id: string) => request<Session>(`/sessions/${id}/resume`, { method: "POST" }),
+  fsList: (id: string, path: string) => request<FsListResult>(`/sessions/${id}/fs?path=${encodeURIComponent(path)}`),
+  fsRead: (id: string, path: string) => request<FsReadResult>(`/sessions/${id}/fs/file?path=${encodeURIComponent(path)}`),
+  fsWrite: (id: string, path: string, content: string) =>
+    request<FsWriteResult>(`/sessions/${id}/fs/file`, { method: "PUT", body: JSON.stringify({ path, content }) }),
 };
+
+/** Workspace change notifications fan out from the single UI WebSocket to whoever has files open. */
+export type FsChangeListener = (sessionId: string, changes: FsChange[]) => void;
+const fsListeners = new Set<FsChangeListener>();
+export function onFsChanged(fn: FsChangeListener): () => void {
+  fsListeners.add(fn);
+  return () => fsListeners.delete(fn);
+}
+export function emitFsChanged(sessionId: string, changes: FsChange[]): void {
+  for (const fn of fsListeners) fn(sessionId, changes);
+}
 
 /** Subscribes to Control Plane pushes; reconnects with a fixed 1s backoff. */
 export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnect: () => void): () => void {

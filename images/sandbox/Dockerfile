@@ -133,7 +133,11 @@ RUN curl -fsSL https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/setup.sh -o /tmp
     && (bash /tmp/devin-setup.sh </dev/null >/tmp/devin-setup.log 2>&1 || true) \
     && rm -f /tmp/devin-setup.sh /tmp/devin-setup.log \
     && devin --version
+# Devin only exposes MCP servers from its own config to the model (the one the
+# Daemon passes over ACP connects but is invisible to mcp_list_tools/call_tool),
+# so the desktop MCP is also registered at user scope.
 COPY --chown=agent:agent images/sandbox/devin-config.json /home/agent/.config/devin/config.json
+COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.config/devin/mcp_config.json
 
 # 6080: noVNC/websockify, 7000: Sandbox Daemon. Both are reached only over the
 # Docker network, never published on the host.

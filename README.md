@@ -1,0 +1,70 @@
+# Sessionboxer
+
+A local, self-hosted session manager for coding agents. Every Session gets its own Docker Sandbox with a Linux desktop; the Agent (Claude Code first) drives it like a human would (mouse, keyboard, screenshots) while you watch, edit files and open terminals from a browser UI.
+
+Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr](./docs/adr). This file is the MVP plan that came out of the design session.
+
+## Shape
+
+```
+┌──────────────── host (your machine) ────────────────┐
+│  Control Plane  (Node, Hono + WS, dockerode, SQLite) │
+│  Web UI         (React/Vite: chat, noVNC, Monaco,    │
+│                  xterm.js)   http://127.0.0.1:4000   │
+│         │ Docker network, no published ports         │
+│   ┌─────┴───── Sandbox (one per Session) ─────────┐  │
+│   │ Sandbox Daemon ── ACP/stdio ── claude-agent-acp│  │
+│   │      (also serves _sessionboxer/fs and /pty)  │  │
+│   │ Xvfb :1 1024x768 + xfce4 + x11vnc + noVNC     │  │
+│   │ computer-use MCP (xdotool, screenshots)       │  │
+│   │ Workspace  (/workspace, seeded from Source)   │  │
+│   └───────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
+```
+
+- Agent runs inside the Sandbox with `bypassPermissions`; the container is the safety boundary (ADR-0001, ADR-0003).
+- Auth is the user's Claude subscription via `CLAUDE_CODE_OAUTH_TOKEN`, entered once in the UI, injected per Sandbox (ADR-0002).
+- Desktop is X11 driven by a Sessionboxer-owned MCP server mirroring Anthropic's `computer` toolset, because Claude Code's built-in computer-use is macOS-only (ADR-0004).
+- Sandboxes publish no host ports; the Control Plane proxies chat, noVNC and terminals under `/sessions/:id/...` (ADR-0005).
+- The Daemon speaks ACP to the Agent so other Providers (Codex, Gemini CLI, OpenCode) are an adapter install away (ADR-0006).
+
+## MVP decisions
+
+| Topic | Decision |
+| --- | --- |
+| Target | Linux host, Claude Code only, Docker Engine on the same machine |
+| Workspace Source | git clone URL, copy of a host directory (tar via Docker `putArchive`, `git ls-files -co --exclude-standard` + `.git` when it is a repo), or empty |
+| UI | chat with inline screenshots and collapsed tool calls, live Desktop (view-only by default, "take control" toggle), file tree + Monaco (last write wins, watcher pushes disk changes), terminal |
+| Session states | `creating` → `idle` → `running` → `stopped` → (`error`); `deleted` removes container and volume; stop during `running` sends `session/cancel` first |
+| Session title | auto from first prompt, editable |
+| Persistence | Control Plane SQLite (`better-sqlite3`) holds Session metadata and the normalized ACP `session/update` stream; the Agent's own history stays in the container for resume |
+| Reconnect | Daemon ring-buffers the current turn with sequence numbers; Control Plane resumes from last seen seq |
+| Image | one `sessionboxer/sandbox:dev` built locally: Ubuntu 24.04, Node 22, Python 3, git, curl, build-essential, gh, Firefox ESR, xdotool, scrot/ImageMagick, xfce4, Xvfb, x11vnc, noVNC; Daemon and MCP compiled in; global `CLAUDE.md` describing the Desktop |
+| Display | fixed 1024x768, screenshots unscaled |
+| Limits | 2 CPUs, 4 GB RAM per Sandbox, global setting |
+| Git | user.name/email injected; no GitHub token in Sandboxes for MVP |
+| Model | Provider defaults; per-Session settings object reserved in the schema |
+| Control Plane | runs on the host, binds `127.0.0.1:4000`, no auth |
+| Provider secrets | per-Provider map in `~/.sessionboxer/config.json` (0600), only the Session's Provider gets its env vars |
+
+## Repository layout (planned)
+
+npm workspaces:
+
+```
+apps/control-plane      Hono + WebSocket + dockerode + better-sqlite3
+apps/web                React/Vite, xterm.js, Monaco, noVNC
+packages/sandbox-daemon ACP client + _sessionboxer/fs + _sessionboxer/pty
+packages/computer-use-mcp  stdio MCP server mirroring Anthropic's computer toolset
+packages/protocol       shared zod types
+images/sandbox          Dockerfile
+```
+
+## Milestones
+
+- **M0 spike (gate for ADR-0006)**: build the image; run `claude-agent-acp` with `CLAUDE_CODE_OAUTH_TOKEN` and the computer-use MCP by hand; the Agent takes a screenshot, opens Firefox, clicks something.
+- **M1**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding.
+- **M2**: live Desktop in the UI (noVNC proxied).
+- **M3**: file tree + Monaco.
+- **M4**: terminal.
+- **M5**: "copy host directory" Workspace Source, settings screens, `sessionboxer` CLI wrapper.

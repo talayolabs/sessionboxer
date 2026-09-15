@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sandbox entrypoint: bring up the Desktop stack, then hand over to the
-# Sandbox Daemon (or, until M1 lands, idle so the Control Plane can exec in).
+# Sandbox Daemon.
 set -euo pipefail
 
 : "${DISPLAY:=:1}"
@@ -22,6 +22,10 @@ fi
 if [[ -n "${GIT_AUTHOR_EMAIL:-}" ]]; then
   git config --global user.email "$GIT_AUTHOR_EMAIL"
 fi
+
+# A stopped container keeps its /tmp, so a previous X server's lock would
+# otherwise block the Desktop on resume.
+rm -f "/tmp/.X${DISPLAY#:}-lock" "/tmp/.X11-unix/X${DISPLAY#:}"
 
 log "starting Xvfb on $DISPLAY (${SESSIONBOXER_DISPLAY_WIDTH}x${SESSIONBOXER_DISPLAY_HEIGHT})"
 Xvfb "$DISPLAY" -screen 0 "${SESSIONBOXER_DISPLAY_WIDTH}x${SESSIONBOXER_DISPLAY_HEIGHT}x24" \
@@ -51,5 +55,6 @@ if [[ $# -gt 0 ]]; then
   exec "$@"
 fi
 
-# M0: nothing else to run yet; keep the container alive for docker exec.
-exec sleep infinity
+# The Sandbox Daemon is PID-1's child: when it dies the container exits and
+# the Control Plane sees the Session fail.
+exec sessionboxer-daemon

@@ -11,6 +11,7 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build:image": "docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .",
+    "start": "node apps/control-plane/dist/index.js",
     "spike:acp": "node scripts/spike-acp.mjs"
   },
   "engines": {

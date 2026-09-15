@@ -1,0 +1,26 @@
+{
+  "name": "@sessionboxer/sandbox-daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Runs inside every Sandbox: ACP client for the Agent, JSON-RPC over WebSocket for the Control Plane.",
+  "bin": {
+    "sessionboxer-daemon": "dist/index.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
+    "@sessionboxer/protocol": "0.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.6.0"
+  }
+}

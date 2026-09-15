@@ -1,0 +1,393 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { PublicSettings, Session, SessionEvent, WorkspaceSource } from "@sessionboxer/protocol";
+import { api, subscribe } from "./api";
+import { Transcript } from "./Transcript";
+import { buildTranscript } from "./transcript";
+
+type Route = { view: "session"; id: string | null } | { view: "new" } | { view: "settings" };
+
+function useErrorBanner() {
+  const [error, setError] = useState<string | null>(null);
+  const run = useCallback(async (fn: () => Promise<unknown>) => {
+    try {
+      setError(null);
+      await fn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+  return { error, setError, run };
+}
+
+export function App() {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [route, setRoute] = useState<Route>({ view: "session", id: null });
+  const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [settings, setSettings] = useState<PublicSettings | null>(null);
+  const { error, setError, run } = useErrorBanner();
+
+  const selectedId = route.view === "session" ? route.id : null;
+  const selected = sessions.find((s) => s.id === selectedId) ?? null;
+
+  const reloadSessions = useCallback(() => run(async () => setSessions(await api.sessions())), [run]);
+
+  useEffect(() => {
+    void reloadSessions();
+    void run(async () => setSettings(await api.settings()));
+  }, [reloadSessions, run]);
+
+  // Load events when the selected session changes; the WS keeps them current.
+  useEffect(() => {
+    if (!selectedId) {
+      setEvents([]);
+      return;
+    }
+    let cancelled = false;
+    void run(async () => {
+      const evs = await api.events(selectedId);
+      if (!cancelled) setEvents(evs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, run]);
+
+  useEffect(() => {
+    return subscribe(
+      (msg) => {
+        switch (msg.type) {
+          case "session":
+            setSessions((prev) => {
+              const i = prev.findIndex((s) => s.id === msg.session.id);
+              if (i < 0) return [msg.session, ...prev];
+              const next = [...prev];
+              next[i] = msg.session;
+              return next;
+            });
+            break;
+          case "session_deleted":
+            setSessions((prev) => prev.filter((s) => s.id !== msg.id));
+            setRoute((r) => (r.view === "session" && r.id === msg.id ? { view: "session", id: null } : r));
+            break;
+          case "event":
+            setEvents((prev) => {
+              if (msg.event.sessionId !== selectedId) return prev;
+              const last = prev[prev.length - 1];
+              if (last && msg.event.seq <= last.seq) return prev;
+              return [...prev, msg.event];
+            });
+            break;
+        }
+      },
+      () => {
+        // Reconnected: refetch to fill any gap.
+        void reloadSessions();
+        if (selectedId) {
+          void run(async () => setEvents(await api.events(selectedId)));
+        }
+      },
+    );
+  }, [selectedId, reloadSessions, run]);
+
+  const items = useMemo(() => buildTranscript(events), [events]);
+  const tokenSet = settings?.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN ?? true;
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <h1>Sessionboxer</h1>
+          <button onClick={() => setRoute({ view: "new" })}>+ New</button>
+        </div>
+        <ul className="session-list">
+          {sessions.map((s) => (
+            <li
+              key={s.id}
+              className={s.id === selectedId ? "active" : ""}
+              onClick={() => setRoute({ view: "session", id: s.id })}
+            >
+              <span className={`dot dot-${s.status}`} title={s.status} />
+              <span className="session-title">{s.title}</span>
+            </li>
+          ))}
+          {sessions.length === 0 && <li className="empty">No sessions yet</li>}
+        </ul>
+        <div className="sidebar-footer">
+          <button onClick={() => setRoute({ view: "settings" })}>Settings{tokenSet ? "" : " (token missing)"}</button>
+        </div>
+      </aside>
+
+      <main className="main">
+        {error && (
+          <div className="banner banner-error" onClick={() => setError(null)}>
+            {error}
+          </div>
+        )}
+        {!tokenSet && route.view !== "settings" && (
+          <div className="banner banner-warn" onClick={() => setRoute({ view: "settings" })}>
+            No Claude token configured. Open Settings and paste the output of <code>claude setup-token</code>.
+          </div>
+        )}
+        {route.view === "new" && (
+          <NewSession
+            onCreated={(s) => setRoute({ view: "session", id: s.id })}
+            onCancel={() => setRoute({ view: "session", id: null })}
+            run={run}
+          />
+        )}
+        {route.view === "settings" && settings && (
+          <SettingsView
+            settings={settings}
+            onSaved={(s) => {
+              setSettings(s);
+              setRoute({ view: "session", id: null });
+            }}
+            run={run}
+          />
+        )}
+        {route.view === "session" && !selected && (
+          <div className="placeholder">Select a session or create a new one.</div>
+        )}
+        {route.view === "session" && selected && (
+          <SessionView session={selected} items={items} run={run} />
+        )}
+      </main>
+    </div>
+  );
+}
+
+type Runner = (fn: () => Promise<unknown>) => Promise<void>;
+
+function SessionView({ session, items, run }: { session: Session; items: ReturnType<typeof buildTranscript>; run: Runner }) {
+  const [text, setText] = useState("");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [title, setTitle] = useState(session.title);
+  useEffect(() => setTitle(session.title), [session.title]);
+
+  const canPrompt = session.status === "idle" || session.status === "running";
+  const send = () => {
+    const t = text.trim();
+    if (!t || !canPrompt) return;
+    setText("");
+    void run(() => api.prompt(session.id, t));
+  };
+
+  const source = session.workspaceSource;
+  const sourceLabel =
+    source.type === "git" ? `${source.url}${source.ref ? `@${source.ref}` : ""}` : source.type === "copy" ? source.path : "empty workspace";
+
+  return (
+    <div className="session">
+      <header className="session-header">
+        {editingTitle ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setEditingTitle(false);
+              if (title.trim() && title !== session.title) void run(() => api.renameSession(session.id, title.trim()));
+            }}
+          >
+            <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => setEditingTitle(false)} />
+          </form>
+        ) : (
+          <h2 onDoubleClick={() => setEditingTitle(true)} title="Double-click to rename">
+            {session.title}
+          </h2>
+        )}
+        <span className={`badge badge-${session.status}`}>{session.status}</span>
+        <span className="muted">{session.provider}</span>
+        <span className="muted" title={sourceLabel}>
+          {sourceLabel}
+        </span>
+        <span className="spacer" />
+        {session.status === "running" && <button onClick={() => void run(() => api.cancel(session.id))}>Cancel turn</button>}
+        {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
+          <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
+        )}
+        {(session.status === "stopped" || session.status === "error") && (
+          <button onClick={() => void run(() => api.resume(session.id))}>Resume</button>
+        )}
+        <button
+          className="danger"
+          onClick={() => {
+            if (confirm(`Delete "${session.title}" and its Sandbox?`)) void run(() => api.deleteSession(session.id));
+          }}
+        >
+          Delete
+        </button>
+      </header>
+      {session.error && <div className="banner banner-error">{session.error}</div>}
+      <Transcript items={items} />
+      <form
+        className="composer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send();
+        }}
+      >
+        <textarea
+          value={text}
+          placeholder={canPrompt ? "Message the agent… (Enter to send, Shift+Enter for newline)" : `Session is ${session.status}`}
+          disabled={!canPrompt}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          rows={3}
+        />
+        <button type="submit" disabled={!canPrompt || !text.trim()}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => void; onCancel: () => void; run: Runner }) {
+  const [sourceType, setSourceType] = useState<WorkspaceSource["type"]>("empty");
+  const [gitUrl, setGitUrl] = useState("");
+  const [gitRef, setGitRef] = useState("");
+  const [copyPath, setCopyPath] = useState("");
+  const [title, setTitle] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const workspaceSource: WorkspaceSource =
+      sourceType === "git"
+        ? { type: "git", url: gitUrl.trim(), ...(gitRef.trim() ? { ref: gitRef.trim() } : {}) }
+        : sourceType === "copy"
+          ? { type: "copy", path: copyPath.trim() }
+          : { type: "empty" };
+    setBusy(true);
+    void run(async () => {
+      const s = await api.createSession({
+        provider: "claude-code",
+        workspaceSource,
+        ...(title.trim() ? { title: title.trim() } : {}),
+        ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+      });
+      onCreated(s);
+    }).finally(() => setBusy(false));
+  };
+
+  return (
+    <form className="panel" onSubmit={submit}>
+      <h2>New session</h2>
+      <label>
+        Provider
+        <select value="claude-code" disabled>
+          <option value="claude-code">Claude Code</option>
+        </select>
+      </label>
+      <label>
+        Workspace
+        <select value={sourceType} onChange={(e) => setSourceType(e.target.value as WorkspaceSource["type"])}>
+          <option value="empty">Empty directory</option>
+          <option value="git">Clone a git URL</option>
+          <option value="copy">Copy a host directory (coming in M5)</option>
+        </select>
+      </label>
+      {sourceType === "git" && (
+        <>
+          <label>
+            Repository URL
+            <input required value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/org/repo.git" />
+          </label>
+          <label>
+            Branch / tag (optional)
+            <input value={gitRef} onChange={(e) => setGitRef(e.target.value)} placeholder="main" />
+          </label>
+        </>
+      )}
+      {sourceType === "copy" && (
+        <label>
+          Host path
+          <input required value={copyPath} onChange={(e) => setCopyPath(e.target.value)} placeholder="/home/you/project" />
+        </label>
+      )}
+      <label>
+        Title (optional, defaults to the first prompt)
+        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+      <label>
+        First prompt (optional, sent once the Sandbox is ready)
+        <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+      </label>
+      <div className="actions">
+        <button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button type="submit" disabled={busy}>
+          {busy ? "Creating…" : "Create"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; onSaved: (s: PublicSettings) => void; run: Runner }) {
+  const [token, setToken] = useState("");
+  const [gitUserName, setGitUserName] = useState(settings.gitUserName);
+  const [gitUserEmail, setGitUserEmail] = useState(settings.gitUserEmail);
+  const [cpus, setCpus] = useState(String(settings.sandboxCpus));
+  const [memory, setMemory] = useState(String(settings.sandboxMemoryGb));
+  const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void run(async () => {
+      const saved = await api.updateSettings({
+        gitUserName,
+        gitUserEmail,
+        sandboxCpus: Number(cpus),
+        sandboxMemoryGb: Number(memory),
+        ...(token.trim() ? { providerSecrets: { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } } : {}),
+      });
+      setToken("");
+      onSaved(saved);
+    });
+  };
+
+  return (
+    <form className="panel" onSubmit={submit}>
+      <h2>Settings</h2>
+      <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Applies to Sandboxes created afterwards.</p>
+      <label>
+        Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
+        <input
+          type="password"
+          autoComplete="off"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder={tokenSet ? "Leave empty to keep the current token" : "Run `claude setup-token` and paste the result"}
+        />
+      </label>
+      <label>
+        Git user.name
+        <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} />
+      </label>
+      <label>
+        Git user.email
+        <input value={gitUserEmail} onChange={(e) => setGitUserEmail(e.target.value)} />
+      </label>
+      <div className="row">
+        <label>
+          Sandbox CPUs
+          <input type="number" min={0.5} step={0.5} value={cpus} onChange={(e) => setCpus(e.target.value)} />
+        </label>
+        <label>
+          Sandbox memory (GB)
+          <input type="number" min={1} step={1} value={memory} onChange={(e) => setMemory(e.target.value)} />
+        </label>
+      </div>
+      <div className="actions">
+        <button type="submit">Save</button>
+      </div>
+    </form>
+  );
+}

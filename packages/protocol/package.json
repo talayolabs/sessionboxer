@@ -1,0 +1,27 @@
+{
+  "name": "@sessionboxer/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Types shared by the Control Plane, the Sandbox Daemon and the web UI.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

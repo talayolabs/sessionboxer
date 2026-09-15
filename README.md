@@ -47,23 +47,38 @@ Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr
 | Control Plane | runs on the host, binds `127.0.0.1:4000`, no auth |
 | Provider secrets | per-Provider map in `~/.sessionboxer/config.json` (0600), only the Session's Provider gets its env vars |
 
-## Repository layout (planned)
+## Repository layout
 
 npm workspaces:
 
 ```
-apps/control-plane      Hono + WebSocket + dockerode + better-sqlite3
-apps/web                React/Vite, xterm.js, Monaco, noVNC
-packages/sandbox-daemon ACP client + _sessionboxer/fs + _sessionboxer/pty
+apps/control-plane      Hono + WebSocket + dockerode + better-sqlite3 (host)
+apps/web                React/Vite UI (later: xterm.js, Monaco, noVNC)
+packages/sandbox-daemon runs in every Sandbox: ACP client for the Agent, JSON-RPC over WS for the Control Plane
 packages/computer-use-mcp  stdio MCP server mirroring Anthropic's computer toolset
-packages/protocol       shared zod types
-images/sandbox          Dockerfile
+packages/protocol       shared zod types + JSON-RPC framing
+images/sandbox          Dockerfile (desktop stack + claude-code + claude-agent-acp + daemon + MCP)
 ```
+
+## Running it
+
+Requires Docker, Node 22 and a token from `claude setup-token`.
+
+```sh
+npm install
+npm run build:image        # sessionboxer/sandbox:dev, ~3 GB, rebuild after changing the daemon/MCP/image
+npm run build
+npm start                  # http://127.0.0.1:4000
+```
+
+Open the UI, paste the token under Settings (stored in `~/.sessionboxer/config.json`, mode 0600; `CLAUDE_CODE_OAUTH_TOKEN` in the Control Plane's environment overrides it), create a Session, prompt. Each Session is one container `sbx-<id>` on the private `sessionboxer` Docker network with no host ports; **Stop** keeps the container for **Resume** (Claude Code history is reloaded via ACP `session/load`), **Delete** removes it. Session metadata and the normalized event stream live in `~/.sessionboxer/db.sqlite`.
+
+Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies `/api` to :4000).
 
 ## Milestones
 
 - **M0 spike (gate for ADR-0006), done**: build the image; run `claude-agent-acp` with `CLAUDE_CODE_OAUTH_TOKEN` and the computer-use MCP by hand; the Agent takes a screenshot, opens Firefox, clicks something. Result recorded in ADR-0006.
-- **M1**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding.
+- **M1, done**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding, event replay after Control Plane restart.
 - **M2**: live Desktop in the UI (noVNC proxied).
 - **M3**: file tree + Monaco.
 - **M4**: terminal.

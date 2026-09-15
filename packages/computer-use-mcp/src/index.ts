@@ -169,8 +169,8 @@ server.registerTool(
 server.registerTool(
   "wait",
   {
-    description: "Wait for a number of seconds (for pages to load, animations to finish), then return a screenshot.",
-    inputSchema: { duration: z.number().positive().max(60) },
+    description: "Wait for a number of seconds (for pages to load, animations to finish; default 2), then return a screenshot.",
+    inputSchema: { duration: z.number().positive().max(60).default(2) },
   },
   async ({ duration }) => {
     await sleep(duration * 1000);

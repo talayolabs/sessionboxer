@@ -8,8 +8,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build:protocol && npm run build --workspaces --if-present",
+    "build:protocol": "npm run build -w @sessionboxer/protocol",
+    "typecheck": "npm run build:protocol && npm run typecheck --workspaces --if-present",
     "build:image": "docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .",
     "start": "node apps/control-plane/dist/index.js",
     "spike:acp": "node scripts/spike-acp.mjs"

@@ -41,16 +41,25 @@ export function Desktop({ session }: { session: Session }) {
     client.background = "#0b0d11";
     client.viewOnly = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    client.addEventListener("connect", () => setState("connected"));
+    // noVNC emits `disconnect` asynchronously, also for the disconnect() below,
+    // so events from a client this effect already tore down must be ignored.
+    let disposed = false;
+    let gone = false;
+    client.addEventListener("connect", () => {
+      if (!disposed) setState("connected");
+    });
     client.addEventListener("disconnect", () => {
+      gone = true;
+      if (disposed) return;
       setState("disconnected");
       timer = setTimeout(() => setAttempt((a) => a + 1), RECONNECT_MS);
     });
     rfb.current = client;
     return () => {
+      disposed = true;
       if (timer) clearTimeout(timer);
       rfb.current = null;
-      client.disconnect();
+      if (!gone) client.disconnect();
     };
   }, [session.id, live, attempt]);
 

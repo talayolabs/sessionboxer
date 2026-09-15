@@ -24,7 +24,9 @@ export function bridgeDesktop(client: WebSocket, targetUrl: string, log: (msg: s
 
   const closeBoth = (code = 1000, reason = ""): void => {
     if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) client.close(code, reason);
-    if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) upstream.close();
+    // Always send a status code: websockify echoes a status-less close frame
+    // back as the reserved code 1005, which `ws` rejects as an invalid frame.
+    if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) upstream.close(1000);
   };
   client.on("close", () => closeBoth());
   upstream.on("close", () => closeBoth(1011, "desktop connection closed"));

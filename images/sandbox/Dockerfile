@@ -1,6 +1,6 @@
 # Sessionboxer Sandbox image: one container per Session, with an X11 Desktop
-# (Xvfb + xfce4 + x11vnc + noVNC), the Claude Code ACP adapter, the
-# computer-use MCP server and the Sandbox Daemon. Build from the repo root:
+# (Xvfb + xfce4 + x11vnc + noVNC), the Provider ACP adapters (Claude Code,
+# Devin CLI), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
 #   docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .
 
 # ---------------------------------------------------------------------------
@@ -29,6 +29,7 @@ FROM ubuntu:24.04
 ARG NODE_MAJOR=22
 ARG CLAUDE_CODE_VERSION=2.1.272
 ARG CLAUDE_AGENT_ACP_VERSION=0.77.0
+ARG DEVIN_CLI_VERSION=3000.10.27
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -104,8 +105,10 @@ RUN userdel -r ubuntu 2>/dev/null || true \
 # Firefox: no first-run wizard, no update nags, no default-browser prompt.
 COPY images/sandbox/firefox-policies.json /etc/firefox/policies/policies.json
 
-# Agent-facing configuration and the Desktop entrypoint.
-COPY --chown=agent:agent images/sandbox/CLAUDE.md /home/agent/.claude/CLAUDE.md
+# Agent-facing configuration and the Desktop entrypoint. The Desktop briefing
+# is installed once as ~/.claude/CLAUDE.md: Claude Code reads it natively and
+# Devin CLI loads it as an always-on rule too (`devin rules list`).
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -115,10 +118,22 @@ ENV DISPLAY=:1 \
     SESSIONBOXER_DISPLAY_WIDTH=1024 \
     SESSIONBOXER_DISPLAY_HEIGHT=768 \
     HOME=/home/agent \
-    IS_SANDBOX=1
+    IS_SANDBOX=1 \
+    PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 USER agent
 WORKDIR /workspace
+
+# Devin CLI (`devin acp` is spawned by the Sandbox Daemon). The pinned installer
+# is a per-user install, so it runs as agent; its trailing `devin setup` tries
+# to log in and fails without a TTY, which is fine: credentials are injected
+# per Session (WINDSURF_API_KEY), never baked in. auto_update is off so a
+# Sandbox runs the version the image was built with.
+RUN curl -fsSL https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/setup.sh -o /tmp/devin-setup.sh \
+    && (bash /tmp/devin-setup.sh </dev/null >/tmp/devin-setup.log 2>&1 || true) \
+    && rm -f /tmp/devin-setup.sh /tmp/devin-setup.log \
+    && devin --version
+COPY --chown=agent:agent images/sandbox/devin-config.json /home/agent/.config/devin/config.json
 
 # 6080: noVNC/websockify, 7000: Sandbox Daemon. Both are reached only over the
 # Docker network, never published on the host.

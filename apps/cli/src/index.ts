@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import type { CreateSessionRequest, Session, WorkspaceSource } from "@sessionboxer/protocol";
+import { PROVIDERS, Provider, type CreateSessionRequest, type Session, type WorkspaceSource } from "@sessionboxer/protocol";
 
 const BASE_URL = (process.env.SESSIONBOXER_URL ?? "http://127.0.0.1:4000").replace(/\/$/, "");
 
@@ -21,6 +21,7 @@ Usage:
 Options for new:
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
   -p, --prompt <text>    First prompt, sent once the Sandbox is ready
+      --provider <id>    Provider: ${PROVIDERS.join(" | ")} (default claude-code)
       --no-open          Do not open the browser
 
 Environment:
@@ -84,6 +85,7 @@ async function newSession(args: string[]): Promise<void> {
       empty: { type: "boolean", default: false },
       title: { type: "string", short: "t" },
       prompt: { type: "string", short: "p" },
+      provider: { type: "string", default: "claude-code" },
       open: { type: "boolean", default: true },
     },
   });
@@ -98,8 +100,11 @@ async function newSession(args: string[]): Promise<void> {
       ? { type: "empty" }
       : { type: "copy", path: path.resolve(positionals[0] ?? ".") };
 
+  const provider = Provider.safeParse(values.provider);
+  if (!provider.success) throw new CliError(`new: --provider must be one of ${PROVIDERS.join(", ")}`);
+
   const body: CreateSessionRequest = {
-    provider: "claude-code",
+    provider: provider.data,
     workspaceSource,
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),

@@ -8,6 +8,7 @@ import {
   DaemonPromptParams,
   FsPathParams,
   FsWriteParams,
+  Provider,
   PtyIdParams,
   PtyInputParams,
   PtyOpenParams,
@@ -52,9 +53,19 @@ function emit(body: DaemonEvent["body"]): void {
   for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.event, params: event });
 }
 
+/** ACP adapter per Provider; `SESSIONBOXER_ACP_COMMAND` overrides (space-separated) for experiments. */
+const ACP_COMMANDS: Record<Provider, string[]> = {
+  "claude-code": ["claude-agent-acp"],
+  devin: ["devin", "acp"],
+};
+const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
+const [acpCommand = "claude-agent-acp", ...acpArgs] =
+  env.SESSIONBOXER_ACP_COMMAND?.split(" ") ?? ACP_COMMANDS[provider];
+
 const agent = new AgentManager(
   {
-    command: env.SESSIONBOXER_ACP_COMMAND ?? "claude-agent-acp",
+    command: acpCommand,
+    args: acpArgs,
     cwd: workspace,
     mcpCommand: env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp",
     stateFile: `${home}/.sessionboxer/daemon-state.json`,

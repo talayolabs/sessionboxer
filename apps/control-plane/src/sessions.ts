@@ -20,7 +20,7 @@ import {
   type Settings,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
-import { claudeToken } from "./config.js";
+import { providerEnv, providerSetupHint } from "./config.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import type { Db } from "./db.js";
 import type { SandboxDocker } from "./docker.js";
@@ -219,8 +219,8 @@ export class SessionManager {
 
   async create(req: CreateSessionRequest): Promise<Session> {
     const settings = this.settings();
-    if (req.provider === "claude-code" && !claudeToken(settings)) {
-      throw new HttpError(400, "No Claude token configured. Run `claude setup-token` and paste it in Settings.");
+    if (Object.values(providerEnv(req.provider, settings)).some((v) => v === "")) {
+      throw new HttpError(400, providerSetupHint(req.provider));
     }
     let workspaceSource: WorkspaceSource = req.workspaceSource;
     if (workspaceSource.type === "copy") {
@@ -260,7 +260,8 @@ export class SessionManager {
   private async provision(session: Session, settings: Settings): Promise<void> {
     const env: Record<string, string> = {
       SESSIONBOXER_SESSION_ID: session.id,
-      CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings),
+      SESSIONBOXER_PROVIDER: session.provider,
+      ...providerEnv(session.provider, settings),
     };
     if (settings.gitUserName) {
       env.GIT_AUTHOR_NAME = settings.gitUserName;

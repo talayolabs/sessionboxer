@@ -11,9 +11,14 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code"] as const;
+export const PROVIDERS = ["claude-code", "devin"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
+
+export const PROVIDER_LABELS: Record<Provider, string> = {
+  "claude-code": "Claude Code",
+  devin: "Devin",
+};
 
 export const WorkspaceSource = z.discriminatedUnion("type", [
   z.object({ type: z.literal("empty") }),
@@ -65,6 +70,7 @@ export const Settings = z.object({
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
+      devin: z.object({ WINDSURF_API_KEY: z.string().default("") }).default({}),
     })
     .default({}),
 });
@@ -72,7 +78,10 @@ export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
 export const PublicSettings = Settings.omit({ providerSecrets: true }).extend({
-  providerSecretsSet: z.object({ "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }) }),
+  providerSecretsSet: z.object({
+    "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
+    devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
+  }),
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
@@ -80,6 +89,7 @@ export const UpdateSettingsRequest = Settings.partial().extend({
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string() }).partial(),
+      devin: z.object({ WINDSURF_API_KEY: z.string() }).partial(),
     })
     .partial()
     .optional(),

@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { PublicSettings, Session, SessionEvent, WorkspaceSource } from "@sessionboxer/protocol";
+import {
+  PROVIDERS,
+  PROVIDER_LABELS,
+  type Provider,
+  type PublicSettings,
+  type Session,
+  type SessionEvent,
+  type WorkspaceSource,
+} from "@sessionboxer/protocol";
 import { api, emitFsChanged, subscribe } from "./api";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
@@ -126,7 +134,9 @@ export function App() {
   }, [selectedId, reloadSessions, run, setRoute]);
 
   const items = useMemo(() => buildTranscript(events), [events]);
-  const tokenSet = settings?.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN ?? true;
+  const anyTokenSet = settings
+    ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
+    : true;
 
   return (
     <div className="app">
@@ -149,7 +159,7 @@ export function App() {
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}
         </ul>
         <div className="sidebar-footer">
-          <button onClick={() => setRoute({ view: "settings" })}>Settings{tokenSet ? "" : " (token missing)"}</button>
+          <button onClick={() => setRoute({ view: "settings" })}>Settings{anyTokenSet ? "" : " (token missing)"}</button>
         </div>
       </aside>
 
@@ -159,9 +169,9 @@ export function App() {
             {error}
           </div>
         )}
-        {!tokenSet && route.view !== "settings" && (
+        {!anyTokenSet && route.view !== "settings" && (
           <div className="banner banner-warn" onClick={() => setRoute({ view: "settings" })}>
-            No Claude token configured. Open Settings and paste the output of <code>claude setup-token</code>.
+            No Provider token configured. Open Settings and add a Claude Code or Devin token.
           </div>
         )}
         {route.view === "new" && (
@@ -245,7 +255,7 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
           </h2>
         )}
         <span className={`badge badge-${session.status}`}>{session.status}</span>
-        <span className="muted">{session.provider}</span>
+        <span className="muted">{PROVIDER_LABELS[session.provider]}</span>
         <span className="muted" title={sourceLabel}>
           {sourceLabel}
         </span>
@@ -318,6 +328,7 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
 }
 
 function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => void; onCancel: () => void; run: Runner }) {
+  const [provider, setProvider] = useState<Provider>("claude-code");
   const [sourceType, setSourceType] = useState<WorkspaceSource["type"]>("empty");
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
@@ -337,7 +348,7 @@ function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => v
     setBusy(true);
     void run(async () => {
       const s = await api.createSession({
-        provider: "claude-code",
+        provider,
         workspaceSource,
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
@@ -351,8 +362,12 @@ function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => v
       <h2>New session</h2>
       <label>
         Provider
-        <select value="claude-code" disabled>
-          <option value="claude-code">Claude Code</option>
+        <select value={provider} onChange={(e) => setProvider(e.target.value as Provider)}>
+          {PROVIDERS.map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_LABELS[p]}
+            </option>
+          ))}
         </select>
       </label>
       <label>
@@ -403,11 +418,13 @@ function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => v
 
 function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; onSaved: (s: PublicSettings) => void; run: Runner }) {
   const [token, setToken] = useState("");
+  const [devinToken, setDevinToken] = useState("");
   const [gitUserName, setGitUserName] = useState(settings.gitUserName);
   const [gitUserEmail, setGitUserEmail] = useState(settings.gitUserEmail);
   const [cpus, setCpus] = useState(String(settings.sandboxCpus));
   const [memory, setMemory] = useState(String(settings.sandboxMemoryGb));
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
+  const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -417,9 +434,13 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         gitUserEmail,
         sandboxCpus: Number(cpus),
         sandboxMemoryGb: Number(memory),
-        ...(token.trim() ? { providerSecrets: { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } } : {}),
+        providerSecrets: {
+          ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
+          ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
+        },
       });
       setToken("");
+      setDevinToken("");
       onSaved(saved);
     });
   };
@@ -436,6 +457,20 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder={tokenSet ? "Leave empty to keep the current token" : "Run `claude setup-token` and paste the result"}
+        />
+      </label>
+      <label>
+        Devin token (WINDSURF_API_KEY) {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
+        <input
+          type="password"
+          autoComplete="off"
+          value={devinToken}
+          onChange={(e) => setDevinToken(e.target.value)}
+          placeholder={
+            devinTokenSet
+              ? "Leave empty to keep the current token"
+              : "Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml"
+          }
         />
       </label>
       <label>

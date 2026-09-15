@@ -9,11 +9,13 @@ import {
   type InitializeRequest,
   type McpServer,
   type NewSessionRequest,
+  type SessionModeState,
 } from "@agentclientprotocol/sdk";
 import type { SessionUpdate, StopReason } from "@sessionboxer/protocol";
 
 export interface AgentConfig {
   command: string;
+  args: string[];
   cwd: string;
   mcpCommand: string;
   stateFile: string;
@@ -32,6 +34,9 @@ interface PersistedState {
 }
 
 const CLIENT_INFO = { name: "sessionboxer-daemon", version: "0.0.0" };
+
+/** Mode ids that mean "auto-approve every tool call", per adapter (claude-agent-acp, devin acp). */
+const BYPASS_MODE_IDS = ["bypassPermissions", "bypass"];
 
 /**
  * Owns the Agent child process and its ACP connection. Creates a new ACP
@@ -69,8 +74,8 @@ export class AgentManager {
 
   private async start(): Promise<void> {
     this.error = null;
-    this.cfg.log(`spawning ${this.cfg.command}`);
-    const child = spawn(this.cfg.command, [], {
+    this.cfg.log(`spawning ${[this.cfg.command, ...this.cfg.args].join(" ")}`);
+    const child = spawn(this.cfg.command, this.cfg.args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
       cwd: this.cfg.cwd,
@@ -121,13 +126,14 @@ export class AgentManager {
       if (this.acpSessionId && init.agentCapabilities?.loadSession) {
         this.replaying = true;
         try {
-          await conn.agent.request("session/load", {
+          const result = await conn.agent.request("session/load", {
             sessionId: this.acpSessionId,
             cwd: this.cfg.cwd,
             mcpServers,
           });
           loaded = true;
           this.cfg.log(`loaded ACP session ${this.acpSessionId}`);
+          await this.ensureBypassMode(conn, this.acpSessionId, result?.modes);
         } catch (e) {
           this.cfg.log(`session/load failed, creating a new session: ${String(e)}`);
         } finally {
@@ -139,18 +145,8 @@ export class AgentManager {
         const created = await conn.agent.request("session/new", newParams);
         this.acpSessionId = created.sessionId;
         this.writeState({ acpSessionId: created.sessionId });
-        const modes = created.modes;
-        if (
-          modes &&
-          modes.currentModeId !== "bypassPermissions" &&
-          modes.availableModes.some((m) => m.id === "bypassPermissions")
-        ) {
-          await conn.agent.request("session/set_mode", {
-            sessionId: created.sessionId,
-            modeId: "bypassPermissions",
-          });
-        }
         this.cfg.log(`created ACP session ${created.sessionId}`);
+        await this.ensureBypassMode(conn, created.sessionId, created.modes);
       }
       this.ready = true;
       this.events.onStateChange();
@@ -161,6 +157,17 @@ export class AgentManager {
       this.kill();
       throw e;
     }
+  }
+
+  private async ensureBypassMode(
+    conn: ClientConnection,
+    sessionId: string,
+    modes: SessionModeState | null | undefined,
+  ): Promise<void> {
+    const bypass = modes?.availableModes.find((m) => BYPASS_MODE_IDS.includes(m.id));
+    if (!modes || !bypass || modes.currentModeId === bypass.id) return;
+    await conn.agent.request("session/set_mode", { sessionId, modeId: bypass.id });
+    this.cfg.log(`switched to mode ${bypass.id}`);
   }
 
   async prompt(text: string): Promise<void> {

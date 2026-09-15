@@ -1,6 +1,6 @@
 # Sessionboxer
 
-A local, self-hosted session manager for coding agents. Every Session gets its own Docker Sandbox with a Linux desktop; the Agent (Claude Code first) drives it like a human would (mouse, keyboard, screenshots) while you watch, edit files and open terminals from a browser UI.
+A local, self-hosted session manager for coding agents. Every Session gets its own Docker Sandbox with a Linux desktop; the Agent (Claude Code or Devin) drives it like a human would (mouse, keyboard, screenshots) while you watch, edit files and open terminals from a browser UI.
 
 Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr](./docs/adr). This file is the MVP plan that came out of the design session.
 
@@ -14,6 +14,7 @@ Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr
 │         │ Docker network, no published ports         │
 │   ┌─────┴───── Sandbox (one per Session) ─────────┐  │
 │   │ Sandbox Daemon ── ACP/stdio ── claude-agent-acp│  │
+│   │                            or devin acp        │  │
 │   │      (also serves _sessionboxer/fs and /pty)  │  │
 │   │ Xvfb :1 1024x768 + xfce4 + x11vnc + noVNC     │  │
 │   │ computer-use MCP (xdotool, screenshots)       │  │
@@ -26,20 +27,20 @@ Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr
 - Auth is the user's Claude subscription via `CLAUDE_CODE_OAUTH_TOKEN`, entered once in the UI, injected per Sandbox (ADR-0002).
 - Desktop is X11 driven by a Sessionboxer-owned MCP server mirroring Anthropic's `computer` toolset, because Claude Code's built-in computer-use is macOS-only (ADR-0004).
 - Sandboxes publish no host ports; the Control Plane proxies chat, noVNC and terminals under `/sessions/:id/...` (ADR-0005).
-- The Daemon speaks ACP to the Agent so other Providers (Codex, Gemini CLI, OpenCode) are an adapter install away (ADR-0006).
+- The Daemon speaks ACP to the Agent so other Providers are an adapter install away (ADR-0006); Devin is the second one, through Devin CLI's `devin acp` (ADR-0007).
 
 ## MVP decisions
 
 | Topic | Decision |
 | --- | --- |
-| Target | Linux host, Claude Code only, Docker Engine on the same machine |
+| Target | Linux host, Docker Engine on the same machine; Providers: Claude Code, Devin (CLI) |
 | Workspace Source | git clone URL, copy of a host directory (tar via Docker `putArchive`, `git ls-files -co --exclude-standard` + `.git` when it is a repo), or empty |
 | UI | chat with inline screenshots and collapsed tool calls, live Desktop (view-only by default, "take control" toggle), file tree + Monaco (last write wins, watcher pushes disk changes), terminal |
 | Session states | `creating` → `idle` → `running` → `stopped` → (`error`); `deleted` removes container and volume; stop during `running` sends `session/cancel` first |
 | Session title | auto from first prompt, editable |
 | Persistence | Control Plane SQLite (`better-sqlite3`) holds Session metadata and the normalized ACP `session/update` stream; the Agent's own history stays in the container for resume |
 | Reconnect | Daemon ring-buffers the current turn with sequence numbers; Control Plane resumes from last seen seq |
-| Image | one `sessionboxer/sandbox:dev` built locally: Ubuntu 24.04, Node 22, Python 3, git, curl, build-essential, gh, Firefox ESR, xdotool, scrot/ImageMagick, xfce4, Xvfb, x11vnc, noVNC; Daemon and MCP compiled in; global `CLAUDE.md` describing the Desktop |
+| Image | one `sessionboxer/sandbox:dev` built locally: Ubuntu 24.04, Node 22, Python 3, git, curl, build-essential, gh, Firefox ESR, xdotool, scrot/ImageMagick, xfce4, Xvfb, x11vnc, noVNC; Devin CLI (pinned, auto-update off); Daemon and MCP compiled in; one Desktop briefing (`~/.claude/CLAUDE.md`, read by both Providers) |
 | Display | fixed 1024x768, screenshots unscaled |
 | Limits | 2 CPUs, 4 GB RAM per Sandbox, global setting |
 | Git | user.name/email injected; no GitHub token in Sandboxes for MVP |
@@ -58,12 +59,12 @@ apps/cli                `sessionboxer` command: serve the Control Plane, `new .`
 packages/sandbox-daemon runs in every Sandbox: ACP client for the Agent, JSON-RPC over WS for the Control Plane
 packages/computer-use-mcp  stdio MCP server mirroring Anthropic's computer toolset
 packages/protocol       shared zod types + JSON-RPC framing
-images/sandbox          Dockerfile (desktop stack + claude-code + claude-agent-acp + daemon + MCP)
+images/sandbox          Dockerfile (desktop stack + claude-code + claude-agent-acp + devin CLI + daemon + MCP)
 ```
 
 ## Running it
 
-Requires Docker, Node 22 and a token from `claude setup-token`.
+Requires Docker, Node 22 and a Provider token: `claude setup-token` for Claude Code, and/or a Devin token (`devin auth login` on your machine, then the token from `~/.local/share/devin/credentials.toml`; it is passed to the Sandbox as `WINDSURF_API_KEY`).
 
 ```sh
 npm install
@@ -72,7 +73,7 @@ npm run build
 npm start                  # http://127.0.0.1:4000  (same as `npx sessionboxer serve`)
 ```
 
-Open the UI, paste the token under Settings (stored in `~/.sessionboxer/config.json`, mode 0600; `CLAUDE_CODE_OAUTH_TOKEN` in the Control Plane's environment overrides it), create a Session, prompt. Each Session is one container `sbx-<id>` on the private `sessionboxer` Docker network with no host ports; **Stop** keeps the container for **Resume** (Claude Code history is reloaded via ACP `session/load`), **Delete** removes it. Session metadata and the normalized event stream live in `~/.sessionboxer/db.sqlite`.
+Open the UI, paste the token(s) under Settings (stored in `~/.sessionboxer/config.json`, mode 0600; `CLAUDE_CODE_OAUTH_TOKEN` / `WINDSURF_API_KEY` in the Control Plane's environment override it), create a Session choosing its Provider, prompt. Only the chosen Provider's token is injected into that Sandbox. Each Session is one container `sbx-<id>` on the private `sessionboxer` Docker network with no host ports; **Stop** keeps the container for **Resume** (Claude Code history is reloaded via ACP `session/load`), **Delete** removes it. Session metadata and the normalized event stream live in `~/.sessionboxer/db.sqlite`.
 
 The Desktop pane is the Sandbox's screen streamed over `GET /api/sessions/:id/desktop` (RFB over WebSocket, bridged by the Control Plane to websockify inside the container). It is view-only while the Agent is `running`; **Take control** shares the Agent's mouse and keyboard until the next turn starts. An `idle` Sandbox is always interactive.
 
@@ -103,6 +104,7 @@ Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies 
 - **M3, done**: file tree + Monaco editor (Daemon fs RPC + Workspace watcher, external-change handling).
 - **M4, done**: terminal (Daemon PTYs over the existing connection, xterm.js pane with reattach).
 - **M5, done**: "copy host directory" Workspace Source (git-aware tar into the Sandbox), `sessionboxer` CLI wrapper; Settings (token, git identity, Sandbox CPU/memory) had landed with M1.
+- **M6, done**: Devin as a second Provider: Devin CLI in the image, `devin acp` through the Daemon's ACP path (`bypass` mode, same `desktop` MCP), `WINDSURF_API_KEY` in Settings, Provider selector in New Session (ADR-0007).
 
 ## Running the M0 spike by hand
 

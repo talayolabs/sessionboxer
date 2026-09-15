@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "computer-use": {
+      "type": "stdio",
+      "command": "sessionboxer-computer-use-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

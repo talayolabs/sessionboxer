@@ -1,0 +1,19 @@
+{
+  "name": "sessionboxer",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Local session manager for coding agents: one Docker sandbox with a desktop per session.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:image": "docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .",
+    "spike:acp": "node scripts/spike-acp.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

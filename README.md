@@ -2,130 +2,137 @@
 
 # Sessionboxer
 
-A local, self-hosted session manager for coding agents. Every Session gets its own Docker Sandbox with a Linux desktop; the Agent (Claude Code or Devin) drives it like a human would (mouse, keyboard, screenshots) while you watch, edit files and open terminals from a browser UI.
+Run coding agents in boxes. Each session gets its own Docker container with a full Linux desktop, and the agent (Claude Code or Devin) works in it like a person would: terminal, editor, browser, mouse and keyboard. You watch the screen live, browse and edit the files, open terminals, and step in when you want to.
 
-Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr](./docs/adr). This file is the MVP plan that came out of the design session.
+<br clear="left" />
 
-## Shape
+![Sessionboxer demo](docs/assets/demo.gif)
 
-```
-┌──────────────── host (your machine) ────────────────┐
-│  Control Plane  (Node, Hono + WS, dockerode, SQLite) │
-│  Web UI         (React/Vite: chat, noVNC, Monaco,    │
-│                  xterm.js)   http://127.0.0.1:4000   │
-│         │ Docker network, no published ports         │
-│   ┌─────┴───── Sandbox (one per Session) ─────────┐  │
-│   │ Sandbox Daemon ── ACP/stdio ── claude-agent-acp│  │
-│   │                            or devin acp        │  │
-│   │      (also serves _sessionboxer/fs and /pty)  │  │
-│   │ Xvfb :1 1024x768 + xfce4 + x11vnc + noVNC     │  │
-│   │ computer-use MCP (xdotool, screenshots)       │  │
-│   │ Workspace  (/workspace, seeded from Source)   │  │
-│   └───────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────┘
-```
+*A new session with a first prompt; Claude Code writes and serves a page, opens it in Firefox on the box's desktop and checks it with a screenshot; the editor picks up its next edit live; a terminal inside the box. ([video](docs/assets/demo.mp4))*
 
-- Agent runs inside the Sandbox with `bypassPermissions`; the container is the safety boundary (ADR-0001, ADR-0003).
-- Auth is the user's Claude subscription via `CLAUDE_CODE_OAUTH_TOKEN`, entered once in the UI, injected per Sandbox (ADR-0002).
-- Desktop is X11 driven by a Sessionboxer-owned MCP server mirroring Anthropic's `computer` toolset, because Claude Code's built-in computer-use is macOS-only (ADR-0004).
-- Sandboxes publish no host ports; the Control Plane proxies chat, noVNC and terminals under `/sessions/:id/...` (ADR-0005).
-- The Daemon speaks ACP to the Agent so other Providers are an adapter install away (ADR-0006); Devin is the second one, through Devin CLI's `devin acp` (ADR-0007).
-- Docker inside a Sandbox is opt-in and runs under the Sysbox runtime when the host has it; without Sysbox it falls back to `--privileged` with a warning in every surface (ADR-0008).
+## What you get
 
-## MVP decisions
+- **One box per session.** Every conversation runs in its own container with its own copy of the code. Nothing the agent does touches your machine; delete the session and it is all gone.
+- **A real desktop.** The container runs a Linux desktop with Firefox. The agent can take screenshots, click and type, so it can test web apps, read documentation or use any GUI tool. You see the same screen in the browser and can take the controls at any time.
+- **Agents that don't ask.** Inside the box the agent runs with all permissions granted, so it doesn't stop every few seconds to ask whether it may run a command. The container is the safety boundary.
+- **Files and terminals.** A file tree with an editor that follows the agent's changes live, and as many shells in the box as you want.
+- **Stop and resume.** Stop a session to free CPU and memory; resume it later with the conversation, files and installed tools exactly where they were.
+- **Docker inside the box** (optional). Agents can run `docker`, `docker compose` and `docker build` inside their own container.
+- **Your subscription.** Sessionboxer uses your own Claude or Devin account; there is no Sessionboxer account and nothing leaves your machine except the agent's own traffic.
 
-| Topic | Decision |
-| --- | --- |
-| Target | Linux host, Docker Engine on the same machine; Providers: Claude Code, Devin (CLI) |
-| Workspace Source | git clone URL, copy of a host directory (tar via Docker `putArchive`, `git ls-files -co --exclude-standard` + `.git` when it is a repo), or empty |
-| UI | chat with inline screenshots and collapsed tool calls, live Desktop (view-only by default, "take control" toggle), file tree + Monaco (last write wins, watcher pushes disk changes), terminal |
-| Session states | `creating` → `idle` → `running` → `stopped` → (`error`); `deleted` removes container and volume; stop during `running` sends `session/cancel` first |
-| Session title | auto from first prompt, editable |
-| Persistence | Control Plane SQLite (`better-sqlite3`) holds Session metadata and the normalized ACP `session/update` stream; the Agent's own history stays in the container for resume |
-| Reconnect | Daemon ring-buffers the current turn with sequence numbers; Control Plane resumes from last seen seq |
-| Image | one `sessionboxer/sandbox:dev` built locally: Ubuntu 24.04, Node 22, Python 3, git, curl, build-essential, gh, Firefox ESR, xdotool, scrot/ImageMagick, xfce4, Xvfb, x11vnc, noVNC, Docker CLI + dockerd (started only for Docker-enabled Sessions); Devin CLI (pinned, auto-update off); Daemon and MCP compiled in; one Desktop briefing (`~/.claude/CLAUDE.md`, read by both Providers) |
-| Display | fixed 1024x768, screenshots unscaled |
-| Limits | 2 CPUs, 4 GB RAM per Sandbox, global setting |
-| Docker in Sandboxes | off by default; `sysbox-runc` when `docker info` lists it, else `--privileged` (warned); never the host socket |
-| Git | user.name/email injected; no GitHub token in Sandboxes for MVP |
-| Model | Provider defaults; per-Session settings object reserved in the schema |
-| Control Plane | runs on the host, binds `127.0.0.1:4000`, no auth |
-| Provider secrets | per-Provider map in `~/.sessionboxer/config.json` (0600), only the Session's Provider gets its env vars |
+## Requirements
 
-## Repository layout
+- Linux with [Docker Engine](https://docs.docker.com/engine/install/) (your user must be able to run `docker`)
+- Node.js 22+
+- A Claude Code subscription and/or a Devin account
+- Optional: [Sysbox](https://github.com/nestybox/sysbox) if you want Docker inside sessions without giving the agent a privileged container (see below)
 
-npm workspaces:
-
-```
-apps/control-plane      Hono + WebSocket + dockerode + better-sqlite3 (host)
-apps/web                React/Vite UI: chat, live Desktop (noVNC), Files (Monaco), Terminal (xterm.js)
-apps/cli                `sessionboxer` command: serve the Control Plane, `new .`, ls/open/stop/resume/rm
-packages/sandbox-daemon runs in every Sandbox: ACP client for the Agent, JSON-RPC over WS for the Control Plane
-packages/computer-use-mcp  stdio MCP server mirroring Anthropic's computer toolset
-packages/protocol       shared zod types + JSON-RPC framing
-images/sandbox          Dockerfile (desktop stack + claude-code + claude-agent-acp + devin CLI + daemon + MCP)
-```
-
-## Running it
-
-Requires Docker, Node 22, optionally [Sysbox](https://github.com/nestybox/sysbox) for unprivileged Docker inside Sandboxes, and a Provider token: `claude setup-token` for Claude Code, and/or a Devin token (`devin auth login` on your machine, then the token from `~/.local/share/devin/credentials.toml`; it is passed to the Sandbox as `WINDSURF_API_KEY`).
+## Install
 
 ```sh
+git clone https://github.com/talayolabs/sessionboxer.git
+cd sessionboxer
 npm install
-npm run build:image        # sessionboxer/sandbox:dev, ~3 GB, rebuild after changing the daemon/MCP/image
+npm run build:image     # builds the sandbox image (~3 GB, takes a few minutes the first time)
 npm run build
-npm start                  # http://127.0.0.1:4000  (same as `npx sessionboxer serve`)
 ```
 
-Open the UI, paste the token(s) under Settings (stored in `~/.sessionboxer/config.json`, mode 0600; `CLAUDE_CODE_OAUTH_TOKEN` / `WINDSURF_API_KEY` in the Control Plane's environment override it), create a Session choosing its Provider, prompt. Only the chosen Provider's token is injected into that Sandbox. Each Session is one container `sbx-<id>` on the private `sessionboxer` Docker network with no host ports; **Stop** keeps the container for **Resume** (Claude Code history is reloaded via ACP `session/load`), **Delete** removes it. Session metadata and the normalized event stream live in `~/.sessionboxer/db.sqlite`.
-
-The Desktop pane is the Sandbox's screen streamed over `GET /api/sessions/:id/desktop` (RFB over WebSocket, bridged by the Control Plane to websockify inside the container). It is view-only while the Agent is `running`; **Take control** shares the Agent's mouse and keyboard until the next turn starts. An `idle` Sandbox is always interactive.
-
-The Files pane lists the Workspace and edits files in Monaco through the Sandbox Daemon (`_sessionboxer/fs/list|read|write`, proxied as `GET /api/sessions/:id/fs?path=`, `GET|PUT /api/sessions/:id/fs/file`). Paths are Workspace-relative and may not escape it, symlinks included. Saves are last-write-wins; the Daemon watches the Workspace (chokidar, ignoring `.git`, `node_modules`, `.venv`, `__pycache__`, `.cache`) and pushes `fs_changed` over the UI WebSocket, so an open editor reloads the Agent's edits, or warns when you also have unsaved changes. Binary files and files over 2 MB are not opened.
-
-The Terminal pane runs `bash -l` shells in the Workspace, owned by the Sandbox Daemon (node-pty; `_sessionboxer/pty/list|open|attach|input|resize|close`, output and exit as notifications). The Control Plane exposes them as `GET|POST /api/sessions/:id/terminals`, `DELETE /api/sessions/:id/terminals/:ptyId` and one WebSocket per terminal at `/api/sessions/:id/terminals/:ptyId/ws` (binary frames are raw bytes both ways, text frames are JSON control messages: `attached`, `exit`, `error`, `resize`). The Daemon keeps the last 256 KiB of output per terminal, so a page reload reattaches with scrollback; exited shells stay listed for five minutes. Terminals die with the Sandbox on **Stop**; **Resume** opens a fresh one.
-
-**Workspace Sources.** *Empty*, *git clone* (`git clone [--branch ref] url` inside the Sandbox) or *copy a host directory*: the Control Plane tars the directory (the path must be absolute; it runs on your machine, so no bind mount) and streams it into `/workspace` with Docker `putArchive`. Inside a git work tree only tracked and untracked-but-not-ignored files are copied (`git ls-files -co --exclude-standard`, so `node_modules`, build output and secrets in `.gitignore` stay behind), plus `.git` when the directory is the repository root; any other directory is copied whole. Symlinks are copied as symlinks. The copy is one-way: nothing in the Sandbox writes back to the host.
-
-**CLI.** `npx sessionboxer` (from this checkout; `npm link -w @sessionboxer/cli` to have it on your PATH) talks to a running Control Plane (`SESSIONBOXER_URL`, default `http://127.0.0.1:4000`) and opens the browser on the new Session:
+Start it with
 
 ```sh
-sessionboxer serve                          # run the Control Plane in the foreground
-sessionboxer new .                          # box the current directory
+npm start               # http://127.0.0.1:4000
+```
+
+and open http://127.0.0.1:4000 in your browser. Sessionboxer only listens on localhost.
+
+To update, `git pull` and run the three build commands again.
+
+## First run: connect your agent
+
+Open **Settings** (bottom of the sidebar) and paste a token for the agent you want to use:
+
+- **Claude Code**: run `claude setup-token` on your machine and paste the result.
+- **Devin**: run `devin auth login` on your machine, then paste the token from `~/.local/share/devin/credentials.toml`.
+
+Tokens are stored in `~/.sessionboxer/config.json` (readable only by you) and are only handed to the containers of sessions that use that agent. Settings also holds the git name and email that commits made by agents will carry, and how much CPU and memory each session gets (2 CPUs and 4 GB by default).
+
+## Using it
+
+### Start a session
+
+Click **+ New**, pick the agent, choose where the code comes from:
+
+- **Empty directory**: start from scratch.
+- **Clone a git URL**: any URL `git clone` accepts, optionally a branch or tag. Private repositories need credentials embedded in the URL or a public mirror for now.
+- **Copy a host directory**: a folder on your machine. Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. The copy is one-way: changes in the box do not flow back.
+
+Optionally type the first prompt right there; it is sent as soon as the box is ready. The session title defaults to the first prompt and can be edited later.
+
+### Talk to the agent
+
+The chat shows the agent's messages and, folded, each tool it used: commands, file edits, and the screenshots it took while using the desktop. Press Enter to send, Shift+Enter for a newline. **Cancel turn** interrupts the agent.
+
+### Watch and take over the desktop
+
+**Show desktop** opens the box's screen next to the chat. While the agent is working the view is read-only so you don't fight over the mouse; **Take control** hands it to you until the agent's next turn. When the agent is idle the desktop is always interactive: log into a site for it, open a program, arrange windows.
+
+### Files and terminals
+
+**Files** lists the project folder in the box and opens files in an editor. Save with Ctrl+S. When the agent changes a file you have open, the editor reloads it, or warns you if you had unsaved edits.
+
+**Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
+
+### Stop, resume, delete
+
+- **Stop** pauses the box. It uses no CPU or memory while stopped; the conversation, files, installed packages and everything else in the container are kept.
+- **Resume** brings it back where it was. The agent reloads the conversation, so you can continue as if nothing happened.
+- **Delete** removes the session and its container for good.
+
+### Docker inside sessions
+
+Some tasks need Docker: running a database for tests, `docker compose up`, building images. Tick **Docker inside the Sandbox** when creating a session, or turn it on for all new sessions in Settings, and the box gets its own Docker daemon. Images and containers created inside survive Stop/Resume and disappear with the session.
+
+There are two ways this can run, and Sessionboxer picks automatically:
+
+- With [Sysbox](https://github.com/nestybox/sysbox) installed on your machine (`sysbox-ce` package from its releases page), the box stays a normal, unprivileged container. Recommended.
+- Without Sysbox, the box has to run as a *privileged* container, which means the agent could break out of it onto your machine. Sessionboxer still lets you do it, but shows a ⚠ on the Settings button, explains it next to the option, and marks such sessions in the sidebar and header. Only use this with agents and tasks you trust, or install Sysbox.
+
+## Command line
+
+The `sessionboxer` command talks to the running server and opens the browser on the new session. Run it as `npx sessionboxer` from the checkout, or `npm link -w @sessionboxer/cli` once to have it on your PATH.
+
+```sh
+sessionboxer serve                                   # start the server (same as npm start)
+sessionboxer new .                                   # box the current directory
 sessionboxer new . -p "run the tests and fix what breaks"
+sessionboxer new . --provider devin --docker
 sessionboxer new --git https://github.com/org/repo.git --ref main
 sessionboxer new --empty -t scratch --no-open
-sessionboxer ls | open <id> | stop <id> | resume <id> | rm <id>
+sessionboxer ls
+sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 ```
 
-**Docker inside Sandboxes.** Off by default. Turn it on globally in Settings or per Session (New Session checkbox, `sessionboxer new --docker` / `--no-docker`); a Docker-enabled Sandbox starts its own `dockerd`, so `docker`, `docker compose` and `docker build` work for the Agent and in the Terminal pane, and nested images/containers survive **Stop**/**Resume**. The Sandbox runs under the [Sysbox](https://github.com/nestybox/sysbox) runtime when the host has it (`docker info` lists `sysbox-runc`; install `sysbox-ce` from its releases page, Linux only), which keeps it unprivileged. Without Sysbox the Sandbox runs `--privileged`, which lets the Agent escape to your host: the sidebar Settings button shows a ⚠, Settings/New Session explain it next to the toggle, the session header shows `Docker (privileged)` and the CLI prints a warning. The mode is fixed when the Session is created (ADR-0008).
+`SESSIONBOXER_URL` points it at a server other than `http://127.0.0.1:4000`.
 
-Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies `/api` to :4000).
+## Where things live
 
-## Milestones
+| | |
+| --- | --- |
+| Settings and tokens | `~/.sessionboxer/config.json` |
+| Sessions and chat history | `~/.sessionboxer/db.sqlite` |
+| Session containers | `sbx-<session id>` on the `sessionboxer` Docker network, no published ports |
+| Project folder in the box | `/workspace` |
+| Sandbox image | `sessionboxer/sandbox:dev` (built locally) |
 
-- **M0 spike (gate for ADR-0006), done**: build the image; run `claude-agent-acp` with `CLAUDE_CODE_OAUTH_TOKEN` and the computer-use MCP by hand; the Agent takes a screenshot, opens Firefox, clicks something. Result recorded in ADR-0006.
-- **M1, done**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding, event replay after Control Plane restart.
-- **M2, done**: live Desktop in the UI (noVNC proxied through the Control Plane, view-only while the Agent runs, explicit takeover).
-- **M3, done**: file tree + Monaco editor (Daemon fs RPC + Workspace watcher, external-change handling).
-- **M4, done**: terminal (Daemon PTYs over the existing connection, xterm.js pane with reattach).
-- **M5, done**: "copy host directory" Workspace Source (git-aware tar into the Sandbox), `sessionboxer` CLI wrapper; Settings (token, git identity, Sandbox CPU/memory) had landed with M1.
-- **M6, done**: Devin as a second Provider: Devin CLI in the image, `devin acp` through the Daemon's ACP path (`bypass` mode, same `desktop` MCP), `WINDSURF_API_KEY` in Settings, Provider selector in New Session (ADR-0007).
-- **M7, done**: Docker inside Sandboxes: Docker CLI + `dockerd` in the image, per-Session `dockerMode` (`none`/`sysbox`/`privileged`), Sysbox detection with a warned `--privileged` fallback, Settings default + New Session/CLI override (ADR-0008).
+`CLAUDE_CODE_OAUTH_TOKEN` or `WINDSURF_API_KEY` set in the environment of `npm start` take precedence over the tokens in Settings.
 
-## Running the M0 spike by hand
+## Troubleshooting
 
-Requires Docker, Node 22 and a token from `claude setup-token`.
+- **"docker: permission denied"** when starting: add your user to the `docker` group (`sudo usermod -aG docker $USER`, then log out and in).
+- **Session goes to *error* with "sandbox image not found"**: run `npm run build:image`.
+- **Devin session fails right after creation**: Devin occasionally times out while loading team settings on a cold start. Sessionboxer retries a few times; if it still fails, Resume the session.
+- **Docker inside the box can't pull images**: Docker Hub rate-limits anonymous pulls per IP; log in with `docker login` in the box's Terminal or pull from another registry.
 
-```sh
-npm install
-npm run build:image                       # sessionboxer/sandbox:dev, ~3 GB
-docker network create sessionboxer-spike
-docker run -d --name sbx-spike --network sessionboxer-spike \
-  --cpus 2 --memory 4g sessionboxer/sandbox:dev
-docker cp scripts/spike-acp.mjs sbx-spike:/tmp/spike-acp.mjs
-docker exec -e CLAUDE_CODE_OAUTH_TOKEN sbx-spike node /tmp/spike-acp.mjs \
-  "Take a screenshot, open https://example.com in Firefox, take another screenshot."
-```
+## For contributors
 
-The token is passed as an environment variable at `docker exec` time only. Screenshots the Agent took land in `/tmp/acp-*.png` inside the container; the Desktop is viewable at `http://sbx-spike:6080/vnc.html` from any container on the same network (no host ports are published).
+Architecture, decisions and the milestone log are in [docs/DESIGN.md](docs/DESIGN.md), the vocabulary in [CONTEXT.md](CONTEXT.md), and the reasoning behind each decision in [docs/adr](docs/adr). Layout is npm workspaces: `apps/control-plane` (server), `apps/web` (UI), `apps/cli`, `packages/sandbox-daemon` and `packages/computer-use-mcp` (run inside the box), `packages/protocol` (shared types), `images/sandbox` (the Docker image). `npm run dev -w @sessionboxer/web` starts the UI with hot reload against a running server.

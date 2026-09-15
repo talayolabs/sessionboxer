@@ -8,6 +8,10 @@ import {
   DaemonPromptParams,
   FsPathParams,
   FsWriteParams,
+  PtyIdParams,
+  PtyInputParams,
+  PtyOpenParams,
+  PtyResizeParams,
   isJsonRpcRequest,
   parseJsonRpc,
   type DaemonEvent,
@@ -15,6 +19,7 @@ import {
   type JsonRpcId,
 } from "@sessionboxer/protocol";
 import { AgentManager } from "./agent.js";
+import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 
 const EVENT_BUFFER_MAX = 5000;
@@ -34,6 +39,10 @@ const clients = new Set<WebSocket>();
 
 function send(ws: WebSocket, msg: object): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function notify(method: string, params: object): void {
+  for (const ws of clients) send(ws, { jsonrpc: "2.0", method, params });
 }
 
 function emit(body: DaemonEvent["body"]): void {
@@ -62,10 +71,13 @@ const agent = new AgentManager(
   },
 );
 
-const workspaceFs = new WorkspaceFs(
+const workspaceFs = new WorkspaceFs(workspace, (changes) => notify(DAEMON_METHODS.fsChanged, { changes }), log);
+
+const terminals = new Terminals(
   workspace,
-  (changes) => {
-    for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.fsChanged, params: { changes } });
+  {
+    onOutput: (id, data) => notify(DAEMON_METHODS.ptyOutput, { id, data: data.toString("base64") }),
+    onExit: (id, exitCode) => notify(DAEMON_METHODS.ptyExit, { id, exitCode }),
   },
   log,
 );
@@ -113,6 +125,27 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = FsWriteParams.parse(params);
       return workspaceFs.write(p.path, p.content);
     }
+    case DAEMON_METHODS.ptyList:
+      return { terminals: terminals.list() };
+    case DAEMON_METHODS.ptyOpen: {
+      const p = PtyOpenParams.parse(params);
+      return terminals.open(p.cols, p.rows);
+    }
+    case DAEMON_METHODS.ptyAttach:
+      return terminals.attach(PtyIdParams.parse(params).id);
+    case DAEMON_METHODS.ptyInput: {
+      const p = PtyInputParams.parse(params);
+      terminals.input(p.id, p.data);
+      return {};
+    }
+    case DAEMON_METHODS.ptyResize: {
+      const p = PtyResizeParams.parse(params);
+      terminals.resize(p.id, p.cols, p.rows);
+      return {};
+    }
+    case DAEMON_METHODS.ptyClose:
+      terminals.close(PtyIdParams.parse(params).id);
+      return {};
     default:
       throw Object.assign(new Error(`method not found: ${method}`), { code: -32601 });
   }
@@ -152,6 +185,7 @@ agent.ensureStarted().catch((e: unknown) => log(`agent start failed: ${String(e)
 const shutdown = (): void => {
   log("shutting down");
   agent.kill();
+  terminals.closeAll();
   void workspaceFs.close();
   wss.close();
   process.exit(0);

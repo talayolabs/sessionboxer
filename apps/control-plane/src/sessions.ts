@@ -5,6 +5,9 @@ import {
   FsReadResult,
   FsWriteResult,
   NOVNC_PORT,
+  PtyAttachResult,
+  PtyInfo,
+  PtyListResult,
   type CreateSessionRequest,
   type DaemonEvent,
   type DaemonStatus,
@@ -33,8 +36,17 @@ export class HttpError extends Error {
 const CANCEL_GRACE_MS = 8000;
 const DAEMON_WAIT_MS = 15_000;
 
+/** One UI connection attached to a terminal. */
+export interface TerminalSink {
+  output: (data: Buffer) => void;
+  exit: (exitCode: number) => void;
+  /** The Sandbox went away (stop/delete/daemon loss); the UI should drop the terminal. */
+  detached: (reason: string) => void;
+}
+
 export class SessionManager {
   private readonly clients = new Map<string, DaemonClient>();
+  private readonly terminalSinks = new Map<string, Set<TerminalSink>>();
   private readonly stopping = new Set<string>();
   private readonly pendingPrompts = new Map<string, string>();
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
@@ -86,7 +98,7 @@ export class SessionManager {
   private async liveClient(id: string): Promise<DaemonClient> {
     const s = this.get(id);
     if (s.status !== "idle" && s.status !== "running") {
-      throw new HttpError(409, `session ${id} is ${s.status}; files are only available while the Sandbox runs`);
+      throw new HttpError(409, `session ${id} is ${s.status}; files and terminals are only available while the Sandbox runs`);
     }
     const client = this.clients.get(id);
     if (!client || !(await client.waitConnected(DAEMON_WAIT_MS))) {
@@ -95,13 +107,14 @@ export class SessionManager {
     return client;
   }
 
-  private async fsCall(id: string, method: string, params: unknown): Promise<unknown> {
+  private async daemonCall(id: string, method: string, params: unknown): Promise<unknown> {
     try {
       const client = await this.liveClient(id);
       return await client.request(method, params);
     } catch (e) {
       if (e instanceof DaemonRpcError) {
-        const status = e.code === -32001 ? 404 : e.code === -32002 ? 403 : e.code === -32602 ? 400 : 502;
+        const status =
+          e.code === -32001 ? 404 : e.code === -32002 ? 403 : e.code === -32003 ? 409 : e.code === -32602 ? 400 : 502;
         throw new HttpError(status, e.message);
       }
       throw e;
@@ -109,15 +122,72 @@ export class SessionManager {
   }
 
   async fsList(id: string, path: string): Promise<FsListResult> {
-    return FsListResult.parse(await this.fsCall(id, DAEMON_METHODS.fsList, { path }));
+    return FsListResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsList, { path }));
   }
 
   async fsRead(id: string, path: string): Promise<FsReadResult> {
-    return FsReadResult.parse(await this.fsCall(id, DAEMON_METHODS.fsRead, { path }));
+    return FsReadResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsRead, { path }));
   }
 
   async fsWrite(id: string, path: string, content: string): Promise<FsWriteResult> {
-    return FsWriteResult.parse(await this.fsCall(id, DAEMON_METHODS.fsWrite, { path, content }));
+    return FsWriteResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsWrite, { path, content }));
+  }
+
+  // --- Terminals -----------------------------------------------------------
+
+  async terminalList(id: string): Promise<PtyListResult> {
+    return PtyListResult.parse(await this.daemonCall(id, DAEMON_METHODS.ptyList, {}));
+  }
+
+  async terminalOpen(id: string, cols: number, rows: number): Promise<PtyInfo> {
+    return PtyInfo.parse(await this.daemonCall(id, DAEMON_METHODS.ptyOpen, { cols, rows }));
+  }
+
+  async terminalClose(id: string, ptyId: string): Promise<void> {
+    await this.daemonCall(id, DAEMON_METHODS.ptyClose, { id: ptyId });
+    this.detachTerminal(id, ptyId, "terminal closed");
+  }
+
+  /** Attach a UI connection; returns the current scrollback and a function to detach. */
+  async terminalAttach(id: string, ptyId: string, sink: TerminalSink): Promise<{ attached: PtyAttachResult; detach: () => void }> {
+    const attached = PtyAttachResult.parse(await this.daemonCall(id, DAEMON_METHODS.ptyAttach, { id: ptyId }));
+    const key = `${id}/${ptyId}`;
+    let sinks = this.terminalSinks.get(key);
+    if (!sinks) {
+      sinks = new Set();
+      this.terminalSinks.set(key, sinks);
+    }
+    sinks.add(sink);
+    const detach = (): void => {
+      const set = this.terminalSinks.get(key);
+      if (!set) return;
+      set.delete(sink);
+      if (set.size === 0) this.terminalSinks.delete(key);
+    };
+    return { attached, detach };
+  }
+
+  async terminalInput(id: string, ptyId: string, data: Buffer): Promise<void> {
+    await this.daemonCall(id, DAEMON_METHODS.ptyInput, { id: ptyId, data: data.toString("base64") });
+  }
+
+  async terminalResize(id: string, ptyId: string, cols: number, rows: number): Promise<void> {
+    await this.daemonCall(id, DAEMON_METHODS.ptyResize, { id: ptyId, cols, rows });
+  }
+
+  private sinksOf(id: string, ptyId: string): TerminalSink[] {
+    return [...(this.terminalSinks.get(`${id}/${ptyId}`) ?? [])];
+  }
+
+  private detachTerminal(id: string, ptyId: string, reason: string): void {
+    for (const sink of this.sinksOf(id, ptyId)) sink.detached(reason);
+    this.terminalSinks.delete(`${id}/${ptyId}`);
+  }
+
+  private detachAllTerminals(id: string, reason: string): void {
+    for (const key of [...this.terminalSinks.keys()]) {
+      if (key.startsWith(`${id}/`)) this.detachTerminal(id, key.slice(id.length + 1), reason);
+    }
   }
 
   async boot(): Promise<void> {
@@ -305,7 +375,16 @@ export class SessionManager {
       onStatus: (status) => this.onDaemonStatus(id, status),
       onEvent: (event) => this.onDaemonEvent(id, event),
       onFsChanged: (changes: FsChange[]) => this.broadcast({ type: "fs_changed", sessionId: id, changes }),
-      onDisconnected: () => this.log(`daemon ${id} disconnected`),
+      onPtyOutput: (ptyId, data) => {
+        for (const sink of this.sinksOf(id, ptyId)) sink.output(data);
+      },
+      onPtyExit: (ptyId, exitCode) => {
+        for (const sink of this.sinksOf(id, ptyId)) sink.exit(exitCode);
+      },
+      onDisconnected: () => {
+        this.log(`daemon ${id} disconnected`);
+        this.detachAllTerminals(id, "Sandbox Daemon disconnected");
+      },
       log: (msg) => this.log(`daemon ${id}: ${msg}`),
     });
     this.clients.set(id, client);
@@ -314,6 +393,7 @@ export class SessionManager {
   private disconnect(id: string): void {
     this.clients.get(id)?.close();
     this.clients.delete(id);
+    this.detachAllTerminals(id, "Sandbox stopped");
   }
 
   private onDaemonConnected(id: string, status: DaemonStatus): void {

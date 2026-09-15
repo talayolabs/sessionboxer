@@ -75,7 +75,8 @@ RUN cd /opt/sessionboxer/computer-use-mcp \
     && chmod +x /opt/sessionboxer/computer-use-mcp/dist/index.js
 
 # Sandbox Daemon (compiled in stage 1) plus the shared protocol package it
-# imports at runtime; the workspace dependency becomes a symlink.
+# imports at runtime; the workspace dependency becomes a symlink. node-pty has
+# no Linux prebuilds, so it is compiled here (build-essential + python3 above).
 COPY --from=build /src/packages/protocol/package.json /opt/sessionboxer/protocol/
 COPY --from=build /src/packages/protocol/dist /opt/sessionboxer/protocol/dist
 COPY --from=build /src/packages/sandbox-daemon/package.json /opt/sessionboxer/sandbox-daemon/
@@ -85,6 +86,7 @@ RUN cd /opt/sessionboxer/protocol \
     && cd /opt/sessionboxer/sandbox-daemon \
     && npm pkg delete dependencies.@sessionboxer/protocol \
     && npm install --omit=dev --no-package-lock --ignore-scripts \
+    && npm rebuild node-pty \
     && mkdir -p node_modules/@sessionboxer \
     && ln -s /opt/sessionboxer/protocol node_modules/@sessionboxer/protocol \
     && npm cache clean --force \

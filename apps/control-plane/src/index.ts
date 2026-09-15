@@ -11,6 +11,7 @@ import {
   CreateSessionRequest,
   FsWriteParams,
   PromptRequest,
+  PtyOpenParams,
   UpdateSessionRequest,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
@@ -27,6 +28,7 @@ import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { HttpError, SessionManager } from "./sessions.js";
+import { bridgeTerminal } from "./terminal-bridge.js";
 
 const log = (msg: string): void => {
   process.stderr.write(`[control-plane ${new Date().toISOString()}] ${msg}\n`);
@@ -95,6 +97,35 @@ api.put("/sessions/:id/fs/file", async (c) => {
   const req = FsWriteParams.parse(await c.req.json());
   return c.json(await sessions.fsWrite(c.req.param("id"), req.path, req.content));
 });
+
+// Terminals: shells in the Workspace, owned by the Daemon. The WebSocket carries
+// raw bytes as binary frames and JSON control messages as text frames.
+api.get("/sessions/:id/terminals", async (c) => c.json(await sessions.terminalList(c.req.param("id"))));
+api.post("/sessions/:id/terminals", async (c) => {
+  const req = PtyOpenParams.parse(await c.req.json());
+  return c.json(await sessions.terminalOpen(c.req.param("id"), req.cols, req.rows), 201);
+});
+api.delete("/sessions/:id/terminals/:ptyId", async (c) => {
+  await sessions.terminalClose(c.req.param("id"), c.req.param("ptyId"));
+  return c.body(null, 204);
+});
+api.get(
+  "/sessions/:id/terminals/:ptyId/ws",
+  upgradeWebSocket((c) => {
+    const id = c.req.param("id") ?? "";
+    const ptyId = c.req.param("ptyId") ?? "";
+    return {
+      onOpen(_evt, ws) {
+        if (!ws.raw) return;
+        void bridgeTerminal(ws.raw, sessions, id, ptyId, log);
+      },
+      onError(err) {
+        log(`terminal ws error: ${String(err)}`);
+      },
+    };
+  }),
+);
+
 api.post("/sessions/:id/resume", async (c) => c.json(await sessions.resume(c.req.param("id"))));
 
 // noVNC endpoint for the UI: a plain RFB-over-WebSocket stream, proxied to the Sandbox.

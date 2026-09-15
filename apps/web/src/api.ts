@@ -4,6 +4,8 @@ import type {
   FsListResult,
   FsReadResult,
   FsWriteResult,
+  PtyInfo,
+  PtyListResult,
   PublicSettings,
   Session,
   SessionBroadcast,
@@ -50,7 +52,17 @@ export const api = {
   fsRead: (id: string, path: string) => request<FsReadResult>(`/sessions/${id}/fs/file?path=${encodeURIComponent(path)}`),
   fsWrite: (id: string, path: string, content: string) =>
     request<FsWriteResult>(`/sessions/${id}/fs/file`, { method: "PUT", body: JSON.stringify({ path, content }) }),
+  terminals: (id: string) => request<PtyListResult>(`/sessions/${id}/terminals`),
+  openTerminal: (id: string, cols: number, rows: number) =>
+    request<PtyInfo>(`/sessions/${id}/terminals`, { method: "POST", body: JSON.stringify({ cols, rows }) }),
+  closeTerminal: (id: string, ptyId: string) =>
+    request<void>(`/sessions/${id}/terminals/${ptyId}`, { method: "DELETE" }),
 };
+
+export function terminalSocketUrl(sessionId: string, ptyId: string): string {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${location.host}/api/sessions/${sessionId}/terminals/${ptyId}/ws`;
+}
 
 /** Workspace change notifications fan out from the single UI WebSocket to whoever has files open. */
 export type FsChangeListener = (sessionId: string, changes: FsChange[]) => void;

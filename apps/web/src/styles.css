@@ -147,3 +147,14 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .editor-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: 13px; }
 .editor-body { position: relative; flex: 1; min-height: 0; }
+
+/* Terminal pane: xterm.js tabs */
+.terminal { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }
+.terminal-toolbar { flex: none; display: flex; gap: 6px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+.terminal-toolbar .tab { padding: 3px 10px; font-size: 12px; background: transparent; border: 1px solid var(--border); }
+.terminal-toolbar .tab.active { background: var(--user); color: #fff; border-color: var(--user); }
+.terminal .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: 13px; }
+.terminal-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.terminal-screen { flex: 1; min-height: 0; padding: 6px 0 0 6px; }
+.terminal-screen .xterm { height: 100%; }
+.terminal-status { flex: none; display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--panel); font-size: 13px; }

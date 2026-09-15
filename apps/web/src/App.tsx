@@ -3,6 +3,7 @@ import type { PublicSettings, Session, SessionEvent, WorkspaceSource } from "@se
 import { api, emitFsChanged, subscribe } from "./api";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
+import { TerminalPane } from "./Terminal";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript";
 
@@ -193,15 +194,16 @@ export function App() {
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
-type Pane = "desktop" | "files" | "hidden";
+type Pane = "desktop" | "files" | "terminal" | "hidden";
 const PANES: Array<{ id: Exclude<Pane, "hidden">; label: string }> = [
   { id: "desktop", label: "Desktop" },
   { id: "files", label: "Files" },
+  { id: "terminal", label: "Terminal" },
 ];
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "desktop" || v === "files" || v === "hidden" ? v : "desktop";
+  return v === "desktop" || v === "files" || v === "terminal" || v === "hidden" ? v : "desktop";
 }
 
 function SessionView({ session, items, run }: { session: Session; items: ReturnType<typeof buildTranscript>; run: Runner }) {
@@ -309,6 +311,7 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
         </div>
         {pane === "desktop" && <Desktop session={session} />}
         {pane === "files" && <Files session={session} />}
+        {pane === "terminal" && <TerminalPane session={session} />}
       </div>
     </div>
   );

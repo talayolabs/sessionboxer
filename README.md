@@ -77,6 +77,8 @@ The Desktop pane is the Sandbox's screen streamed over `GET /api/sessions/:id/de
 
 The Files pane lists the Workspace and edits files in Monaco through the Sandbox Daemon (`_sessionboxer/fs/list|read|write`, proxied as `GET /api/sessions/:id/fs?path=`, `GET|PUT /api/sessions/:id/fs/file`). Paths are Workspace-relative and may not escape it, symlinks included. Saves are last-write-wins; the Daemon watches the Workspace (chokidar, ignoring `.git`, `node_modules`, `.venv`, `__pycache__`, `.cache`) and pushes `fs_changed` over the UI WebSocket, so an open editor reloads the Agent's edits, or warns when you also have unsaved changes. Binary files and files over 2 MB are not opened.
 
+The Terminal pane runs `bash -l` shells in the Workspace, owned by the Sandbox Daemon (node-pty; `_sessionboxer/pty/list|open|attach|input|resize|close`, output and exit as notifications). The Control Plane exposes them as `GET|POST /api/sessions/:id/terminals`, `DELETE /api/sessions/:id/terminals/:ptyId` and one WebSocket per terminal at `/api/sessions/:id/terminals/:ptyId/ws` (binary frames are raw bytes both ways, text frames are JSON control messages: `attached`, `exit`, `error`, `resize`). The Daemon keeps the last 256 KiB of output per terminal, so a page reload reattaches with scrollback; exited shells stay listed for five minutes. Terminals die with the Sandbox on **Stop**; **Resume** opens a fresh one.
+
 Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies `/api` to :4000).
 
 ## Milestones
@@ -85,7 +87,7 @@ Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies 
 - **M1, done**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding, event replay after Control Plane restart.
 - **M2, done**: live Desktop in the UI (noVNC proxied through the Control Plane, view-only while the Agent runs, explicit takeover).
 - **M3, done**: file tree + Monaco editor (Daemon fs RPC + Workspace watcher, external-change handling).
-- **M4**: terminal.
+- **M4, done**: terminal (Daemon PTYs over the existing connection, xterm.js pane with reattach).
 - **M5**: "copy host directory" Workspace Source, settings screens, `sessionboxer` CLI wrapper.
 
 ## Running the M0 spike by hand

@@ -118,6 +118,10 @@ export type SessionBroadcast =
 // ---------------------------------------------------------------------------
 
 export const DAEMON_PORT = 7000;
+/** websockify in front of x11vnc inside the Sandbox; the Control Plane proxies it to the UI. */
+export const NOVNC_PORT = 6080;
+export const DESKTOP_WIDTH = 1024;
+export const DESKTOP_HEIGHT = 768;
 
 export const DAEMON_METHODS = {
   hello: "_sessionboxer/hello",

@@ -1,10 +1,41 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PublicSettings, Session, SessionEvent, WorkspaceSource } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
+import { Desktop } from "./Desktop";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript";
 
 type Route = { view: "session"; id: string | null } | { view: "new" } | { view: "settings" };
+
+// Routes live in the URL hash so a reload (or a shared link) lands on the same Session.
+function parseRoute(hash: string): Route {
+  const path = hash.replace(/^#\/?/, "");
+  if (path === "new") return { view: "new" };
+  if (path === "settings") return { view: "settings" };
+  const m = /^sessions\/([^/]+)$/.exec(path);
+  return { view: "session", id: m?.[1] ?? null };
+}
+
+function routeToHash(route: Route): string {
+  if (route.view === "new") return "#/new";
+  if (route.view === "settings") return "#/settings";
+  return route.id ? `#/sessions/${route.id}` : "#/";
+}
+
+function useRoute(): [Route, (r: Route) => void] {
+  const [route, setRouteState] = useState<Route>(() => parseRoute(location.hash));
+  useEffect(() => {
+    const onChange = () => setRouteState(parseRoute(location.hash));
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  const setRoute = useCallback((r: Route) => {
+    const hash = routeToHash(r);
+    if (location.hash !== hash) location.hash = hash;
+    else setRouteState(r);
+  }, []);
+  return [route, setRoute];
+}
 
 function useErrorBanner() {
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +52,7 @@ function useErrorBanner() {
 
 export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [route, setRoute] = useState<Route>({ view: "session", id: null });
+  const [route, setRoute] = useRoute();
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const { error, setError, run } = useErrorBanner();
@@ -67,7 +98,7 @@ export function App() {
             break;
           case "session_deleted":
             setSessions((prev) => prev.filter((s) => s.id !== msg.id));
-            setRoute((r) => (r.view === "session" && r.id === msg.id ? { view: "session", id: null } : r));
+            if (selectedId === msg.id) setRoute({ view: "session", id: null });
             break;
           case "event":
             setEvents((prev) => {
@@ -87,7 +118,7 @@ export function App() {
         }
       },
     );
-  }, [selectedId, reloadSessions, run]);
+  }, [selectedId, reloadSessions, run, setRoute]);
 
   const items = useMemo(() => buildTranscript(events), [events]);
   const tokenSet = settings?.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN ?? true;
@@ -162,7 +193,9 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
   const [text, setText] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
+  const [showDesktop, setShowDesktop] = useState(() => localStorage.getItem("sessionboxer.desktop") !== "hidden");
   useEffect(() => setTitle(session.title), [session.title]);
+  useEffect(() => localStorage.setItem("sessionboxer.desktop", showDesktop ? "shown" : "hidden"), [showDesktop]);
 
   const canPrompt = session.status === "idle" || session.status === "running";
   const send = () => {
@@ -200,6 +233,7 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
           {sourceLabel}
         </span>
         <span className="spacer" />
+        <button onClick={() => setShowDesktop((v) => !v)}>{showDesktop ? "Hide desktop" : "Show desktop"}</button>
         {session.status === "running" && <button onClick={() => void run(() => api.cancel(session.id))}>Cancel turn</button>}
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
@@ -217,31 +251,36 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
         </button>
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
-      <Transcript items={items} />
-      <form
-        className="composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <textarea
-          value={text}
-          placeholder={canPrompt ? "Message the agent… (Enter to send, Shift+Enter for newline)" : `Session is ${session.status}`}
-          disabled={!canPrompt}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+      <div className="session-body">
+        <div className="chat">
+          <Transcript items={items} />
+          <form
+            className="composer"
+            onSubmit={(e) => {
               e.preventDefault();
               send();
-            }
-          }}
-          rows={3}
-        />
-        <button type="submit" disabled={!canPrompt || !text.trim()}>
-          Send
-        </button>
-      </form>
+            }}
+          >
+            <textarea
+              value={text}
+              placeholder={canPrompt ? "Message the agent… (Enter to send, Shift+Enter for newline)" : `Session is ${session.status}`}
+              disabled={!canPrompt}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={3}
+            />
+            <button type="submit" disabled={!canPrompt || !text.trim()}>
+              Send
+            </button>
+          </form>
+        </div>
+        {showDesktop && <Desktop session={session} />}
+      </div>
     </div>
   );
 }

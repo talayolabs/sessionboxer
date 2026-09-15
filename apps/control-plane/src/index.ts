@@ -23,6 +23,7 @@ import {
   toPublicSettings,
 } from "./config.js";
 import { Db } from "./db.js";
+import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { HttpError, SessionManager } from "./sessions.js";
 
@@ -86,6 +87,23 @@ api.post("/sessions/:id/cancel", async (c) => {
 });
 api.post("/sessions/:id/stop", async (c) => c.json(await sessions.stop(c.req.param("id"))));
 api.post("/sessions/:id/resume", async (c) => c.json(await sessions.resume(c.req.param("id"))));
+
+// noVNC endpoint for the UI: a plain RFB-over-WebSocket stream, proxied to the Sandbox.
+api.get(
+  "/sessions/:id/desktop",
+  upgradeWebSocket(async (c) => {
+    const target = await sessions.desktopUrl(c.req.param("id") ?? "");
+    return {
+      onOpen(_evt, ws) {
+        if (!ws.raw) return;
+        bridgeDesktop(ws.raw, target, log);
+      },
+      onError(err) {
+        log(`desktop ws error: ${String(err)}`);
+      },
+    };
+  }),
+);
 
 api.get(
   "/ws",

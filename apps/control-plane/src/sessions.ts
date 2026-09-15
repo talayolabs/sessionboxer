@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import {
   DAEMON_METHODS,
+  NOVNC_PORT,
   type CreateSessionRequest,
   type DaemonEvent,
   type DaemonStatus,
@@ -62,6 +63,16 @@ export class SessionManager {
   events(id: string, afterSeq = 0): SessionEvent[] {
     this.get(id);
     return this.db.listEvents(id, afterSeq);
+  }
+
+  /** websockify endpoint of a live Sandbox's Desktop, reachable only from the host. */
+  async desktopUrl(id: string): Promise<string> {
+    const s = this.get(id);
+    if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {
+      throw new HttpError(409, `session ${id} is ${s.status}; the Desktop is only available while the Sandbox runs`);
+    }
+    const host = await this.docker.address(s.containerId);
+    return `ws://${host}:${NOVNC_PORT}/websockify`;
   }
 
   async boot(): Promise<void> {

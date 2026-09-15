@@ -1,6 +1,6 @@
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
-import { DAEMON_PORT } from "@sessionboxer/protocol";
+import { DAEMON_PORT, NOVNC_PORT } from "@sessionboxer/protocol";
 import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
@@ -42,7 +42,7 @@ export class SandboxDocker {
       Hostname: `sbx-${spec.sessionId.slice(0, 12)}`,
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
       Labels: { [LABEL_SESSION]: spec.sessionId },
-      ExposedPorts: { [`${DAEMON_PORT}/tcp`]: {}, "6080/tcp": {} },
+      ExposedPorts: { [`${DAEMON_PORT}/tcp`]: {}, [`${NOVNC_PORT}/tcp`]: {} },
       HostConfig: {
         NanoCpus: Math.round(spec.cpus * 1e9),
         Memory: Math.round(spec.memoryGb * 1024 ** 3),

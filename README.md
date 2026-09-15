@@ -53,7 +53,7 @@ npm workspaces:
 
 ```
 apps/control-plane      Hono + WebSocket + dockerode + better-sqlite3 (host)
-apps/web                React/Vite UI (later: xterm.js, Monaco, noVNC)
+apps/web                React/Vite UI: chat + live Desktop (noVNC); later xterm.js, Monaco
 packages/sandbox-daemon runs in every Sandbox: ACP client for the Agent, JSON-RPC over WS for the Control Plane
 packages/computer-use-mcp  stdio MCP server mirroring Anthropic's computer toolset
 packages/protocol       shared zod types + JSON-RPC framing
@@ -73,13 +73,15 @@ npm start                  # http://127.0.0.1:4000
 
 Open the UI, paste the token under Settings (stored in `~/.sessionboxer/config.json`, mode 0600; `CLAUDE_CODE_OAUTH_TOKEN` in the Control Plane's environment overrides it), create a Session, prompt. Each Session is one container `sbx-<id>` on the private `sessionboxer` Docker network with no host ports; **Stop** keeps the container for **Resume** (Claude Code history is reloaded via ACP `session/load`), **Delete** removes it. Session metadata and the normalized event stream live in `~/.sessionboxer/db.sqlite`.
 
+The Desktop pane is the Sandbox's screen streamed over `GET /api/sessions/:id/desktop` (RFB over WebSocket, bridged by the Control Plane to websockify inside the container). It is view-only while the Agent is `running`; **Take control** shares the Agent's mouse and keyboard until the next turn starts. An `idle` Sandbox is always interactive.
+
 Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies `/api` to :4000).
 
 ## Milestones
 
 - **M0 spike (gate for ADR-0006), done**: build the image; run `claude-agent-acp` with `CLAUDE_CODE_OAUTH_TOKEN` and the computer-use MCP by hand; the Agent takes a screenshot, opens Firefox, clicks something. Result recorded in ADR-0006.
 - **M1, done**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding, event replay after Control Plane restart.
-- **M2**: live Desktop in the UI (noVNC proxied).
+- **M2, done**: live Desktop in the UI (noVNC proxied through the Control Plane, view-only while the Agent runs, explicit takeover).
 - **M3**: file tree + Monaco.
 - **M4**: terminal.
 - **M5**: "copy host directory" Workspace Source, settings screens, `sessionboxer` CLI wrapper.

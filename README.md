@@ -28,6 +28,7 @@ Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr
 - Desktop is X11 driven by a Sessionboxer-owned MCP server mirroring Anthropic's `computer` toolset, because Claude Code's built-in computer-use is macOS-only (ADR-0004).
 - Sandboxes publish no host ports; the Control Plane proxies chat, noVNC and terminals under `/sessions/:id/...` (ADR-0005).
 - The Daemon speaks ACP to the Agent so other Providers are an adapter install away (ADR-0006); Devin is the second one, through Devin CLI's `devin acp` (ADR-0007).
+- Docker inside a Sandbox is opt-in and runs under the Sysbox runtime when the host has it; without Sysbox it falls back to `--privileged` with a warning in every surface (ADR-0008).
 
 ## MVP decisions
 
@@ -40,9 +41,10 @@ Vocabulary lives in [CONTEXT.md](./CONTEXT.md). Hard decisions live in [docs/adr
 | Session title | auto from first prompt, editable |
 | Persistence | Control Plane SQLite (`better-sqlite3`) holds Session metadata and the normalized ACP `session/update` stream; the Agent's own history stays in the container for resume |
 | Reconnect | Daemon ring-buffers the current turn with sequence numbers; Control Plane resumes from last seen seq |
-| Image | one `sessionboxer/sandbox:dev` built locally: Ubuntu 24.04, Node 22, Python 3, git, curl, build-essential, gh, Firefox ESR, xdotool, scrot/ImageMagick, xfce4, Xvfb, x11vnc, noVNC; Devin CLI (pinned, auto-update off); Daemon and MCP compiled in; one Desktop briefing (`~/.claude/CLAUDE.md`, read by both Providers) |
+| Image | one `sessionboxer/sandbox:dev` built locally: Ubuntu 24.04, Node 22, Python 3, git, curl, build-essential, gh, Firefox ESR, xdotool, scrot/ImageMagick, xfce4, Xvfb, x11vnc, noVNC, Docker CLI + dockerd (started only for Docker-enabled Sessions); Devin CLI (pinned, auto-update off); Daemon and MCP compiled in; one Desktop briefing (`~/.claude/CLAUDE.md`, read by both Providers) |
 | Display | fixed 1024x768, screenshots unscaled |
 | Limits | 2 CPUs, 4 GB RAM per Sandbox, global setting |
+| Docker in Sandboxes | off by default; `sysbox-runc` when `docker info` lists it, else `--privileged` (warned); never the host socket |
 | Git | user.name/email injected; no GitHub token in Sandboxes for MVP |
 | Model | Provider defaults; per-Session settings object reserved in the schema |
 | Control Plane | runs on the host, binds `127.0.0.1:4000`, no auth |
@@ -64,7 +66,7 @@ images/sandbox          Dockerfile (desktop stack + claude-code + claude-agent-a
 
 ## Running it
 
-Requires Docker, Node 22 and a Provider token: `claude setup-token` for Claude Code, and/or a Devin token (`devin auth login` on your machine, then the token from `~/.local/share/devin/credentials.toml`; it is passed to the Sandbox as `WINDSURF_API_KEY`).
+Requires Docker, Node 22, optionally [Sysbox](https://github.com/nestybox/sysbox) for unprivileged Docker inside Sandboxes, and a Provider token: `claude setup-token` for Claude Code, and/or a Devin token (`devin auth login` on your machine, then the token from `~/.local/share/devin/credentials.toml`; it is passed to the Sandbox as `WINDSURF_API_KEY`).
 
 ```sh
 npm install
@@ -94,6 +96,8 @@ sessionboxer new --empty -t scratch --no-open
 sessionboxer ls | open <id> | stop <id> | resume <id> | rm <id>
 ```
 
+**Docker inside Sandboxes.** Off by default. Turn it on globally in Settings or per Session (New Session checkbox, `sessionboxer new --docker` / `--no-docker`); a Docker-enabled Sandbox starts its own `dockerd`, so `docker`, `docker compose` and `docker build` work for the Agent and in the Terminal pane, and nested images/containers survive **Stop**/**Resume**. The Sandbox runs under the [Sysbox](https://github.com/nestybox/sysbox) runtime when the host has it (`docker info` lists `sysbox-runc`; install `sysbox-ce` from its releases page, Linux only), which keeps it unprivileged. Without Sysbox the Sandbox runs `--privileged`, which lets the Agent escape to your host: the sidebar Settings button shows a ⚠, Settings/New Session explain it next to the toggle, the session header shows `Docker (privileged)` and the CLI prints a warning. The mode is fixed when the Session is created (ADR-0008).
+
 Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies `/api` to :4000).
 
 ## Milestones
@@ -105,6 +109,7 @@ Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies 
 - **M4, done**: terminal (Daemon PTYs over the existing connection, xterm.js pane with reattach).
 - **M5, done**: "copy host directory" Workspace Source (git-aware tar into the Sandbox), `sessionboxer` CLI wrapper; Settings (token, git identity, Sandbox CPU/memory) had landed with M1.
 - **M6, done**: Devin as a second Provider: Devin CLI in the image, `devin acp` through the Daemon's ACP path (`bypass` mode, same `desktop` MCP), `WINDSURF_API_KEY` in Settings, Provider selector in New Session (ADR-0007).
+- **M7, done**: Docker inside Sandboxes: Docker CLI + `dockerd` in the image, per-Session `dockerMode` (`none`/`sysbox`/`privileged`), Sysbox detection with a warned `--privileged` fallback, Settings default + New Session/CLI override (ADR-0008).
 
 ## Running the M0 spike by hand
 

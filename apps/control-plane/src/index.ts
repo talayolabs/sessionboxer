@@ -53,12 +53,12 @@ const api = new Hono();
 
 api.get("/health", (c) => c.json({ ok: true }));
 
-api.get("/settings", (c) => c.json(toPublicSettings(settings)));
+api.get("/settings", async (c) => c.json(toPublicSettings(settings, await sessions.dockerModeAvailable())));
 api.put("/settings", async (c) => {
   const update = UpdateSettingsRequest.parse(await c.req.json());
   settings = applySettingsUpdate(settings, update);
   saveSettings(settings);
-  return c.json(toPublicSettings(settings));
+  return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
 });
 
 api.get("/sessions", (c) => c.json(sessions.list()));

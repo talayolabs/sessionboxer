@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import {
+  DockerMode,
   Session,
   WorkspaceSource,
   type SessionEvent,
@@ -13,6 +14,7 @@ interface SessionRow {
   provider: string;
   status: string;
   workspace_source: string;
+  docker_mode: string;
   container_id: string | null;
   error: string | null;
   created_at: string;
@@ -33,6 +35,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider TEXT NOT NULL,
   status TEXT NOT NULL,
   workspace_source TEXT NOT NULL,
+  docker_mode TEXT NOT NULL DEFAULT 'none',
   container_id TEXT,
   error TEXT,
   created_at TEXT NOT NULL,
@@ -52,6 +55,11 @@ CREATE TABLE IF NOT EXISTS daemon_cursors (
 );
 `;
 
+/** Columns added after the first release, applied to databases created before them. */
+const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
+  { table: "sessions", column: "docker_mode", ddl: "ALTER TABLE sessions ADD COLUMN docker_mode TEXT NOT NULL DEFAULT 'none'" },
+];
+
 export class Db {
   private readonly db: Database.Database;
 
@@ -60,6 +68,14 @@ export class Db {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  private migrate(): void {
+    for (const m of MIGRATIONS) {
+      const columns = this.db.prepare(`PRAGMA table_info(${m.table})`).all() as Array<{ name: string }>;
+      if (!columns.some((c) => c.name === m.column)) this.db.exec(m.ddl);
+    }
   }
 
   listSessions(): Session[] {
@@ -75,8 +91,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, container_id, error, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @container_id, @error, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -152,6 +168,7 @@ function rowToSession(row: SessionRow): Session {
     provider: row.provider,
     status: row.status as SessionStatus,
     workspaceSource: WorkspaceSource.parse(JSON.parse(row.workspace_source)),
+    dockerMode: DockerMode.parse(row.docker_mode),
     containerId: row.container_id,
     error: row.error,
     createdAt: row.created_at,
@@ -166,6 +183,7 @@ function sessionToRow(s: Session): SessionRow {
     provider: s.provider,
     status: s.status,
     workspace_source: JSON.stringify(s.workspaceSource),
+    docker_mode: s.dockerMode,
     container_id: s.containerId,
     error: s.error,
     created_at: s.createdAt,

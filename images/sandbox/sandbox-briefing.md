@@ -29,7 +29,17 @@ root unless told otherwise.
   Use the desktop for browsers and other graphical applications, or when the
   user asks you to.
 
+## Docker
+
+- If `docker info` succeeds, this Sandbox has its own private Docker daemon:
+  use `docker` and `docker compose` freely. Images, containers and volumes
+  live inside the Sandbox and survive Stop/Resume.
+- If it fails with "Cannot connect to the Docker daemon", Docker is disabled
+  for this Session. Do not try to start `dockerd`, grant capabilities or work
+  around it; tell the user to enable "Docker inside Sandboxes" in Settings
+  and create a new Session.
+
 ## Tools available
 
 git, gh, node 22, npm, python3, pip, build-essential, curl, jq, xdotool,
-imagemagick, firefox-esr, xfce4-terminal.
+imagemagick, firefox-esr, xfce4-terminal, docker (CLI, compose, buildx).

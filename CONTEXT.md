@@ -39,3 +39,7 @@ _Avoid_: Claude, bot, model, worker
 **Sandbox Daemon**:
 The Sessionboxer-owned process inside every Sandbox that starts the Agent, talks to it on the Control Plane's behalf, and serves the Workspace's files and terminals to the UI.
 _Avoid_: Agent (taken), sidecar, runner, bridge
+
+**Docker Mode**:
+Whether a Sandbox has its own private Docker daemon, fixed when the Session is created: `none`, `sysbox` (the Sandbox runs under the Sysbox runtime, unprivileged) or `privileged` (fallback when the host lacks Sysbox; the Sandbox runs `--privileged` and the user is warned).
+_Avoid_: DinD, nested Docker, Docker-in-Docker (fine in prose, not as the feature name)

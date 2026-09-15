@@ -46,11 +46,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' > /etc/apt/preferences.d/mozilla \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list \
     && curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && apt-get update && apt-get install -y --no-install-recommends \
       # dev tooling
       git build-essential python3 python3-pip python3-venv gh nodejs \
       sudo tini procps less vim-tiny jq unzip zip openssh-client \
+      # nested Docker (ADR-0008): dockerd is started by the entrypoint only for
+      # Docker-enabled Sessions; the CLI is always present.
+      docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
       # desktop stack
       xvfb xfce4 xfce4-terminal dbus-x11 x11-utils x11-xserver-utils \
       x11vnc novnc websockify \
@@ -100,6 +105,7 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd -m -u 1000 -g 1000 -s /bin/bash agent \
     && echo "agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agent \
     && chmod 0440 /etc/sudoers.d/agent \
+    && usermod -aG docker agent \
     && mkdir -p /workspace && chown agent:agent /workspace
 
 # Firefox: no first-run wizard, no update nags, no default-browser prompt.

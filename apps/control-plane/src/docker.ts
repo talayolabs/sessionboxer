@@ -1,15 +1,17 @@
 import { PassThrough, type Readable } from "node:stream";
 import Docker from "dockerode";
-import { DAEMON_PORT, NOVNC_PORT } from "@sessionboxer/protocol";
+import { DAEMON_PORT, NOVNC_PORT, type DockerMode } from "@sessionboxer/protocol";
 import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
+export const SYSBOX_RUNTIME = "sysbox-runc";
 
 export interface SandboxSpec {
   sessionId: string;
   env: Record<string, string>;
   cpus: number;
   memoryGb: number;
+  dockerMode: DockerMode;
 }
 
 export type ContainerState = "running" | "stopped" | "missing";
@@ -35,6 +37,12 @@ export class SandboxDocker {
     }
   }
 
+  /** Whether the host Docker daemon has the Sysbox runtime registered (ADR-0008). */
+  async hasSysbox(): Promise<boolean> {
+    const info = (await this.docker.info()) as { Runtimes?: Record<string, unknown> };
+    return Object.hasOwn(info.Runtimes ?? {}, SYSBOX_RUNTIME);
+  }
+
   async create(spec: SandboxSpec): Promise<string> {
     const container = await this.docker.createContainer({
       name: `sbx-${spec.sessionId}`,
@@ -43,6 +51,10 @@ export class SandboxDocker {
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
       Labels: { [LABEL_SESSION]: spec.sessionId },
       ExposedPorts: { [`${DAEMON_PORT}/tcp`]: {}, [`${NOVNC_PORT}/tcp`]: {} },
+      // The nested daemon's storage must not sit on the Sandbox's own overlayfs;
+      // Sysbox mounts /var/lib/docker itself, `--privileged` gets an anonymous
+      // volume (removed with the container).
+      ...(spec.dockerMode === "privileged" ? { Volumes: { "/var/lib/docker": {} } } : {}),
       HostConfig: {
         NanoCpus: Math.round(spec.cpus * 1e9),
         Memory: Math.round(spec.memoryGb * 1024 ** 3),
@@ -52,6 +64,8 @@ export class SandboxDocker {
         PortBindings: {},
         PublishAllPorts: false,
         RestartPolicy: { Name: "no" },
+        ...(spec.dockerMode === "sysbox" ? { Runtime: SYSBOX_RUNTIME } : {}),
+        ...(spec.dockerMode === "privileged" ? { Privileged: true } : {}),
       },
     });
     return container.id;

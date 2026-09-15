@@ -20,6 +20,21 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   devin: "Devin",
 };
 
+/**
+ * How a Sandbox gets its own Docker daemon: `sysbox` runs it under the Sysbox
+ * runtime (unprivileged, isolation intact), `privileged` falls back to
+ * `--privileged` (root-equivalent on the host), `none` ships no daemon.
+ */
+export const DOCKER_MODES = ["none", "sysbox", "privileged"] as const;
+export const DockerMode = z.enum(DOCKER_MODES);
+export type DockerMode = z.infer<typeof DockerMode>;
+
+export const DOCKER_MODE_LABELS: Record<DockerMode, string> = {
+  none: "no Docker",
+  sysbox: "Docker (Sysbox)",
+  privileged: "Docker (privileged)",
+};
+
 export const WorkspaceSource = z.discriminatedUnion("type", [
   z.object({ type: z.literal("empty") }),
   z.object({ type: z.literal("git"), url: z.string().min(1), ref: z.string().min(1).optional() }),
@@ -33,6 +48,7 @@ export const Session = z.object({
   provider: Provider,
   status: SessionStatus,
   workspaceSource: WorkspaceSource,
+  dockerMode: DockerMode.default("none"),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
   createdAt: z.string(),
@@ -44,6 +60,8 @@ export const CreateSessionRequest = z.object({
   title: z.string().min(1).max(200).optional(),
   provider: Provider.default("claude-code"),
   workspaceSource: WorkspaceSource.default({ type: "empty" }),
+  /** Docker daemon inside the Sandbox; defaults to the `dockerInSandbox` setting. */
+  docker: z.boolean().optional(),
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -67,6 +85,7 @@ export const Settings = z.object({
   gitUserEmail: z.string().default(""),
   sandboxCpus: z.number().positive().default(2),
   sandboxMemoryGb: z.number().positive().default(4),
+  dockerInSandbox: z.boolean().default(false),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
@@ -82,6 +101,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true }).extend({
     "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
     devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
   }),
+  /** Mode a Docker-enabled Session created now would get, given the host's runtimes. */
+  dockerModeAvailable: DockerMode.exclude(["none"]),
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 

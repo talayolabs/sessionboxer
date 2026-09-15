@@ -12,6 +12,7 @@ import {
   type CreateSessionRequest,
   type DaemonEvent,
   type DaemonStatus,
+  type DockerMode,
   type FsChange,
   type Session,
   type SessionBroadcast,
@@ -82,6 +83,11 @@ export class SessionManager {
   events(id: string, afterSeq = 0): SessionEvent[] {
     this.get(id);
     return this.db.listEvents(id, afterSeq);
+  }
+
+  /** Docker mode a Docker-enabled Session gets on this host (ADR-0008). */
+  async dockerModeAvailable(): Promise<Exclude<DockerMode, "none">> {
+    return (await this.docker.hasSysbox()) ? "sysbox" : "privileged";
   }
 
   /** websockify endpoint of a live Sandbox's Desktop, reachable only from the host. */
@@ -232,6 +238,7 @@ export class SessionManager {
       }
     }
     await this.docker.ensureImage();
+    const dockerMode: DockerMode = (req.docker ?? settings.dockerInSandbox) ? await this.dockerModeAvailable() : "none";
 
     const id = randomBytes(6).toString("hex");
     const now = new Date().toISOString();
@@ -241,6 +248,7 @@ export class SessionManager {
       provider: req.provider,
       status: "creating",
       workspaceSource,
+      dockerMode,
       containerId: null,
       error: null,
       createdAt: now,
@@ -263,6 +271,7 @@ export class SessionManager {
       SESSIONBOXER_PROVIDER: session.provider,
       ...providerEnv(session.provider, settings),
     };
+    if (session.dockerMode !== "none") env.SESSIONBOXER_DOCKER = session.dockerMode;
     if (settings.gitUserName) {
       env.GIT_AUTHOR_NAME = settings.gitUserName;
       env.GIT_COMMITTER_NAME = settings.gitUserName;
@@ -276,6 +285,7 @@ export class SessionManager {
       env,
       cpus: settings.sandboxCpus,
       memoryGb: settings.sandboxMemoryGb,
+      dockerMode: session.dockerMode,
     });
     this.update(session.id, { containerId });
     await this.docker.start(containerId);

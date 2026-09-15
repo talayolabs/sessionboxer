@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  DOCKER_MODE_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
   type Provider,
@@ -137,6 +138,8 @@ export function App() {
   const anyTokenSet = settings
     ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
     : true;
+  const sysboxMissing = settings ? settings.dockerModeAvailable !== "sysbox" : false;
+  const settingsWarning = !anyTokenSet ? "No Provider token configured" : sysboxMissing ? "Sysbox runtime not installed" : null;
 
   return (
     <div className="app">
@@ -154,13 +157,26 @@ export function App() {
             >
               <span className={`dot dot-${s.status}`} title={s.status} />
               <span className="session-title">{s.title}</span>
-              <span className="session-provider">{PROVIDER_LABELS[s.provider]}</span>
+              <span className="session-provider">
+                {PROVIDER_LABELS[s.provider]}
+                {s.dockerMode !== "none" && (
+                  <span
+                    className={s.dockerMode === "privileged" ? "warn" : undefined}
+                    title={DOCKER_MODE_LABELS[s.dockerMode]}
+                  >
+                    {" \u00b7 "}
+                    {s.dockerMode === "privileged" ? "\u26a0 " : ""}docker
+                  </span>
+                )}
+              </span>
             </li>
           ))}
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}
         </ul>
         <div className="sidebar-footer">
-          <button onClick={() => setRoute({ view: "settings" })}>Settings{anyTokenSet ? "" : " (token missing)"}</button>
+          <button onClick={() => setRoute({ view: "settings" })} title={settingsWarning ?? undefined}>
+            Settings{settingsWarning && <span className="warn-sign" aria-label={settingsWarning}>⚠</span>}
+          </button>
         </div>
       </aside>
 
@@ -175,8 +191,9 @@ export function App() {
             No Provider token configured. Open Settings and add a Claude Code or Devin token.
           </div>
         )}
-        {route.view === "new" && (
+        {route.view === "new" && settings && (
           <NewSession
+            settings={settings}
             onCreated={(s) => setRoute({ view: "session", id: s.id })}
             onCancel={() => setRoute({ view: "session", id: null })}
             run={run}
@@ -257,6 +274,14 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
         )}
         <span className={`badge badge-${session.status}`}>{session.status}</span>
         <span className="muted">{PROVIDER_LABELS[session.provider]}</span>
+        {session.dockerMode !== "none" && (
+          <span
+            className={session.dockerMode === "privileged" ? "warn" : "muted"}
+            title={session.dockerMode === "privileged" ? PRIVILEGED_WARNING : "Private Docker daemon under the Sysbox runtime"}
+          >
+            {DOCKER_MODE_LABELS[session.dockerMode]}
+          </span>
+        )}
         <span className="muted" title={sourceLabel}>
           {sourceLabel}
         </span>
@@ -328,8 +353,38 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
   );
 }
 
-function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => void; onCancel: () => void; run: Runner }) {
+const PRIVILEGED_WARNING =
+  "This Sandbox runs with --privileged: the Agent can escape to the host (root-equivalent). Install Sysbox for isolated nested Docker.";
+
+/** Explains what "Docker inside Sandboxes" means on this host (ADR-0008). */
+function DockerModeNote({ settings, enabled }: { settings: PublicSettings; enabled: boolean }) {
+  if (settings.dockerModeAvailable === "sysbox") {
+    return <p className="muted">Sysbox runtime detected: Docker-enabled Sandboxes get a private, unprivileged Docker daemon.</p>;
+  }
+  return (
+    <div className="banner banner-warn" role="alert">
+      <strong>Sysbox runtime not installed on this host.</strong>{" "}
+      {enabled
+        ? "Docker-enabled Sandboxes fall back to --privileged: the Agent can escape to your host (root-equivalent), so only run code you trust."
+        : "Enabling Docker would fall back to --privileged, which lets the Agent escape to your host (root-equivalent)."}{" "}
+      Install Sysbox (Linux, <code>sysbox-ce</code> .deb from github.com/nestybox/sysbox), then reload this page.
+    </div>
+  );
+}
+
+function NewSession({
+  settings,
+  onCreated,
+  onCancel,
+  run,
+}: {
+  settings: PublicSettings;
+  onCreated: (s: Session) => void;
+  onCancel: () => void;
+  run: Runner;
+}) {
   const [provider, setProvider] = useState<Provider>("claude-code");
+  const [docker, setDocker] = useState(settings.dockerInSandbox);
   const [sourceType, setSourceType] = useState<WorkspaceSource["type"]>("empty");
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
@@ -351,6 +406,7 @@ function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => v
       const s = await api.createSession({
         provider,
         workspaceSource,
+        docker,
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
       });
@@ -397,6 +453,11 @@ function NewSession({ onCreated, onCancel, run }: { onCreated: (s: Session) => v
           <input required value={copyPath} onChange={(e) => setCopyPath(e.target.value)} placeholder="/home/you/project" />
         </label>
       )}
+      <label className="check">
+        <input type="checkbox" checked={docker} onChange={(e) => setDocker(e.target.checked)} />
+        Docker inside the Sandbox ({DOCKER_MODE_LABELS[settings.dockerModeAvailable]})
+      </label>
+      {docker && <DockerModeNote settings={settings} enabled />}
       <label>
         Title (optional, defaults to the first prompt)
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -424,6 +485,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
   const [gitUserEmail, setGitUserEmail] = useState(settings.gitUserEmail);
   const [cpus, setCpus] = useState(String(settings.sandboxCpus));
   const [memory, setMemory] = useState(String(settings.sandboxMemoryGb));
+  const [docker, setDocker] = useState(settings.dockerInSandbox);
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
 
@@ -435,6 +497,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         gitUserEmail,
         sandboxCpus: Number(cpus),
         sandboxMemoryGb: Number(memory),
+        dockerInSandbox: docker,
         providerSecrets: {
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
@@ -492,6 +555,11 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
           <input type="number" min={1} step={1} value={memory} onChange={(e) => setMemory(e.target.value)} />
         </label>
       </div>
+      <label className="check">
+        <input type="checkbox" checked={docker} onChange={(e) => setDocker(e.target.checked)} />
+        Docker inside Sandboxes by default (per-Session override in New session)
+      </label>
+      <DockerModeNote settings={settings} enabled={docker} />
       <div className="actions">
         <button type="submit">Save</button>
       </div>

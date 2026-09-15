@@ -1,7 +1,13 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Settings, type Provider, type PublicSettings, type UpdateSettingsRequest } from "@sessionboxer/protocol";
+import {
+  Settings,
+  type DockerMode,
+  type Provider,
+  type PublicSettings,
+  type UpdateSettingsRequest,
+} from "@sessionboxer/protocol";
 
 export const DATA_DIR = process.env.SESSIONBOXER_HOME ?? join(homedir(), ".sessionboxer");
 export const CONFIG_FILE = join(DATA_DIR, "config.json");
@@ -46,7 +52,7 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
   return Settings.parse(next);
 }
 
-export function toPublicSettings(settings: Settings): PublicSettings {
+export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">): PublicSettings {
   const { providerSecrets, ...rest } = settings;
   return {
     ...rest,
@@ -54,6 +60,7 @@ export function toPublicSettings(settings: Settings): PublicSettings {
       "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings) !== "" },
       devin: { WINDSURF_API_KEY: devinToken(settings) !== "" },
     },
+    dockerModeAvailable,
   };
 }
 

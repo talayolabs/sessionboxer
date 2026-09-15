@@ -49,6 +49,7 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--border); }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
 .sidebar-footer button { width: 100%; }
+.warn-sign { color: var(--warn); margin-left: 6px; }
 .session-list { list-style: none; margin: 0; padding: 6px; overflow: auto; flex: 1; }
 .session-list li { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .session-list li:hover { background: #1f232d; }
@@ -124,6 +125,9 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .panel label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); }
 .panel .row { display: flex; gap: 14px; }
 .panel .row label { flex: 1; }
+.panel label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.panel label.check input { width: auto; margin: 0; }
+.panel .banner { border: 1px solid var(--border); border-radius: 6px; cursor: default; line-height: 1.4; }
 .panel .actions { display: flex; gap: 10px; justify-content: flex-end; }
 
 /* Side pane switcher */

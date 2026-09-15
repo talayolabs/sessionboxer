@@ -3,7 +3,14 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { PROVIDERS, Provider, type CreateSessionRequest, type Session, type WorkspaceSource } from "@sessionboxer/protocol";
+import {
+  DOCKER_MODE_LABELS,
+  PROVIDERS,
+  Provider,
+  type CreateSessionRequest,
+  type Session,
+  type WorkspaceSource,
+} from "@sessionboxer/protocol";
 
 const BASE_URL = (process.env.SESSIONBOXER_URL ?? "http://127.0.0.1:4000").replace(/\/$/, "");
 
@@ -22,6 +29,9 @@ Options for new:
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
   -p, --prompt <text>    First prompt, sent once the Sandbox is ready
       --provider <id>    Provider: ${PROVIDERS.join(" | ")} (default claude-code)
+      --docker           Private Docker daemon inside the Sandbox (Sysbox, or --privileged
+                         with a warning when Sysbox is not installed); --no-docker to disable.
+                         Default: the "Docker inside Sandboxes" setting
       --no-open          Do not open the browser
 
 Environment:
@@ -86,6 +96,7 @@ async function newSession(args: string[]): Promise<void> {
       title: { type: "string", short: "t" },
       prompt: { type: "string", short: "p" },
       provider: { type: "string", default: "claude-code" },
+      docker: { type: "boolean" },
       open: { type: "boolean", default: true },
     },
   });
@@ -106,11 +117,17 @@ async function newSession(args: string[]): Promise<void> {
   const body: CreateSessionRequest = {
     provider: provider.data,
     workspaceSource,
+    ...(values.docker !== undefined ? { docker: values.docker } : {}),
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),
   };
   const session = await api<Session>("POST", "/sessions", body);
   show(session);
+  if (session.dockerMode === "privileged") {
+    process.stderr.write(
+      "warning: Sysbox runtime not installed; this Sandbox runs with --privileged (the Agent can escape to the host).\n",
+    );
+  }
   if (values.open) await open(session.id);
 }
 
@@ -146,7 +163,8 @@ function show(s: Session): void {
       : s.workspaceSource.type === "copy"
         ? s.workspaceSource.path
         : "empty";
-  process.stdout.write(`${s.id}  ${s.status.padEnd(8)}  ${s.title}\n    ${source}\n    ${sessionUrl(s.id)}\n`);
+  const docker = s.dockerMode === "none" ? "" : `  [${DOCKER_MODE_LABELS[s.dockerMode]}]`;
+  process.stdout.write(`${s.id}  ${s.status.padEnd(8)}  ${s.title}${docker}\n    ${source}\n    ${sessionUrl(s.id)}\n`);
 }
 
 function sessionUrl(id: string): string {

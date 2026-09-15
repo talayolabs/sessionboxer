@@ -4,6 +4,7 @@
     "DisableTelemetry": true,
     "DisableFirefoxStudies": true,
     "DontCheckDefaultBrowser": true,
+    "SkipTermsOfUse": true,
     "OverrideFirstRunPage": "",
     "OverridePostUpdatePage": "",
     "NoDefaultBookmarks": true,

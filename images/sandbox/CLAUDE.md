@@ -13,7 +13,7 @@ root unless told otherwise.
 
 - A 1024x768 X11 desktop (xfce4) is running on `DISPLAY=:1`. The user watches it
   live and may take control of the mouse and keyboard at any time.
-- Use the `computer-use` MCP tools to operate it like a human would:
+- Use the `desktop` MCP tools (`mcp__desktop__*`) to operate it like a human would:
   `screenshot`, `left_click`, `type`, `key`, `scroll`, `zoom`, `mouse_move`,
   `left_click_drag`, `right_click`, `double_click`, `triple_click`,
   `hold_key`, `wait`, `cursor_position`.

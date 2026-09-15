@@ -119,7 +119,7 @@ try {
 
     const session = await ctx.request("session/new", {
       cwd,
-      mcpServers: [{ name: "computer-use", command: mcpCommand, args: [], env: [] }],
+      mcpServers: [{ name: "desktop", command: mcpCommand, args: [], env: [] }],
     });
     log(`session/new ok: ${session.sessionId} modes=${session.modes?.availableModes?.map((m) => m.id).join(",")} current=${session.modes?.currentModeId}`);
 

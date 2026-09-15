@@ -62,9 +62,26 @@ images/sandbox          Dockerfile
 
 ## Milestones
 
-- **M0 spike (gate for ADR-0006)**: build the image; run `claude-agent-acp` with `CLAUDE_CODE_OAUTH_TOKEN` and the computer-use MCP by hand; the Agent takes a screenshot, opens Firefox, clicks something.
+- **M0 spike (gate for ADR-0006), done**: build the image; run `claude-agent-acp` with `CLAUDE_CODE_OAUTH_TOKEN` and the computer-use MCP by hand; the Agent takes a screenshot, opens Firefox, clicks something. Result recorded in ADR-0006.
 - **M1**: Control Plane + Daemon: create / stop / resume / delete Sessions, chat over ACP, SQLite history, token onboarding.
 - **M2**: live Desktop in the UI (noVNC proxied).
 - **M3**: file tree + Monaco.
 - **M4**: terminal.
 - **M5**: "copy host directory" Workspace Source, settings screens, `sessionboxer` CLI wrapper.
+
+## Running the M0 spike by hand
+
+Requires Docker, Node 22 and a token from `claude setup-token`.
+
+```sh
+npm install
+npm run build:image                       # sessionboxer/sandbox:dev, ~3 GB
+docker network create sessionboxer-spike
+docker run -d --name sbx-spike --network sessionboxer-spike \
+  --cpus 2 --memory 4g sessionboxer/sandbox:dev
+docker cp scripts/spike-acp.mjs sbx-spike:/tmp/spike-acp.mjs
+docker exec -e CLAUDE_CODE_OAUTH_TOKEN sbx-spike node /tmp/spike-acp.mjs \
+  "Take a screenshot, open https://example.com in Firefox, take another screenshot."
+```
+
+The token is passed as an environment variable at `docker exec` time only. Screenshots the Agent took land in `/tmp/acp-*.png` inside the container; the Desktop is viewable at `http://sbx-spike:6080/vnc.html` from any container on the same network (no host ports are published).

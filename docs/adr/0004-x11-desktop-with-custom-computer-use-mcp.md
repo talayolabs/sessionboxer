@@ -12,3 +12,4 @@ Claude Code ships a built-in `computer-use` MCP server, but it is macOS-only, so
 
 - The Desktop is X11 for the foreseeable future; any tool that reaches for `xdotool`, `xrandr` or `DISPLAY=:1` assumes that.
 - The MCP server's tool names and argument shapes must track Anthropic's `computer` toolset when it changes.
+- Claude Code reserves the MCP server name `computer-use` for its built-in server and silently drops any config entry using it, so the Sessionboxer server is registered under the name `desktop` (tools appear as `mcp__desktop__screenshot` and so on).

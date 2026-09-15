@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DOCKER_MODE_LABELS,
   PROVIDERS,
@@ -10,6 +10,7 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { api, emitFsChanged, subscribe } from "./api";
+import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
 import { TerminalPane } from "./Terminal";
@@ -237,13 +238,31 @@ function loadPane(): Pane {
   return v === "desktop" || v === "files" || v === "terminal" || v === "hidden" ? v : "desktop";
 }
 
+function loadComposerMode(): ComposerMode {
+  return localStorage.getItem("sessionboxer.composerMode") === "rich" ? "rich" : "raw";
+}
+
+function loadComposerHeight(): number | null {
+  const v = Number(localStorage.getItem("sessionboxer.composerHeight"));
+  return v >= COMPOSER_MIN_FRAC && v <= COMPOSER_MAX_FRAC ? v : null;
+}
+
 function SessionView({ session, items, run }: { session: Session; items: ReturnType<typeof buildTranscript>; run: Runner }) {
   const [text, setText] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
   const [pane, setPane] = useState<Pane>(loadPane);
+  const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode);
+  const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
+  const [zen, setZen] = useState(false);
+  const chatRef = useRef<HTMLDivElement>(null);
   useEffect(() => setTitle(session.title), [session.title]);
   useEffect(() => localStorage.setItem("sessionboxer.pane", pane), [pane]);
+  useEffect(() => localStorage.setItem("sessionboxer.composerMode", composerMode), [composerMode]);
+  useEffect(() => {
+    if (composerHeight === null) localStorage.removeItem("sessionboxer.composerHeight");
+    else localStorage.setItem("sessionboxer.composerHeight", String(composerHeight));
+  }, [composerHeight]);
 
   const canPrompt = session.status === "idle" || session.status === "running";
   const send = () => {
@@ -321,32 +340,22 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
       <div className="session-body">
-        <div className="chat">
+        <div className="chat" ref={chatRef}>
           <Transcript items={items} />
-          <form
-            className="composer"
-            onSubmit={(e) => {
-              e.preventDefault();
-              send();
-            }}
-          >
-            <textarea
-              value={text}
-              placeholder={canPrompt ? "Message the agent… (Enter to send, Shift+Enter for newline)" : `Session is ${session.status}`}
-              disabled={!canPrompt}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              rows={3}
-            />
-            <button type="submit" disabled={!canPrompt || !text.trim()}>
-              Send
-            </button>
-          </form>
+          <Composer
+            value={text}
+            onChange={setText}
+            onSend={send}
+            disabled={!canPrompt}
+            placeholder={canPrompt ? "Message the agent\u2026" : `Session is ${session.status}`}
+            mode={composerMode}
+            onModeChange={setComposerMode}
+            zen={zen}
+            onZenChange={setZen}
+            heightFrac={composerHeight}
+            onHeightFracChange={setComposerHeight}
+            chatRef={chatRef}
+          />
         </div>
         {pane === "desktop" && <Desktop session={session} />}
         {pane === "files" && <Files session={session} />}

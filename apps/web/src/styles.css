@@ -47,6 +47,8 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 
 .sidebar { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--border); }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand img { width: 24px; height: 24px; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
 .sidebar-footer button { width: 100%; }
 .warn-sign { color: var(--warn); margin-left: 6px; }

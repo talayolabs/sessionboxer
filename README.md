@@ -1,3 +1,5 @@
+<img src="docs/assets/sessionboxer-icon.png" alt="" width="96" align="left" />
+
 # Sessionboxer
 
 A local, self-hosted session manager for coding agents. Every Session gets its own Docker Sandbox with a Linux desktop; the Agent (Claude Code or Devin) drives it like a human would (mouse, keyboard, screenshots) while you watch, edit files and open terminals from a browser UI.

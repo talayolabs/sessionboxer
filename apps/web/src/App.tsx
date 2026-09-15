@@ -145,7 +145,10 @@ export function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h1>Sessionboxer</h1>
+          <h1 className="brand">
+            <img src="/icon-192.png" alt="" />
+            Sessionboxer
+          </h1>
           <button onClick={() => setRoute({ view: "new" })}>+ New</button>
         </div>
         <ul className="session-list">

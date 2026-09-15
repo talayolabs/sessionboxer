@@ -154,6 +154,7 @@ export function App() {
             >
               <span className={`dot dot-${s.status}`} title={s.status} />
               <span className="session-title">{s.title}</span>
+              <span className="session-provider">{PROVIDER_LABELS[s.provider]}</span>
             </li>
           ))}
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}

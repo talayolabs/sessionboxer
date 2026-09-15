@@ -9,6 +9,7 @@ import {
   type InitializeRequest,
   type McpServer,
   type NewSessionRequest,
+  type NewSessionResponse,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
 import type { SessionUpdate, StopReason } from "@sessionboxer/protocol";
@@ -37,6 +38,10 @@ const CLIENT_INFO = { name: "sessionboxer-daemon", version: "0.0.0" };
 
 /** Mode ids that mean "auto-approve every tool call", per adapter (claude-agent-acp, devin acp). */
 const BYPASS_MODE_IDS = ["bypassPermissions", "bypass"];
+
+/** session/new can fail on transient upstream fetches (Devin's team settings); retry before giving up. */
+const NEW_SESSION_ATTEMPTS = 3;
+const NEW_SESSION_RETRY_MS = 3000;
 
 /**
  * Owns the Agent child process and its ACP connection. Creates a new ACP
@@ -142,7 +147,7 @@ export class AgentManager {
       }
       if (!loaded) {
         const newParams: NewSessionRequest = { cwd: this.cfg.cwd, mcpServers };
-        const created = await conn.agent.request("session/new", newParams);
+        const created = await this.newSessionWithRetry(conn, newParams);
         this.acpSessionId = created.sessionId;
         this.writeState({ acpSessionId: created.sessionId });
         this.cfg.log(`created ACP session ${created.sessionId}`);
@@ -156,6 +161,22 @@ export class AgentManager {
       this.events.onStateChange();
       this.kill();
       throw e;
+    }
+  }
+
+  private async newSessionWithRetry(
+    conn: ClientConnection,
+    params: NewSessionRequest,
+  ): Promise<NewSessionResponse> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await conn.agent.request("session/new", params);
+      } catch (e) {
+        if (attempt >= NEW_SESSION_ATTEMPTS || !this.child) throw e;
+        const delay = NEW_SESSION_RETRY_MS * attempt;
+        this.cfg.log(`session/new failed (attempt ${attempt}), retrying in ${delay}ms: ${String(e)}`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
   }
 

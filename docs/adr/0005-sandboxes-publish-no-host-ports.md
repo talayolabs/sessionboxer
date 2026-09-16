@@ -7,3 +7,4 @@ Each Sandbox runs several network services (the daemon that fronts the Agent, x1
 - One published port for the whole system; exposing Sessionboxer on a LAN or behind a reverse proxy is a single-port problem.
 - Dev servers the Agent starts inside a Sandbox are reachable from the Desktop's browser, but not from the host, unless a per-port proxy is added later.
 - The Control Plane must run where it can reach the Docker network (same host as the Docker daemon, or itself inside a container on that network).
+- On macOS the daemon runs in a VM and, except under OrbStack, the host cannot route to container addresses. The Control Plane detects this at startup (`SandboxDocker.detectReach`) and then publishes only the daemon and noVNC ports of each Sandbox on `127.0.0.1` with ephemeral host ports, dialing those instead of the container address. Still nothing on a non-loopback interface, still stable URLs; `SESSIONBOXER_SANDBOX_REACH` overrides the detection.

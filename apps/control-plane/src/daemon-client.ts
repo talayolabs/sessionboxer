@@ -1,7 +1,6 @@
 import WebSocket from "ws";
 import {
   DAEMON_METHODS,
-  DAEMON_PORT,
   DaemonStatus,
   FsChangedParams,
   PtyExitParams,
@@ -58,7 +57,7 @@ export class DaemonClient {
   connected = false;
 
   constructor(
-    private readonly host: string,
+    private readonly url: string,
     private readonly handlers: DaemonClientHandlers,
   ) {
     this.connect();
@@ -66,7 +65,7 @@ export class DaemonClient {
 
   private connect(): void {
     if (this.closed) return;
-    const ws = new WebSocket(`ws://${this.host}:${DAEMON_PORT}`);
+    const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.on("open", () => {
       this.connected = true;

@@ -20,7 +20,7 @@ import { formatMb } from "./format";
 import { SavedMessages } from "./SavedMessages";
 import { TerminalPane } from "./Terminal";
 import { Transcript } from "./Transcript";
-import { buildTranscript } from "./transcript";
+import { buildTranscript } from "./transcript-model";
 
 type Route = { view: "session"; id: string | null } | { view: "new" } | { view: "settings" };
 

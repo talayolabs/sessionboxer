@@ -47,6 +47,7 @@ Internal notes for people working on Sessionboxer: architecture, the MVP decisio
 | Git | user.name/email injected; no GitHub token in Sandboxes for MVP |
 | Model | Provider defaults; per-Session settings object reserved in the schema |
 | Control Plane | runs on the host, binds `127.0.0.1:4000`, no auth |
+| Sandbox reach | by container address on the `sessionboxer` network (Linux, OrbStack); daemon + noVNC ports published on `127.0.0.1` with ephemeral host ports when the daemon is in a VM the host cannot route to (Docker Desktop, Colima), see ADR-0005 |
 | Provider secrets | per-Provider map in `~/.sessionboxer/config.json` (0600), only the Session's Provider gets its env vars |
 
 ## Repository layout
@@ -65,7 +66,7 @@ images/sandbox          Dockerfile (desktop stack + claude-code + claude-agent-a
 
 ## Running it
 
-Requires Docker, Node 22, optionally [Sysbox](https://github.com/nestybox/sysbox) for unprivileged Docker inside Sandboxes, and a Provider token: `claude setup-token` for Claude Code, and/or a Devin token (`devin auth login` on your machine, then the token from `~/.local/share/devin/credentials.toml`; it is passed to the Sandbox as `WINDSURF_API_KEY`).
+Requires Docker (Linux, or macOS via OrbStack or Docker Desktop), Node 22, optionally [Sysbox](https://github.com/nestybox/sysbox) for unprivileged Docker inside Sandboxes, and a Provider token: `claude setup-token` for Claude Code, and/or a Devin token (`devin auth login` on your machine, then the token from `~/.local/share/devin/credentials.toml`; it is passed to the Sandbox as `WINDSURF_API_KEY`).
 
 ```sh
 npm install

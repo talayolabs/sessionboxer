@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Snapshot, ToolCallContent } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
-import type { TranscriptItem } from "./transcript";
+import type { TranscriptItem } from "./transcript-model";
 
 export interface SnapshotActions {
   onFork: (snapshot: Snapshot) => void;

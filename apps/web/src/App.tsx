@@ -19,6 +19,7 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { api, emitFsChanged, subscribe } from "./api";
+import { BranchTree } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
@@ -112,6 +113,9 @@ export function App() {
   snapshotsForRef.current = snapshotsFor;
   const [forkRequest, setForkRequest] = useState<{ sessionId: string; snapshotId: string } | null>(null);
   const clearForkRequest = useCallback(() => setForkRequest(null), []);
+  // Sidebar entries whose branch tree is unfolded, and the Session whose branch is being switched from the tree.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [treeSwitching, setTreeSwitching] = useState<string | null>(null);
   const { error, setError, run } = useErrorBanner();
 
   const selectedId = route.view === "session" ? route.id : null;
@@ -260,6 +264,26 @@ export function App() {
               onClick={() => setRoute({ view: "session", id: s.id })}
             >
               <div className="session-row">
+                {s.branches.length > 1 ? (
+                  <button
+                    type="button"
+                    className="chevron"
+                    aria-expanded={expanded.has(s.id)}
+                    title={expanded.has(s.id) ? "Hide the conversation branches" : `Show the ${s.branches.length} conversation branches`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpanded((prev) => {
+                        const next = new Set(prev);
+                        if (!next.delete(s.id)) next.add(s.id);
+                        return next;
+                      });
+                    }}
+                  >
+                    {expanded.has(s.id) ? "\u25BE" : "\u25B8"}
+                  </button>
+                ) : (
+                  <span className="chevron chevron-blank" />
+                )}
                 <span className={`dot dot-${s.status}`} title={s.status} />
                 <span className="session-title">{s.title}</span>
                 <span className="session-provider">
@@ -283,6 +307,18 @@ export function App() {
                 autoSnapshot={s.autoSnapshot ?? settings?.autoSnapshot ?? true}
                 onClick={() => setSnapshotsFor(s.id)}
               />
+              {expanded.has(s.id) && s.branches.length > 1 && (
+                <BranchTree
+                  session={s}
+                  switching={treeSwitching === s.id}
+                  onSelect={(branchId) => {
+                    setRoute({ view: "session", id: s.id });
+                    if (branchId === s.activeBranchId || treeSwitching) return;
+                    setTreeSwitching(s.id);
+                    void run(() => api.switchBranch(s.id, { branchId })).finally(() => setTreeSwitching(null));
+                  }}
+                />
+              )}
             </li>
           ))}
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}

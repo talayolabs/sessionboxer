@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import type { HostDirListing } from "@sessionboxer/protocol";
 import { pack, type Pack } from "tar-fs";
 
 const execFileAsync = promisify(execFile);
@@ -19,6 +21,34 @@ export async function resolveHostDir(input: string): Promise<string> {
   }
   if (!(await stat(real)).isDirectory()) throw new HostDirError(`Host path is not a directory: ${input}`);
   return real;
+}
+
+/** Subdirectories of `input` (default: the home directory) for the folder picker in the UI. */
+export async function listHostDir(input: string | undefined): Promise<HostDirListing> {
+  const dir = await resolveHostDir(input?.trim() || homedir());
+  const dirs: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    if (entry.isDirectory()) {
+      dirs.push(entry.name);
+    } else if (entry.isSymbolicLink()) {
+      try {
+        if ((await stat(path.join(dir, entry.name))).isDirectory()) dirs.push(entry.name);
+      } catch {
+        // dangling symlink
+      }
+    }
+  }
+  dirs.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  const parent = path.dirname(dir);
+  let inGit = false;
+  try {
+    await git(dir, ["rev-parse", "--show-toplevel"]);
+    inGit = true;
+  } catch {
+    // not a work tree
+  }
+  return { path: dir, parent: parent === dir ? null : parent, dirs, git: inGit };
 }
 
 /**

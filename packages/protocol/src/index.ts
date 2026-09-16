@@ -156,6 +156,19 @@ export const ForkSessionRequest = z.object({
 });
 export type ForkSessionRequest = z.infer<typeof ForkSessionRequest>;
 
+/** One level of the host filesystem, for picking a "copy" Workspace Source in the UI. */
+export const HostDirListing = z.object({
+  /** Canonical absolute path of the listed directory. */
+  path: z.string(),
+  /** `null` at the filesystem root. */
+  parent: z.string().nullable(),
+  /** Subdirectory names, sorted; hidden ones are skipped. */
+  dirs: z.array(z.string()),
+  /** True when `path` is inside a git work tree. */
+  git: z.boolean(),
+});
+export type HostDirListing = z.infer<typeof HostDirListing>;
+
 // ---------------------------------------------------------------------------
 // Settings (stored in ~/.sessionboxer/config.json, 0600)
 // ---------------------------------------------------------------------------

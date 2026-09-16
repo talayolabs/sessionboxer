@@ -31,6 +31,7 @@ import {
 import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
+import { HostDirError, listHostDir } from "./host-dir.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
 
@@ -63,6 +64,16 @@ api.put("/settings", async (c) => {
   settings = applySettingsUpdate(settings, update);
   saveSettings(settings);
   return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
+});
+
+api.get("/host/dirs", async (c) => {
+  try {
+    return c.json(await listHostDir(c.req.query("path")));
+  } catch (e) {
+    if (e instanceof HostDirError) throw new HttpError(400, e.message);
+    if (e instanceof Error && "code" in e && e.code === "EACCES") throw new HttpError(403, `Permission denied: ${c.req.query("path")}`);
+    throw e;
+  }
 });
 
 api.get("/sessions", (c) => c.json(sessions.list()));

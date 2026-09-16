@@ -64,7 +64,7 @@ Click **+ New**, pick the agent, choose where the code comes from:
 
 - **Empty directory**: start from scratch.
 - **Clone a git URL**: any URL `git clone` accepts, optionally a branch or tag. Private repositories need credentials embedded in the URL or a public mirror for now.
-- **Copy a host directory**: a folder on your machine. Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. The copy is one-way: changes in the box do not flow back.
+- **Copy a host directory**: a folder on your machine (type the path or pick it with **Browse…**). Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. The copy is one-way: changes in the box do not flow back.
 
 Optionally type the first prompt right there; it is sent as soon as the box is ready. The session title defaults to the first prompt and can be edited later.
 

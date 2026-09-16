@@ -209,10 +209,28 @@ li.expanded .saved-text { white-space: normal; }
 .panel fieldset.choice { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
 .panel fieldset.choice legend { color: var(--muted); padding: 0 4px; }
 .choice-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.input-row { display: flex; gap: 8px; }
+.input-row input { flex: 1; min-width: 0; }
+.input-row button { flex: none; white-space: nowrap; }
 
-/* Modal dialogs (fork) */
+/* Modal dialogs (fork, folder picker) */
 .modal-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: 100%; max-width: 640px; max-height: 100%; overflow-x: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.folder-dialog { height: 520px; gap: 10px; }
+.folder-path { display: flex; gap: 6px; align-items: center; }
+.folder-path input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.folder-path button { flex: none; }
+.folder-list { list-style: none; margin: 0; padding: 4px; flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.folder-list[aria-busy="true"] { opacity: 0.6; }
+.folder-list li.empty { color: var(--muted); font-size: 13px; padding: 8px 10px; }
+.folder-entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; border-radius: 5px; padding: 6px 8px; color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-entry:hover { background: #1f232d; border: 0; }
+.folder-entry.active { background: var(--user); color: #fff; }
+.folder-entry.active .folder-icon { color: #fff; }
+.folder-icon { color: var(--muted); width: 10px; flex: none; }
+.folder-footer { display: flex; gap: 12px; align-items: baseline; font-size: 12px; min-height: 16px; }
+.folder-chosen { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.folder-hint { flex: none; margin-left: auto; }
 
 /* Side pane switcher */
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }

@@ -15,6 +15,7 @@ import { api, emitFsChanged, subscribe } from "./api";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
+import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { SavedMessages } from "./SavedMessages";
@@ -549,6 +550,7 @@ function NewSession({
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
   const [copyPath, setCopyPath] = useState("");
+  const [browsing, setBrowsing] = useState(false);
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -575,6 +577,7 @@ function NewSession({
   };
 
   return (
+    <>
     <form className="panel" onSubmit={submit}>
       <h2>New session</h2>
       <label>
@@ -610,7 +613,12 @@ function NewSession({
       {sourceType === "copy" && (
         <label>
           Host path (absolute; git repos copy tracked + untracked-but-not-ignored files and .git)
-          <input required value={copyPath} onChange={(e) => setCopyPath(e.target.value)} placeholder="/home/you/project" />
+          <div className="input-row">
+            <input required value={copyPath} onChange={(e) => setCopyPath(e.target.value)} placeholder="/home/you/project" />
+            <button type="button" onClick={() => setBrowsing(true)}>
+              Browse…
+            </button>
+          </div>
         </label>
       )}
       <label className="check">
@@ -635,6 +643,17 @@ function NewSession({
         </button>
       </div>
     </form>
+    {browsing && (
+      <FolderDialog
+        initialPath={copyPath}
+        onSelect={(p) => {
+          setCopyPath(p);
+          setBrowsing(false);
+        }}
+        onClose={() => setBrowsing(false)}
+      />
+    )}
+    </>
   );
 }
 

@@ -12,6 +12,9 @@ import {
   FsWriteParams,
   PromptRequest,
   PtyOpenParams,
+  QueueRequest,
+  SaveMessageRequest,
+  UpdateSavedMessageRequest,
   UpdateSessionRequest,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
@@ -89,6 +92,29 @@ api.post("/sessions/:id/cancel", async (c) => {
   return c.json({ ok: true });
 });
 api.post("/sessions/:id/stop", async (c) => c.json(await sessions.stop(c.req.param("id"))));
+
+// Saved messages ("save for later") and the queue that plays them one turn at a time.
+api.get("/sessions/:id/saved", (c) => c.json(sessions.savedMessages(c.req.param("id"))));
+api.post("/sessions/:id/saved", async (c) => {
+  const req = SaveMessageRequest.parse(await c.req.json());
+  return c.json(sessions.saveMessage(c.req.param("id"), req.text), 201);
+});
+api.patch("/sessions/:id/saved/:messageId", async (c) => {
+  const req = UpdateSavedMessageRequest.parse(await c.req.json());
+  return c.json(sessions.updateSavedMessage(c.req.param("id"), c.req.param("messageId"), req));
+});
+api.delete("/sessions/:id/saved/:messageId", (c) => {
+  sessions.deleteSavedMessage(c.req.param("id"), c.req.param("messageId"));
+  return c.body(null, 204);
+});
+api.post("/sessions/:id/saved/:messageId/send", async (c) => {
+  await sessions.sendSavedMessage(c.req.param("id"), c.req.param("messageId"));
+  return c.json({ ok: true }, 202);
+});
+api.post("/sessions/:id/queue", async (c) => {
+  const req = QueueRequest.parse(await c.req.json());
+  return c.json(await sessions.setQueueRunning(c.req.param("id"), req.running));
+});
 
 // Workspace files, relative to the Workspace root (`path=` empty or missing for the root).
 api.get("/sessions/:id/fs", async (c) => c.json(await sessions.fsList(c.req.param("id"), c.req.query("path") ?? "")));

@@ -13,6 +13,8 @@ export type ComposerProps = {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
+  /** Keep the text for later instead of sending it (Ctrl+S). */
+  onSave: () => void;
   disabled: boolean;
   placeholder: string;
   mode: ComposerMode;
@@ -23,6 +25,8 @@ export type ComposerProps = {
   heightFrac: number | null;
   onHeightFracChange: (frac: number | null) => void;
   chatRef: RefObject<HTMLDivElement | null>;
+  /** Rendered above the toolbar (the saved-messages list). */
+  above?: ReactNode;
 };
 
 export const COMPOSER_MIN_FRAC = 0.1;
@@ -77,7 +81,7 @@ function isSendKey(e: KeyboardEvent | globalThis.KeyboardEvent): boolean {
 }
 
 export function Composer(props: ComposerProps) {
-  const { value, onChange, onSend, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef } =
+  const { value, onChange, onSend, onSave, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above } =
     props;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -192,8 +196,17 @@ export function Composer(props: ComposerProps) {
     target.addEventListener("pointercancel", up);
   };
 
-  const canSend = !disabled && value.trim().length > 0;
+  const hasText = value.trim().length > 0;
+  const canSend = !disabled && hasText;
   const sized = heightFrac !== null && !zen;
+  const onSaveKey = (e: KeyboardEvent): boolean => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      if (hasText) onSave();
+      return true;
+    }
+    return false;
+  };
 
   return (
     <>
@@ -214,7 +227,9 @@ export function Composer(props: ComposerProps) {
           e.preventDefault();
           onSend();
         }}
+        onKeyDown={onSaveKey}
       >
+        {above}
         <div className="toolbar" role="toolbar" aria-label="Formatting">
           {TOOLS.map((t) => (
             <button
@@ -274,7 +289,10 @@ export function Composer(props: ComposerProps) {
             {" \u00b7 "}Markdown
           </span>
           <span className="spacer" />
-          <button type="submit" disabled={!canSend}>
+          <button type="button" title="Keep this message in the Session's saved list (Ctrl+S)" disabled={!hasText} onClick={onSave}>
+            Save for later
+          </button>
+          <button type="submit" className="primary" disabled={!canSend}>
             Send
           </button>
         </div>

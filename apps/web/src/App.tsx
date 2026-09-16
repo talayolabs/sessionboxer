@@ -5,6 +5,7 @@ import {
   PROVIDER_LABELS,
   type Provider,
   type PublicSettings,
+  type SavedMessage,
   type Session,
   type SessionEvent,
   type WorkspaceSource,
@@ -13,6 +14,7 @@ import { api, emitFsChanged, subscribe } from "./api";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
+import { SavedMessages } from "./SavedMessages";
 import { TerminalPane } from "./Terminal";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript";
@@ -66,6 +68,7 @@ export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [route, setRoute] = useRoute();
   const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [saved, setSaved] = useState<SavedMessage[]>([]);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const { error, setError, run } = useErrorBanner();
 
@@ -79,16 +82,19 @@ export function App() {
     void run(async () => setSettings(await api.settings()));
   }, [reloadSessions, run]);
 
-  // Load events when the selected session changes; the WS keeps them current.
+  // Load events and saved messages when the selected session changes; the WS keeps them current.
   useEffect(() => {
     if (!selectedId) {
       setEvents([]);
+      setSaved([]);
       return;
     }
     let cancelled = false;
     void run(async () => {
-      const evs = await api.events(selectedId);
-      if (!cancelled) setEvents(evs);
+      const [evs, msgs] = await Promise.all([api.events(selectedId), api.savedMessages(selectedId)]);
+      if (cancelled) return;
+      setEvents(evs);
+      setSaved(msgs);
     });
     return () => {
       cancelled = true;
@@ -123,6 +129,9 @@ export function App() {
           case "fs_changed":
             emitFsChanged(msg.sessionId, msg.changes);
             break;
+          case "saved_messages":
+            if (msg.sessionId === selectedId) setSaved(msg.messages);
+            break;
         }
       },
       () => {
@@ -130,6 +139,7 @@ export function App() {
         void reloadSessions();
         if (selectedId) {
           void run(async () => setEvents(await api.events(selectedId)));
+          void run(async () => setSaved(await api.savedMessages(selectedId)));
         }
       },
     );
@@ -162,6 +172,7 @@ export function App() {
               <span className={`dot dot-${s.status}`} title={s.status} />
               <span className="session-title">{s.title}</span>
               <span className="session-provider">
+                {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6 "}</span>}
                 {PROVIDER_LABELS[s.provider]}
                 {s.dockerMode !== "none" && (
                   <span
@@ -217,7 +228,7 @@ export function App() {
           <div className="placeholder">Select a session or create a new one.</div>
         )}
         {route.view === "session" && selected && (
-          <SessionView session={selected} items={items} run={run} />
+          <SessionView session={selected} items={items} saved={saved} run={run} />
         )}
       </main>
     </div>
@@ -247,7 +258,17 @@ function loadComposerHeight(): number | null {
   return v >= COMPOSER_MIN_FRAC && v <= COMPOSER_MAX_FRAC ? v : null;
 }
 
-function SessionView({ session, items, run }: { session: Session; items: ReturnType<typeof buildTranscript>; run: Runner }) {
+function SessionView({
+  session,
+  items,
+  saved,
+  run,
+}: {
+  session: Session;
+  items: ReturnType<typeof buildTranscript>;
+  saved: SavedMessage[];
+  run: Runner;
+}) {
   const [text, setText] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
@@ -270,6 +291,12 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
     if (!t || !canPrompt) return;
     setText("");
     void run(() => api.prompt(session.id, t));
+  };
+  const saveForLater = () => {
+    const t = text.trim();
+    if (!t) return;
+    setText("");
+    void run(() => api.saveMessage(session.id, t));
   };
 
   const source = session.workspaceSource;
@@ -346,6 +373,19 @@ function SessionView({ session, items, run }: { session: Session; items: ReturnT
             value={text}
             onChange={setText}
             onSend={send}
+            onSave={saveForLater}
+            above={
+              <SavedMessages
+                messages={saved}
+                queueRunning={session.queueRunning}
+                canSend={canPrompt}
+                onLoad={(m) => setText(m.text)}
+                onSend={(m) => void run(() => api.sendSavedMessage(session.id, m.id))}
+                onDelete={(m) => void run(() => api.deleteSavedMessage(session.id, m.id))}
+                onMove={(m, position) => void run(() => api.updateSavedMessage(session.id, m.id, { position }))}
+                onQueueToggle={(running) => void run(() => api.setQueueRunning(session.id, running))}
+              />
+            }
             disabled={!canPrompt}
             placeholder={canPrompt ? "Message the agent\u2026" : `Session is ${session.status}`}
             mode={composerMode}

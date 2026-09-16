@@ -14,6 +14,7 @@ import {
   type DaemonStatus,
   type DockerMode,
   type FsChange,
+  type SavedMessage,
   type Session,
   type SessionBroadcast,
   type SessionEvent,
@@ -251,6 +252,7 @@ export class SessionManager {
       dockerMode,
       containerId: null,
       error: null,
+      queueRunning: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -332,12 +334,91 @@ export class SessionManager {
     await client.request(DAEMON_METHODS.cancel, {});
   }
 
+  // --- Saved messages and the queue ------------------------------------------
+
+  savedMessages(id: string): SavedMessage[] {
+    this.get(id);
+    return this.db.listSavedMessages(id);
+  }
+
+  saveMessage(id: string, text: string): SavedMessage {
+    this.get(id);
+    const saved = this.db.insertSavedMessage(id, text);
+    this.broadcastSaved(id);
+    return saved;
+  }
+
+  updateSavedMessage(id: string, messageId: string, patch: { text?: string; position?: number }): SavedMessage {
+    this.get(id);
+    const saved = this.db.updateSavedMessage(id, messageId, patch);
+    if (!saved) throw new HttpError(404, `saved message ${messageId} not found`);
+    this.broadcastSaved(id);
+    return saved;
+  }
+
+  deleteSavedMessage(id: string, messageId: string): void {
+    this.get(id);
+    if (!this.db.deleteSavedMessage(id, messageId)) throw new HttpError(404, `saved message ${messageId} not found`);
+    this.broadcastSaved(id);
+  }
+
+  /** Sends a saved message now and drops it from the list. */
+  async sendSavedMessage(id: string, messageId: string): Promise<void> {
+    this.get(id);
+    const saved = this.db.getSavedMessage(id, messageId);
+    if (!saved) throw new HttpError(404, `saved message ${messageId} not found`);
+    await this.prompt(id, saved.text);
+    this.db.deleteSavedMessage(id, messageId);
+    this.broadcastSaved(id);
+  }
+
+  /**
+   * Play/pause the queue. While playing, the first saved message is sent as soon as
+   * the Agent is idle and again after every `turn_ended`, until the list is empty.
+   * Pausing lets the current turn finish.
+   */
+  async setQueueRunning(id: string, running: boolean): Promise<Session> {
+    const s = this.get(id);
+    if (running && this.db.listSavedMessages(id).length === 0) throw new HttpError(409, "No saved messages to play.");
+    if (running && (s.status === "stopped" || s.status === "error")) {
+      throw new HttpError(409, `Session is ${s.status}; resume it before playing the queue.`);
+    }
+    const next = s.queueRunning === running ? s : this.update(id, { queueRunning: running });
+    if (running && next.status === "idle") await this.pumpQueue(id);
+    return this.get(id);
+  }
+
+  /** Sends the next saved message if the queue is playing and the Agent is idle. */
+  private async pumpQueue(id: string): Promise<void> {
+    const s = this.db.getSession(id);
+    if (!s?.queueRunning || s.status !== "idle") return;
+    const next = this.db.listSavedMessages(id)[0];
+    if (!next) {
+      this.update(id, { queueRunning: false });
+      return;
+    }
+    try {
+      await this.prompt(id, next.text);
+    } catch (e) {
+      this.log(`queue ${id} paused: ${e instanceof Error ? e.message : String(e)}`);
+      this.update(id, { queueRunning: false });
+      return;
+    }
+    this.db.deleteSavedMessage(id, next.id);
+    this.broadcastSaved(id);
+  }
+
+  private broadcastSaved(id: string): void {
+    this.broadcast({ type: "saved_messages", sessionId: id, messages: this.db.listSavedMessages(id) });
+  }
+
   async stop(id: string): Promise<Session> {
     const s = this.get(id);
     if (!s.containerId) throw new HttpError(409, "Session has no Sandbox.");
     if (s.status === "stopped") return s;
     this.stopping.add(id);
     try {
+      if (s.queueRunning) this.update(id, { queueRunning: false });
       if (s.status === "running") await this.cancelAndWait(id);
       this.disconnect(id);
       await this.docker.stop(s.containerId);
@@ -451,6 +532,12 @@ export class SessionManager {
     if (ev.body.type === "turn_ended" || ev.body.type === "agent_error") {
       const s = this.db.getSession(id);
       if (s?.status === "running") this.setStatus(id, "idle");
+      if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
+        void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed: ${String(e)}`));
+      } else if (s?.queueRunning) {
+        this.log(`queue ${id} paused after ${ev.body.type}`);
+        this.update(id, { queueRunning: false });
+      }
     }
   }
 
@@ -464,7 +551,10 @@ export class SessionManager {
     return s;
   }
 
-  private update(id: string, patch: Partial<Pick<Session, "title" | "status" | "containerId" | "error">>): Session {
+  private update(
+    id: string,
+    patch: Partial<Pick<Session, "title" | "status" | "containerId" | "error" | "queueRunning">>,
+  ): Session {
     const s = this.db.updateSession(id, patch);
     if (!s) throw new HttpError(404, `session ${id} not found`);
     this.broadcast({ type: "session", session: s });

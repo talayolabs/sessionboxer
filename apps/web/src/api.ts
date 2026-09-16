@@ -7,9 +7,11 @@ import type {
   PtyInfo,
   PtyListResult,
   PublicSettings,
+  SavedMessage,
   Session,
   SessionBroadcast,
   SessionEvent,
+  UpdateSavedMessageRequest,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 
@@ -48,6 +50,16 @@ export const api = {
   cancel: (id: string) => request<{ ok: true }>(`/sessions/${id}/cancel`, { method: "POST" }),
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),
   resume: (id: string) => request<Session>(`/sessions/${id}/resume`, { method: "POST" }),
+  savedMessages: (id: string) => request<SavedMessage[]>(`/sessions/${id}/saved`),
+  saveMessage: (id: string, text: string) =>
+    request<SavedMessage>(`/sessions/${id}/saved`, { method: "POST", body: JSON.stringify({ text }) }),
+  updateSavedMessage: (id: string, messageId: string, patch: UpdateSavedMessageRequest) =>
+    request<SavedMessage>(`/sessions/${id}/saved/${messageId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteSavedMessage: (id: string, messageId: string) => request<void>(`/sessions/${id}/saved/${messageId}`, { method: "DELETE" }),
+  sendSavedMessage: (id: string, messageId: string) =>
+    request<{ ok: true }>(`/sessions/${id}/saved/${messageId}/send`, { method: "POST" }),
+  setQueueRunning: (id: string, running: boolean) =>
+    request<Session>(`/sessions/${id}/queue`, { method: "POST", body: JSON.stringify({ running }) }),
   fsList: (id: string, path: string) => request<FsListResult>(`/sessions/${id}/fs?path=${encodeURIComponent(path)}`),
   fsRead: (id: string, path: string) => request<FsReadResult>(`/sessions/${id}/fs/file?path=${encodeURIComponent(path)}`),
   fsWrite: (id: string, path: string, content: string) =>

@@ -132,6 +132,30 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .composer textarea { width: 100%; resize: none; line-height: 1.45; }
 .composer.sized textarea, .composer.zen textarea { height: 100%; flex: 1; }
 .composer.zen textarea, .composer.zen .rich-editor { font-size: 16px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.1); }
+
+/* Saved messages ("save for later") and their queue, docked above the composer toolbar. */
+.saved { flex: none; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); max-height: 40%; min-height: 0; }
+.saved.playing { border-color: var(--accent); }
+.saved-header { display: flex; align-items: center; gap: 10px; padding: 4px 8px 4px 4px; }
+.saved-toggle { color: var(--text) !important; font-size: 13px; gap: 6px; }
+.saved-toggle .chev { color: var(--muted); width: 10px; display: inline-block; }
+.saved-status { font-size: 12px; color: var(--accent); }
+.saved-list { list-style: none; margin: 0; padding: 0 6px 6px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.saved-list li { display: flex; align-items: flex-start; gap: 6px; padding: 4px 6px; border-radius: 6px; }
+.saved-list li:hover { background: #1f232d; }
+.saved-list li.empty { color: var(--muted); font-size: 12px; }
+.saved-list li:first-child .saved-pos { color: var(--accent); }
+.saved-pos { color: var(--muted); font-size: 12px; min-width: 18px; padding-top: 3px; }
+.saved-text { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 2px 0; color: var(--text); font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-text:hover { border: 0; color: var(--accent); }
+li.expanded .saved-text { white-space: normal; }
+.saved-text pre { font-size: 12px; max-height: 240px; }
+.saved-actions { display: inline-flex; gap: 3px; flex: none; }
+.saved-actions .small { padding: 1px 6px; }
+
 .composer-footer { flex: none; display: flex; align-items: center; gap: 10px; }
 .composer-footer .hint { font-size: 12px; }
 .toolbar { flex: none; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }

@@ -51,6 +51,8 @@ export const Session = z.object({
   dockerMode: DockerMode.default("none"),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
+  /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
+  queueRunning: z.boolean().default(false),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -75,6 +77,32 @@ export const PromptRequest = z.object({
   text: z.string().min(1),
 });
 export type PromptRequest = z.infer<typeof PromptRequest>;
+
+// ---------------------------------------------------------------------------
+// Saved messages: prompts kept per Session ("save for later"), ordered; played
+// as a queue one turn at a time while `Session.queueRunning`.
+// ---------------------------------------------------------------------------
+
+export const SavedMessage = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  text: z.string(),
+  /** 0-based order in the Session's list. */
+  position: z.number().int().nonnegative(),
+  createdAt: z.string(),
+});
+export type SavedMessage = z.infer<typeof SavedMessage>;
+
+export const SaveMessageRequest = z.object({ text: z.string().min(1) });
+export type SaveMessageRequest = z.infer<typeof SaveMessageRequest>;
+
+export const UpdateSavedMessageRequest = z
+  .object({ text: z.string().min(1), position: z.number().int().nonnegative() })
+  .partial();
+export type UpdateSavedMessageRequest = z.infer<typeof UpdateSavedMessageRequest>;
+
+export const QueueRequest = z.object({ running: z.boolean() });
+export type QueueRequest = z.infer<typeof QueueRequest>;
 
 // ---------------------------------------------------------------------------
 // Settings (stored in ~/.sessionboxer/config.json, 0600)
@@ -142,7 +170,8 @@ export type SessionBroadcast =
   | { type: "session"; session: Session }
   | { type: "session_deleted"; id: string }
   | { type: "event"; event: SessionEvent }
-  | { type: "fs_changed"; sessionId: string; changes: FsChange[] };
+  | { type: "fs_changed"; sessionId: string; changes: FsChange[] }
+  | { type: "saved_messages"; sessionId: string; messages: SavedMessage[] };
 
 // ---------------------------------------------------------------------------
 // Workspace files (UI <-> Control Plane <-> Daemon). Paths are relative to the

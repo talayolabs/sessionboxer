@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { Snapshot, ToolCallContent } from "@sessionboxer/protocol";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
 import { Markdown } from "./Markdown";
 import type { TranscriptItem } from "./transcript-model";
@@ -7,6 +7,101 @@ import type { TranscriptItem } from "./transcript-model";
 export interface SnapshotActions {
   onFork: (snapshot: Snapshot) => void;
   onDelete: (snapshot: Snapshot) => void;
+}
+
+export interface BranchActions {
+  onRevert: (seq: number) => void;
+  onSwitch: (branchId: string) => void;
+}
+
+/** Conversation branches as seen from the active one, for the turn dividers. */
+interface BranchView {
+  branches: Branch[];
+  activeBranchId: string;
+  /** Branches that fork off at (branchId, seq) of the visible transcript. */
+  forksAt: (branchId: string, seq: number) => Branch[];
+  /** The ancestor whose own continuation resumes past (branchId, seq), if this is where the active lineage left it. */
+  leftAt: (branchId: string, seq: number) => Branch | null;
+  /** Idle, live Session: branching allowed right now. */
+  canBranch: boolean;
+  busy: boolean;
+}
+
+function useBranchView(branches: Branch[], activeBranchId: string, canBranch: boolean, busy: boolean): BranchView {
+  return useMemo(() => {
+    const scope = branchScope(branches, activeBranchId);
+    return {
+      branches,
+      activeBranchId,
+      forksAt: (branchId, seq) => branches.filter((b) => b.parentId === branchId && b.forkedAtSeq === seq && b.id !== activeBranchId),
+      leftAt: (branchId, seq) => {
+        if (branchId === activeBranchId) return null;
+        const entry = scope.find((s) => s.branchId === branchId);
+        if (!entry || entry.uptoSeq !== seq) return null;
+        return branches.find((b) => b.id === branchId) ?? null;
+      },
+      canBranch,
+      busy,
+    };
+  }, [branches, activeBranchId, canBranch, busy]);
+}
+
+function TurnDivider({
+  item,
+  view,
+  actions,
+}: {
+  item: Extract<TranscriptItem, { kind: "turn_ended" }>;
+  view: BranchView;
+  actions: BranchActions;
+}) {
+  const forks = view.forksAt(item.branchId, item.seq);
+  const left = view.leftAt(item.branchId, item.seq);
+  const disabled = !view.canBranch || view.busy;
+  const why = view.busy ? "Switching branch…" : view.canBranch ? undefined : "Wait for the Agent to finish (needs a running, idle Session)";
+  return (
+    <div className={`turn-divider${item.tail ? " turn-divider-tail" : ""}`} data-seq={item.seq}>
+      <span className="turn-divider-line" />
+      <span className="turn-divider-label" title={new Date(item.ts).toLocaleString()}>
+        {item.stopReason === "end_turn" ? "turn ended" : `turn ended (${item.stopReason})`} {formatTime(item.ts)}
+      </span>
+      {!item.tail && (
+        <button
+          type="button"
+          className="small"
+          disabled={disabled}
+          title={why ?? "Continue the conversation from here; what follows is kept as a branch you can switch back to"}
+          onClick={() => actions.onRevert(item.seq)}
+        >
+          {"\u21B6"} Revert to here
+        </button>
+      )}
+      {left && (
+        <button
+          type="button"
+          className="small"
+          disabled={disabled}
+          title={why ?? `Back to how the conversation went on in "${left.name}"`}
+          onClick={() => actions.onSwitch(left.id)}
+        >
+          {"\u21AA"} Continue on {left.name}
+        </button>
+      )}
+      {forks.map((b) => (
+        <button
+          key={b.id}
+          type="button"
+          className="small"
+          disabled={disabled}
+          title={why ?? `Switch to "${b.name}" (${b.method === "fork" ? "forked" : "replayed"} from this point ${formatTime(b.createdAt)})`}
+          onClick={() => actions.onSwitch(b.id)}
+        >
+          {"\u2387"} {b.name}
+        </button>
+      ))}
+      <span className="turn-divider-line" />
+    </div>
+  );
 }
 
 function ToolContent({ content }: { content: ToolCallContent }) {
@@ -95,7 +190,17 @@ function SnapshotMarker({ snapshot, actions }: { snapshot: Snapshot; actions: Sn
   );
 }
 
-function Item({ item, actions }: { item: TranscriptItem; actions: SnapshotActions }) {
+function Item({
+  item,
+  actions,
+  branchActions,
+  branchView,
+}: {
+  item: TranscriptItem;
+  actions: SnapshotActions;
+  branchActions: BranchActions;
+  branchView: BranchView;
+}) {
   switch (item.kind) {
     case "user":
       return (
@@ -129,7 +234,7 @@ function Item({ item, actions }: { item: TranscriptItem; actions: SnapshotAction
         </ul>
       );
     case "turn_ended":
-      return <div className="marker">turn ended ({item.stopReason})</div>;
+      return <TurnDivider item={item} view={branchView} actions={branchActions} />;
     case "error":
       return <div className="marker marker-error">{item.message}</div>;
     case "status":
@@ -163,8 +268,25 @@ function Item({ item, actions }: { item: TranscriptItem; actions: SnapshotAction
   }
 }
 
-export function Transcript({ items, actions }: { items: TranscriptItem[]; actions: SnapshotActions }) {
+export function Transcript({
+  items,
+  actions,
+  branchActions,
+  branches,
+  activeBranchId,
+  canBranch,
+  branchBusy,
+}: {
+  items: TranscriptItem[];
+  actions: SnapshotActions;
+  branchActions: BranchActions;
+  branches: Branch[];
+  activeBranchId: string;
+  canBranch: boolean;
+  branchBusy: boolean;
+}) {
   const bottom = useRef<HTMLDivElement>(null);
+  const branchView = useBranchView(branches, activeBranchId, canBranch, branchBusy);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [items]);
@@ -172,7 +294,7 @@ export function Transcript({ items, actions }: { items: TranscriptItem[]; action
     <div className="transcript">
       {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
       {items.map((item) => (
-        <Item key={item.key} item={item} actions={actions} />
+        <Item key={item.key} item={item} actions={actions} branchActions={branchActions} branchView={branchView} />
       ))}
       <div ref={bottom} />
     </div>

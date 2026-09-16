@@ -12,11 +12,13 @@ import type {
   PtyInfo,
   PtyListResult,
   PublicSettings,
+  RevertRequest,
   SavedMessage,
   Session,
   SessionBroadcast,
   SessionEvent,
   Snapshot,
+  SwitchBranchRequest,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
   UpdateSettingsRequest,
@@ -75,6 +77,10 @@ export const api = {
   deleteAllSnapshots: (id: string) => request<DeleteSnapshotsResult>(`/sessions/${id}/snapshots`, { method: "DELETE" }),
   forkSession: (id: string, req: ForkSessionRequest) =>
     request<Session>(`/sessions/${id}/fork`, { method: "POST", body: JSON.stringify(req) }),
+  revert: (id: string, req: RevertRequest) =>
+    request<Session>(`/sessions/${id}/revert`, { method: "POST", body: JSON.stringify(req) }),
+  switchBranch: (id: string, req: SwitchBranchRequest) =>
+    request<Session>(`/sessions/${id}/branch`, { method: "POST", body: JSON.stringify(req) }),
   hostDirs: (path?: string) => request<HostDirListing>(`/host/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   fsList: (id: string, path: string) => request<FsListResult>(`/sessions/${id}/fs?path=${encodeURIComponent(path)}`),
   fsRead: (id: string, path: string) => request<FsReadResult>(`/sessions/${id}/fs/file?path=${encodeURIComponent(path)}`),

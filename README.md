@@ -88,6 +88,12 @@ Click the size under a session in the sidebar to open its **Snapshots** popup: t
 
 In Settings you set the default for automatic snapshots and how many to keep per session (default 10; older automatic ones are removed, manual snapshots and snapshots a fork was started from are kept). A snapshot's ✕ in the chat deletes it too; snapshots that a fork was started from cannot be deleted while that fork exists. Tokens are never stored in snapshot images.
 
+### Go back and try another way
+
+Each time the agent finishes a turn, a line divides the chat: *turn ended 14:03*. The last one marks where the agent is waiting for you. Every earlier line has **↶ Revert to here**: the chat is cut back to that point and you continue from there, in the same box, with the agent remembering only what came before. Nothing is lost: what followed is kept as another **branch** of the conversation. The divider where they part shows a button to jump to the other branch (**↪ Continue on main**, **⑂ branch 1**), and a **⑂** selector in the header lists all of them. Only one branch talks to the agent at a time, and you can only revert or switch while it is idle.
+
+Claude keeps the branch's memory exact (its session is forked at that point); Devin is given a transcript of the conversation up to the point instead. Branches share the box, so files changed on one branch stay changed on the others; take a snapshot and fork a new session if you want the files to go back too.
+
 ### Watch and take over the desktop
 
 **Show desktop** opens the box's screen next to the chat. While the agent is working the view is read-only so you don't fight over the mouse; **Take control** hands it to you until the agent's next turn. When the agent is idle the desktop is always interactive: log into a site for it, open a program, arrange windows.

@@ -6,6 +6,9 @@ import {
   DAEMON_PORT,
   DaemonMcpSetResult,
   DaemonModelSetResult,
+  DaemonSessionForkResult,
+  DaemonSessionSwitchResult,
+  DaemonStatus,
   FsListResult,
   FsReadResult,
   FsWriteResult,
@@ -13,9 +16,12 @@ import {
   PtyAttachResult,
   PtyInfo,
   PtyListResult,
+  ROOT_BRANCH_ID,
+  branchScope,
+  inBranchScope,
+  type Branch,
   type CreateSessionRequest,
   type DaemonEvent,
-  type DaemonStatus,
   type DeleteSnapshotsResult,
   type DockerMode,
   type ForkSessionRequest,
@@ -45,6 +51,10 @@ const CANCEL_GRACE_MS = 8000;
 const DAEMON_WAIT_MS = 15_000;
 /** A one-shot ask spawns a fresh ACP session, which is slow on cold Providers. */
 const ASK_TIMEOUT_MS = 120_000;
+/** Rewinding the Agent may replay the whole transcript into a fresh session. */
+const BRANCH_TIMEOUT_MS = 300_000;
+/** Longest transcript handed to an Agent that cannot fork (the tail is kept). */
+const REPLAY_MAX_CHARS = 60_000;
 
 /** One UI connection attached to a terminal. */
 export interface TerminalSink {
@@ -277,6 +287,8 @@ export class SessionManager {
       modelPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
+      branches: [],
+      activeBranchId: ROOT_BRANCH_ID,
       createdAt: now,
       updatedAt: now,
     };
@@ -337,11 +349,13 @@ export class SessionManager {
       modelPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
+      branches: [],
+      activeBranchId: ROOT_BRANCH_ID,
       createdAt: now,
       updatedAt: now,
     };
     this.db.insertSession(session);
-    this.db.copyEvents(origin.id, id, snapshot.eventSeq);
+    this.db.copyEvents(origin.id, id, snapshot.eventSeq, branchScope(origin.branches, snapshot.branchId));
     const marker = this.db.appendEvent(id, {
       type: "forked",
       fromSessionId: origin.id,
@@ -448,6 +462,94 @@ export class SessionManager {
     const client = this.clients.get(id);
     if (!client?.connected) throw new HttpError(503, "Sandbox Daemon is not connected.");
     await client.request(DAEMON_METHODS.cancel, {});
+  }
+
+  // --- Branches ---------------------------------------------------------------
+
+  /**
+   * Continues the conversation from the `turn_ended` at `seq`. What followed stays on the
+   * current branch (it can be switched back to), a new branch becomes active, and the
+   * Agent's memory is rewound: ACP `session/fork` at the last assistant message before
+   * `seq` when the Agent offers it, else a fresh session fed the transcript. Branches share
+   * the Sandbox and only the active one talks to the Agent; refused while a turn runs.
+   */
+  async revert(id: string, seq: number): Promise<Session> {
+    const s = this.requireIdleForBranching(id);
+    const scope = this.db.activeScope(id);
+    const target = this.db.getEvent(id, seq);
+    if (!target || target.body.type !== "turn_ended" || !inBranchScope(scope, target.branchId, seq)) {
+      throw new HttpError(400, "Revert points must be a turn boundary of the current branch.");
+    }
+    const visible = this.db.listEvents(id, 0, 100_000, scope);
+    if (!visible.some((e) => e.seq > seq && isConversational(e))) {
+      throw new HttpError(409, "This is already the end of the conversation; just send the next message.");
+    }
+    const before = visible.filter((e) => e.seq <= seq);
+    await this.snapshotChains.get(id)?.catch(() => undefined);
+    const status = DaemonStatus.parse(await this.daemonCall(id, DAEMON_METHODS.status, {}));
+    if (status.turnActive) throw new HttpError(409, "The Agent is still working on the previous prompt.");
+    const fromBranch = s.activeBranchId;
+    this.ensureRootBranch(id);
+    if (status.acpSessionId) this.db.setBranchAcpSessionId(id, fromBranch, status.acpSessionId);
+
+    const result = DaemonSessionForkResult.parse(
+      await this.daemonCall(
+        id,
+        DAEMON_METHODS.sessionFork,
+        { messageId: lastAssistantMessageId(before), replay: replayPrompt(before) },
+        BRANCH_TIMEOUT_MS,
+      ),
+    );
+    const branch: Branch = {
+      id: randomBytes(4).toString("hex"),
+      sessionId: id,
+      name: `branch ${this.db.listBranches(id).length}`,
+      parentId: target.branchId,
+      forkedAtSeq: seq,
+      method: result.method,
+      createdAt: new Date().toISOString(),
+    };
+    this.db.insertBranch(branch, result.acpSessionId);
+    this.log(`branch ${id}/${branch.id} from ${fromBranch}@${seq} (${result.method}, ACP ${result.acpSessionId})`);
+    return this.update(id, { activeBranchId: branch.id });
+  }
+
+  /** Makes another branch the active one: its transcript shows and the Agent loads its session. */
+  async switchBranch(id: string, branchId: string): Promise<Session> {
+    const s = this.requireIdleForBranching(id);
+    if (s.activeBranchId === branchId) return s;
+    if (!s.branches.some((b) => b.id === branchId)) throw new HttpError(404, `branch ${branchId} not found`);
+    const acpSessionId = this.db.branchAcpSessionId(id, branchId);
+    if (!acpSessionId) throw new HttpError(409, "This branch has no Agent session on record; it cannot be resumed.");
+    await this.snapshotChains.get(id)?.catch(() => undefined);
+    const status = DaemonStatus.parse(await this.daemonCall(id, DAEMON_METHODS.status, {}));
+    if (status.turnActive) throw new HttpError(409, "The Agent is still working on the previous prompt.");
+    if (status.acpSessionId) this.db.setBranchAcpSessionId(id, s.activeBranchId, status.acpSessionId);
+
+    const result = DaemonSessionSwitchResult.parse(
+      await this.daemonCall(id, DAEMON_METHODS.sessionSwitch, { acpSessionId }, BRANCH_TIMEOUT_MS),
+    );
+    if (result.acpSessionId !== acpSessionId) {
+      this.log(`branch ${id}/${branchId}: ACP session ${acpSessionId} could not be loaded; the Agent starts over on ${result.acpSessionId}`);
+      this.db.setBranchAcpSessionId(id, branchId, result.acpSessionId);
+    }
+    return this.update(id, { activeBranchId: branchId });
+  }
+
+  private requireIdleForBranching(id: string): Session {
+    const s = this.get(id);
+    if (s.status === "running") throw new HttpError(409, "The Agent is still working on the previous prompt.");
+    if (s.status !== "idle") throw new HttpError(409, `Session is ${s.status}; branching needs a running Sandbox.`);
+    return s;
+  }
+
+  private ensureRootBranch(id: string): void {
+    if (this.db.listBranches(id).length > 0) return;
+    const s = this.get(id);
+    this.db.insertBranch(
+      { id: ROOT_BRANCH_ID, sessionId: id, name: "main", parentId: null, forkedAtSeq: null, method: null, createdAt: s.createdAt },
+      null,
+    );
   }
 
   // --- Saved messages and the queue ------------------------------------------
@@ -578,6 +680,7 @@ export class SessionManager {
         imageTag: `${SNAPSHOT_REPO}:${tag}`,
         imageId,
         eventSeq: eventSeq ?? this.db.lastEventSeq(id),
+        branchId: s.activeBranchId,
         sizeBytes,
         queuedMessages: this.db.listSavedMessages(id).map((m) => m.text),
         createdAt: new Date().toISOString(),
@@ -909,6 +1012,67 @@ export class SessionManager {
   async shutdown(): Promise<void> {
     for (const id of this.clients.keys()) this.disconnect(id);
   }
+}
+
+/** Something was said or done (not status/usage/title bookkeeping). */
+function isConversational({ body }: SessionEvent): boolean {
+  if (body.type === "user_prompt") return true;
+  if (body.type !== "update") return false;
+  switch (body.update.sessionUpdate) {
+    case "user_message_chunk":
+    case "agent_message_chunk":
+    case "agent_thought_chunk":
+    case "tool_call":
+    case "tool_call_update":
+    case "plan":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** `messageId` of the last assistant message in the transcript prefix: where an ACP point-fork cuts. */
+function lastAssistantMessageId(events: SessionEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const body = events[i]?.body;
+    if (body?.type === "update" && body.update.sessionUpdate === "agent_message_chunk" && body.update.messageId) {
+      return body.update.messageId;
+    }
+  }
+  return null;
+}
+
+/** The transcript prefix as one prompt that primes a fresh Agent session (Providers without `session/fork`). */
+function replayPrompt(events: SessionEvent[]): string | null {
+  const parts: string[] = [];
+  let agent: string[] = [];
+  const flushAgent = (): void => {
+    if (agent.length > 0) parts.push(`Assistant:\n${agent.join("")}`);
+    agent = [];
+  };
+  for (const { body } of events) {
+    if (body.type === "user_prompt") {
+      flushAgent();
+      parts.push(`User:\n${body.text}`);
+    } else if (body.type === "update") {
+      const u = body.update;
+      if (u.sessionUpdate === "agent_message_chunk" && u.content.type === "text") agent.push(u.content.text);
+      else if (u.sessionUpdate === "tool_call") {
+        flushAgent();
+        parts.push(`[Assistant used a tool: ${u.title}]`);
+      }
+    }
+  }
+  flushAgent();
+  if (parts.length === 0) return null;
+  let transcript = parts.join("\n\n");
+  if (transcript.length > REPLAY_MAX_CHARS) transcript = `[earlier part omitted]\n\n${transcript.slice(-REPLAY_MAX_CHARS)}`;
+  return (
+    "We are resuming an earlier conversation between you (Assistant) and the user, transcribed below. " +
+    "Treat it as your own memory of what was said and done; the files in the workspace are in the state that conversation left them. " +
+    'Do not repeat or redo any of it now: reply with exactly "OK" and wait for the user\'s next message.\n\n' +
+    transcript
+  );
 }
 
 function titleFromPrompt(prompt: string | undefined): string | undefined {

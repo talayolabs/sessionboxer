@@ -23,7 +23,16 @@ export type TranscriptItem =
       rawOutput?: unknown;
     }
   | { kind: "plan"; key: string; entries: { content: string; status: string }[] }
-  | { kind: "turn_ended"; key: string; stopReason: StopReason }
+  | {
+      kind: "turn_ended";
+      key: string;
+      stopReason: StopReason;
+      seq: number;
+      branchId: string;
+      ts: string;
+      /** Nothing conversational follows: the Session is waiting here for the next prompt. */
+      tail: boolean;
+    }
   | { kind: "error"; key: string; message: string }
   | { kind: "status"; key: string; status: SessionStatus; error?: string }
   | { kind: "snapshot"; key: string; snapshot: Snapshot }
@@ -43,6 +52,29 @@ function blockText(block: ContentBlock): string {
       return block.uri;
     case "resource":
       return "text" in block.resource ? block.resource.text : `[resource ${block.resource.uri}]`;
+  }
+}
+
+/** Updates that say or do something, as opposed to usage/title/command bookkeeping. */
+const CONVERSATIONAL_UPDATES = new Set<string>([
+  "user_message_chunk",
+  "agent_message_chunk",
+  "agent_thought_chunk",
+  "tool_call",
+  "tool_call_update",
+  "plan",
+]);
+
+/** Conversation went on after the last turn boundary, so it is no longer the waiting point. */
+function markContinued(items: TranscriptItem[]): void {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (!item) break;
+    if (item.kind === "turn_ended") {
+      item.tail = false;
+      return;
+    }
+    if (item.kind === "user" || item.kind === "agent" || item.kind === "thought" || item.kind === "tool" || item.kind === "plan") return;
   }
 }
 
@@ -75,10 +107,11 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
     const body = ev.body;
     switch (body.type) {
       case "user_prompt":
+        markContinued(items);
         items.push({ kind: "user", key, text: body.text });
         break;
       case "turn_ended":
-        items.push({ kind: "turn_ended", key, stopReason: body.stopReason });
+        items.push({ kind: "turn_ended", key, stopReason: body.stopReason, seq: ev.seq, branchId: ev.branchId, ts: ev.ts, tail: true });
         break;
       case "agent_error":
         items.push({ kind: "error", key, message: body.message });
@@ -103,6 +136,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "update": {
         const u = body.update;
+        if (CONVERSATIONAL_UPDATES.has(u.sessionUpdate)) markContinued(items);
         switch (u.sessionUpdate) {
           case "agent_message_chunk":
             appendText("agent", key, blockText(u.content));

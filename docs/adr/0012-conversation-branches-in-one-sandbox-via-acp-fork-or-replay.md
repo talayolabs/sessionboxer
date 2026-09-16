@@ -1,0 +1,24 @@
+# Conversation branches: "Revert to here" forks the transcript inside one Sandbox, via ACP `session/fork` or a transcript replay
+
+Users want to go back to an earlier point of a conversation and continue from there without losing what came after, inside the same Session (same box, same files), with the Agent's memory rewound to that point. Snapshot forks (ADR-0009) already cover "new box from a point"; this is the lighter, in-place counterpart. Only one conversation may be running in a Session at a time.
+
+Probes on this VM established: `claude-agent-acp` advertises `sessionCapabilities.fork` and implements `session/fork`; a JetBrains-originated `_meta.jetbrains.air.fork { version: 1, messageId }` forks *up to* an assistant message, and our stored `agent_message_chunk` updates carry those `messageId`s. The fork response only holds `sessionId`; the forked session is not promptable ("Session not found") until it is `session/load`ed on the same connection. `devin acp` has no fork (load/list/delete only).
+
+## Considered Options
+
+- Hard delete: drop the events after the point and keep prompting the same ACP session (rejected): the Agent would still remember what was deleted, and the user asked for a soft delete.
+- One Sandbox per branch (rejected): a branch is meant to be cheap and instant; snapshot forks already exist for that.
+- Branches as a tree of event ranges in one Session, one ACP session per branch, only the active one loaded in the Agent (chosen). Claude: `session/fork` at the last assistant `messageId` before the point, then `session/load` of the fork. Providers without fork: a new ACP session whose first prompt is the transcript up to the point (prompts, agent text, tool titles; capped; answered with "OK"). Switching branches restarts the Agent in place so it `session/load`s the branch's ACP session, the same mechanism MCP toggles use.
+
+## Consequences
+
+- Protocol: `Branch { id, sessionId, name, parentId, forkedAtSeq, method: "fork" | "replay" | null, createdAt }`, `ROOT_BRANCH_ID = "root"` (shown as *main*); `Session.branches`/`activeBranchId`; `branchId` on `SessionEvent` and `Snapshot`; `branchScope()`/`inBranchScope()` project a branch as itself plus each ancestor up to its fork `seq`; `POST /sessions/:id/revert { seq }` (a `turn_ended` of the active scope) and `POST /sessions/:id/branch { branchId }`; Daemon RPCs `_sessionboxer/session/fork { messageId, replay }` → `{ acpSessionId, method }` and `_sessionboxer/session/switch { acpSessionId }` → `{ acpSessionId }`.
+- Control Plane: `branches` table (with the branch's ACP session id), `active_branch_id` on sessions, `branch_id` on events and snapshots (defaults `root`, so old databases migrate in place; the root row is created lazily on the first revert). Events are appended to the active branch; `GET /events` and the transcript only return the active scope. A revert point must be a `turn_ended` in scope with conversational events after it (bookkeeping updates such as usage/title do not count), the Session must be idle, and the snapshot chain is awaited first; the current ACP session id is recorded on the branch being left. A failed `session/load` on switch keeps the branch but starts a fresh ACP session and logs it. Snapshot forks copy the origin's visible scope into the new Session's root branch.
+- Daemon: `forkSession()`/`switchSession()` run under a `branching` flag that refuses prompts meanwhile (and are refused during a turn); `replaying` suppresses the history the fork/load replays into `session/update`. The new ACP session id is persisted so Stop/Resume loads the active branch.
+- Web: a divider after every `turn_ended` ("turn ended HH:MM"); the tail divider (nothing conversational after it) is accent-colored and has no Revert button, earlier ones have **↶ Revert to here**; the divider where branches part offers **↪ Continue on <parent>** / **⑂ <child>**; a **⑂** selector in the header lists all branches. Buttons are disabled while the Session is not idle or a switch is in flight. Events, saved messages and snapshots are refetched when the active branch changes; snapshot markers are filtered to the scope.
+- Files are shared by all branches (one box): reverting the conversation does not revert the workspace. A Snapshot fork is the tool for that.
+- Not done: renaming or deleting branches; a branch tree view (branches list only in the selector and on the dividers).
+
+## Verified (M11)
+
+REST smoke against live Sandboxes, Claude and Devin: revert refused with 409 during a turn and at the tail; revert to the first turn created `branch 1` (Claude `fork`, Devin `replay`) in 2.4 s / 6.1 s; the branch listed only ALPHA, `main` after switching back listed ALPHA and BRAVO; switching back to the branch showed its own continuation; Stop/Resume reloaded the branch's ACP session. Browser run via the testing agent.

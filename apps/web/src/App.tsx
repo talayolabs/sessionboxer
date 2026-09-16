@@ -3,6 +3,10 @@ import {
   DOCKER_MODE_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
+  ROOT_BRANCH_ID,
+  branchScope,
+  inBranchScope,
+  type Branch,
   type ModelOption,
   type Provider,
   type ProviderModels,
@@ -122,7 +126,8 @@ export function App() {
     void run(async () => setModels(await api.models()));
   }, [reloadSessions, run]);
 
-  // Load events and saved messages when the selected session changes; the WS keeps them current.
+  // Load events and saved messages when the selected session (or its active branch) changes; the WS keeps them current.
+  const activeBranchId = selected?.activeBranchId ?? ROOT_BRANCH_ID;
   useEffect(() => {
     if (!selectedId) {
       setEvents([]);
@@ -145,7 +150,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedId, run]);
+  }, [selectedId, activeBranchId, run]);
 
   useEffect(() => {
     setDialogSnapshots(null);
@@ -225,7 +230,12 @@ export function App() {
     );
   }, [selectedId, reloadSessions, run, setRoute]);
 
-  const items = useMemo(() => buildTranscript(events, snapshots), [events, snapshots]);
+  const branches = selected?.branches ?? EMPTY_BRANCHES;
+  const visibleSnapshots = useMemo(() => {
+    const scope = branchScope(branches, activeBranchId);
+    return snapshots.filter((s) => inBranchScope(scope, s.branchId, s.eventSeq));
+  }, [snapshots, branches, activeBranchId]);
+  const items = useMemo(() => buildTranscript(events, visibleSnapshots), [events, visibleSnapshots]);
   const anyTokenSet = settings
     ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
     : true;
@@ -358,7 +368,7 @@ export function App() {
             models={models?.[selected.provider] ?? []}
             items={items}
             saved={saved}
-            snapshots={snapshots}
+            snapshots={visibleSnapshots}
             snapshotting={snapshotting.has(selected.id)}
             forkRequest={forkRequest?.sessionId === selected.id ? forkRequest.snapshotId : null}
             onForkRequestHandled={clearForkRequest}
@@ -374,6 +384,7 @@ export function App() {
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
 const EMPTY_MODELS: ProviderModels = Object.fromEntries(PROVIDERS.map((p): [Provider, ModelOption[]] => [p, []])) as ProviderModels;
+const EMPTY_BRANCHES: Branch[] = [];
 
 /** Total storage (machine + Snapshots) under a sidebar entry; click opens the Snapshots popup with the breakdown. */
 function SessionSizes({
@@ -460,6 +471,7 @@ function SessionView({
   const [title, setTitle] = useState(session.title);
   const [forkFrom, setForkFrom] = useState<string | null>(null);
   const [forking, setForking] = useState(false);
+  const [branching, setBranching] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
@@ -528,6 +540,17 @@ function SessionView({
       if (confirm(`Delete snapshot #${s.ordinal} (${formatMb(s.sizeBytes)})?`)) void run(() => api.deleteSnapshot(session.id, s.id));
     },
   };
+  const branchActions = {
+    onRevert: (seq: number) => {
+      setBranching(true);
+      void run(() => api.revert(session.id, { seq })).finally(() => setBranching(false));
+    },
+    onSwitch: (branchId: string) => {
+      if (branchId === session.activeBranchId) return;
+      setBranching(true);
+      void run(() => api.switchBranch(session.id, { branchId })).finally(() => setBranching(false));
+    },
+  };
 
   return (
     <div className="session">
@@ -560,6 +583,24 @@ function SessionView({
         <span className="muted" title={sourceLabel}>
           {sourceLabel}
         </span>
+        {session.branches.length > 1 && (
+          <label className="branch-select" title="Conversation branch (from “Revert to here”); only the active one talks to the Agent">
+            {"\u2387"}
+            <select
+              value={session.activeBranchId}
+              disabled={branching || session.status !== "idle"}
+              onChange={(e) => branchActions.onSwitch(e.target.value)}
+            >
+              {session.branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                  {b.forkedAtSeq !== null ? ` (from ${session.branches.find((p) => p.id === b.parentId)?.name ?? "?"})` : ""}
+                </option>
+              ))}
+            </select>
+            {branching && <span className="muted">switching…</span>}
+          </label>
+        )}
         <span className="spacer" />
         <div className="segmented" role="tablist" aria-label="Side pane">
           {PANES.map((p) => (
@@ -637,7 +678,15 @@ function SessionView({
       )}
       <div className="session-body">
         <div className="chat" ref={chatRef}>
-          <Transcript items={items} actions={snapshotActions} />
+          <Transcript
+            items={items}
+            actions={snapshotActions}
+            branchActions={branchActions}
+            branches={session.branches}
+            activeBranchId={session.activeBranchId}
+            canBranch={session.status === "idle"}
+            branchBusy={branching}
+          />
           <Composer
             value={text}
             onChange={setText}

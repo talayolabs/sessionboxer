@@ -124,6 +124,65 @@ export type ModelOption = z.infer<typeof ModelOption>;
 /** Last model list seen from each Provider's Agent; empty until a Session of that Provider has started. */
 export type ProviderModels = Record<Provider, ModelOption[]>;
 
+// ---------------------------------------------------------------------------
+// Branches: "revert to here" at a turn boundary keeps the conversation that
+// followed as a branch and continues from that point on a new one. Branches
+// share the Session's Sandbox; only the active branch talks to the Agent.
+// ---------------------------------------------------------------------------
+
+/** Id of the Session's original conversation. */
+export const ROOT_BRANCH_ID = "root";
+
+export const BRANCH_METHODS = ["fork", "replay"] as const;
+/** How the Agent's memory was rewound: an ACP `session/fork` at the message, or a new session fed the transcript. */
+export const BranchMethod = z.enum(BRANCH_METHODS);
+export type BranchMethod = z.infer<typeof BranchMethod>;
+
+export const Branch = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  name: z.string(),
+  /** `null` for the root branch. */
+  parentId: z.string().nullable(),
+  /** `turn_ended` event of the parent this branch continues from; `null` for the root branch. */
+  forkedAtSeq: z.number().int().nullable(),
+  method: BranchMethod.nullable(),
+  createdAt: z.string(),
+});
+export type Branch = z.infer<typeof Branch>;
+
+/** A branch's view of the transcript: its own events plus each ancestor's up to the fork point. */
+export type BranchScope = Array<{ branchId: string; uptoSeq: number }>;
+
+export function branchScope(branches: Branch[], activeBranchId: string): BranchScope {
+  const scope: BranchScope = [];
+  let id: string | null = activeBranchId;
+  let upto = Number.POSITIVE_INFINITY;
+  const seen = new Set<string>();
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    scope.push({ branchId: id, uptoSeq: upto });
+    const branch = branches.find((b) => b.id === id);
+    if (!branch || branch.parentId === null || branch.forkedAtSeq === null) break;
+    upto = branch.forkedAtSeq;
+    id = branch.parentId;
+  }
+  return scope;
+}
+
+export function inBranchScope(scope: BranchScope, branchId: string, seq: number): boolean {
+  return scope.some((s) => s.branchId === branchId && seq <= s.uptoSeq);
+}
+
+export const RevertRequest = z.object({
+  /** `seq` of the `turn_ended` event to continue from (the divider in the transcript). */
+  seq: z.number().int().positive(),
+});
+export type RevertRequest = z.infer<typeof RevertRequest>;
+
+export const SwitchBranchRequest = z.object({ branchId: z.string().min(1) });
+export type SwitchBranchRequest = z.infer<typeof SwitchBranchRequest>;
+
 export const Session = z.object({
   id: z.string(),
   title: z.string(),
@@ -150,6 +209,10 @@ export const Session = z.object({
   /** Bytes taken by this Session's Snapshot images (each Snapshot stores a full copy of the writable layer). */
   snapshotBytes: z.number().int().nonnegative().default(0),
   snapshotCount: z.number().int().nonnegative().default(0),
+  /** Conversation branches; empty until the first "revert", then the root and every branch. */
+  branches: z.array(Branch).default([]),
+  /** Branch the transcript shows and prompts go to. */
+  activeBranchId: z.string().default(ROOT_BRANCH_ID),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -239,6 +302,8 @@ export const Snapshot = z.object({
   imageId: z.string(),
   /** Last Session event included in the Snapshot; the transcript marker goes right after it. */
   eventSeq: z.number().int().nonnegative(),
+  /** Branch that was active when the Snapshot was taken. */
+  branchId: z.string().default(ROOT_BRANCH_ID),
   /** Size of the committed layer (the Sandbox's writable layer at that moment). */
   sizeBytes: z.number().int().nonnegative(),
   /** Saved messages that were queued when the Snapshot was taken (candidates for the fork's first prompt). */
@@ -345,9 +410,10 @@ export type SessionEventBody =
   | { type: "model_changed"; model: string; name: string };
 
 export interface SessionEvent {
-  /** Control Plane sequence, monotonic per Session. */
+  /** Control Plane sequence, monotonic per Session (across branches). */
   seq: number;
   sessionId: string;
+  branchId: string;
   ts: string;
   body: SessionEventBody;
 }
@@ -488,6 +554,8 @@ export const DAEMON_METHODS = {
   ask: "_sessionboxer/ask",
   mcpSet: "_sessionboxer/mcp/set",
   modelSet: "_sessionboxer/model/set",
+  sessionFork: "_sessionboxer/session/fork",
+  sessionSwitch: "_sessionboxer/session/switch",
   cancel: "_sessionboxer/cancel",
   status: "_sessionboxer/status",
   event: "_sessionboxer/event",
@@ -555,6 +623,28 @@ export type DaemonModelSetParams = z.infer<typeof DaemonModelSetParams>;
 
 export const DaemonModelSetResult = z.object({ applied: z.boolean() });
 export type DaemonModelSetResult = z.infer<typeof DaemonModelSetResult>;
+
+/**
+ * Rewinds the Agent to an earlier point and continues on a new ACP session: `session/fork` at
+ * `messageId` (the last assistant message to keep; `null` forks the whole history) when the Agent
+ * supports forking, otherwise a fresh session primed with `replay` (the transcript so far).
+ * Fails while a turn is active. The Daemon switches to the new session.
+ */
+export const DaemonSessionForkParams = z.object({
+  messageId: z.string().nullable(),
+  replay: z.string().nullable(),
+});
+export type DaemonSessionForkParams = z.infer<typeof DaemonSessionForkParams>;
+
+export const DaemonSessionForkResult = z.object({ acpSessionId: z.string(), method: BranchMethod });
+export type DaemonSessionForkResult = z.infer<typeof DaemonSessionForkResult>;
+
+/** Makes `acpSessionId` the Agent's session (restarting it with `session/load`); fails while a turn is active. */
+export const DaemonSessionSwitchParams = z.object({ acpSessionId: z.string().min(1) });
+export type DaemonSessionSwitchParams = z.infer<typeof DaemonSessionSwitchParams>;
+
+export const DaemonSessionSwitchResult = z.object({ acpSessionId: z.string() });
+export type DaemonSessionSwitchResult = z.infer<typeof DaemonSessionSwitchResult>;
 
 export const DaemonPromptParams = z.object({ text: z.string().min(1) });
 export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;

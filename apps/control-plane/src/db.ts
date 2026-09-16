@@ -1,13 +1,18 @@
 import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
 import {
+  BranchMethod,
   DockerMode,
   ModelOption,
   PROVIDERS,
   Provider,
+  ROOT_BRANCH_ID,
   Session,
   SnapshotReason,
   WorkspaceSource,
+  branchScope,
+  type Branch,
+  type BranchScope,
   type ProviderModels,
   type SavedMessage,
   type SessionEvent,
@@ -33,6 +38,7 @@ interface SessionRow {
   mcp_pending: number;
   model: string | null;
   model_pending: number;
+  active_branch_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -51,8 +57,20 @@ interface SnapshotRow {
   image_tag: string;
   image_id: string;
   event_seq: number;
+  branch_id: string;
   size_bytes: number;
   queued_messages: string;
+  created_at: string;
+}
+
+interface BranchRow {
+  session_id: string;
+  id: string;
+  name: string;
+  parent_id: string | null;
+  forked_at_seq: number | null;
+  method: string | null;
+  acp_session_id: string | null;
   created_at: string;
 }
 
@@ -67,9 +85,13 @@ interface SavedMessageRow {
 interface EventRow {
   seq: number;
   session_id: string;
+  branch_id: string;
   ts: string;
   body: string;
 }
+
+/** Stands in for "no upper bound" in SQL (a `BranchScope` uses Infinity). */
+const MAX_SEQ = Number.MAX_SAFE_INTEGER;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -88,6 +110,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   mcp_pending INTEGER NOT NULL DEFAULT 0,
   model TEXT,
   model_pending INTEGER NOT NULL DEFAULT 0,
+  active_branch_id TEXT NOT NULL DEFAULT 'root',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -99,10 +122,22 @@ CREATE TABLE IF NOT EXISTS snapshots (
   image_tag TEXT NOT NULL,
   image_id TEXT NOT NULL,
   event_seq INTEGER NOT NULL,
+  branch_id TEXT NOT NULL DEFAULT 'root',
   size_bytes INTEGER NOT NULL,
   queued_messages TEXT NOT NULL,
   created_at TEXT NOT NULL,
   UNIQUE (session_id, ordinal)
+);
+CREATE TABLE IF NOT EXISTS branches (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  parent_id TEXT,
+  forked_at_seq INTEGER,
+  method TEXT,
+  acp_session_id TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, id)
 );
 CREATE TABLE IF NOT EXISTS saved_messages (
   id TEXT PRIMARY KEY,
@@ -114,6 +149,7 @@ CREATE TABLE IF NOT EXISTS saved_messages (
 CREATE TABLE IF NOT EXISTS events (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
+  branch_id TEXT NOT NULL DEFAULT 'root',
   ts TEXT NOT NULL,
   body TEXT NOT NULL,
   PRIMARY KEY (session_id, seq)
@@ -140,6 +176,9 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "mcp_pending", ddl: "ALTER TABLE sessions ADD COLUMN mcp_pending INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "model", ddl: "ALTER TABLE sessions ADD COLUMN model TEXT" },
   { table: "sessions", column: "model_pending", ddl: "ALTER TABLE sessions ADD COLUMN model_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
+  { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
+  { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];
 
 const SESSION_SELECT = `
@@ -168,19 +207,25 @@ export class Db {
 
   listSessions(): Session[] {
     const rows = this.db.prepare(`${SESSION_SELECT} ORDER BY s.created_at DESC`).all() as SessionQueryRow[];
-    return rows.map(rowToSession);
+    const branches = new Map<string, Branch[]>();
+    for (const row of this.db.prepare("SELECT * FROM branches ORDER BY created_at ASC").all() as BranchRow[]) {
+      const list = branches.get(row.session_id) ?? [];
+      list.push(rowToBranch(row));
+      branches.set(row.session_id, list);
+    }
+    return rows.map((r) => rowToSession(r, branches.get(r.id) ?? []));
   }
 
   getSession(id: string): Session | null {
     const row = this.db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(id) as SessionQueryRow | undefined;
-    return row ? rowToSession(row) : null;
+    return row ? rowToSession(row, this.listBranches(id)) : null;
   }
 
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, active_branch_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @active_branch_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -193,11 +238,44 @@ export class Db {
       .prepare(
         `UPDATE sessions SET title=@title, status=@status, container_id=@container_id, error=@error,
            queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes,
-           mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, model=@model, model_pending=@model_pending, updated_at=@updated_at
+           mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, model=@model, model_pending=@model_pending,
+           active_branch_id=@active_branch_id, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
     return next;
+  }
+
+  listBranches(sessionId: string): Branch[] {
+    const rows = this.db.prepare("SELECT * FROM branches WHERE session_id = ? ORDER BY created_at ASC").all(sessionId) as BranchRow[];
+    return rows.map(rowToBranch);
+  }
+
+  insertBranch(branch: Branch, acpSessionId: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO branches (session_id, id, name, parent_id, forked_at_seq, method, acp_session_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(branch.sessionId, branch.id, branch.name, branch.parentId, branch.forkedAtSeq, branch.method, acpSessionId, branch.createdAt);
+  }
+
+  /** ACP session the Agent runs for this branch; `null` when never recorded. */
+  branchAcpSessionId(sessionId: string, branchId: string): string | null {
+    const row = this.db.prepare("SELECT acp_session_id FROM branches WHERE session_id = ? AND id = ?").get(sessionId, branchId) as
+      | { acp_session_id: string | null }
+      | undefined;
+    return row?.acp_session_id ?? null;
+  }
+
+  setBranchAcpSessionId(sessionId: string, branchId: string, acpSessionId: string): void {
+    this.db.prepare("UPDATE branches SET acp_session_id = ? WHERE session_id = ? AND id = ?").run(acpSessionId, sessionId, branchId);
+  }
+
+  /** The active branch's view of the transcript (every event when the Session has no branches). */
+  activeScope(sessionId: string): BranchScope {
+    const row = this.db.prepare("SELECT active_branch_id FROM sessions WHERE id = ?").get(sessionId) as { active_branch_id: string } | undefined;
+    return branchScope(this.listBranches(sessionId), row?.active_branch_id ?? ROOT_BRANCH_ID);
   }
 
   /** Sessions whose Sandbox was started from this Snapshot's image (its image must stay). */
@@ -238,8 +316,8 @@ export class Db {
   insertSnapshot(snapshot: Snapshot): void {
     this.db
       .prepare(
-        `INSERT INTO snapshots (id, session_id, ordinal, reason, image_tag, image_id, event_seq, size_bytes, queued_messages, created_at)
-         VALUES (@id, @session_id, @ordinal, @reason, @image_tag, @image_id, @event_seq, @size_bytes, @queued_messages, @created_at)`,
+        `INSERT INTO snapshots (id, session_id, ordinal, reason, image_tag, image_id, event_seq, branch_id, size_bytes, queued_messages, created_at)
+         VALUES (@id, @session_id, @ordinal, @reason, @image_tag, @image_id, @event_seq, @branch_id, @size_bytes, @queued_messages, @created_at)`,
       )
       .run({
         id: snapshot.id,
@@ -249,6 +327,7 @@ export class Db {
         image_tag: snapshot.imageTag,
         image_id: snapshot.imageId,
         event_seq: snapshot.eventSeq,
+        branch_id: snapshot.branchId,
         size_bytes: snapshot.sizeBytes,
         queued_messages: JSON.stringify(snapshot.queuedMessages),
         created_at: snapshot.createdAt,
@@ -323,31 +402,39 @@ export class Db {
     idsInOrder.forEach((id, i) => stmt.run(i, id));
   }
 
+  /** Appends to the Session's active branch. */
   appendEvent(sessionId: string, body: SessionEventBody, ts = new Date().toISOString()): SessionEvent {
     const row = this.db
-      .prepare("SELECT COALESCE(MAX(seq), 0) AS max FROM events WHERE session_id = ?")
-      .get(sessionId) as { max: number };
+      .prepare("SELECT COALESCE(MAX(seq), 0) AS max, (SELECT active_branch_id FROM sessions WHERE id = ?) AS branch FROM events WHERE session_id = ?")
+      .get(sessionId, sessionId) as { max: number; branch: string | null };
     const seq = row.max + 1;
+    const branchId = row.branch ?? ROOT_BRANCH_ID;
     this.db
-      .prepare("INSERT INTO events (session_id, seq, ts, body) VALUES (?, ?, ?, ?)")
-      .run(sessionId, seq, ts, JSON.stringify(body));
-    return { seq, sessionId, ts, body };
+      .prepare("INSERT INTO events (session_id, seq, branch_id, ts, body) VALUES (?, ?, ?, ?, ?)")
+      .run(sessionId, seq, branchId, ts, JSON.stringify(body));
+    return { seq, sessionId, branchId, ts, body };
+  }
+
+  getEvent(sessionId: string, seq: number): SessionEvent | null {
+    const row = this.db.prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?").get(sessionId, seq) as EventRow | undefined;
+    return row ? rowToEvent(row) : null;
   }
 
   /**
-   * Copies the conversation up to `uptoSeq` into a new Session, keeping sequence
-   * numbers (so later appends continue after them). Lifecycle `status` markers are
-   * the origin's, not the fork's, and are left out.
+   * Copies the conversation seen from `scope` up to `uptoSeq` into a new Session's root
+   * branch, keeping sequence numbers (so later appends continue after them). Lifecycle
+   * `status` markers are the origin's, not the fork's, and are left out.
    */
-  copyEvents(fromSessionId: string, toSessionId: string, uptoSeq: number): void {
+  copyEvents(fromSessionId: string, toSessionId: string, uptoSeq: number, scope: BranchScope): void {
+    const where = scopeClause(scope);
     this.db
       .prepare(
-        `INSERT INTO events (session_id, seq, ts, body)
-         SELECT ?, seq, ts, body FROM events
-         WHERE session_id = ? AND seq <= ? AND json_extract(body, '$.type') <> 'status'
+        `INSERT INTO events (session_id, seq, branch_id, ts, body)
+         SELECT ?, seq, '${ROOT_BRANCH_ID}', ts, body FROM events
+         WHERE session_id = ? AND seq <= ? AND json_extract(body, '$.type') <> 'status' AND ${where.sql}
          ORDER BY seq ASC`,
       )
-      .run(toSessionId, fromSessionId, uptoSeq);
+      .run(toSessionId, fromSessionId, uptoSeq, ...where.params);
   }
 
   lastEventSeq(sessionId: string): number {
@@ -357,16 +444,13 @@ export class Db {
     return row.max;
   }
 
-  listEvents(sessionId: string, afterSeq = 0, limit = 5000): SessionEvent[] {
+  /** Events of one branch's view of the transcript (the active branch's by default). */
+  listEvents(sessionId: string, afterSeq = 0, limit = 5000, scope = this.activeScope(sessionId)): SessionEvent[] {
+    const where = scopeClause(scope);
     const rows = this.db
-      .prepare("SELECT * FROM events WHERE session_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?")
-      .all(sessionId, afterSeq, limit) as EventRow[];
-    return rows.map((r) => ({
-      seq: r.seq,
-      sessionId: r.session_id,
-      ts: r.ts,
-      body: JSON.parse(r.body) as SessionEventBody,
-    }));
+      .prepare(`SELECT * FROM events WHERE session_id = ? AND seq > ? AND ${where.sql} ORDER BY seq ASC LIMIT ?`)
+      .all(sessionId, afterSeq, ...where.params, limit) as EventRow[];
+    return rows.map(rowToEvent);
   }
 
   getDaemonCursor(sessionId: string): { epoch: string; lastSeq: number } | null {
@@ -418,11 +502,46 @@ export class Db {
 export type SessionPatch = Partial<
   Pick<
     Session,
-    "title" | "status" | "containerId" | "error" | "queueRunning" | "autoSnapshot" | "diskBytes" | "mcpEnabled" | "mcpPending" | "model" | "modelPending"
+    | "title"
+    | "status"
+    | "containerId"
+    | "error"
+    | "queueRunning"
+    | "autoSnapshot"
+    | "diskBytes"
+    | "mcpEnabled"
+    | "mcpPending"
+    | "model"
+    | "modelPending"
+    | "activeBranchId"
   >
 >;
 
-function rowToSession(row: SessionQueryRow): Session {
+function scopeClause(scope: BranchScope): { sql: string; params: Array<string | number> } {
+  if (scope.length === 0) return { sql: "1", params: [] };
+  return {
+    sql: `(${scope.map(() => "(branch_id = ? AND seq <= ?)").join(" OR ")})`,
+    params: scope.flatMap((s) => [s.branchId, Number.isFinite(s.uptoSeq) ? s.uptoSeq : MAX_SEQ]),
+  };
+}
+
+function rowToEvent(r: EventRow): SessionEvent {
+  return { seq: r.seq, sessionId: r.session_id, branchId: r.branch_id, ts: r.ts, body: JSON.parse(r.body) as SessionEventBody };
+}
+
+function rowToBranch(row: BranchRow): Branch {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    name: row.name,
+    parentId: row.parent_id,
+    forkedAtSeq: row.forked_at_seq,
+    method: row.method === null ? null : BranchMethod.parse(row.method),
+    createdAt: row.created_at,
+  };
+}
+
+function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
   return Session.parse({
     id: row.id,
     title: row.title,
@@ -441,6 +560,8 @@ function rowToSession(row: SessionQueryRow): Session {
     modelPending: row.model_pending === 1,
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
+    branches,
+    activeBranchId: row.active_branch_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -455,6 +576,7 @@ function rowToSnapshot(row: SnapshotRow): Snapshot {
     imageTag: row.image_tag,
     imageId: row.image_id,
     eventSeq: row.event_seq,
+    branchId: row.branch_id,
     sizeBytes: row.size_bytes,
     queuedMessages: JSON.parse(row.queued_messages) as string[],
     createdAt: row.created_at,
@@ -482,6 +604,7 @@ function sessionToRow(s: Session): SessionRow {
     mcp_pending: s.mcpPending ? 1 : 0,
     model: s.model,
     model_pending: s.modelPending ? 1 : 0,
+    active_branch_id: s.activeBranchId,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };

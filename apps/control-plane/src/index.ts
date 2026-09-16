@@ -11,6 +11,8 @@ import {
   AskRequest,
   CreateSessionRequest,
   ForkSessionRequest,
+  RevertRequest,
+  SwitchBranchRequest,
   FsWriteParams,
   PromptRequest,
   PtyOpenParams,
@@ -112,6 +114,16 @@ api.post("/sessions/:id/cancel", async (c) => {
   return c.json({ ok: true });
 });
 api.post("/sessions/:id/stop", async (c) => c.json(await sessions.stop(c.req.param("id"))));
+
+// Conversation branches: "revert to here" keeps what followed as a branch; switch between them.
+api.post("/sessions/:id/revert", async (c) => {
+  const req = RevertRequest.parse(await c.req.json());
+  return c.json(await sessions.revert(c.req.param("id"), req.seq));
+});
+api.post("/sessions/:id/branch", async (c) => {
+  const req = SwitchBranchRequest.parse(await c.req.json());
+  return c.json(await sessions.switchBranch(c.req.param("id"), req.branchId));
+});
 
 // Saved messages ("save for later") and the queue that plays them one turn at a time.
 api.get("/sessions/:id/saved", (c) => c.json(sessions.savedMessages(c.req.param("id"))));

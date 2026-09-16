@@ -12,7 +12,14 @@ import {
   type SessionConfigOption,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
-import type { McpServerSpec, ModelOption, SessionUpdate, StopReason } from "@sessionboxer/protocol";
+import type {
+  DaemonSessionForkParams,
+  DaemonSessionForkResult,
+  McpServerSpec,
+  ModelOption,
+  SessionUpdate,
+  StopReason,
+} from "@sessionboxer/protocol";
 import { acpMcpServers } from "./mcp-config.js";
 
 export interface AgentConfig {
@@ -75,6 +82,8 @@ export class AgentManager {
   private conn: ClientConnection | null = null;
   private starting: Promise<void> | null = null;
   private replaying = false;
+  /** A fork/switch is rewiring the ACP session; prompts are refused but it is not a turn. */
+  private branching = false;
   /** Throwaway ACP sessions of `ask()`, kept forever so their late updates never reach the transcript. */
   private readonly oneShotIds = new Set<string>();
   private readonly oneShotSinks = new Map<string, (update: SessionUpdate) => void>();
@@ -101,6 +110,8 @@ export class AgentManager {
 
   acpSessionId: string | null = null;
   agentInfo: { name: string; version: string } | null = null;
+  /** The Agent advertised ACP `session/fork` (unstable; claude-agent-acp does, devin acp does not). */
+  canFork = false;
   turnActive = false;
   ready = false;
   error: string | null = null;
@@ -319,6 +330,7 @@ export class AgentManager {
       this.agentInfo = init.agentInfo
         ? { name: init.agentInfo.name, version: init.agentInfo.version ?? "" }
         : null;
+      this.canFork = Boolean(init.agentCapabilities?.sessionCapabilities?.fork);
       const mcpServers = acpMcpServers(this.cfg.mcpCommand, userServers);
 
       let loaded = false;
@@ -397,6 +409,7 @@ export class AgentManager {
 
   async prompt(text: string): Promise<void> {
     if (this.turnActive) throw new Error("a turn is already active");
+    if (this.branching) throw new Error("the conversation is being branched; retry in a moment");
     this.turnActive = true;
     this.events.onStateChange();
     try {
@@ -408,6 +421,7 @@ export class AgentManager {
       });
       this.events.onTurnEnded(result.stopReason);
     } catch (e) {
+      this.cfg.log(`session/prompt on ${this.acpSessionId} failed: ${String(e)}`);
       this.events.onError(e instanceof Error ? e.message : String(e));
     } finally {
       this.turnActive = false;
@@ -454,6 +468,101 @@ export class AgentManager {
   async cancel(): Promise<void> {
     if (!this.conn || !this.acpSessionId || !this.turnActive) return;
     await this.conn.agent.notify("session/cancel", { sessionId: this.acpSessionId });
+  }
+
+  /**
+   * Continues the conversation from an earlier point on a new ACP session, which becomes
+   * the Agent's session. `session/fork` when the Agent offers it (claude-agent-acp forks
+   * up to `messageId` via its JetBrains `_meta`, whole history when `null`), otherwise a
+   * fresh session primed with `replay`. Prompts are refused meanwhile.
+   */
+  async forkSession(params: DaemonSessionForkParams): Promise<DaemonSessionForkResult> {
+    if (this.turnActive) throw new Error("a turn is already active");
+    if (this.branching) throw new Error("another branch operation is in progress");
+    this.branching = true;
+    try {
+      await this.mcpApplyChain.catch(() => undefined);
+      await this.modelApplyChain.catch(() => undefined);
+      await this.ensureStarted();
+      const conn = this.conn;
+      const from = this.acpSessionId;
+      if (!conn || !from) throw new Error("agent not ready");
+      const mcpServers = acpMcpServers(this.cfg.mcpCommand, this.mcpServers ?? []);
+      this.replaying = true;
+      try {
+        if (this.canFork) {
+          try {
+            const forked = await conn.agent.request("session/fork", {
+              sessionId: from,
+              cwd: this.cfg.cwd,
+              mcpServers,
+              ...(params.messageId ? { _meta: { jetbrains: { air: { fork: { version: 1, messageId: params.messageId } } } } } : {}),
+            });
+            // claude-agent-acp registers the fork only on `session/load`; prompting before that is "Session not found".
+            const loaded = await conn.agent.request("session/load", { sessionId: forked.sessionId, cwd: this.cfg.cwd, mcpServers });
+            await this.adoptSession(conn, forked.sessionId, loaded?.modes ?? forked.modes, loaded?.configOptions ?? forked.configOptions);
+            this.cfg.log(`forked ACP session ${from} -> ${forked.sessionId}${params.messageId ? ` at ${params.messageId}` : ""}`);
+            return { acpSessionId: forked.sessionId, method: "fork" };
+          } catch (e) {
+            if (!params.replay) throw e;
+            this.cfg.log(`session/fork failed, replaying the transcript instead: ${String(e)}`);
+          }
+        }
+        if (!params.replay) throw new Error("this Agent cannot fork its session");
+        const created = await this.newSessionWithRetry(conn, { cwd: this.cfg.cwd, mcpServers });
+        await this.adoptSession(conn, created.sessionId, created.modes, created.configOptions);
+        const result = await conn.agent.request("session/prompt", {
+          sessionId: created.sessionId,
+          prompt: [{ type: "text", text: params.replay }],
+        });
+        this.cfg.log(`replayed transcript into ACP session ${created.sessionId} (${result.stopReason})`);
+        return { acpSessionId: created.sessionId, method: "replay" };
+      } finally {
+        this.replaying = false;
+      }
+    } finally {
+      this.branching = false;
+      this.events.onStateChange();
+    }
+  }
+
+  /**
+   * Makes `acpSessionId` the Agent's session: restarts the Agent so it `session/load`s it.
+   * Resolves with the session actually running (a new one if the load failed).
+   */
+  async switchSession(acpSessionId: string): Promise<string> {
+    if (this.turnActive) throw new Error("a turn is already active");
+    if (this.branching) throw new Error("another branch operation is in progress");
+    if (acpSessionId === this.acpSessionId && this.ready) return acpSessionId;
+    this.branching = true;
+    try {
+      await this.mcpApplyChain.catch(() => undefined);
+      if (this.starting) await this.starting.catch(() => undefined);
+      if (this.turnActive) throw new Error("a turn is already active");
+      this.acpSessionId = acpSessionId;
+      this.writeState({ acpSessionId });
+      this.kill();
+      await this.ensureStarted();
+      if (!this.acpSessionId) throw new Error("agent not ready");
+      return this.acpSessionId;
+    } finally {
+      this.branching = false;
+    }
+  }
+
+  private async adoptSession(
+    conn: ClientConnection,
+    sessionId: string,
+    modes: SessionModeState | null | undefined,
+    configOptions: SessionConfigOption[] | null | undefined,
+  ): Promise<void> {
+    this.acpSessionId = sessionId;
+    this.writeState({ acpSessionId: sessionId });
+    this.currentModel = null;
+    this.captureConfigOptions(configOptions);
+    await this.ensureBypassMode(conn, sessionId, modes);
+    await this.applyRequestedModel(conn, sessionId).catch((e: unknown) => this.cfg.log(`model switch after fork failed: ${String(e)}`));
+    this.events.onStateChange();
   }
 
   private onAgentGone(reason: string): void {

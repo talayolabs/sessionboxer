@@ -9,6 +9,10 @@ import {
   DaemonMcpSetParams,
   DaemonModelSetParams,
   DaemonPromptParams,
+  DaemonSessionForkParams,
+  type DaemonSessionForkResult,
+  DaemonSessionSwitchParams,
+  type DaemonSessionSwitchResult,
   FsPathParams,
   FsWriteParams,
   Provider,
@@ -154,6 +158,16 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.modelSet: {
       const p = DaemonModelSetParams.parse(params);
       return { applied: agent.setModel(p.model) };
+    }
+    case DAEMON_METHODS.sessionFork: {
+      const p = DaemonSessionForkParams.parse(params);
+      const result: DaemonSessionForkResult = await agent.forkSession(p);
+      return result;
+    }
+    case DAEMON_METHODS.sessionSwitch: {
+      const p = DaemonSessionSwitchParams.parse(params);
+      const result: DaemonSessionSwitchResult = { acpSessionId: await agent.switchSession(p.acpSessionId) };
+      return result;
     }
     case DAEMON_METHODS.cancel:
       await agent.cancel();

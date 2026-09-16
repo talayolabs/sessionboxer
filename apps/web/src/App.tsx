@@ -8,12 +8,15 @@ import {
   type SavedMessage,
   type Session,
   type SessionEvent,
+  type Snapshot,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { api, emitFsChanged, subscribe } from "./api";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
+import { ForkDialog } from "./ForkDialog";
+import { formatMb } from "./format";
 import { SavedMessages } from "./SavedMessages";
 import { TerminalPane } from "./Terminal";
 import { Transcript } from "./Transcript";
@@ -69,6 +72,8 @@ export function App() {
   const [route, setRoute] = useRoute();
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [saved, setSaved] = useState<SavedMessage[]>([]);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [snapshotting, setSnapshotting] = useState<Set<string>>(() => new Set());
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const { error, setError, run } = useErrorBanner();
 
@@ -87,14 +92,20 @@ export function App() {
     if (!selectedId) {
       setEvents([]);
       setSaved([]);
+      setSnapshots([]);
       return;
     }
     let cancelled = false;
     void run(async () => {
-      const [evs, msgs] = await Promise.all([api.events(selectedId), api.savedMessages(selectedId)]);
+      const [evs, msgs, snaps] = await Promise.all([
+        api.events(selectedId),
+        api.savedMessages(selectedId),
+        api.snapshots(selectedId),
+      ]);
       if (cancelled) return;
       setEvents(evs);
       setSaved(msgs);
+      setSnapshots(snaps);
     });
     return () => {
       cancelled = true;
@@ -132,20 +143,33 @@ export function App() {
           case "saved_messages":
             if (msg.sessionId === selectedId) setSaved(msg.messages);
             break;
+          case "snapshots":
+            if (msg.sessionId === selectedId) setSnapshots(msg.snapshots);
+            break;
+          case "snapshotting":
+            setSnapshotting((prev) => {
+              const next = new Set(prev);
+              if (msg.active) next.add(msg.sessionId);
+              else next.delete(msg.sessionId);
+              return next;
+            });
+            break;
         }
       },
       () => {
         // Reconnected: refetch to fill any gap.
         void reloadSessions();
+        setSnapshotting(new Set());
         if (selectedId) {
           void run(async () => setEvents(await api.events(selectedId)));
           void run(async () => setSaved(await api.savedMessages(selectedId)));
+          void run(async () => setSnapshots(await api.snapshots(selectedId)));
         }
       },
     );
   }, [selectedId, reloadSessions, run, setRoute]);
 
-  const items = useMemo(() => buildTranscript(events), [events]);
+  const items = useMemo(() => buildTranscript(events, snapshots), [events, snapshots]);
   const anyTokenSet = settings
     ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
     : true;
@@ -169,21 +193,24 @@ export function App() {
               className={s.id === selectedId ? "active" : ""}
               onClick={() => setRoute({ view: "session", id: s.id })}
             >
-              <span className={`dot dot-${s.status}`} title={s.status} />
-              <span className="session-title">{s.title}</span>
-              <span className="session-provider">
-                {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6 "}</span>}
-                {PROVIDER_LABELS[s.provider]}
-                {s.dockerMode !== "none" && (
-                  <span
-                    className={s.dockerMode === "privileged" ? "warn" : undefined}
-                    title={DOCKER_MODE_LABELS[s.dockerMode]}
-                  >
-                    {" \u00b7 "}
-                    {s.dockerMode === "privileged" ? "\u26a0 " : ""}docker
-                  </span>
-                )}
-              </span>
+              <div className="session-row">
+                <span className={`dot dot-${s.status}`} title={s.status} />
+                <span className="session-title">{s.title}</span>
+                <span className="session-provider">
+                  {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6 "}</span>}
+                  {PROVIDER_LABELS[s.provider]}
+                  {s.dockerMode !== "none" && (
+                    <span
+                      className={s.dockerMode === "privileged" ? "warn" : undefined}
+                      title={DOCKER_MODE_LABELS[s.dockerMode]}
+                    >
+                      {" \u00b7 "}
+                      {s.dockerMode === "privileged" ? "\u26a0 " : ""}docker
+                    </span>
+                  )}
+                </span>
+              </div>
+              <SessionSizes session={s} snapshotting={snapshotting.has(s.id)} />
             </li>
           ))}
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}
@@ -228,7 +255,15 @@ export function App() {
           <div className="placeholder">Select a session or create a new one.</div>
         )}
         {route.view === "session" && selected && (
-          <SessionView session={selected} items={items} saved={saved} run={run} />
+          <SessionView
+            session={selected}
+            items={items}
+            saved={saved}
+            snapshots={snapshots}
+            snapshotting={snapshotting.has(selected.id)}
+            run={run}
+            onForked={(s) => setRoute({ view: "session", id: s.id })}
+          />
         )}
       </main>
     </div>
@@ -236,6 +271,25 @@ export function App() {
 }
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
+
+/** Storage line under a sidebar entry: what the Sandbox adds on top of its image, plus its Snapshots. */
+function SessionSizes({ session, snapshotting }: { session: Session; snapshotting: boolean }) {
+  const parts: string[] = [];
+  if (session.diskBytes !== null) parts.push(`${formatMb(session.diskBytes)} machine`);
+  if (session.snapshotCount > 0) {
+    parts.push(`${formatMb(session.snapshotBytes)} in ${session.snapshotCount} snap${session.snapshotCount === 1 ? "" : "s"}`);
+  }
+  if (parts.length === 0 && !snapshotting) return null;
+  return (
+    <div
+      className="session-sizes"
+      title="Machine: the Sandbox's writable layer on top of the image. Snaps: snapshot layer sizes as reported by Docker (layers shared between snapshots are counted once each)."
+    >
+      <span>{parts.join(" \u00b7 ")}</span>
+      {snapshotting && <span className="warn">{"\u{1F4F7} snapshotting\u2026"}</span>}
+    </div>
+  );
+}
 
 type Pane = "desktop" | "files" | "terminal" | "hidden";
 const PANES: Array<{ id: Exclude<Pane, "hidden">; label: string }> = [
@@ -262,16 +316,24 @@ function SessionView({
   session,
   items,
   saved,
+  snapshots,
+  snapshotting,
   run,
+  onForked,
 }: {
   session: Session;
   items: ReturnType<typeof buildTranscript>;
   saved: SavedMessage[];
+  snapshots: Snapshot[];
+  snapshotting: boolean;
   run: Runner;
+  onForked: (s: Session) => void;
 }) {
   const [text, setText] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
+  const [forkFrom, setForkFrom] = useState<string | null>(null);
+  const [forking, setForking] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
@@ -301,7 +363,21 @@ function SessionView({
 
   const source = session.workspaceSource;
   const sourceLabel =
-    source.type === "git" ? `${source.url}${source.ref ? `@${source.ref}` : ""}` : source.type === "copy" ? source.path : "empty workspace";
+    source.type === "git"
+      ? `${source.url}${source.ref ? `@${source.ref}` : ""}`
+      : source.type === "copy"
+        ? source.path
+        : source.type === "fork"
+          ? `fork of ${source.label}`
+          : "empty workspace";
+  const isLive = session.status === "idle" || session.status === "running";
+  const latestSnapshot = snapshots[snapshots.length - 1];
+  const snapshotActions = {
+    onFork: (s: Snapshot) => setForkFrom(s.id),
+    onDelete: (s: Snapshot) => {
+      if (confirm(`Delete snapshot #${s.ordinal} (${formatMb(s.sizeBytes)})?`)) void run(() => api.deleteSnapshot(session.id, s.id));
+    },
+  };
 
   return (
     <div className="session">
@@ -349,6 +425,20 @@ function SessionView({
             </button>
           ))}
         </div>
+        <button
+          disabled={!isLive || snapshotting}
+          title={isLive ? "docker commit the Sandbox now (a fork point)" : "Snapshots need a running Sandbox"}
+          onClick={() => void run(() => api.createSnapshot(session.id))}
+        >
+          {snapshotting ? "Snapshotting\u2026" : "Snapshot"}
+        </button>
+        <button
+          disabled={!latestSnapshot}
+          title={latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first"}
+          onClick={() => latestSnapshot && setForkFrom(latestSnapshot.id)}
+        >
+          Fork…
+        </button>
         {session.status === "running" && <button onClick={() => void run(() => api.cancel(session.id))}>Cancel turn</button>}
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
@@ -366,9 +456,27 @@ function SessionView({
         </button>
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
+      {forkFrom && (
+        <ForkDialog
+          session={session}
+          snapshots={snapshots}
+          saved={saved}
+          initialSnapshotId={forkFrom}
+          busy={forking}
+          onClose={() => setForkFrom(null)}
+          onSubmit={(req) => {
+            setForking(true);
+            void run(async () => {
+              const fork = await api.forkSession(session.id, req);
+              setForkFrom(null);
+              onForked(fork);
+            }).finally(() => setForking(false));
+          }}
+        />
+      )}
       <div className="session-body">
         <div className="chat" ref={chatRef}>
-          <Transcript items={items} />
+          <Transcript items={items} actions={snapshotActions} />
           <Composer
             value={text}
             onChange={setText}
@@ -538,6 +646,8 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
   const [cpus, setCpus] = useState(String(settings.sandboxCpus));
   const [memory, setMemory] = useState(String(settings.sandboxMemoryGb));
   const [docker, setDocker] = useState(settings.dockerInSandbox);
+  const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
+  const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
 
@@ -550,6 +660,8 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         sandboxCpus: Number(cpus),
         sandboxMemoryGb: Number(memory),
         dockerInSandbox: docker,
+        autoSnapshot,
+        snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         providerSecrets: {
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
@@ -564,7 +676,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
   return (
     <form className="panel" onSubmit={submit}>
       <h2>Settings</h2>
-      <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Applies to Sandboxes created afterwards.</p>
+      <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Tokens, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</p>
       <label>
         Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
         <input
@@ -612,6 +724,18 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         Docker inside Sandboxes by default (per-Session override in New session)
       </label>
       <DockerModeNote settings={settings} enabled={docker} />
+      <label className="check">
+        <input type="checkbox" checked={autoSnapshot} onChange={(e) => setAutoSnapshot(e.target.checked)} />
+        Snapshot the Sandbox after every completed turn (docker commit; each snapshot is a fork point)
+      </label>
+      <label>
+        Automatic snapshots to keep per Session (0 = all; manual snapshots and fork origins are always kept)
+        <input type="number" min={0} step={1} value={snapshotKeep} onChange={(e) => setSnapshotKeep(e.target.value)} />
+      </label>
+      <p className="muted">
+        A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
+        turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
+      </p>
       <div className="actions">
         <button type="submit">Save</button>
       </div>

@@ -162,7 +162,9 @@ function show(s: Session): void {
       ? `${s.workspaceSource.url}${s.workspaceSource.ref ? `@${s.workspaceSource.ref}` : ""}`
       : s.workspaceSource.type === "copy"
         ? s.workspaceSource.path
-        : "empty";
+        : s.workspaceSource.type === "fork"
+          ? `fork of ${s.workspaceSource.label}`
+          : "empty";
   const docker = s.dockerMode === "none" ? "" : `  [${DOCKER_MODE_LABELS[s.dockerMode]}]`;
   process.stdout.write(`${s.id}  ${s.status.padEnd(8)}  ${s.title}${docker}\n    ${source}\n    ${sessionUrl(s.id)}\n`);
 }

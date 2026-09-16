@@ -1,5 +1,6 @@
 import type {
   CreateSessionRequest,
+  ForkSessionRequest,
   FsChange,
   FsListResult,
   FsReadResult,
@@ -11,6 +12,7 @@ import type {
   Session,
   SessionBroadcast,
   SessionEvent,
+  Snapshot,
   UpdateSavedMessageRequest,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
@@ -60,6 +62,11 @@ export const api = {
     request<{ ok: true }>(`/sessions/${id}/saved/${messageId}/send`, { method: "POST" }),
   setQueueRunning: (id: string, running: boolean) =>
     request<Session>(`/sessions/${id}/queue`, { method: "POST", body: JSON.stringify({ running }) }),
+  snapshots: (id: string) => request<Snapshot[]>(`/sessions/${id}/snapshots`),
+  createSnapshot: (id: string) => request<Snapshot>(`/sessions/${id}/snapshots`, { method: "POST" }),
+  deleteSnapshot: (id: string, snapshotId: string) => request<void>(`/sessions/${id}/snapshots/${snapshotId}`, { method: "DELETE" }),
+  forkSession: (id: string, req: ForkSessionRequest) =>
+    request<Session>(`/sessions/${id}/fork`, { method: "POST", body: JSON.stringify(req) }),
   fsList: (id: string, path: string) => request<FsListResult>(`/sessions/${id}/fs?path=${encodeURIComponent(path)}`),
   fsRead: (id: string, path: string) => request<FsReadResult>(`/sessions/${id}/fs/file?path=${encodeURIComponent(path)}`),
   fsWrite: (id: string, path: string, content: string) =>

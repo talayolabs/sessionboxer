@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
   CreateSessionRequest,
+  ForkSessionRequest,
   FsWriteParams,
   PromptRequest,
   PtyOpenParams,
@@ -114,6 +115,18 @@ api.post("/sessions/:id/saved/:messageId/send", async (c) => {
 api.post("/sessions/:id/queue", async (c) => {
   const req = QueueRequest.parse(await c.req.json());
   return c.json(await sessions.setQueueRunning(c.req.param("id"), req.running));
+});
+
+// Snapshots (`docker commit` of the Sandbox) and forks started from them.
+api.get("/sessions/:id/snapshots", (c) => c.json(sessions.snapshots(c.req.param("id"))));
+api.post("/sessions/:id/snapshots", async (c) => c.json(await sessions.snapshot(c.req.param("id"), "manual"), 201));
+api.delete("/sessions/:id/snapshots/:snapshotId", async (c) => {
+  await sessions.deleteSnapshot(c.req.param("id"), c.req.param("snapshotId"));
+  return c.body(null, 204);
+});
+api.post("/sessions/:id/fork", async (c) => {
+  const req = ForkSessionRequest.parse(await c.req.json());
+  return c.json(await sessions.fork(c.req.param("id"), req), 201);
 });
 
 // Workspace files, relative to the Workspace root (`path=` empty or missing for the root).

@@ -43,7 +43,7 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .warn { color: var(--warn); }
 .spacer { flex: 1; }
 
-.app { display: grid; grid-template-columns: 260px 1fr; height: 100%; min-height: 0; }
+.app { display: grid; grid-template-columns: 290px 1fr; height: 100%; min-height: 0; }
 
 .sidebar { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--border); }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--border); }
@@ -53,7 +53,11 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .sidebar-footer button { width: 100%; }
 .warn-sign { color: var(--warn); margin-left: 6px; }
 .session-list { list-style: none; margin: 0; padding: 6px; overflow: auto; flex: 1; }
-.session-list li { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.session-list li { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.session-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.session-sizes { display: flex; gap: 6px; font-size: 11px; color: var(--muted); padding-left: 16px; min-width: 0; white-space: nowrap; }
+.session-sizes > span:first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.session-sizes > .warn { flex: none; }
 .session-list li:hover { background: #1f232d; }
 .session-list li.active { background: #23293a; }
 .session-list li.empty { color: var(--muted); cursor: default; }
@@ -103,6 +107,10 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .thought div { white-space: pre-wrap; padding: 6px 12px; }
 .marker { color: var(--muted); font-size: 12px; text-align: center; }
 .marker-error { color: var(--error); }
+.marker-snapshot { display: flex; gap: 8px; align-items: center; justify-content: center; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 8px; max-width: 900px; }
+.marker-snapshot .small { padding: 1px 7px; font-size: 11px; }
+.marker-forked { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; max-width: 900px; text-align: left; }
+.marker-forked a { color: var(--accent); }
 .plan { margin: 0; padding-left: 20px; color: var(--muted); }
 .plan-completed { text-decoration: line-through; }
 .plan-in_progress { color: var(--text); }
@@ -194,10 +202,17 @@ li.expanded .saved-text { white-space: normal; }
 .panel label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); }
 .panel .row { display: flex; gap: 14px; }
 .panel .row label { flex: 1; }
-.panel label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
-.panel label.check input { width: auto; margin: 0; }
+.panel label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); min-width: 0; }
+.panel label.check input { width: auto; margin: 0; flex: none; }
 .panel .banner { border: 1px solid var(--border); border-radius: 6px; cursor: default; line-height: 1.4; }
 .panel .actions { display: flex; gap: 10px; justify-content: flex-end; }
+.panel fieldset.choice { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.panel fieldset.choice legend { color: var(--muted); padding: 0 4px; }
+.choice-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+
+/* Modal dialogs (fork) */
+.modal-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: 100%; max-width: 640px; max-height: 100%; overflow-x: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
 
 /* Side pane switcher */
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }

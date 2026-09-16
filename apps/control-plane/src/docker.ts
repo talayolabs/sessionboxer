@@ -4,6 +4,8 @@ import { DAEMON_PORT, NOVNC_PORT, type DockerMode } from "@sessionboxer/protocol
 import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
+export const LABEL_SNAPSHOT = "sessionboxer.snapshot";
+export const SNAPSHOT_REPO = "sessionboxer/snapshot";
 export const SYSBOX_RUNTIME = "sysbox-runc";
 
 export interface SandboxSpec {
@@ -12,6 +14,15 @@ export interface SandboxSpec {
   cpus: number;
   memoryGb: number;
   dockerMode: DockerMode;
+  /** Image to start from; the Sandbox image unless forking a Snapshot. */
+  image?: string;
+}
+
+export interface CommitSpec {
+  snapshotId: string;
+  tag: string;
+  /** Env vars to blank in the image config (`docker commit` would otherwise persist the container's secrets). */
+  stripEnv: string[];
 }
 
 export type ContainerState = "running" | "stopped" | "missing";
@@ -46,7 +57,7 @@ export class SandboxDocker {
   async create(spec: SandboxSpec): Promise<string> {
     const container = await this.docker.createContainer({
       name: `sbx-${spec.sessionId}`,
-      Image: SANDBOX_IMAGE,
+      Image: spec.image ?? SANDBOX_IMAGE,
       Hostname: `sbx-${spec.sessionId.slice(0, 12)}`,
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
       Labels: { [LABEL_SESSION]: spec.sessionId },
@@ -99,6 +110,62 @@ export class SandboxDocker {
       if (isStatus(e, 404)) return "missing";
       throw e;
     }
+  }
+
+  /** Bytes in the container's writable layer (what the Sandbox adds on top of its image). */
+  async diskUsage(containerId: string): Promise<number | null> {
+    try {
+      // `size=1` is a documented query param the dockerode typings do not know about.
+      const info = (await this.docker
+        .getContainer(containerId)
+        .inspect({ size: true } as Docker.ContainerInspectOptions)) as { SizeRw?: number };
+      return info.SizeRw ?? null;
+    } catch (e) {
+      if (isStatus(e, 404)) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * `docker commit`: freezes the container's filesystem into an image tagged
+   * `sessionboxer/snapshot:<tag>`. The container is paused for the duration.
+   * Returns the image id and the size of the committed layer.
+   */
+  async commit(containerId: string, spec: CommitSpec): Promise<{ imageId: string; sizeBytes: number }> {
+    const changes = [`LABEL ${LABEL_SNAPSHOT}=${spec.snapshotId}`, ...spec.stripEnv.map((k) => `ENV ${k}=`)];
+    const res = (await this.docker.getContainer(containerId).commit({
+      _query: { container: containerId, repo: SNAPSHOT_REPO, tag: spec.tag, pause: true, changes },
+      _body: {},
+    })) as { Id: string };
+    const history = (await this.docker.getImage(res.Id).history()) as Array<{ Size: number }>;
+    return { imageId: res.Id, sizeBytes: history[0]?.Size ?? 0 };
+  }
+
+  async imageExists(ref: string): Promise<boolean> {
+    try {
+      await this.docker.getImage(ref).inspect();
+      return true;
+    } catch (e) {
+      if (isStatus(e, 404)) return false;
+      throw e;
+    }
+  }
+
+  /** Removes an image; `false` if it is still in use (a container was created from it) or already gone. */
+  async removeImage(ref: string): Promise<boolean> {
+    try {
+      await this.docker.getImage(ref).remove();
+      return true;
+    } catch (e) {
+      if (isStatus(e, 404) || isStatus(e, 409)) return false;
+      throw e;
+    }
+  }
+
+  /** Ids of every Snapshot image on this host, whether or not the database still knows them. */
+  async listSnapshotImageIds(): Promise<string[]> {
+    const images = await this.docker.listImages({ filters: { label: [LABEL_SNAPSHOT] } });
+    return images.map((i) => i.Id);
   }
 
   async address(containerId: string): Promise<string> {

@@ -13,6 +13,7 @@ import {
   type DaemonEvent,
   type DaemonStatus,
   type DockerMode,
+  type ForkSessionRequest,
   type FsChange,
   type SavedMessage,
   type Session,
@@ -20,12 +21,14 @@ import {
   type SessionEvent,
   type SessionStatus,
   type Settings,
+  type Snapshot,
+  type SnapshotReason,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { providerEnv, providerSetupHint } from "./config.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
-import type { Db } from "./db.js";
-import type { SandboxDocker } from "./docker.js";
+import type { Db, SessionPatch } from "./db.js";
+import { SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 
 export class HttpError extends Error {
@@ -54,6 +57,8 @@ export class SessionManager {
   private readonly stopping = new Set<string>();
   private readonly pendingPrompts = new Map<string, string>();
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
+  /** Per-Session chain so Snapshots of one Sandbox never overlap. */
+  private readonly snapshotChains = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly db: Db,
@@ -208,6 +213,7 @@ export class SessionManager {
       this.disconnect(sessionId);
       this.setStatus(sessionId, "error", `Sandbox exited unexpectedly (exit code ${exitCode})`);
     });
+    void this.collectSnapshotImages().catch((e: unknown) => this.log(`snapshot gc failed: ${String(e)}`));
     for (const s of this.db.listSessions()) {
       if (!s.containerId) {
         if (s.status !== "error") this.setStatus(s.id, "error", "Sandbox was never created");
@@ -253,6 +259,9 @@ export class SessionManager {
       containerId: null,
       error: null,
       queueRunning: false,
+      diskBytes: null,
+      snapshotBytes: 0,
+      snapshotCount: 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -267,7 +276,72 @@ export class SessionManager {
     return session;
   }
 
-  private async provision(session: Session, settings: Settings): Promise<void> {
+  /**
+   * New Session whose Sandbox starts from one of `fromId`'s Snapshot images: same
+   * filesystem as the origin at that moment (Workspace, installed tools, the
+   * Agent's own session files), with the transcript up to the Snapshot copied
+   * over. The origin Session, its Sandbox and its saved messages are untouched.
+   */
+  async fork(fromId: string, req: ForkSessionRequest): Promise<Session> {
+    const origin = this.get(fromId);
+    const snapshot = this.db.getSnapshot(fromId, req.snapshotId);
+    if (!snapshot) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
+    const settings = this.settings();
+    if (Object.values(providerEnv(origin.provider, settings)).some((v) => v === "")) {
+      throw new HttpError(400, providerSetupHint(origin.provider));
+    }
+    if (!(await this.docker.imageExists(snapshot.imageId))) {
+      throw new HttpError(409, `The image of snapshot ${snapshot.ordinal} is gone from Docker; delete the snapshot.`);
+    }
+    if (origin.dockerMode !== "none" && (await this.dockerModeAvailable()) !== origin.dockerMode) {
+      throw new HttpError(409, `The origin ran with ${origin.dockerMode} Docker, which this host no longer offers.`);
+    }
+
+    const id = randomBytes(6).toString("hex");
+    const now = new Date().toISOString();
+    const session: Session = {
+      id,
+      title: req.title ?? `${origin.title} (fork ${snapshot.ordinal})`,
+      provider: origin.provider,
+      status: "creating",
+      workspaceSource: {
+        type: "fork",
+        sessionId: origin.id,
+        snapshotId: snapshot.id,
+        label: `${origin.title} @ snapshot ${snapshot.ordinal}`,
+      },
+      dockerMode: origin.dockerMode,
+      containerId: null,
+      error: null,
+      queueRunning: false,
+      diskBytes: null,
+      snapshotBytes: 0,
+      snapshotCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db.insertSession(session);
+    this.db.copyEvents(origin.id, id, snapshot.eventSeq);
+    const marker = this.db.appendEvent(id, {
+      type: "forked",
+      fromSessionId: origin.id,
+      fromTitle: origin.title,
+      snapshotId: snapshot.id,
+      snapshotOrdinal: snapshot.ordinal,
+    });
+    for (const text of req.savedMessages) this.db.insertSavedMessage(id, text);
+    this.broadcast({ type: "session", session });
+    this.broadcast({ type: "event", event: marker });
+    if (req.prompt) this.pendingPrompts.set(id, req.prompt);
+
+    void this.provision(session, settings, snapshot.imageId).catch((e: unknown) => {
+      this.log(`provision fork ${id} failed: ${String(e)}`);
+      this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
+    });
+    return session;
+  }
+
+  private async provision(session: Session, settings: Settings, image?: string): Promise<void> {
     const env: Record<string, string> = {
       SESSIONBOXER_SESSION_ID: session.id,
       SESSIONBOXER_PROVIDER: session.provider,
@@ -288,12 +362,14 @@ export class SessionManager {
       cpus: settings.sandboxCpus,
       memoryGb: settings.sandboxMemoryGb,
       dockerMode: session.dockerMode,
+      image,
     });
     this.update(session.id, { containerId });
     await this.docker.start(containerId);
     await this.seedWorkspace(containerId, session.workspaceSource);
     this.setStatus(session.id, "idle");
     await this.connect(session.id, containerId);
+    void this.refreshDiskUsage(session.id);
   }
 
   private async seedWorkspace(containerId: string, source: WorkspaceSource): Promise<void> {
@@ -412,6 +488,120 @@ export class SessionManager {
     this.broadcast({ type: "saved_messages", sessionId: id, messages: this.db.listSavedMessages(id) });
   }
 
+  // --- Snapshots -------------------------------------------------------------
+
+  snapshots(id: string): Snapshot[] {
+    this.get(id);
+    return this.db.listSnapshots(id);
+  }
+
+  /**
+   * `docker commit` of the Sandbox as it is now. Serialized per Session; the
+   * container is paused for the few seconds the commit takes. Automatic
+   * Snapshots (`reason: "turn"`) are pruned to `Settings.snapshotKeep`.
+   */
+  snapshot(id: string, reason: SnapshotReason, eventSeq?: number): Promise<Snapshot> {
+    const prev = this.snapshotChains.get(id) ?? Promise.resolve();
+    const run = prev.then(
+      () => this.doSnapshot(id, reason, eventSeq),
+      () => this.doSnapshot(id, reason, eventSeq),
+    );
+    this.snapshotChains.set(id, run);
+    void run.finally(() => {
+      if (this.snapshotChains.get(id) === run) this.snapshotChains.delete(id);
+    });
+    return run;
+  }
+
+  private async doSnapshot(id: string, reason: SnapshotReason, eventSeq?: number): Promise<Snapshot> {
+    const s = this.get(id);
+    if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {
+      throw new HttpError(409, `Session is ${s.status}; Snapshots need a running Sandbox.`);
+    }
+    const snapshotId = randomBytes(6).toString("hex");
+    const ordinal = this.db.nextSnapshotOrdinal(id);
+    const tag = `${id}-${ordinal}`;
+    this.broadcast({ type: "snapshotting", sessionId: id, active: true });
+    try {
+      const started = Date.now();
+      const { imageId, sizeBytes } = await this.docker.commit(s.containerId, {
+        snapshotId,
+        tag,
+        stripEnv: Object.keys(providerEnv(s.provider, this.settings())),
+      });
+      const snapshot: Snapshot = {
+        id: snapshotId,
+        sessionId: id,
+        ordinal,
+        reason,
+        imageTag: `${SNAPSHOT_REPO}:${tag}`,
+        imageId,
+        eventSeq: eventSeq ?? this.db.lastEventSeq(id),
+        sizeBytes,
+        queuedMessages: this.db.listSavedMessages(id).map((m) => m.text),
+        createdAt: new Date().toISOString(),
+      };
+      this.db.insertSnapshot(snapshot);
+      this.log(`snapshot ${id}#${ordinal} ${(sizeBytes / 1024 ** 2).toFixed(1)} MB in ${Date.now() - started} ms`);
+      await this.pruneSnapshots(id);
+      this.broadcastSnapshots(id);
+      await this.refreshDiskUsage(id);
+      return snapshot;
+    } finally {
+      this.broadcast({ type: "snapshotting", sessionId: id, active: false });
+    }
+  }
+
+  async deleteSnapshot(id: string, snapshotId: string): Promise<void> {
+    this.get(id);
+    const snapshot = this.db.getSnapshot(id, snapshotId);
+    if (!snapshot) throw new HttpError(404, `snapshot ${snapshotId} not found`);
+    const forks = this.db.countForksOf(snapshotId);
+    if (forks > 0) throw new HttpError(409, `Snapshot ${snapshot.ordinal} is the origin of ${forks} Session(s); delete them first.`);
+    await this.docker.removeImage(snapshot.imageId);
+    this.db.deleteSnapshot(id, snapshotId);
+    this.broadcastSnapshots(id);
+  }
+
+  /** Drops the oldest automatic Snapshots beyond `snapshotKeep`, never one a fork was started from. */
+  private async pruneSnapshots(id: string): Promise<void> {
+    const keep = this.settings().snapshotKeep;
+    if (keep <= 0) return;
+    const auto = this.db.listSnapshots(id).filter((s) => s.reason === "turn");
+    for (const old of auto.slice(0, Math.max(0, auto.length - keep))) {
+      if (this.db.countForksOf(old.id) > 0) continue;
+      await this.docker.removeImage(old.imageId);
+      this.db.deleteSnapshot(id, old.id);
+    }
+  }
+
+  /** Removes Snapshot images no Session references any more (deleted Sessions, failed prunes). */
+  private async collectSnapshotImages(): Promise<void> {
+    const known = this.db.listAllSnapshotImageIds();
+    for (const imageId of await this.docker.listSnapshotImageIds()) {
+      if (known.has(imageId)) continue;
+      if (await this.docker.removeImage(imageId)) this.log(`removed orphan snapshot image ${imageId.slice(7, 19)}`);
+    }
+  }
+
+  private broadcastSnapshots(id: string): void {
+    this.broadcast({ type: "snapshots", sessionId: id, snapshots: this.db.listSnapshots(id) });
+    const s = this.db.getSession(id);
+    if (s) this.broadcast({ type: "session", session: s });
+  }
+
+  /** Re-measures the Sandbox's writable layer; cheap for small layers, so done after every Snapshot. */
+  private async refreshDiskUsage(id: string): Promise<void> {
+    const s = this.db.getSession(id);
+    if (!s?.containerId) return;
+    try {
+      const diskBytes = await this.docker.diskUsage(s.containerId);
+      if (diskBytes !== null && diskBytes !== s.diskBytes) this.update(id, { diskBytes });
+    } catch (e) {
+      this.log(`disk usage ${id} failed: ${String(e)}`);
+    }
+  }
+
   async stop(id: string): Promise<Session> {
     const s = this.get(id);
     if (!s.containerId) throw new HttpError(409, "Session has no Sandbox.");
@@ -422,7 +612,9 @@ export class SessionManager {
       if (s.status === "running") await this.cancelAndWait(id);
       this.disconnect(id);
       await this.docker.stop(s.containerId);
-      return this.setStatus(id, "stopped");
+      const stopped = this.setStatus(id, "stopped");
+      void this.refreshDiskUsage(id);
+      return stopped;
     } finally {
       this.stopping.delete(id);
     }
@@ -466,8 +658,11 @@ export class SessionManager {
     } finally {
       this.stopping.delete(id);
     }
+    const snapshots = this.db.listSnapshots(id);
     this.db.deleteSession(id);
     this.broadcast({ type: "session_deleted", id });
+    // Images a fork still runs on stay (removeImage returns false); the GC picks them up later.
+    for (const snap of snapshots) await this.docker.removeImage(snap.imageId).catch(() => false);
   }
 
   rename(id: string, title: string): Session {
@@ -533,11 +728,30 @@ export class SessionManager {
       const s = this.db.getSession(id);
       if (s?.status === "running") this.setStatus(id, "idle");
       if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
-        void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed: ${String(e)}`));
-      } else if (s?.queueRunning) {
-        this.log(`queue ${id} paused after ${ev.body.type}`);
-        this.update(id, { queueRunning: false });
+        void this.afterTurn(id, stored.seq).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
+      } else {
+        if (s?.queueRunning) {
+          this.log(`queue ${id} paused after ${ev.body.type}`);
+          this.update(id, { queueRunning: false });
+        }
+        if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
       }
+    }
+  }
+
+  /** A completed turn: Snapshot first (so the next queued prompt does not land in it), then pump the queue. */
+  private async afterTurn(id: string, eventSeq: number): Promise<void> {
+    await this.autoSnapshot(id, eventSeq);
+    await this.pumpQueue(id);
+  }
+
+  private async autoSnapshot(id: string, eventSeq: number): Promise<void> {
+    if (!this.settings().autoSnapshot) return;
+    if (this.db.getSession(id)?.status !== "idle") return;
+    try {
+      await this.snapshot(id, "turn", eventSeq);
+    } catch (e) {
+      this.log(`auto snapshot ${id} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -551,10 +765,7 @@ export class SessionManager {
     return s;
   }
 
-  private update(
-    id: string,
-    patch: Partial<Pick<Session, "title" | "status" | "containerId" | "error" | "queueRunning">>,
-  ): Session {
+  private update(id: string, patch: SessionPatch): Session {
     const s = this.db.updateSession(id, patch);
     if (!s) throw new HttpError(404, `session ${id} not found`);
     this.broadcast({ type: "session", session: s });
@@ -575,5 +786,6 @@ function titleFromPrompt(prompt: string | undefined): string | undefined {
 function titleFromSource(source: WorkspaceSource): string | undefined {
   if (source.type === "copy") return basename(source.path) || undefined;
   if (source.type === "git") return basename(source.url).replace(/\.git$/, "") || undefined;
+  if (source.type === "fork") return source.label;
   return undefined;
 }

@@ -72,6 +72,16 @@ Optionally type the first prompt right there; it is sent as soon as the box is r
 
 The chat shows the agent's messages and, folded, each tool it used: commands, file edits, and the screenshots it took while using the desktop. Press Enter to send, Shift+Enter for a newline. **Cancel turn** interrupts the agent.
 
+The prompt box is Markdown: write it raw or switch to **Rich text**, use the toolbar for formatting either way, drag the divider to make the box taller, or go full screen with the zen button. **Save for later** (Ctrl+S) keeps a message in the session's *Saved for later* list instead of sending it; from there you can load it back, send it now, reorder, or press **▶ Play all** to send the saved messages one by one, each as soon as the agent finishes the previous one.
+
+### Snapshots and forks
+
+Every time the agent finishes a turn, Sessionboxer takes a **snapshot** of the box (a `docker commit`): files, installed packages, browser state, the agent's own memory of the conversation. Snapshots appear in the chat as `📷 Snapshot #n` markers with their size, and the sidebar shows under each session how much disk the box itself uses ("machine", what it changed on top of its image) and how much its snapshots take. **Snapshot** in the header takes one by hand.
+
+**Fork from here** on a marker (or **Fork…** in the header) starts a *new* session with its *own* box from that snapshot: same files, same tools, same conversation up to that point, and the agent remembers it all. Pick what the fork should do first: nothing, one of the messages that were queued in *Saved for later* when the snapshot was taken (or is queued now), or a new prompt, and optionally copy the rest of the queue over. The original session, its box and its queue are not touched, so you can try two approaches side by side.
+
+In Settings you can turn automatic snapshots off and choose how many to keep per session (default 10; older automatic ones are removed, manual snapshots and snapshots a fork was started from are kept). A snapshot's ✕ deletes it; snapshots that a fork was started from cannot be deleted while that fork exists. Tokens are never stored in snapshot images.
+
 ### Watch and take over the desktop
 
 **Show desktop** opens the box's screen next to the chat. While the agent is working the view is read-only so you don't fight over the mouse; **Take control** hands it to you until the agent's next turn. When the agent is idle the desktop is always interactive: log into a site for it, open a program, arrange windows.
@@ -86,7 +96,7 @@ The chat shows the agent's messages and, folded, each tool it used: commands, fi
 
 - **Stop** pauses the box. It uses no CPU or memory while stopped; the conversation, files, installed packages and everything else in the container are kept.
 - **Resume** brings it back where it was. The agent reloads the conversation, so you can continue as if nothing happened.
-- **Delete** removes the session and its container for good.
+- **Delete** removes the session, its container and its snapshots for good (forks started from it keep working).
 
 ### Docker inside sessions
 
@@ -123,6 +133,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 | Session containers | `sbx-<session id>` on the `sessionboxer` Docker network, no published ports |
 | Project folder in the box | `/workspace` |
 | Sandbox image | `sessionboxer/sandbox:dev` (built locally) |
+| Snapshot images | `sessionboxer/snapshot:<session id>-<n>`; unreferenced ones are removed at startup |
 
 `CLAUDE_CODE_OAUTH_TOKEN` or `WINDSURF_API_KEY` set in the environment of `npm start` take precedence over the tokens in Settings.
 

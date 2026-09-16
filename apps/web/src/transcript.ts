@@ -2,6 +2,7 @@ import type {
   ContentBlock,
   SessionEvent,
   SessionStatus,
+  Snapshot,
   StopReason,
   ToolCallContent,
 } from "@sessionboxer/protocol";
@@ -24,7 +25,9 @@ export type TranscriptItem =
   | { kind: "plan"; key: string; entries: { content: string; status: string }[] }
   | { kind: "turn_ended"; key: string; stopReason: StopReason }
   | { kind: "error"; key: string; message: string }
-  | { kind: "status"; key: string; status: SessionStatus; error?: string };
+  | { kind: "status"; key: string; status: SessionStatus; error?: string }
+  | { kind: "snapshot"; key: string; snapshot: Snapshot }
+  | { kind: "forked"; key: string; fromSessionId: string; fromTitle: string; snapshotOrdinal: number };
 
 function blockText(block: ContentBlock): string {
   switch (block.type) {
@@ -41,10 +44,20 @@ function blockText(block: ContentBlock): string {
   }
 }
 
-/** Folds the persisted event stream into renderable items (chunks merged, tool calls updated in place). */
-export function buildTranscript(events: SessionEvent[]): TranscriptItem[] {
+/**
+ * Folds the persisted event stream into renderable items (chunks merged, tool calls
+ * updated in place). Snapshots are slotted in right after the event they were taken at.
+ */
+export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = []): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const tools = new Map<string, Extract<TranscriptItem, { kind: "tool" }>>();
+  const pending = [...snapshots].sort((a, b) => a.eventSeq - b.eventSeq || a.ordinal - b.ordinal);
+  const flushSnapshots = (uptoSeq: number) => {
+    for (let next = pending[0]; next && next.eventSeq <= uptoSeq; next = pending[0]) {
+      pending.shift();
+      items.push({ kind: "snapshot", key: `s${next.id}`, snapshot: next });
+    }
+  };
 
   const appendText = (kind: "agent" | "thought", key: string, text: string) => {
     const last = items[items.length - 1];
@@ -70,6 +83,15 @@ export function buildTranscript(events: SessionEvent[]): TranscriptItem[] {
         break;
       case "status":
         items.push(body.error ? { kind: "status", key, status: body.status, error: body.error } : { kind: "status", key, status: body.status });
+        break;
+      case "forked":
+        items.push({
+          kind: "forked",
+          key,
+          fromSessionId: body.fromSessionId,
+          fromTitle: body.fromTitle,
+          snapshotOrdinal: body.snapshotOrdinal,
+        });
         break;
       case "update": {
         const u = body.update;
@@ -140,6 +162,8 @@ export function buildTranscript(events: SessionEvent[]): TranscriptItem[] {
         }
       }
     }
+    flushSnapshots(ev.seq);
   }
+  flushSnapshots(Number.POSITIVE_INFINITY);
   return items;
 }

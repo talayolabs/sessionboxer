@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { ToolCallContent } from "@sessionboxer/protocol";
+import type { Snapshot, ToolCallContent } from "@sessionboxer/protocol";
+import { formatMb, formatTime } from "./format";
 import type { TranscriptItem } from "./transcript";
+
+export interface SnapshotActions {
+  onFork: (snapshot: Snapshot) => void;
+  onDelete: (snapshot: Snapshot) => void;
+}
 
 function ToolContent({ content }: { content: ToolCallContent }) {
   switch (content.type) {
@@ -67,7 +73,28 @@ function ToolCall({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> })
   );
 }
 
-function Item({ item }: { item: TranscriptItem }) {
+function SnapshotMarker({ snapshot, actions }: { snapshot: Snapshot; actions: SnapshotActions }) {
+  return (
+    <div className="marker marker-snapshot" title={`${snapshot.imageTag}\n${new Date(snapshot.createdAt).toLocaleString()}`}>
+      <span>
+        {"\u{1F4F7} "}Snapshot #{snapshot.ordinal}
+        {snapshot.reason === "manual" ? " (manual)" : ""}
+        {" \u00b7 "}
+        {formatMb(snapshot.sizeBytes)}
+        {" \u00b7 "}
+        {formatTime(snapshot.createdAt)}
+      </span>
+      <button type="button" className="small" title="Start a new Session and Sandbox from this point" onClick={() => actions.onFork(snapshot)}>
+        Fork from here
+      </button>
+      <button type="button" className="small" title="Delete this snapshot image" onClick={() => actions.onDelete(snapshot)}>
+        {"\u2715"}
+      </button>
+    </div>
+  );
+}
+
+function Item({ item, actions }: { item: TranscriptItem; actions: SnapshotActions }) {
   switch (item.kind) {
     case "user":
       return <div className="msg msg-user">{item.text}</div>;
@@ -103,10 +130,19 @@ function Item({ item }: { item: TranscriptItem }) {
           {item.error ? `: ${item.error}` : ""}
         </div>
       );
+    case "snapshot":
+      return <SnapshotMarker snapshot={item.snapshot} actions={actions} />;
+    case "forked":
+      return (
+        <div className="marker marker-forked">
+          Forked from <a href={`#/sessions/${item.fromSessionId}`}>{item.fromTitle}</a> at snapshot #{item.snapshotOrdinal}: same
+          files, tools and conversation up to here; changes below stay in this Session.
+        </div>
+      );
   }
 }
 
-export function Transcript({ items }: { items: TranscriptItem[] }) {
+export function Transcript({ items, actions }: { items: TranscriptItem[]; actions: SnapshotActions }) {
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -115,7 +151,7 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
     <div className="transcript">
       {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
       {items.map((item) => (
-        <Item key={item.key} item={item} />
+        <Item key={item.key} item={item} actions={actions} />
       ))}
       <div ref={bottom} />
     </div>

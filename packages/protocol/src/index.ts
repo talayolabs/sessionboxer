@@ -39,6 +39,14 @@ export const WorkspaceSource = z.discriminatedUnion("type", [
   z.object({ type: z.literal("empty") }),
   z.object({ type: z.literal("git"), url: z.string().min(1), ref: z.string().min(1).optional() }),
   z.object({ type: z.literal("copy"), path: z.string().min(1) }),
+  /** The Sandbox started from another Session's Snapshot image (whole filesystem, not just the Workspace). */
+  z.object({
+    type: z.literal("fork"),
+    sessionId: z.string(),
+    snapshotId: z.string(),
+    /** Human-readable origin, e.g. "My session @ snapshot 3", kept even if the origin is deleted. */
+    label: z.string(),
+  }),
 ]);
 export type WorkspaceSource = z.infer<typeof WorkspaceSource>;
 
@@ -53,6 +61,11 @@ export const Session = z.object({
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
   queueRunning: z.boolean().default(false),
+  /** Bytes the Sandbox container's writable layer takes on the host (last measured), `null` if unknown. */
+  diskBytes: z.number().int().nonnegative().nullable().default(null),
+  /** Bytes taken by this Session's Snapshot images (each Snapshot stores a full copy of the writable layer). */
+  snapshotBytes: z.number().int().nonnegative().default(0),
+  snapshotCount: z.number().int().nonnegative().default(0),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -105,6 +118,45 @@ export const QueueRequest = z.object({ running: z.boolean() });
 export type QueueRequest = z.infer<typeof QueueRequest>;
 
 // ---------------------------------------------------------------------------
+// Snapshots: `docker commit` of a Session's Sandbox, taken after every Agent turn
+// (when `Settings.autoSnapshot`) or on demand. A Snapshot is a fork point: a new
+// Session can start a fresh Sandbox from its image with the conversation so far.
+// ---------------------------------------------------------------------------
+
+export const SNAPSHOT_REASONS = ["turn", "manual"] as const;
+export const SnapshotReason = z.enum(SNAPSHOT_REASONS);
+export type SnapshotReason = z.infer<typeof SnapshotReason>;
+
+export const Snapshot = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  /** 1-based, increasing per Session; shown as "snapshot N". */
+  ordinal: z.number().int().positive(),
+  reason: SnapshotReason,
+  /** Docker image reference (`sessionboxer/snapshot:<sessionId>-<ordinal>`). */
+  imageTag: z.string(),
+  imageId: z.string(),
+  /** Last Session event included in the Snapshot; the transcript marker goes right after it. */
+  eventSeq: z.number().int().nonnegative(),
+  /** Size of the committed layer (the Sandbox's writable layer at that moment). */
+  sizeBytes: z.number().int().nonnegative(),
+  /** Saved messages that were queued when the Snapshot was taken (candidates for the fork's first prompt). */
+  queuedMessages: z.array(z.string()),
+  createdAt: z.string(),
+});
+export type Snapshot = z.infer<typeof Snapshot>;
+
+export const ForkSessionRequest = z.object({
+  snapshotId: z.string(),
+  title: z.string().min(1).max(200).optional(),
+  /** Sent to the fork as soon as its Sandbox is ready. */
+  prompt: z.string().min(1).optional(),
+  /** Texts to put in the fork's saved-message list, in order. */
+  savedMessages: z.array(z.string().min(1)).default([]),
+});
+export type ForkSessionRequest = z.infer<typeof ForkSessionRequest>;
+
+// ---------------------------------------------------------------------------
 // Settings (stored in ~/.sessionboxer/config.json, 0600)
 // ---------------------------------------------------------------------------
 
@@ -114,6 +166,10 @@ export const Settings = z.object({
   sandboxCpus: z.number().positive().default(2),
   sandboxMemoryGb: z.number().positive().default(4),
   dockerInSandbox: z.boolean().default(false),
+  /** `docker commit` the Sandbox after every Agent turn. */
+  autoSnapshot: z.boolean().default(true),
+  /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */
+  snapshotKeep: z.number().int().nonnegative().default(10),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
@@ -155,7 +211,9 @@ export type SessionEventBody =
   | { type: "update"; update: SessionUpdate }
   | { type: "turn_ended"; stopReason: StopReason }
   | { type: "agent_error"; message: string }
-  | { type: "status"; status: SessionStatus; error?: string };
+  | { type: "status"; status: SessionStatus; error?: string }
+  /** First event of a forked Session: everything before it was copied from the origin. */
+  | { type: "forked"; fromSessionId: string; fromTitle: string; snapshotId: string; snapshotOrdinal: number };
 
 export interface SessionEvent {
   /** Control Plane sequence, monotonic per Session. */
@@ -171,7 +229,10 @@ export type SessionBroadcast =
   | { type: "session_deleted"; id: string }
   | { type: "event"; event: SessionEvent }
   | { type: "fs_changed"; sessionId: string; changes: FsChange[] }
-  | { type: "saved_messages"; sessionId: string; messages: SavedMessage[] };
+  | { type: "saved_messages"; sessionId: string; messages: SavedMessage[] }
+  | { type: "snapshots"; sessionId: string; snapshots: Snapshot[] }
+  /** A `docker commit` is in progress (the Sandbox is paused for a few seconds). */
+  | { type: "snapshotting"; sessionId: string; active: boolean };
 
 // ---------------------------------------------------------------------------
 // Workspace files (UI <-> Control Plane <-> Daemon). Paths are relative to the
@@ -341,7 +402,7 @@ export interface DaemonEvent {
   epoch: string;
   seq: number;
   ts: string;
-  body: Exclude<SessionEventBody, { type: "status" }>;
+  body: Exclude<SessionEventBody, { type: "status" } | { type: "forked" }>;
 }
 
 // ---------------------------------------------------------------------------

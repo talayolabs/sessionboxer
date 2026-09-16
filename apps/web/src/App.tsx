@@ -276,6 +276,8 @@ export function App() {
           snapshots={dialogSnapshots}
           globalAutoSnapshot={settings?.autoSnapshot ?? true}
           snapshotting={snapshotting.has(snapshotsSession.id)}
+          notice={error}
+          onDismissNotice={() => setError(null)}
           onAutoSnapshotChange={(value) => void run(() => api.updateSession(snapshotsSession.id, { autoSnapshot: value }))}
           onSnapshotNow={() => void run(() => api.createSnapshot(snapshotsSession.id))}
           onFork={(s) => {

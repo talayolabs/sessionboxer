@@ -12,6 +12,8 @@ export function SnapshotsDialog({
   snapshots,
   globalAutoSnapshot,
   snapshotting,
+  notice,
+  onDismissNotice,
   onAutoSnapshotChange,
   onSnapshotNow,
   onFork,
@@ -24,6 +26,9 @@ export function SnapshotsDialog({
   snapshots: Snapshot[] | null;
   globalAutoSnapshot: boolean;
   snapshotting: boolean;
+  /** Error/feedback from the last action, shown inside the dialog (the page banner sits behind the backdrop). */
+  notice: string | null;
+  onDismissNotice: () => void;
   /** `null` clears the per-Session override. */
   onAutoSnapshotChange: (value: boolean | null) => void;
   onSnapshotNow: () => void;
@@ -49,6 +54,11 @@ export function SnapshotsDialog({
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal panel snapshots-dialog" role="dialog" aria-modal="true" aria-labelledby="snapshots-title">
         <h2 id="snapshots-title">Snapshots of "{session.title}"</h2>
+        {notice && (
+          <div className="banner banner-error dialog-banner" role="alert" onClick={onDismissNotice} title="Dismiss">
+            {notice}
+          </div>
+        )}
         <label className="check switch">
           <input type="checkbox" checked={effective} onChange={(e) => onAutoSnapshotChange(e.target.checked)} />
           <span className="slider" aria-hidden="true" />

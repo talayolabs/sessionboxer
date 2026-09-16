@@ -72,7 +72,7 @@ Optionally type the first prompt right there; it is sent as soon as the box is r
 
 ### Talk to the agent
 
-The chat shows the agent's messages and, folded, each tool it used: commands, file edits, and the screenshots it took while using the desktop. Press Enter to send, Shift+Enter for a newline. **Cancel turn** interrupts the agent.
+The chat shows the agent's messages and, folded, each tool it used: commands, file edits, and the screenshots it took while using the desktop. Press Enter to send, Shift+Enter for a newline. While the agent works, **Send** turns into **Stop**, which interrupts the turn; what you typed stays in the box.
 
 The model picker at the bottom left of the prompt box switches the model for the rest of the conversation; while the agent is working the change waits until the current turn ends (the picker shows *pending*), and the chat shows a `Model now: …` marker when it takes effect. The choice survives Stop/Resume.
 

@@ -150,6 +150,8 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .composer.zen textarea, .composer.zen .rich-editor { font-size: 16px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.primary:hover { filter: brightness(1.1); }
+button.primary.stop { background: var(--error); border-color: var(--error); }
+button.primary.stop::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; background: currentColor; border-radius: 1px; vertical-align: -1px; }
 
 /* Saved messages ("save for later") and their queue, docked above the composer toolbar. */
 .saved { flex: none; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); max-height: 40%; min-height: 0; }

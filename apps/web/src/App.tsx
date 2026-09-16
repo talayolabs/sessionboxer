@@ -604,7 +604,6 @@ function SessionView({
           MCP {mcpActive.length > 0 && <span className="count">{mcpActive.length}</span>}
           {session.mcpPending && <span className="warn-sign">pending</span>}
         </button>
-        {session.status === "running" && <button onClick={() => void run(() => api.cancel(session.id))}>Cancel turn</button>}
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
         )}
@@ -648,6 +647,8 @@ function SessionView({
             onChange={setText}
             onSend={send}
             onSave={saveForLater}
+            running={session.status === "running"}
+            onStop={() => void run(() => api.cancel(session.id))}
             above={
               <SavedMessages
                 messages={saved}

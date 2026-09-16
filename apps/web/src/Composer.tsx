@@ -15,6 +15,9 @@ export type ComposerProps = {
   onSend: () => void;
   /** Keep the text for later instead of sending it (Ctrl+S). */
   onSave: () => void;
+  /** The agent is working on a turn: Send becomes Stop and Enter does not send. */
+  running?: boolean;
+  onStop?: () => void;
   disabled: boolean;
   placeholder: string;
   mode: ComposerMode;
@@ -151,8 +154,11 @@ function isSendKey(e: KeyboardEvent | globalThis.KeyboardEvent): boolean {
 }
 
 export function Composer(props: ComposerProps) {
-  const { value, onChange, onSend, onSave, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above, footerStart, onTranslate } =
+  const { value, onChange, onSend, onSave, running = false, onStop, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above, footerStart, onTranslate } =
     props;
+  const submit = useCallback(() => {
+    if (!running) onSend();
+  }, [running, onSend]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const valueRef = useRef(value);
@@ -360,7 +366,7 @@ export function Composer(props: ComposerProps) {
   };
 
   const hasText = value.trim().length > 0;
-  const canSend = !disabled && hasText;
+  const canSend = !disabled && hasText && !running;
   const sized = heightFrac !== null && !zen;
   const onSaveKey = (e: KeyboardEvent): boolean => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
@@ -388,7 +394,7 @@ export function Composer(props: ComposerProps) {
         style={sized ? { height: `${heightFrac * 100}%` } : undefined}
         onSubmit={(e) => {
           e.preventDefault();
-          onSend();
+          submit();
         }}
         onKeyDown={onSaveKey}
       >
@@ -435,7 +441,7 @@ export function Composer(props: ComposerProps) {
               onKeyDown={(e) => {
                 if (isSendKey(e) || (e.key === "Enter" && !e.shiftKey && !zen)) {
                   e.preventDefault();
-                  onSend();
+                  submit();
                 } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
                   const k = e.key.toLowerCase();
                   if (k === "b" || k === "i") {
@@ -446,7 +452,7 @@ export function Composer(props: ComposerProps) {
               }}
             />
           ) : (
-            <RichEditor value={value} onChange={onChange} onSend={onSend} disabled={disabled} placeholder={placeholder} onReady={setEditor} />
+            <RichEditor value={value} onChange={onChange} onSend={submit} disabled={disabled} placeholder={placeholder} onReady={setEditor} />
           )}
         </div>
         {selection && onTranslate && !disabled && (
@@ -474,16 +480,22 @@ export function Composer(props: ComposerProps) {
         <div className="composer-footer">
           {footerStart}
           <span className="muted hint">
-            {mode === "raw" && !zen ? "Enter to send, Shift+Enter for a new line" : "Ctrl+Enter to send"}
+            {running ? "Agent is working; the message waits here" : mode === "raw" && !zen ? "Enter to send, Shift+Enter for a new line" : "Ctrl+Enter to send"}
             {" \u00b7 "}Markdown
           </span>
           <span className="spacer" />
           <button type="button" title="Keep this message in the Session's saved list (Ctrl+S)" disabled={!hasText} onClick={onSave}>
             Save for later
           </button>
-          <button type="submit" className="primary" disabled={!canSend}>
-            Send
-          </button>
+          {running ? (
+            <button type="button" className="primary stop" title="Stop the agent (cancels this turn)" onClick={onStop}>
+              Stop
+            </button>
+          ) : (
+            <button type="submit" className="primary" disabled={!canSend}>
+              Send
+            </button>
+          )}
         </div>
       </form>
     </>

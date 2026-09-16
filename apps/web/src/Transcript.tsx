@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Snapshot, ToolCallContent } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
+import { Markdown } from "./Markdown";
 import type { TranscriptItem } from "./transcript-model";
 
 export interface SnapshotActions {
@@ -97,14 +98,22 @@ function SnapshotMarker({ snapshot, actions }: { snapshot: Snapshot; actions: Sn
 function Item({ item, actions }: { item: TranscriptItem; actions: SnapshotActions }) {
   switch (item.kind) {
     case "user":
-      return <div className="msg msg-user">{item.text}</div>;
+      return (
+        <div className="msg msg-user">
+          <Markdown text={item.text} />
+        </div>
+      );
     case "agent":
-      return <div className="msg msg-agent">{item.text}</div>;
+      return (
+        <div className="msg msg-agent">
+          <Markdown text={item.text} />
+        </div>
+      );
     case "thought":
       return (
         <details className="thought">
           <summary>thinking</summary>
-          <div>{item.text}</div>
+          <Markdown text={item.text} />
         </details>
       );
     case "tool":

@@ -22,7 +22,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a fu
 
 ## Requirements
 
-- Linux with [Docker Engine](https://docs.docker.com/engine/install/) (your user must be able to run `docker`)
+- Linux with [Docker Engine](https://docs.docker.com/engine/install/) (your user must be able to run `docker`), or macOS with [OrbStack](https://orbstack.dev) or Docker Desktop (see [macOS](#macos))
 - Node.js 22+
 - A Claude Code subscription and/or a Devin account
 - Optional: [Sysbox](https://github.com/nestybox/sysbox) if you want Docker inside sessions without giving the agent a privileged container (see below)
@@ -143,6 +143,15 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 - **Session goes to *error* with "sandbox image not found"**: run `npm run build:image`.
 - **Devin session fails right after creation**: Devin occasionally times out while loading team settings on a cold start. Sessionboxer retries a few times; if it still fails, Resume the session.
 - **Docker inside the box can't pull images**: Docker Hub rate-limits anonymous pulls per IP; log in with `docker login` in the box's Terminal or pull from another registry.
+
+### macOS
+
+Sessionboxer talks to each box over the private `sessionboxer` Docker network. On macOS the Docker daemon runs in a VM, and only [OrbStack](https://orbstack.dev) routes container addresses to the host. Sessionboxer checks which daemon it is talking to at startup (the `sandbox reach: ip|localhost` line in the log):
+
+- **OrbStack**: boxes are reached by container address, exactly as on Linux.
+- **Docker Desktop, Colima, …**: each box additionally publishes its two internal ports (daemon and desktop) on `127.0.0.1` with random host ports, and the server dials those. Nothing is exposed beyond your machine. `SESSIONBOXER_SANDBOX_REACH=ip` or `=localhost` overrides the detection (for example `ip` with Docker Desktop + [docker-mac-net-connect](https://github.com/chipmk/docker-mac-net-connect)).
+
+Other notes: Colima does not create `/var/run/docker.sock`, so export `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` before `npm start`. Sysbox is Linux-only, so *Docker inside the Sandbox* always uses the privileged mode on macOS (the box is still inside the Docker VM, not your Mac). The sandbox image builds natively on Apple Silicon (arm64).
 
 ## For contributors
 

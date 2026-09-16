@@ -7,6 +7,21 @@ export const LABEL_SESSION = "sessionboxer.session";
 export const LABEL_SNAPSHOT = "sessionboxer.snapshot";
 export const SNAPSHOT_REPO = "sessionboxer/snapshot";
 export const SYSBOX_RUNTIME = "sysbox-runc";
+const LOOPBACK = "127.0.0.1";
+
+/**
+ * How the Control Plane reaches a Sandbox's ports (ADR-0005): by container
+ * address on the Sandbox network (`ip`, Linux and OrbStack), or through ports
+ * published on the loopback interface when the Docker daemon lives in a VM
+ * whose container addresses the host cannot route to (`localhost`, Docker
+ * Desktop and Colima on macOS/Windows).
+ */
+export type SandboxReach = "ip" | "localhost";
+
+export interface Endpoint {
+  host: string;
+  port: number;
+}
 
 export interface SandboxSpec {
   sessionId: string;
@@ -29,6 +44,16 @@ export type ContainerState = "running" | "stopped" | "missing";
 
 export class SandboxDocker {
   readonly docker = new Docker();
+  reach: SandboxReach = "ip";
+
+  /** Picks `reach` for this host; `SESSIONBOXER_SANDBOX_REACH=ip|localhost` overrides the detection. */
+  async detectReach(): Promise<SandboxReach> {
+    const forced = process.env.SESSIONBOXER_SANDBOX_REACH;
+    if (forced === "ip" || forced === "localhost") return (this.reach = forced);
+    if (process.platform === "linux") return (this.reach = "ip");
+    const info = (await this.docker.info()) as { OperatingSystem?: string };
+    return (this.reach = /orbstack/i.test(info.OperatingSystem ?? "") ? "ip" : "localhost");
+  }
 
   async ensureNetwork(): Promise<void> {
     const existing = await this.docker.listNetworks({ filters: { name: [SANDBOX_NETWORK] } });
@@ -55,13 +80,14 @@ export class SandboxDocker {
   }
 
   async create(spec: SandboxSpec): Promise<string> {
+    const ports = [DAEMON_PORT, NOVNC_PORT].map((p) => `${p}/tcp`);
     const container = await this.docker.createContainer({
       name: `sbx-${spec.sessionId}`,
       Image: spec.image ?? SANDBOX_IMAGE,
       Hostname: `sbx-${spec.sessionId.slice(0, 12)}`,
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
       Labels: { [LABEL_SESSION]: spec.sessionId },
-      ExposedPorts: { [`${DAEMON_PORT}/tcp`]: {}, [`${NOVNC_PORT}/tcp`]: {} },
+      ExposedPorts: Object.fromEntries(ports.map((p) => [p, {}])),
       // The nested daemon's storage must not sit on the Sandbox's own overlayfs;
       // Sysbox mounts /var/lib/docker itself, `--privileged` gets an anonymous
       // volume (removed with the container).
@@ -71,8 +97,12 @@ export class SandboxDocker {
         Memory: Math.round(spec.memoryGb * 1024 ** 3),
         ShmSize: 1024 ** 3,
         NetworkMode: SANDBOX_NETWORK,
-        // Sandboxes publish no host ports (ADR-0005).
-        PortBindings: {},
+        // Sandboxes publish no host ports (ADR-0005), except on loopback with
+        // an ephemeral host port each when the container address is unreachable.
+        PortBindings:
+          this.reach === "localhost"
+            ? Object.fromEntries(ports.map((p) => [p, [{ HostIp: LOOPBACK, HostPort: "" }]]))
+            : {},
         PublishAllPorts: false,
         RestartPolicy: { Name: "no" },
         ...(spec.dockerMode === "sysbox" ? { Runtime: SYSBOX_RUNTIME } : {}),
@@ -168,11 +198,18 @@ export class SandboxDocker {
     return images.map((i) => i.Id);
   }
 
-  async address(containerId: string): Promise<string> {
+  /** Where the Control Plane can dial `containerPort` of a running Sandbox. */
+  async endpoint(containerId: string, containerPort: number): Promise<Endpoint> {
     const info = await this.docker.getContainer(containerId).inspect();
+    if (this.reach === "localhost") {
+      const binding = info.NetworkSettings.Ports[`${containerPort}/tcp`]?.[0];
+      const port = Number(binding?.HostPort);
+      if (!port) throw new Error(`container ${containerId} has no published host port for ${containerPort}/tcp`);
+      return { host: LOOPBACK, port };
+    }
     const net = info.NetworkSettings.Networks[SANDBOX_NETWORK];
     if (!net?.IPAddress) throw new Error(`container ${containerId} has no address on ${SANDBOX_NETWORK}`);
-    return net.IPAddress;
+    return { host: net.IPAddress, port: containerPort };
   }
 
   /** Runs a command in the Sandbox (as the agent user by default); rejects on non-zero exit. */

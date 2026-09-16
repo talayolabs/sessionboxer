@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { basename } from "node:path";
 import {
   DAEMON_METHODS,
+  DAEMON_PORT,
   FsListResult,
   FsReadResult,
   FsWriteResult,
@@ -102,8 +103,8 @@ export class SessionManager {
     if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {
       throw new HttpError(409, `session ${id} is ${s.status}; the Desktop is only available while the Sandbox runs`);
     }
-    const host = await this.docker.address(s.containerId);
-    return `ws://${host}:${NOVNC_PORT}/websockify`;
+    const { host, port } = await this.docker.endpoint(s.containerId, NOVNC_PORT);
+    return `ws://${host}:${port}/websockify`;
   }
 
   // --- Workspace files -----------------------------------------------------
@@ -205,6 +206,7 @@ export class SessionManager {
   }
 
   async boot(): Promise<void> {
+    this.log(`sandbox reach: ${await this.docker.detectReach()}`);
     await this.docker.ensureNetwork();
     await this.docker.watchDeaths((containerId, sessionId, exitCode) => {
       if (this.stopping.has(sessionId)) return;
@@ -671,8 +673,8 @@ export class SessionManager {
 
   private async connect(id: string, containerId: string): Promise<void> {
     this.disconnect(id);
-    const host = await this.docker.address(containerId);
-    const client = new DaemonClient(host, {
+    const { host, port } = await this.docker.endpoint(containerId, DAEMON_PORT);
+    const client = new DaemonClient(`ws://${host}:${port}`, {
       cursor: () => this.db.getDaemonCursor(id) ?? {},
       onConnected: (status) => this.onDaemonConnected(id, status),
       onStatus: (status) => this.onDaemonStatus(id, status),

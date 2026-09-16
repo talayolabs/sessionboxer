@@ -19,6 +19,7 @@ import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { SavedMessages } from "./SavedMessages";
+import { SnapshotsDialog } from "./SnapshotsDialog";
 import { TerminalPane } from "./Terminal";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript-model";
@@ -92,10 +93,18 @@ export function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [snapshotting, setSnapshotting] = useState<Set<string>>(() => new Set());
   const [settings, setSettings] = useState<PublicSettings | null>(null);
+  // Snapshots popup opened from the sidebar; it can be for a Session other than the selected one.
+  const [snapshotsFor, setSnapshotsFor] = useState<string | null>(null);
+  const [dialogSnapshots, setDialogSnapshots] = useState<Snapshot[] | null>(null);
+  const snapshotsForRef = useRef<string | null>(null);
+  snapshotsForRef.current = snapshotsFor;
+  const [forkRequest, setForkRequest] = useState<{ sessionId: string; snapshotId: string } | null>(null);
+  const clearForkRequest = useCallback(() => setForkRequest(null), []);
   const { error, setError, run } = useErrorBanner();
 
   const selectedId = route.view === "session" ? route.id : null;
   const selected = sessions.find((s) => s.id === selectedId) ?? null;
+  const snapshotsSession = sessions.find((s) => s.id === snapshotsFor) ?? null;
 
   const reloadSessions = useCallback(() => run(async () => setSessions(await api.sessions())), [run]);
 
@@ -130,6 +139,19 @@ export function App() {
   }, [selectedId, run]);
 
   useEffect(() => {
+    setDialogSnapshots(null);
+    if (!snapshotsFor) return;
+    let cancelled = false;
+    void run(async () => {
+      const snaps = await api.snapshots(snapshotsFor);
+      if (!cancelled) setDialogSnapshots(snaps);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshotsFor, run]);
+
+  useEffect(() => {
     return subscribe(
       (msg) => {
         switch (msg.type) {
@@ -145,6 +167,7 @@ export function App() {
           case "session_deleted":
             setSessions((prev) => prev.filter((s) => s.id !== msg.id));
             if (selectedId === msg.id) setRoute({ view: "session", id: null });
+            if (snapshotsForRef.current === msg.id) setSnapshotsFor(null);
             break;
           case "event":
             setEvents((prev) => {
@@ -162,6 +185,7 @@ export function App() {
             break;
           case "snapshots":
             if (msg.sessionId === selectedId) setSnapshots(msg.snapshots);
+            if (msg.sessionId === snapshotsForRef.current) setDialogSnapshots(msg.snapshots);
             break;
           case "snapshotting":
             setSnapshotting((prev) => {
@@ -182,6 +206,8 @@ export function App() {
           void run(async () => setSaved(await api.savedMessages(selectedId)));
           void run(async () => setSnapshots(await api.snapshots(selectedId)));
         }
+        const dialogId = snapshotsForRef.current;
+        if (dialogId) void run(async () => setDialogSnapshots(await api.snapshots(dialogId)));
       },
     );
   }, [selectedId, reloadSessions, run, setRoute]);
@@ -227,7 +253,12 @@ export function App() {
                   )}
                 </span>
               </div>
-              <SessionSizes session={s} snapshotting={snapshotting.has(s.id)} />
+              <SessionSizes
+                session={s}
+                snapshotting={snapshotting.has(s.id)}
+                autoSnapshot={s.autoSnapshot ?? settings?.autoSnapshot ?? true}
+                onClick={() => setSnapshotsFor(s.id)}
+              />
             </li>
           ))}
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}
@@ -238,6 +269,38 @@ export function App() {
           </button>
         </div>
       </aside>
+
+      {snapshotsSession && (
+        <SnapshotsDialog
+          session={snapshotsSession}
+          snapshots={dialogSnapshots}
+          globalAutoSnapshot={settings?.autoSnapshot ?? true}
+          snapshotting={snapshotting.has(snapshotsSession.id)}
+          onAutoSnapshotChange={(value) => void run(() => api.updateSession(snapshotsSession.id, { autoSnapshot: value }))}
+          onSnapshotNow={() => void run(() => api.createSnapshot(snapshotsSession.id))}
+          onFork={(s) => {
+            setSnapshotsFor(null);
+            setRoute({ view: "session", id: snapshotsSession.id });
+            setForkRequest({ sessionId: snapshotsSession.id, snapshotId: s.id });
+          }}
+          onDelete={(s) => {
+            if (confirm(`Delete snapshot #${s.ordinal} (${formatMb(s.sizeBytes)})?`)) {
+              void run(() => api.deleteSnapshot(snapshotsSession.id, s.id));
+            }
+          }}
+          onDeleteAll={() => {
+            const n = snapshotsSession.snapshotCount;
+            if (!confirm(`Delete all ${n} snapshot${n === 1 ? "" : "s"} of "${snapshotsSession.title}" (${formatMb(snapshotsSession.snapshotBytes)})?`)) return;
+            void run(async () => {
+              const res = await api.deleteAllSnapshots(snapshotsSession.id);
+              if (res.kept > 0) {
+                setError(`${res.kept} snapshot${res.kept === 1 ? " was" : "s were"} kept: a fork was started from ${res.kept === 1 ? "it" : "them"}.`);
+              }
+            });
+          }}
+          onClose={() => setSnapshotsFor(null)}
+        />
+      )}
 
       <main className="main">
         {error && (
@@ -278,6 +341,8 @@ export function App() {
             saved={saved}
             snapshots={snapshots}
             snapshotting={snapshotting.has(selected.id)}
+            forkRequest={forkRequest?.sessionId === selected.id ? forkRequest.snapshotId : null}
+            onForkRequestHandled={clearForkRequest}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
           />
@@ -289,22 +354,42 @@ export function App() {
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
-/** Storage line under a sidebar entry: what the Sandbox adds on top of its image, plus its Snapshots. */
-function SessionSizes({ session, snapshotting }: { session: Session; snapshotting: boolean }) {
+/** Storage line under a sidebar entry (machine + Snapshots); click opens the Snapshots popup. */
+function SessionSizes({
+  session,
+  snapshotting,
+  autoSnapshot,
+  onClick,
+}: {
+  session: Session;
+  snapshotting: boolean;
+  autoSnapshot: boolean;
+  onClick: () => void;
+}) {
   const parts: string[] = [];
   if (session.diskBytes !== null) parts.push(`${formatMb(session.diskBytes)} machine`);
   if (session.snapshotCount > 0) {
     parts.push(`${formatMb(session.snapshotBytes)} in ${session.snapshotCount} snap${session.snapshotCount === 1 ? "" : "s"}`);
+  } else {
+    parts.push("no snapshots");
   }
-  if (parts.length === 0 && !snapshotting) return null;
   return (
-    <div
+    <button
+      type="button"
       className="session-sizes"
-      title="Machine: the Sandbox's writable layer on top of the image. Snaps: snapshot layer sizes as reported by Docker (layers shared between snapshots are counted once each)."
+      title="Snapshots: list, fork, delete and the per-session auto-snapshot switch. Machine: the Sandbox's writable layer on top of the image."
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
     >
       <span>{parts.join(" \u00b7 ")}</span>
-      {snapshotting && <span className="warn">{"\u{1F4F7} snapshotting\u2026"}</span>}
-    </div>
+      {snapshotting ? (
+        <span className="warn">{"\u{1F4F7} snapshotting\u2026"}</span>
+      ) : (
+        !autoSnapshot && <span title="Automatic snapshots are off for this session">{"\u{1F4F7}\u00d7"}</span>
+      )}
+    </button>
   );
 }
 
@@ -335,6 +420,8 @@ function SessionView({
   saved,
   snapshots,
   snapshotting,
+  forkRequest,
+  onForkRequestHandled,
   run,
   onForked,
 }: {
@@ -343,6 +430,9 @@ function SessionView({
   saved: SavedMessage[];
   snapshots: Snapshot[];
   snapshotting: boolean;
+  /** Snapshot id to open the fork dialog on (from the Snapshots popup). */
+  forkRequest: string | null;
+  onForkRequestHandled: () => void;
   run: Runner;
   onForked: (s: Session) => void;
 }) {
@@ -357,6 +447,11 @@ function SessionView({
   const [zen, setZen] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   useEffect(() => setTitle(session.title), [session.title]);
+  useEffect(() => {
+    if (!forkRequest) return;
+    setForkFrom(forkRequest);
+    onForkRequestHandled();
+  }, [forkRequest, onForkRequestHandled]);
   useEffect(() => localStorage.setItem("sessionboxer.pane", pane), [pane]);
   useEffect(() => localStorage.setItem("sessionboxer.composerMode", composerMode), [composerMode]);
   useEffect(() => {
@@ -408,7 +503,7 @@ function SessionView({
             onSubmit={(e) => {
               e.preventDefault();
               setEditingTitle(false);
-              if (title.trim() && title !== session.title) void run(() => api.renameSession(session.id, title.trim()));
+              if (title.trim() && title !== session.title) void run(() => api.updateSession(session.id, { title: title.trim() }));
             }}
           >
             <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => setEditingTitle(false)} />
@@ -766,7 +861,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
       <DockerModeNote settings={settings} enabled={docker} />
       <label className="check">
         <input type="checkbox" checked={autoSnapshot} onChange={(e) => setAutoSnapshot(e.target.checked)} />
-        Snapshot the Sandbox after every completed turn (docker commit; each snapshot is a fork point)
+        Snapshot the Sandbox after every completed turn (docker commit; each snapshot is a fork point). Default for new Sessions; each Session can override it from its size line in the sidebar.
       </label>
       <label>
         Automatic snapshots to keep per Session (0 = all; manual snapshots and fork origins are always kept)

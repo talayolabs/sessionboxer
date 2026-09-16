@@ -14,6 +14,7 @@ import {
   type CreateSessionRequest,
   type DaemonEvent,
   type DaemonStatus,
+  type DeleteSnapshotsResult,
   type DockerMode,
   type ForkSessionRequest,
   type FsChange,
@@ -25,6 +26,7 @@ import {
   type Settings,
   type Snapshot,
   type SnapshotReason,
+  type UpdateSessionRequest,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { providerEnv, providerSetupHint } from "./config.js";
@@ -264,6 +266,7 @@ export class SessionManager {
       containerId: null,
       error: null,
       queueRunning: false,
+      autoSnapshot: null,
       diskBytes: null,
       snapshotBytes: 0,
       snapshotCount: 0,
@@ -319,6 +322,7 @@ export class SessionManager {
       containerId: null,
       error: null,
       queueRunning: false,
+      autoSnapshot: origin.autoSnapshot,
       diskBytes: null,
       snapshotBytes: 0,
       snapshotCount: 0,
@@ -573,6 +577,24 @@ export class SessionManager {
     this.broadcastSnapshots(id);
   }
 
+  /** Deletes every Snapshot of the Session except those a fork was started from. */
+  async deleteAllSnapshots(id: string): Promise<DeleteSnapshotsResult> {
+    this.get(id);
+    let deleted = 0;
+    let kept = 0;
+    for (const snapshot of this.db.listSnapshots(id)) {
+      if (this.db.countForksOf(snapshot.id) > 0) {
+        kept++;
+        continue;
+      }
+      await this.docker.removeImage(snapshot.imageId);
+      this.db.deleteSnapshot(id, snapshot.id);
+      deleted++;
+    }
+    this.broadcastSnapshots(id);
+    return { deleted, kept };
+  }
+
   /** Drops the oldest automatic Snapshots beyond `snapshotKeep`, never one a fork was started from. */
   private async pruneSnapshots(id: string): Promise<void> {
     const keep = this.settings().snapshotKeep;
@@ -675,8 +697,11 @@ export class SessionManager {
     for (const snap of snapshots) await this.docker.removeImage(snap.imageId).catch(() => false);
   }
 
-  rename(id: string, title: string): Session {
-    return this.update(id, { title });
+  edit(id: string, req: UpdateSessionRequest): Session {
+    return this.update(id, {
+      ...(req.title !== undefined ? { title: req.title } : {}),
+      ...(req.autoSnapshot !== undefined ? { autoSnapshot: req.autoSnapshot } : {}),
+    });
   }
 
   private async connect(id: string, containerId: string): Promise<void> {
@@ -756,8 +781,9 @@ export class SessionManager {
   }
 
   private async autoSnapshot(id: string, eventSeq: number): Promise<void> {
-    if (!this.settings().autoSnapshot) return;
-    if (this.db.getSession(id)?.status !== "idle") return;
+    const s = this.db.getSession(id);
+    if (!s || s.status !== "idle") return;
+    if (!(s.autoSnapshot ?? this.settings().autoSnapshot)) return;
     try {
       await this.snapshot(id, "turn", eventSeq);
     } catch (e) {

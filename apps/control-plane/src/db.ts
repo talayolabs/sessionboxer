@@ -22,6 +22,7 @@ interface SessionRow {
   container_id: string | null;
   error: string | null;
   queue_running: number;
+  auto_snapshot: number | null;
   disk_bytes: number | null;
   created_at: string;
   updated_at: string;
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   container_id TEXT,
   error TEXT,
   queue_running INTEGER NOT NULL DEFAULT 0,
+  auto_snapshot INTEGER,
   disk_bytes INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -115,6 +117,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "docker_mode", ddl: "ALTER TABLE sessions ADD COLUMN docker_mode TEXT NOT NULL DEFAULT 'none'" },
   { table: "sessions", column: "queue_running", ddl: "ALTER TABLE sessions ADD COLUMN queue_running INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "disk_bytes", ddl: "ALTER TABLE sessions ADD COLUMN disk_bytes INTEGER" },
+  { table: "sessions", column: "auto_snapshot", ddl: "ALTER TABLE sessions ADD COLUMN auto_snapshot INTEGER" },
 ];
 
 const SESSION_SELECT = `
@@ -154,8 +157,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, disk_bytes, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @disk_bytes, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -167,7 +170,7 @@ export class Db {
     this.db
       .prepare(
         `UPDATE sessions SET title=@title, status=@status, container_id=@container_id, error=@error,
-           queue_running=@queue_running, disk_bytes=@disk_bytes, updated_at=@updated_at
+           queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -364,7 +367,9 @@ export class Db {
   }
 }
 
-export type SessionPatch = Partial<Pick<Session, "title" | "status" | "containerId" | "error" | "queueRunning" | "diskBytes">>;
+export type SessionPatch = Partial<
+  Pick<Session, "title" | "status" | "containerId" | "error" | "queueRunning" | "autoSnapshot" | "diskBytes">
+>;
 
 function rowToSession(row: SessionQueryRow): Session {
   return Session.parse({
@@ -377,6 +382,7 @@ function rowToSession(row: SessionQueryRow): Session {
     containerId: row.container_id,
     error: row.error,
     queueRunning: row.queue_running === 1,
+    autoSnapshot: row.auto_snapshot === null ? null : row.auto_snapshot === 1,
     diskBytes: row.disk_bytes,
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
@@ -415,6 +421,7 @@ function sessionToRow(s: Session): SessionRow {
     container_id: s.containerId,
     error: s.error,
     queue_running: s.queueRunning ? 1 : 0,
+    auto_snapshot: s.autoSnapshot === null ? null : s.autoSnapshot ? 1 : 0,
     disk_bytes: s.diskBytes,
     created_at: s.createdAt,
     updated_at: s.updatedAt,

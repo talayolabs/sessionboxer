@@ -80,7 +80,9 @@ Every time the agent finishes a turn, Sessionboxer takes a **snapshot** of the b
 
 **Fork from here** on a marker (or **Fork…** in the header) starts a *new* session with its *own* box from that snapshot: same files, same tools, same conversation up to that point, and the agent remembers it all. Pick what the fork should do first: nothing, one of the messages that were queued in *Saved for later* when the snapshot was taken (or is queued now), or a new prompt, and optionally copy the rest of the queue over. The original session, its box and its queue are not touched, so you can try two approaches side by side.
 
-In Settings you can turn automatic snapshots off and choose how many to keep per session (default 10; older automatic ones are removed, manual snapshots and snapshots a fork was started from are kept). A snapshot's ✕ deletes it; snapshots that a fork was started from cannot be deleted while that fork exists. Tokens are never stored in snapshot images.
+Click the size line under a session in the sidebar to open its **Snapshots** popup: a switch to turn automatic snapshots on or off for that session only, the list of its snapshots with their sizes and **Fork** / **Delete** buttons, **Delete all**, and **Snapshot now**. Sessions with automatic snapshots off show `📷×` in the sidebar.
+
+In Settings you set the default for automatic snapshots and how many to keep per session (default 10; older automatic ones are removed, manual snapshots and snapshots a fork was started from are kept). A snapshot's ✕ in the chat deletes it too; snapshots that a fork was started from cannot be deleted while that fork exists. Tokens are never stored in snapshot images.
 
 ### Watch and take over the desktop
 

@@ -85,7 +85,7 @@ api.post("/sessions", async (c) => {
 api.get("/sessions/:id", (c) => c.json(sessions.get(c.req.param("id"))));
 api.patch("/sessions/:id", async (c) => {
   const req = UpdateSessionRequest.parse(await c.req.json());
-  return c.json(sessions.rename(c.req.param("id"), req.title));
+  return c.json(sessions.edit(c.req.param("id"), req));
 });
 api.delete("/sessions/:id", async (c) => {
   await sessions.delete(c.req.param("id"));
@@ -136,6 +136,7 @@ api.post("/sessions/:id/queue", async (c) => {
 // Snapshots (`docker commit` of the Sandbox) and forks started from them.
 api.get("/sessions/:id/snapshots", (c) => c.json(sessions.snapshots(c.req.param("id"))));
 api.post("/sessions/:id/snapshots", async (c) => c.json(await sessions.snapshot(c.req.param("id"), "manual"), 201));
+api.delete("/sessions/:id/snapshots", async (c) => c.json(await sessions.deleteAllSnapshots(c.req.param("id"))));
 api.delete("/sessions/:id/snapshots/:snapshotId", async (c) => {
   await sessions.deleteSnapshot(c.req.param("id"), c.req.param("snapshotId"));
   return c.body(null, 204);

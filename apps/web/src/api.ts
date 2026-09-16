@@ -1,6 +1,7 @@
 import type {
   AskResult,
   CreateSessionRequest,
+  DeleteSnapshotsResult,
   ForkSessionRequest,
   FsChange,
   FsListResult,
@@ -16,6 +17,7 @@ import type {
   SessionEvent,
   Snapshot,
   UpdateSavedMessageRequest,
+  UpdateSessionRequest,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 
@@ -45,8 +47,8 @@ export const api = {
   sessions: () => request<Session[]>("/sessions"),
   createSession: (req: CreateSessionRequest) =>
     request<Session>("/sessions", { method: "POST", body: JSON.stringify(req) }),
-  renameSession: (id: string, title: string) =>
-    request<Session>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
+  updateSession: (id: string, patch: UpdateSessionRequest) =>
+    request<Session>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSession: (id: string) => request<void>(`/sessions/${id}`, { method: "DELETE" }),
   events: (id: string, after = 0) => request<SessionEvent[]>(`/sessions/${id}/events?after=${after}`),
   prompt: (id: string, text: string) =>
@@ -68,6 +70,7 @@ export const api = {
   snapshots: (id: string) => request<Snapshot[]>(`/sessions/${id}/snapshots`),
   createSnapshot: (id: string) => request<Snapshot>(`/sessions/${id}/snapshots`, { method: "POST" }),
   deleteSnapshot: (id: string, snapshotId: string) => request<void>(`/sessions/${id}/snapshots/${snapshotId}`, { method: "DELETE" }),
+  deleteAllSnapshots: (id: string) => request<DeleteSnapshotsResult>(`/sessions/${id}/snapshots`, { method: "DELETE" }),
   forkSession: (id: string, req: ForkSessionRequest) =>
     request<Session>(`/sessions/${id}/fork`, { method: "POST", body: JSON.stringify(req) }),
   hostDirs: (path?: string) => request<HostDirListing>(`/host/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),

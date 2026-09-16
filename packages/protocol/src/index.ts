@@ -61,6 +61,8 @@ export const Session = z.object({
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
   queueRunning: z.boolean().default(false),
+  /** Per-Session override of `Settings.autoSnapshot`; `null` follows the global setting. */
+  autoSnapshot: z.boolean().nullable().default(null),
   /** Bytes the Sandbox container's writable layer takes on the host (last measured), `null` if unknown. */
   diskBytes: z.number().int().nonnegative().nullable().default(null),
   /** Bytes taken by this Session's Snapshot images (each Snapshot stores a full copy of the writable layer). */
@@ -82,7 +84,9 @@ export const CreateSessionRequest = z.object({
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 
 export const UpdateSessionRequest = z.object({
-  title: z.string().min(1).max(200),
+  title: z.string().min(1).max(200).optional(),
+  /** `null` clears the override (follow `Settings.autoSnapshot`). */
+  autoSnapshot: z.boolean().nullable().optional(),
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequest>;
 
@@ -154,6 +158,13 @@ export const Snapshot = z.object({
   createdAt: z.string(),
 });
 export type Snapshot = z.infer<typeof Snapshot>;
+
+export const DeleteSnapshotsResult = z.object({
+  deleted: z.number().int().nonnegative(),
+  /** Snapshots left in place because a fork was started from them. */
+  kept: z.number().int().nonnegative(),
+});
+export type DeleteSnapshotsResult = z.infer<typeof DeleteSnapshotsResult>;
 
 export const ForkSessionRequest = z.object({
   snapshotId: z.string(),

@@ -143,6 +143,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 
 - **"docker: permission denied"** when starting: add your user to the `docker` group (`sudo usermod -aG docker $USER`, then log out and in).
 - **Session goes to *error* with "sandbox image not found"**: run `npm run build:image`.
+- **"method not found: _sessionboxer/…"** after updating Sessionboxer: the box still runs the previous version's internals. Stop and Resume the session; the current build is copied into the box on every start, so `npm run build:image` is only needed when the image itself changes (system packages, agent CLIs).
 - **Devin session fails right after creation**: Devin occasionally times out while loading team settings on a cold start. Sessionboxer retries a few times; if it still fails, Resume the session.
 - **Docker inside the box can't pull images**: Docker Hub rate-limits anonymous pulls per IP; log in with `docker login` in the box's Terminal or pull from another registry.
 

@@ -1,5 +1,9 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { PassThrough, type Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import Docker from "dockerode";
+import { pack } from "tar-fs";
 import { DAEMON_PORT, NOVNC_PORT, type DockerMode } from "@sessionboxer/protocol";
 import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 
@@ -8,6 +12,20 @@ export const LABEL_SNAPSHOT = "sessionboxer.snapshot";
 export const SNAPSHOT_REPO = "sessionboxer/snapshot";
 export const SYSBOX_RUNTIME = "sysbox-runc";
 const LOOPBACK = "127.0.0.1";
+
+/**
+ * The Sandbox Daemon and the protocol package as built in this checkout,
+ * copied into every Sandbox before it starts so the Daemon always matches the
+ * Control Plane, also for Sandboxes created from an older image or resumed
+ * or forked from a snapshot that carries an older Daemon. Their npm
+ * dependencies still come from the image (`npm run build:image` when the
+ * Dockerfile or those dependencies change).
+ */
+const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../packages");
+const DAEMON_SYNC: { host: string; dest: string }[] = [
+  { host: join(PACKAGES_DIR, "protocol/dist"), dest: "/opt/sessionboxer/protocol" },
+  { host: join(PACKAGES_DIR, "sandbox-daemon/dist"), dest: "/opt/sessionboxer/sandbox-daemon" },
+];
 
 /**
  * How the Control Plane reaches a Sandbox's ports (ADR-0005): by container
@@ -110,6 +128,27 @@ export class SandboxDocker {
       },
     });
     return container.id;
+  }
+
+  /** Copies this checkout's Daemon build into the (stopped) Sandbox; see DAEMON_SYNC. */
+  async syncDaemon(containerId: string): Promise<void> {
+    for (const { host, dest } of DAEMON_SYNC) {
+      if (!existsSync(join(host, "index.js"))) throw new Error(`${host} is not built; run \`npm run build\``);
+      await this.putArchive(
+        containerId,
+        pack(host, {
+          map: (header) => {
+            header.name = join("dist", header.name);
+            header.uid = 0;
+            header.gid = 0;
+            // the image's `sessionboxer-daemon` symlink executes dist/index.js directly
+            header.mode = header.type === "directory" || header.name === "dist/index.js" ? 0o755 : 0o644;
+            return header;
+          },
+        }),
+        dest,
+      );
+    }
   }
 
   async start(containerId: string): Promise<void> {
@@ -256,11 +295,10 @@ export class SandboxDocker {
         if (!line.trim()) continue;
         try {
           const ev = JSON.parse(line) as {
-            id: string;
-            Actor: { Attributes: Record<string, string> };
+            Actor: { ID: string; Attributes: Record<string, string> };
           };
           const sessionId = ev.Actor.Attributes[LABEL_SESSION];
-          if (sessionId) onDie(ev.id, sessionId, ev.Actor.Attributes.exitCode ?? "?");
+          if (sessionId) onDie(ev.Actor.ID, sessionId, ev.Actor.Attributes.exitCode ?? "?");
         } catch {
           // ignore partial lines
         }

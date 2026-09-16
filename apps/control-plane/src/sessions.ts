@@ -133,6 +133,9 @@ export class SessionManager {
       return await client.request(method, params, timeoutMs);
     } catch (e) {
       if (e instanceof DaemonRpcError) {
+        if (e.code === -32601) {
+          throw new HttpError(502, `${e.message}: the Sandbox runs an older Daemon; Stop and Resume the session to refresh it.`);
+        }
         const status =
           e.code === -32001 ? 404 : e.code === -32002 ? 403 : e.code === -32003 ? 409 : e.code === -32602 ? 400 : 502;
         throw new HttpError(status, e.message);
@@ -216,7 +219,7 @@ export class SessionManager {
     await this.docker.watchDeaths((containerId, sessionId, exitCode) => {
       if (this.stopping.has(sessionId)) return;
       const s = this.db.getSession(sessionId);
-      if (!s || s.containerId !== containerId || s.status === "stopped") return;
+      if (!s || s.containerId !== containerId) return;
       this.disconnect(sessionId);
       this.setStatus(sessionId, "error", `Sandbox exited unexpectedly (exit code ${exitCode})`);
     });
@@ -374,11 +377,26 @@ export class SessionManager {
       image,
     });
     this.update(session.id, { containerId });
-    await this.docker.start(containerId);
+    await this.startSandbox(containerId);
     await this.seedWorkspace(containerId, session.workspaceSource);
     this.setStatus(session.id, "idle");
     await this.connect(session.id, containerId);
     void this.refreshDiskUsage(session.id);
+  }
+
+  /** Refreshes the Daemon inside the Sandbox to this checkout's build, then starts it. */
+  private async startSandbox(containerId: string): Promise<void> {
+    try {
+      await this.docker.syncDaemon(containerId);
+    } catch (e) {
+      this.log(
+        `could not refresh the Sandbox Daemon in ${containerId.slice(0, 12)} (${e instanceof Error ? e.message : String(e)}); using the image's copy`,
+      );
+    }
+    await this.docker.start(containerId);
+    if ((await this.docker.state(containerId)) !== "running") {
+      throw new HttpError(502, "Sandbox exited right after starting; see `docker logs` for the container.");
+    }
   }
 
   private async seedWorkspace(containerId: string, source: WorkspaceSource): Promise<void> {
@@ -674,7 +692,7 @@ export class SessionManager {
     if ((await this.docker.state(s.containerId)) === "missing") {
       throw new HttpError(409, "Sandbox container is missing; delete the session.");
     }
-    await this.docker.start(s.containerId);
+    await this.startSandbox(s.containerId);
     const next = this.setStatus(id, "idle");
     await this.connect(id, s.containerId);
     return next;

@@ -145,7 +145,7 @@ export class DaemonClient {
     });
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error("daemon not connected"));
     const id = this.nextId++;
@@ -153,7 +153,7 @@ export class DaemonClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`daemon request ${method} timed out`));
-      }, REQUEST_TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
     });

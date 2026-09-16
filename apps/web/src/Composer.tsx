@@ -27,7 +27,75 @@ export type ComposerProps = {
   chatRef: RefObject<HTMLDivElement | null>;
   /** Rendered above the toolbar (the saved-messages list). */
   above?: ReactNode;
+  /** Enables the "Translate to English" tooltip on selected text; resolves with the replacement. */
+  onTranslate?: (text: string) => Promise<string>;
 };
+
+/** A non-empty selection in the active editor and where its first line sits on screen. */
+type Selection = { start: number; end: number; text: string; x: number; y: number };
+
+const SELECTION_TIP_GAP = 8;
+
+/**
+ * Screen position of a textarea selection's first line, via a hidden mirror of
+ * the textarea's text and metrics (textareas expose no Range API).
+ */
+function textareaSelectionAnchor(ta: HTMLTextAreaElement, start: number, end: number): { x: number; y: number } | null {
+  const cs = getComputedStyle(ta);
+  const mirror = document.createElement("div");
+  for (const prop of [
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "letterSpacing",
+    "lineHeight",
+    "tabSize",
+    "textTransform",
+    "textIndent",
+    "wordSpacing",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+  ] as const) {
+    mirror.style[prop] = cs[prop];
+  }
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.top = "0";
+  mirror.style.left = "-9999px";
+  mirror.style.boxSizing = "border-box";
+  // clientWidth excludes a vertical scrollbar, so lines wrap where the textarea wraps them.
+  mirror.style.width = `${ta.clientWidth + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth)}px`;
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.overflowWrap = "break-word";
+  const text = ta.value;
+  mirror.append(document.createTextNode(text.slice(0, start)));
+  const from = document.createElement("span");
+  from.textContent = text.slice(start, end);
+  mirror.append(from);
+  const to = document.createElement("span");
+  to.textContent = "\u200b";
+  mirror.append(to);
+  document.body.append(mirror);
+  try {
+    const rect = ta.getBoundingClientRect();
+    const originX = rect.left + parseFloat(cs.borderLeftWidth) - ta.scrollLeft;
+    const top = rect.top + parseFloat(cs.borderTopWidth) + from.offsetTop - ta.scrollTop;
+    const sameLine = Math.abs(to.offsetTop - from.offsetTop) < 1;
+    const left = originX + from.offsetLeft;
+    const right = sameLine ? originX + to.offsetLeft : rect.right - parseFloat(cs.paddingRight);
+    if (top < rect.top || top > rect.bottom) return null;
+    return { x: (left + right) / 2, y: top };
+  } finally {
+    mirror.remove();
+  }
+}
 
 export const COMPOSER_MIN_FRAC = 0.1;
 export const COMPOSER_MAX_FRAC = 0.95;
@@ -81,10 +149,86 @@ function isSendKey(e: KeyboardEvent | globalThis.KeyboardEvent): boolean {
 }
 
 export function Composer(props: ComposerProps) {
-  const { value, onChange, onSend, onSave, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above } =
+  const { value, onChange, onSend, onSave, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above, onTranslate } =
     props;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
+  const trackRawSelection = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta || ta.selectionStart === ta.selectionEnd) {
+      setSelection(null);
+      return;
+    }
+    const { selectionStart: start, selectionEnd: end } = ta;
+    const anchor = textareaSelectionAnchor(ta, start, end);
+    setSelection(anchor ? { start, end, text: ta.value.slice(start, end), ...anchor } : null);
+  }, []);
+
+  useEffect(() => {
+    if (!editor) return;
+    const track = () => {
+      const { from, to, empty } = editor.state.selection;
+      const range = window.getSelection()?.rangeCount ? window.getSelection()?.getRangeAt(0) : null;
+      if (empty || !range || !editor.isFocused) {
+        setSelection(null);
+        return;
+      }
+      const rects = range.getClientRects();
+      const box = range.getBoundingClientRect();
+      const first = rects[0] ?? box;
+      const x = rects.length > 1 ? (box.left + box.right) / 2 : (first.left + first.right) / 2;
+      setSelection({ start: from, end: to, text: editor.state.doc.textBetween(from, to, "\n"), x, y: first.top });
+    };
+    const clear = () => setSelection(null);
+    editor.on("selectionUpdate", track);
+    editor.on("blur", clear);
+    return () => {
+      editor.off("selectionUpdate", track);
+      editor.off("blur", clear);
+    };
+  }, [editor]);
+
+  useEffect(() => {
+    setSelection(null);
+    setTranslateError(null);
+  }, [mode]);
+
+  const translate = async () => {
+    if (!selection || !onTranslate || translating) return;
+    const { start, end, text } = selection;
+    const inRaw = mode === "raw";
+    setTranslating(true);
+    setTranslateError(null);
+    try {
+      const out = await onTranslate(text);
+      if (inRaw) {
+        const cur = valueRef.current;
+        if (cur.slice(start, end) !== text) throw new Error("The selected text changed meanwhile");
+        onChange(cur.slice(0, start) + out + cur.slice(end));
+        const ta = textareaRef.current;
+        requestAnimationFrame(() => {
+          ta?.focus();
+          ta?.setSelectionRange(start + out.length, start + out.length);
+        });
+      } else {
+        if (!editor) throw new Error("Editor is gone");
+        if (editor.state.doc.textBetween(start, end, "\n") !== text) throw new Error("The selected text changed meanwhile");
+        editor.view.dispatch(editor.state.tr.insertText(out, start, end));
+        editor.commands.focus();
+      }
+      setSelection(null);
+    } catch (e) {
+      setTranslateError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTranslating(false);
+    }
+  };
 
   useEffect(() => {
     if (!zen) return;
@@ -266,6 +410,9 @@ export function Composer(props: ComposerProps) {
               disabled={disabled}
               rows={sized || zen ? undefined : Math.min(12, Math.max(3, value.split("\n").length))}
               onChange={(e) => onChange(e.target.value)}
+              onSelect={trackRawSelection}
+              onScroll={trackRawSelection}
+              onBlur={() => setSelection(null)}
               onKeyDown={(e) => {
                 if (isSendKey(e) || (e.key === "Enter" && !e.shiftKey && !zen)) {
                   e.preventDefault();
@@ -283,6 +430,20 @@ export function Composer(props: ComposerProps) {
             <RichEditor value={value} onChange={onChange} onSend={onSend} disabled={disabled} placeholder={placeholder} onReady={setEditor} />
           )}
         </div>
+        {selection && onTranslate && !disabled && (
+          <div
+            className="selection-tip"
+            role="toolbar"
+            aria-label="Selection actions"
+            style={{ left: selection.x, top: selection.y - SELECTION_TIP_GAP }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            <button type="button" className="small" disabled={translating} onClick={() => void translate()} title="Ask the Session's Provider to translate the selection">
+              {translating ? "Translating\u2026" : "Translate to English"}
+            </button>
+            {translateError && <span className="error">{translateError}</span>}
+          </div>
+        )}
         <div className="composer-footer">
           <span className="muted hint">
             {mode === "raw" && !zen ? "Enter to send, Shift+Enter for a new line" : "Ctrl+Enter to send"}

@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import {
   DAEMON_METHODS,
   DAEMON_PORT,
+  DaemonAskParams,
   DaemonHelloParams,
   DaemonPromptParams,
   FsPathParams,
@@ -124,6 +125,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       emit({ type: "user_prompt", text: p.text });
       void agent.prompt(p.text);
       return { accepted: true };
+    }
+    case DAEMON_METHODS.ask: {
+      const p = DaemonAskParams.parse(params);
+      return { text: await agent.ask(p.text) };
     }
     case DAEMON_METHODS.cancel:
       await agent.cancel();

@@ -4,3 +4,4 @@ node_modules
 spike-output
 .git
 docs
+**/*.tsbuildinfo

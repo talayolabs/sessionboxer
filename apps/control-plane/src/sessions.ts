@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { basename } from "node:path";
 import {
+  AskResult,
   DAEMON_METHODS,
   DAEMON_PORT,
   FsListResult,
@@ -43,6 +44,8 @@ export class HttpError extends Error {
 
 const CANCEL_GRACE_MS = 8000;
 const DAEMON_WAIT_MS = 15_000;
+/** A one-shot ask spawns a fresh ACP session, which is slow on cold Providers. */
+const ASK_TIMEOUT_MS = 120_000;
 
 /** One UI connection attached to a terminal. */
 export interface TerminalSink {
@@ -122,10 +125,10 @@ export class SessionManager {
     return client;
   }
 
-  private async daemonCall(id: string, method: string, params: unknown): Promise<unknown> {
+  private async daemonCall(id: string, method: string, params: unknown, timeoutMs?: number): Promise<unknown> {
     try {
       const client = await this.liveClient(id);
-      return await client.request(method, params);
+      return await client.request(method, params, timeoutMs);
     } catch (e) {
       if (e instanceof DaemonRpcError) {
         const status =
@@ -404,6 +407,11 @@ export class SessionManager {
     }
     await client.request(DAEMON_METHODS.prompt, { text });
     this.setStatus(id, "running");
+  }
+
+  /** Context-free question to the Session's Provider; nothing is recorded in the transcript. */
+  async ask(id: string, text: string): Promise<AskResult> {
+    return AskResult.parse(await this.daemonCall(id, DAEMON_METHODS.ask, { text }, ASK_TIMEOUT_MS));
   }
 
   async cancel(id: string): Promise<void> {

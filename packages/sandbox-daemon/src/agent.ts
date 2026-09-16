@@ -53,6 +53,11 @@ export class AgentManager {
   private conn: ClientConnection | null = null;
   private starting: Promise<void> | null = null;
   private replaying = false;
+  /** Throwaway ACP sessions of `ask()`, kept forever so their late updates never reach the transcript. */
+  private readonly oneShotIds = new Set<string>();
+  private readonly oneShotSinks = new Map<string, (update: SessionUpdate) => void>();
+  /** While an `ask()` is in session/new, updates from not-yet-known sessions are its. */
+  private creatingOneShots = 0;
 
   acpSessionId: string | null = null;
   agentInfo: { name: string; version: string } | null = null;
@@ -108,6 +113,12 @@ export class AgentManager {
         return { outcome: { outcome: "selected", optionId: allow.optionId } };
       })
       .onNotification("session/update", (ctx) => {
+        const { sessionId, update } = ctx.params;
+        if (this.oneShotIds.has(sessionId)) {
+          this.oneShotSinks.get(sessionId)?.(update);
+          return;
+        }
+        if (this.creatingOneShots > 0 && sessionId !== this.acpSessionId) return;
         if (this.replaying) return;
         this.events.onUpdate(ctx.params.update);
       });
@@ -208,6 +219,40 @@ export class AgentManager {
     } finally {
       this.turnActive = false;
       this.events.onStateChange();
+    }
+  }
+
+  /**
+   * One question, one answer, no memory: a fresh ACP session without the desktop
+   * MCP, prompted once; resolves with the concatenated agent text. Independent of
+   * the main session, so it also works while a turn is active.
+   */
+  async ask(text: string): Promise<string> {
+    await this.ensureStarted();
+    const conn = this.conn;
+    if (!conn) throw new Error("agent not ready");
+    this.creatingOneShots++;
+    let sessionId: string;
+    let modes: NewSessionResponse["modes"];
+    try {
+      const created = await this.newSessionWithRetry(conn, { cwd: this.cfg.cwd, mcpServers: [] });
+      sessionId = created.sessionId;
+      modes = created.modes;
+      this.oneShotIds.add(sessionId);
+    } finally {
+      this.creatingOneShots--;
+    }
+    await this.ensureBypassMode(conn, sessionId, modes);
+    const chunks: string[] = [];
+    this.oneShotSinks.set(sessionId, (update) => {
+      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") chunks.push(update.content.text);
+    });
+    try {
+      const result = await conn.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+      if (result.stopReason !== "end_turn") throw new Error(`agent stopped early (${result.stopReason})`);
+      return chunks.join("");
+    } finally {
+      this.oneShotSinks.delete(sessionId);
     }
   }
 

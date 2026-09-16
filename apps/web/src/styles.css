@@ -171,6 +171,10 @@ li.expanded .saved-text { white-space: normal; }
 .saved-actions { display: inline-flex; gap: 3px; flex: none; }
 .saved-actions .small { padding: 1px 6px; }
 
+.selection-tip { position: fixed; z-index: 60; transform: translate(-50%, -100%); display: flex; align-items: center; gap: 8px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); white-space: nowrap; }
+.selection-tip::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; transform: translateX(-50%) rotate(45deg); background: var(--panel); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.selection-tip .small { padding: 2px 8px; font-size: 12px; }
+.selection-tip .error { color: var(--error); font-size: 12px; max-width: 320px; white-space: normal; }
 .composer-footer { flex: none; display: flex; align-items: center; gap: 10px; }
 .composer-footer .hint { font-size: 12px; }
 .toolbar { flex: none; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }

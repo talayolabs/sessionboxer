@@ -8,6 +8,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
+  AskRequest,
   CreateSessionRequest,
   ForkSessionRequest,
   FsWriteParams,
@@ -98,6 +99,10 @@ api.post("/sessions/:id/prompt", async (c) => {
   const req = PromptRequest.parse(await c.req.json());
   await sessions.prompt(c.req.param("id"), req.text);
   return c.json({ ok: true }, 202);
+});
+api.post("/sessions/:id/ask", async (c) => {
+  const req = AskRequest.parse(await c.req.json());
+  return c.json(await sessions.ask(c.req.param("id"), req.text));
 });
 api.post("/sessions/:id/cancel", async (c) => {
   await sessions.cancel(c.req.param("id"));

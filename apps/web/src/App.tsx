@@ -23,6 +23,22 @@ import { TerminalPane } from "./Terminal";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript-model";
 
+function translationPrompt(text: string): string {
+  return `translate the following text to english, only answer with the text translated to english and nothing else: '${text}'`;
+}
+
+/** Agents tend to echo the quoting of the prompt; drop quotes the original didn't have. */
+function cleanTranslation(answer: string, original: string): string {
+  let out = answer.trim();
+  for (const q of ["'", '"', "`"]) {
+    if (out.length >= 2 && out.startsWith(q) && out.endsWith(q) && !(original.startsWith(q) && original.endsWith(q))) {
+      out = out.slice(1, -1);
+    }
+  }
+  if (!out) throw new Error("The Provider returned an empty translation");
+  return out;
+}
+
 type Route = { view: "session"; id: string | null } | { view: "new" } | { view: "settings" };
 
 // Routes live in the URL hash so a reload (or a shared link) lands on the same Session.
@@ -361,6 +377,10 @@ function SessionView({
     setText("");
     void run(() => api.saveMessage(session.id, t));
   };
+  const translateToEnglish = useCallback(
+    async (selected: string) => cleanTranslation((await api.ask(session.id, translationPrompt(selected))).text, selected),
+    [session.id],
+  );
 
   const source = session.workspaceSource;
   const sourceLabel =
@@ -504,6 +524,7 @@ function SessionView({
             heightFrac={composerHeight}
             onHeightFracChange={setComposerHeight}
             chatRef={chatRef}
+            onTranslate={translateToEnglish}
           />
         </div>
         {pane === "desktop" && <Desktop session={session} />}

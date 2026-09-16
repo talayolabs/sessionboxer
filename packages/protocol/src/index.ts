@@ -91,6 +91,15 @@ export const PromptRequest = z.object({
 });
 export type PromptRequest = z.infer<typeof PromptRequest>;
 
+/** One-shot question to the Session's Provider in a fresh, context-free ACP session; not part of the transcript. */
+export const AskRequest = z.object({
+  text: z.string().min(1).max(20_000),
+});
+export type AskRequest = z.infer<typeof AskRequest>;
+
+export const AskResult = z.object({ text: z.string() });
+export type AskResult = z.infer<typeof AskResult>;
+
 // ---------------------------------------------------------------------------
 // Saved messages: prompts kept per Session ("save for later"), ordered; played
 // as a queue one turn at a time while `Session.queueRunning`.
@@ -367,6 +376,7 @@ export const DESKTOP_HEIGHT = 768;
 export const DAEMON_METHODS = {
   hello: "_sessionboxer/hello",
   prompt: "_sessionboxer/prompt",
+  ask: "_sessionboxer/ask",
   cancel: "_sessionboxer/cancel",
   status: "_sessionboxer/status",
   event: "_sessionboxer/event",
@@ -409,6 +419,12 @@ export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;
 /** The turn runs asynchronously; its outcome arrives as `turn_ended`/`agent_error` events. */
 export const DaemonPromptResult = z.object({ accepted: z.boolean() });
 export type DaemonPromptResult = z.infer<typeof DaemonPromptResult>;
+
+/** Synchronous: resolves with the Agent's reply once the throwaway session's turn ends. */
+export const DaemonAskParams = AskRequest;
+export type DaemonAskParams = AskRequest;
+export const DaemonAskResult = AskResult;
+export type DaemonAskResult = AskResult;
 
 /** Daemon -> Control Plane notification. `body` never carries `status`. */
 export interface DaemonEvent {

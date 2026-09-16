@@ -158,17 +158,33 @@ export function Composer(props: ComposerProps) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
+  // The tooltip stays put while a translation is pending, and an error stays
+  // readable until the next real selection (typing collapses the selection).
+  const pinned = useRef({ translating: false, error: false });
+  pinned.current = { translating, error: translateError !== null };
+
+  const collapse = useCallback(() => {
+    if (pinned.current.translating || pinned.current.error) return;
+    setSelection(null);
+  }, []);
+  const dismiss = useCallback(() => {
+    if (pinned.current.translating) return;
+    setSelection(null);
+    setTranslateError(null);
+  }, []);
 
   const trackRawSelection = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta || ta.selectionStart === ta.selectionEnd) {
-      setSelection(null);
+      collapse();
       return;
     }
+    if (pinned.current.translating) return;
+    setTranslateError(null);
     const { selectionStart: start, selectionEnd: end } = ta;
     const anchor = textareaSelectionAnchor(ta, start, end);
     setSelection(anchor ? { start, end, text: ta.value.slice(start, end), ...anchor } : null);
-  }, []);
+  }, [collapse]);
 
   useEffect(() => {
     if (!editor) return;
@@ -176,23 +192,24 @@ export function Composer(props: ComposerProps) {
       const { from, to, empty } = editor.state.selection;
       const range = window.getSelection()?.rangeCount ? window.getSelection()?.getRangeAt(0) : null;
       if (empty || !range || !editor.isFocused) {
-        setSelection(null);
+        collapse();
         return;
       }
+      if (pinned.current.translating) return;
+      setTranslateError(null);
       const rects = range.getClientRects();
       const box = range.getBoundingClientRect();
       const first = rects[0] ?? box;
       const x = rects.length > 1 ? (box.left + box.right) / 2 : (first.left + first.right) / 2;
       setSelection({ start: from, end: to, text: editor.state.doc.textBetween(from, to, "\n"), x, y: first.top });
     };
-    const clear = () => setSelection(null);
     editor.on("selectionUpdate", track);
-    editor.on("blur", clear);
+    editor.on("blur", dismiss);
     return () => {
       editor.off("selectionUpdate", track);
-      editor.off("blur", clear);
+      editor.off("blur", dismiss);
     };
-  }, [editor]);
+  }, [editor, collapse, dismiss]);
 
   useEffect(() => {
     setSelection(null);
@@ -412,7 +429,7 @@ export function Composer(props: ComposerProps) {
               onChange={(e) => onChange(e.target.value)}
               onSelect={trackRawSelection}
               onScroll={trackRawSelection}
-              onBlur={() => setSelection(null)}
+              onBlur={dismiss}
               onKeyDown={(e) => {
                 if (isSendKey(e) || (e.key === "Enter" && !e.shiftKey && !zen)) {
                   e.preventDefault();
@@ -438,10 +455,18 @@ export function Composer(props: ComposerProps) {
             style={{ left: selection.x, top: selection.y - SELECTION_TIP_GAP }}
             onMouseDown={(e) => e.preventDefault()}
           >
-            <button type="button" className="small" disabled={translating} onClick={() => void translate()} title="Ask the Session's Provider to translate the selection">
-              {translating ? "Translating\u2026" : "Translate to English"}
-            </button>
-            {translateError && <span className="error">{translateError}</span>}
+            {translateError ? (
+              <>
+                <span className="error">{translateError}</span>
+                <button type="button" className="small" onClick={dismiss} aria-label="Dismiss">
+                  {"\u00d7"}
+                </button>
+              </>
+            ) : (
+              <button type="button" className="small" disabled={translating} onClick={() => void translate()} title="Ask the Session's Provider to translate the selection">
+                {translating ? "Translating\u2026" : "Translate to English"}
+              </button>
+            )}
           </div>
         )}
         <div className="composer-footer">

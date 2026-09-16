@@ -13,10 +13,13 @@ import {
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
 import type {
+  AgentOption,
   DaemonSessionForkParams,
   DaemonSessionForkResult,
   McpServerSpec,
   ModelOption,
+  OptionChoice,
+  OptionValues,
   SessionUpdate,
   StopReason,
 } from "@sessionboxer/protocol";
@@ -30,6 +33,8 @@ export interface AgentConfig {
   stateFile: string;
   /** Runs before every spawn with the user MCP servers (Devin reads them from a file, not over ACP). */
   writeMcpConfig?: (servers: McpServerSpec[]) => void;
+  /** Runs before every spawn with the model allowlist (Claude reads `availableModels` from its settings file). */
+  writeModelAllowlist?: (models: string[]) => void;
   log: (msg: string) => void;
 }
 
@@ -41,6 +46,8 @@ export interface AgentEvents {
   onMcpChanged: (servers: string[]) => void;
   /** The Agent now runs another model. */
   onModelChanged: (model: ModelOption) => void;
+  /** One of the Agent's other options now has another value. */
+  onOptionChanged: (option: AgentOption, choice: OptionChoice) => void;
   onStateChange: () => void;
 }
 
@@ -72,6 +79,27 @@ function toModelOptions(option: SessionConfigOption & { type: "select" }): Model
   );
 }
 
+/** The other `select` options: everything but the model and the permission mode (which the Daemon owns). */
+function otherOptions(options: SessionConfigOption[]): AgentOption[] {
+  return options.flatMap((o): AgentOption[] =>
+    o.type !== "select" || o.category === "model" || o.id === "model" || o.category === "mode" || o.id === "mode"
+      ? []
+      : [
+          {
+            id: o.id,
+            name: o.name,
+            description: o.description ?? null,
+            category: o.category ?? null,
+            choices: o.options.flatMap((entry): OptionChoice[] =>
+              "group" in entry
+                ? entry.options.map((v) => ({ value: v.value, name: v.name, description: v.description ?? null }))
+                : [{ value: entry.value, name: entry.name, description: entry.description ?? null }],
+            ),
+          },
+        ],
+  );
+}
+
 /**
  * Owns the Agent child process and its ACP connection. Creates a new ACP
  * session on first start and loads the persisted one on later starts, so the
@@ -94,9 +122,14 @@ export class AgentManager {
   private mcpServers: McpServerSpec[] | null = null;
   /** Set received while a turn was active; applied when it ends. */
   private mcpPendingServers: McpServerSpec[] | null = null;
-  /** Fingerprint of the set the running (or last started) Agent got; `null` before the first start. */
+  /** Fingerprints of the MCP set (and of it plus the model allowlist) the running (or last started) Agent got; `null` before the first start. */
+  private mcpStartedServers: string | null = null;
   private mcpStartedKey: string | null = null;
   private mcpApplyChain: Promise<void> = Promise.resolve();
+
+  /** Model allowlist for the Agent's settings file (Claude); `null` leaves the file alone. */
+  private modelAllowlist: string[] | null = null;
+  private modelAllowlistPending: string[] | null = null;
 
   /** Model the Control Plane asked for; `null` means "whatever the Agent defaults to". */
   private model: string | null = null;
@@ -107,6 +140,14 @@ export class AgentManager {
   private modelConfigId: string | null = null;
   private modelOptions: ModelOption[] | null = null;
   private currentModel: string | null = null;
+
+  /** Values the Control Plane asked for on the Agent's other options, by id. */
+  private optionValuesRequested: OptionValues = {};
+  /** Requested while a turn was active; applied (merged) when it ends. */
+  private optionsPendingValues: OptionValues | null = null;
+  /** Options the Agent currently advertises and their current values; `null` until advertised. */
+  private otherOptionDefs: AgentOption[] | null = null;
+  private currentOptionValues: OptionValues = {};
 
   acpSessionId: string | null = null;
   agentInfo: { name: string; version: string } | null = null;
@@ -121,7 +162,7 @@ export class AgentManager {
   }
 
   get mcpPending(): boolean {
-    return this.mcpPendingServers !== null;
+    return this.mcpPendingServers !== null || this.modelAllowlistPending !== null;
   }
 
   get models(): ModelOption[] | null {
@@ -135,6 +176,107 @@ export class AgentManager {
 
   get modelPending(): boolean {
     return this.modelPendingValue !== null;
+  }
+
+  get options(): AgentOption[] | null {
+    return this.otherOptionDefs;
+  }
+
+  /** Requested values win over reported ones until applied; options never requested show what the Agent reports. */
+  get optionValues(): OptionValues {
+    return { ...this.currentOptionValues, ...this.optionValuesRequested, ...this.optionsPendingValues };
+  }
+
+  get optionsPending(): boolean {
+    return this.optionsPendingValues !== null;
+  }
+
+  /**
+   * Sets other config options (effort, fast mode, …) with ACP `session/set_config_option`,
+   * merged into the requested values; same timing as `setModel`. Returns whether it was
+   * applied right away. Strict (a user's change) fails on options or values the Agent does not
+   * offer right now; lenient (values restored after a connect) keeps them for a later model.
+   */
+  setOptions(values: OptionValues, strict = true): boolean {
+    if (this.turnActive) {
+      this.optionsPendingValues = { ...this.optionsPendingValues, ...values };
+      this.events.onStateChange();
+      return false;
+    }
+    this.optionsPendingValues = null;
+    const previous = this.optionValuesRequested;
+    this.optionValuesRequested = { ...previous, ...values };
+    this.modelApplyChain = this.modelApplyChain
+      .then(() => this.applyOptions(values, strict))
+      .catch((e: unknown) => {
+        this.cfg.log(`option change failed: ${String(e)}`);
+        for (const id of Object.keys(values)) {
+          if (this.optionValuesRequested[id] !== values[id]) continue;
+          if (previous[id] !== undefined) this.optionValuesRequested[id] = previous[id];
+          else delete this.optionValuesRequested[id];
+        }
+        this.events.onError(`Could not change ${Object.keys(values).join(", ")}: ${e instanceof Error ? e.message : String(e)}`);
+        this.events.onStateChange();
+      });
+    this.events.onStateChange();
+    return true;
+  }
+
+  private async applyOptions(values: OptionValues, strict: boolean): Promise<void> {
+    await this.mcpApplyChain.catch(() => undefined);
+    await this.ensureStarted();
+    if (this.turnActive) {
+      this.optionsPendingValues = { ...this.optionsPendingValues, ...values };
+      this.events.onStateChange();
+      return;
+    }
+    if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+    await this.applyRequestedOptions(this.conn, this.acpSessionId, Object.keys(values), strict);
+  }
+
+  /**
+   * Sends the requested values of `ids` (all requested options when omitted) that differ from
+   * what the Agent reports. Strict: options the Agent does not advertise (or values it does not
+   * offer) fail; lenient: they are skipped, for re-applying after a restart or a model change.
+   * `announce` emits `onOptionChanged` for effective changes (off when restoring after a restart).
+   */
+  private async applyRequestedOptions(
+    conn: ClientConnection,
+    sessionId: string,
+    ids?: string[],
+    strict = false,
+    announce = true,
+  ): Promise<void> {
+    const defs = this.otherOptionDefs;
+    if (!defs) {
+      if (strict) throw new Error("the Agent advertises no options");
+      return;
+    }
+    for (const id of ids ?? Object.keys(this.optionValuesRequested)) {
+      const value = this.optionValuesRequested[id];
+      if (value === undefined) continue;
+      const def = defs.find((o) => o.id === id);
+      if (!def) {
+        if (strict) throw new Error(`the Agent does not offer an option "${id}" with the current model`);
+        continue;
+      }
+      if (!def.choices.some((c) => c.value === value)) {
+        if (strict) throw new Error(`the Agent does not offer "${value}" for ${def.name}`);
+        this.cfg.log(`option ${id}=${value} not offered with the current model; skipped`);
+        continue;
+      }
+      if (this.currentOptionValues[id] === value) continue;
+      const previous = this.currentOptionValues[id];
+      const result = await conn.agent.request("session/set_config_option", { sessionId, configId: id, value });
+      this.captureConfigOptions(result.configOptions);
+      const current = this.currentOptionValues[id] ?? value;
+      this.cfg.log(`option ${id} ${previous ?? "?"} -> ${current}`);
+      if (announce && previous !== undefined && previous !== current) {
+        const choice = def.choices.find((c) => c.value === current) ?? { value: current, name: current, description: null };
+        this.events.onOptionChanged(def, choice);
+      }
+    }
+    this.events.onStateChange();
   }
 
   /**
@@ -175,8 +317,11 @@ export class AgentManager {
     await this.applyRequestedModel(this.conn, this.acpSessionId);
   }
 
-  /** Sends the requested model to the Agent when it differs from what it runs; a no-op without a model option. */
-  private async applyRequestedModel(conn: ClientConnection, sessionId: string): Promise<void> {
+  /**
+   * Sends the requested model to the Agent when it differs from what it runs; a no-op without a
+   * model option. `announce` emits `onModelChanged` (off when restoring after a restart).
+   */
+  private async applyRequestedModel(conn: ClientConnection, sessionId: string, announce = true): Promise<void> {
     const model = this.model;
     if (!model || !this.modelConfigId || model === this.currentModel) return;
     if (this.modelOptions && !this.modelOptions.some((o) => o.value === model)) {
@@ -187,21 +332,65 @@ export class AgentManager {
     this.captureConfigOptions(result.configOptions);
     if (this.currentModel === null) this.currentModel = model;
     this.cfg.log(`model ${previous ?? "?"} -> ${this.currentModel}`);
-    if (previous !== null && previous !== this.currentModel) {
+    if (announce && previous !== null && previous !== this.currentModel) {
       const option = this.modelOptions?.find((o) => o.value === this.currentModel);
       this.events.onModelChanged(option ?? { value: this.currentModel, name: this.currentModel, description: null, group: null });
     }
     this.events.onStateChange();
+    // The options on offer (and their values) can change with the model; re-apply what was asked for.
+    await this.applyRequestedOptions(conn, sessionId, undefined, false, announce).catch((e: unknown) =>
+      this.cfg.log(`option set after model switch failed: ${String(e)}`),
+    );
   }
 
-  /** Remembers the model option (choices + current value) from session/new, session/load, set_config_option or an update. */
+  /**
+   * Remembers the model option (choices + current value) and the other options from
+   * session/new, session/load, set_config_option or an update. Returns whether a model option was seen.
+   */
   private captureConfigOptions(options: SessionConfigOption[] | null | undefined): boolean {
+    if (options) {
+      const others = otherOptions(options);
+      this.otherOptionDefs = others;
+      this.currentOptionValues = Object.fromEntries(
+        options.flatMap((o) => (o.type === "select" && others.some((d) => d.id === o.id) ? [[o.id, o.currentValue]] : [])),
+      );
+    }
     const option = modelOption(options);
     if (!option) return false;
     this.modelConfigId = option.id;
     this.modelOptions = toModelOptions(option);
     this.currentModel = option.currentValue;
     return true;
+  }
+
+  /**
+   * Sets the model allowlist the Agent starts with (Claude's `availableModels`). Restarts the
+   * Agent in place like `setMcpServers` when it runs with another list, unless a turn is active,
+   * in which case the change waits for the turn to end. Returns whether it was applied right away.
+   */
+  setModelAllowlist(models: string[]): boolean {
+    if (!this.cfg.writeModelAllowlist) return true;
+    if (this.turnActive) {
+      this.modelAllowlistPending = models;
+      this.events.onStateChange();
+      return false;
+    }
+    this.modelAllowlistPending = null;
+    this.modelAllowlist = models;
+    if (this.mcpServers === null) {
+      // The Agent has not been started yet (the MCP set is still to come); the start picks the list up.
+      this.events.onStateChange();
+      return true;
+    }
+    this.mcpApplyChain = this.mcpApplyChain
+      .then(() => this.applyMcpServers())
+      .catch((e: unknown) => this.cfg.log(`agent start failed: ${String(e)}`));
+    this.events.onStateChange();
+    return true;
+  }
+
+  private startKey(): string {
+    return JSON.stringify({ servers: this.mcpServers, allow: this.modelAllowlist });
   }
 
   /**
@@ -226,7 +415,7 @@ export class AgentManager {
 
   private async applyMcpServers(): Promise<void> {
     if (this.starting) await this.starting.catch(() => undefined);
-    const key = JSON.stringify(this.mcpServers);
+    const key = this.startKey();
     const previous = this.mcpStartedKey;
     if (this.child && previous === key) return;
     if (this.turnActive) {
@@ -235,9 +424,10 @@ export class AgentManager {
       this.events.onStateChange();
       return;
     }
+    const serversChanged = this.mcpStartedServers !== null && this.mcpStartedServers !== JSON.stringify(this.mcpServers ?? []);
     if (this.child) this.kill();
     await this.ensureStarted();
-    if (previous !== null && previous !== key) this.events.onMcpChanged(this.mcpServerNames ?? []);
+    if (serversChanged) this.events.onMcpChanged(this.mcpServerNames ?? []);
   }
 
   constructor(
@@ -262,6 +452,7 @@ export class AgentManager {
     this.currentModel = null;
     const userServers = this.mcpServers ?? [];
     this.cfg.writeMcpConfig?.(userServers);
+    if (this.modelAllowlist) this.cfg.writeModelAllowlist?.(this.modelAllowlist);
     this.cfg.log(
       `spawning ${[this.cfg.command, ...this.cfg.args].join(" ")} (MCP: desktop${userServers.map((s) => `, ${s.name}`).join("")})`,
     );
@@ -307,6 +498,8 @@ export class AgentManager {
                 .then(() => this.applyModel())
                 .catch((e: unknown) => this.cfg.log(`model switch failed: ${String(e)}`));
             }
+          } else {
+            this.events.onStateChange();
           }
           return;
         }
@@ -362,13 +555,17 @@ export class AgentManager {
         await this.ensureBypassMode(conn, created.sessionId, created.modes);
       }
       if (this.acpSessionId) {
-        await this.applyRequestedModel(conn, this.acpSessionId).catch((e: unknown) => {
+        await this.applyRequestedModel(conn, this.acpSessionId, false).catch((e: unknown) => {
           this.cfg.log(`model switch at start failed: ${String(e)}`);
           this.events.onError(`Could not switch model to ${this.model}: ${e instanceof Error ? e.message : String(e)}`);
           this.model = null;
         });
+        await this.applyRequestedOptions(conn, this.acpSessionId, undefined, false, false).catch((e: unknown) =>
+          this.cfg.log(`option set at start failed: ${String(e)}`),
+        );
       }
-      this.mcpStartedKey = JSON.stringify(userServers);
+      this.mcpStartedServers = JSON.stringify(userServers);
+      this.mcpStartedKey = this.startKey();
       this.ready = true;
       this.events.onStateChange();
     } catch (e) {
@@ -426,8 +623,10 @@ export class AgentManager {
     } finally {
       this.turnActive = false;
       this.events.onStateChange();
+      if (this.modelAllowlistPending) this.setModelAllowlist(this.modelAllowlistPending);
       if (this.mcpPendingServers) this.setMcpServers(this.mcpPendingServers);
       if (this.modelPendingValue) this.setModel(this.modelPendingValue);
+      if (this.optionsPendingValues) this.setOptions(this.optionsPendingValues);
     }
   }
 
@@ -561,7 +760,10 @@ export class AgentManager {
     this.currentModel = null;
     this.captureConfigOptions(configOptions);
     await this.ensureBypassMode(conn, sessionId, modes);
-    await this.applyRequestedModel(conn, sessionId).catch((e: unknown) => this.cfg.log(`model switch after fork failed: ${String(e)}`));
+    await this.applyRequestedModel(conn, sessionId, false).catch((e: unknown) => this.cfg.log(`model switch after fork failed: ${String(e)}`));
+    await this.applyRequestedOptions(conn, sessionId, undefined, false, false).catch((e: unknown) =>
+      this.cfg.log(`option set after fork failed: ${String(e)}`),
+    );
     this.events.onStateChange();
   }
 

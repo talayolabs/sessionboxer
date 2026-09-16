@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  DEFAULT_CLAUDE_MODELS,
   DOCKER_MODE_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
   ROOT_BRANCH_ID,
   branchScope,
   inBranchScope,
+  type AgentOption,
   type Branch,
   type ModelOption,
+  type OptionValues,
   type Provider,
   type ProviderModels,
+  type ProviderOptions,
   type PublicMcpServerDef,
   type PublicSettings,
   type SavedMessage,
@@ -29,6 +33,7 @@ import { formatMb } from "./format";
 import { McpDialog, McpPicker } from "./McpDialog";
 import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
+import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
@@ -106,6 +111,7 @@ export function App() {
   const [snapshotting, setSnapshotting] = useState<Set<string>>(() => new Set());
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [models, setModels] = useState<ProviderModels | null>(null);
+  const [options, setOptions] = useState<ProviderOptions | null>(null);
   // Snapshots popup opened from the sidebar; it can be for a Session other than the selected one.
   const [snapshotsFor, setSnapshotsFor] = useState<string | null>(null);
   const [dialogSnapshots, setDialogSnapshots] = useState<Snapshot[] | null>(null);
@@ -131,6 +137,7 @@ export function App() {
     void reloadSessions();
     void run(async () => setSettings(await api.settings()));
     void run(async () => setModels(await api.models()));
+    void run(async () => setOptions(await api.options()));
   }, [reloadSessions, run]);
 
   // Load events and saved messages when the selected session (or its active branch) changes; the WS keeps them current.
@@ -219,12 +226,16 @@ export function App() {
           case "models":
             setModels((prev) => ({ ...(prev ?? EMPTY_MODELS), [msg.provider]: msg.models }));
             break;
+          case "options":
+            setOptions((prev) => ({ ...(prev ?? EMPTY_OPTIONS), [msg.provider]: msg.options }));
+            break;
         }
       },
       () => {
         // Reconnected: refetch to fill any gap.
         void reloadSessions();
         void run(async () => setModels(await api.models()));
+        void run(async () => setOptions(await api.options()));
         setSnapshotting(new Set());
         if (selectedId) {
           void run(async () => setEvents(await api.events(selectedId)));
@@ -388,6 +399,7 @@ export function App() {
           <NewSession
             settings={settings}
             models={models ?? EMPTY_MODELS}
+            options={options ?? EMPTY_OPTIONS}
             onCreated={(s) => setRoute({ view: "session", id: s.id })}
             onCancel={() => setRoute({ view: "session", id: null })}
             run={run}
@@ -411,6 +423,9 @@ export function App() {
             session={selected}
             mcpServers={settings?.mcpServers ?? []}
             models={models?.[selected.provider] ?? []}
+            options={
+              selected.status === "idle" || selected.status === "running" ? selected.availableOptions : (options?.[selected.provider] ?? [])
+            }
             items={items}
             saved={saved}
             snapshots={visibleSnapshots}
@@ -431,6 +446,7 @@ export function App() {
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
 const EMPTY_MODELS: ProviderModels = Object.fromEntries(PROVIDERS.map((p): [Provider, ModelOption[]] => [p, []])) as ProviderModels;
+const EMPTY_OPTIONS: ProviderOptions = Object.fromEntries(PROVIDERS.map((p): [Provider, AgentOption[]] => [p, []])) as ProviderOptions;
 const EMPTY_BRANCHES: Branch[] = [];
 
 /** Total storage (machine + Snapshots) under a sidebar entry; click opens the Snapshots popup with the breakdown. */
@@ -491,6 +507,7 @@ function SessionView({
   session,
   mcpServers,
   models,
+  options,
   items,
   saved,
   snapshots,
@@ -505,6 +522,8 @@ function SessionView({
   session: Session;
   mcpServers: PublicMcpServerDef[];
   models: ModelOption[];
+  /** Non-model options (Effort, Fast mode…): what this Session's Agent advertises, else the Provider cache. */
+  options: AgentOption[];
   items: ReturnType<typeof buildTranscript>;
   saved: SavedMessage[];
   snapshots: Snapshot[];
@@ -586,6 +605,11 @@ function SessionView({
     void run(() => api.updateSession(session.id, { model })).finally(() => setModelBusy(false));
   };
   const showModelSelect = models.length > 0 || session.model !== null;
+  const changeOption = (id: string, value: string | null) => {
+    if (!value || value === session.options[id]) return;
+    setModelBusy(true);
+    void run(() => api.updateSession(session.id, { options: { [id]: value } })).finally(() => setModelBusy(false));
+  };
   const snapshotActions = {
     onFork: (s: Snapshot) => setForkFrom(s.id),
     onDelete: (s: Snapshot) => {
@@ -761,8 +785,13 @@ function SessionView({
               />
             }
             footerStart={
-              showModelSelect && (
-                <ModelSelect compact models={models} value={session.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
+              (showModelSelect || options.length > 0) && (
+                <>
+                  {showModelSelect && (
+                    <ModelSelect compact models={models} value={session.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
+                  )}
+                  <OptionSelects compact options={options} values={session.options} onChange={changeOption} disabled={modelBusy} pending={session.optionsPending} />
+                </>
               )
             }
             disabled={!canPrompt}
@@ -807,18 +836,21 @@ function DockerModeNote({ settings, enabled }: { settings: PublicSettings; enabl
 function NewSession({
   settings,
   models,
+  options,
   onCreated,
   onCancel,
   run,
 }: {
   settings: PublicSettings;
   models: ProviderModels;
+  options: ProviderOptions;
   onCreated: (s: Session) => void;
   onCancel: () => void;
   run: Runner;
 }) {
   const [provider, setProvider] = useState<Provider>("claude-code");
   const [model, setModel] = useState<string | null>(null);
+  const [optionValues, setOptionValues] = useState<OptionValues>({});
   const [docker, setDocker] = useState(settings.dockerInSandbox);
   const [sourceType, setSourceType] = useState<WorkspaceSource["type"]>("empty");
   const [gitUrl, setGitUrl] = useState("");
@@ -846,6 +878,7 @@ function NewSession({
         docker,
         mcpEnabled,
         ...(model ? { model } : {}),
+        ...(Object.keys(optionValues).length > 0 ? { options: optionValues } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
       });
@@ -864,6 +897,7 @@ function NewSession({
           onChange={(e) => {
             setProvider(e.target.value as Provider);
             setModel(null);
+            setOptionValues({});
           }}
         >
           {PROVIDERS.map((p) => (
@@ -874,7 +908,22 @@ function NewSession({
         </select>
       </label>
       {models[provider].length > 0 ? (
-        <ModelSelect models={models[provider]} value={model} onChange={setModel} allowDefault />
+        <>
+          <ModelSelect models={models[provider]} value={model} onChange={setModel} allowDefault />
+          <OptionSelects
+            options={options[provider]}
+            values={optionValues}
+            allowDefault
+            onChange={(id, value) =>
+              setOptionValues((prev) => {
+                const next = { ...prev };
+                if (value === null) delete next[id];
+                else next[id] = value;
+                return next;
+              })
+            }
+          />
+        </>
       ) : (
         <p className="muted">
           Model: {PROVIDER_LABELS[provider]}&apos;s default. The list of models appears here once a {PROVIDER_LABELS[provider]} session has started; you can
@@ -949,6 +998,10 @@ function NewSession({
   );
 }
 
+function parseAliasList(text: string): string[] {
+  return [...new Set(text.split(/[\s,]+/).map((s) => s.trim()).filter((s) => s.length > 0))];
+}
+
 function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; onSaved: (s: PublicSettings) => void; run: Runner }) {
   const [token, setToken] = useState("");
   const [devinToken, setDevinToken] = useState("");
@@ -960,6 +1013,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
+  const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
 
@@ -975,6 +1029,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         mcpServers,
+        claudeModels: parseAliasList(claudeModels),
         providerSecrets: {
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
@@ -1014,6 +1069,15 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
           }
         />
       </label>
+      <label>
+        Claude model aliases (offered in the Model picker, comma-separated)
+        <input value={claudeModels} onChange={(e) => setClaudeModels(e.target.value)} placeholder={DEFAULT_CLAUDE_MODELS.join(", ")} />
+      </label>
+      <p className="muted">
+        Written to Claude&apos;s <code>availableModels</code> setting inside each Sandbox, so models your account has but the picker does not list by
+        default (e.g. <code>fable</code>) become selectable; leave empty for Claude&apos;s built-in list. Aliases only, no keys. Applies to new
+        Sessions and to idle running ones (their Agent restarts in place, keeping the conversation); Stop → Resume a Session if it does not pick it up.
+      </p>
       <label>
         Git user.name
         <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} />

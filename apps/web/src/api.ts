@@ -9,6 +9,7 @@ import type {
   FsWriteResult,
   HostDirListing,
   ProviderModels,
+  ProviderOptions,
   PtyInfo,
   PtyListResult,
   PublicSettings,
@@ -46,6 +47,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   settings: () => request<PublicSettings>("/settings"),
   models: () => request<ProviderModels>("/models"),
+  options: () => request<ProviderOptions>("/options"),
   updateSettings: (update: UpdateSettingsRequest) =>
     request<PublicSettings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
   sessions: () => request<Session[]>("/sessions"),

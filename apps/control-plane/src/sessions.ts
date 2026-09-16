@@ -4,8 +4,11 @@ import {
   AskResult,
   DAEMON_METHODS,
   DAEMON_PORT,
+  DaemonClaudeModelsSetResult,
   DaemonMcpSetResult,
   DaemonModelSetResult,
+  DaemonOptionSetResult,
+  type DaemonOptionSetParams,
   DaemonSessionForkResult,
   DaemonSessionSwitchResult,
   DaemonStatus,
@@ -26,7 +29,9 @@ import {
   type DockerMode,
   type ForkSessionRequest,
   type FsChange,
+  type OptionValues,
   type ProviderModels,
+  type ProviderOptions,
   type SavedMessage,
   type Session,
   type SessionBroadcast,
@@ -285,6 +290,9 @@ export class SessionManager {
       mcpPending: false,
       model: req.model ?? null,
       modelPending: false,
+      options: req.options ?? {},
+      optionsPending: false,
+      availableOptions: [],
       snapshotBytes: 0,
       snapshotCount: 0,
       branches: [],
@@ -347,6 +355,9 @@ export class SessionManager {
       mcpPending: false,
       model: origin.model,
       modelPending: false,
+      options: origin.options,
+      optionsPending: false,
+      availableOptions: [],
       snapshotBytes: 0,
       snapshotCount: 0,
       branches: [],
@@ -770,7 +781,9 @@ export class SessionManager {
     if (s.status === "stopped") return s;
     this.stopping.add(id);
     try {
-      if (s.queueRunning || s.mcpPending || s.modelPending) this.update(id, { queueRunning: false, mcpPending: false, modelPending: false });
+      if (s.queueRunning || s.mcpPending || s.modelPending || s.optionsPending) {
+        this.update(id, { queueRunning: false, mcpPending: false, modelPending: false, optionsPending: false });
+      }
       if (s.status === "running") await this.cancelAndWait(id);
       this.disconnect(id);
       await this.docker.stop(s.containerId);
@@ -833,10 +846,12 @@ export class SessionManager {
       ...(req.autoSnapshot !== undefined ? { autoSnapshot: req.autoSnapshot } : {}),
       ...(req.mcpEnabled !== undefined ? { mcpEnabled: knownMcpIds(this.settings(), req.mcpEnabled) } : {}),
       ...(req.model !== undefined ? { model: req.model } : {}),
+      ...(req.options !== undefined ? { options: { ...this.get(id).options, ...req.options } } : {}),
     });
     if (req.mcpEnabled !== undefined) await this.pushMcpServers(id);
-    if (req.model !== undefined) return this.pushModel(id);
-    return req.mcpEnabled !== undefined ? this.get(id) : s;
+    if (req.model !== undefined) await this.pushModel(id);
+    if (req.options !== undefined) await this.pushOptions(id, req.options);
+    return req.mcpEnabled !== undefined || req.model !== undefined || req.options !== undefined ? this.get(id) : s;
   }
 
   /**
@@ -859,9 +874,63 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Sends option values to the Session's Daemon (`values`, or everything the Session asked for
+   * when omitted, as after a Daemon connect; that restore is lenient, since the current model may
+   * not offer every stored option). Same timing and fallbacks as `pushModel`.
+   */
+  async pushOptions(id: string, values?: OptionValues): Promise<Session> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    const options = values ?? s.options;
+    if (Object.keys(options).length === 0 || !client?.connected) return s;
+    try {
+      const params: DaemonOptionSetParams = { options, lenient: values === undefined };
+      const result = DaemonOptionSetResult.parse(await client.request(DAEMON_METHODS.optionSet, params));
+      return this.update(id, { optionsPending: !result.applied });
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) {
+        throw new HttpError(502, "The Sandbox runs an older Daemon without option selection; Stop and Resume the session to refresh it.");
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Sends the Claude model allowlist (`Settings.claudeModels`) to a Claude Session's Daemon, which
+   * writes it to the Sandbox's Claude settings before the Agent (re)starts. Older Daemons ignore it.
+   */
+  async pushClaudeModels(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "claude-code" || !client?.connected) return;
+    try {
+      DaemonClaudeModelsSetResult.parse(await client.request(DAEMON_METHODS.claudeModelsSet, { models: this.settings().claudeModels }));
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) {
+        this.log(`daemon ${id} predates the Claude model allowlist; Stop and Resume the session to refresh it`);
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /** `Settings.claudeModels` changed: every live Claude Session gets the new allowlist (applied once idle). */
+  async pushClaudeModelsToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.provider !== "claude-code" || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushClaudeModels(s.id).catch((e: unknown) => this.log(`claude models push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
   /** Last model list each Provider's Agent reported (what New Session can offer). */
   providerModels(): ProviderModels {
     return this.db.providerModels();
+  }
+
+  /** Every option each Provider's Agent has advertised (what New Session can offer). */
+  providerOptions(): ProviderOptions {
+    return this.db.providerOptions();
   }
 
   /**
@@ -929,10 +998,12 @@ export class SessionManager {
     const cursor = this.db.getDaemonCursor(id);
     if (!cursor || cursor.epoch !== status.epoch) this.db.setDaemonCursor(id, status.epoch, 0);
     this.onDaemonStatus(id, status);
-    // The Daemon waits for the MCP set before it starts the Agent; older Daemons ignore the call.
-    this.pushMcpServers(id)
+    // The Daemon waits for the MCP set before it starts the Agent (so the allowlist goes first); older Daemons ignore the calls.
+    this.pushClaudeModels(id)
+      .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))
-      .catch((e: unknown) => this.log(`mcp/model push ${id} failed: ${String(e)}`));
+      .then(() => this.pushOptions(id))
+      .catch((e: unknown) => this.log(`mcp/model/options push ${id} failed: ${String(e)}`));
     const pending = this.pendingPrompts.get(id);
     if (pending && !status.turnActive) {
       this.pendingPrompts.delete(id);
@@ -951,6 +1022,18 @@ export class SessionManager {
     }
     if (status.model !== null && (status.model !== s.model || status.modelPending !== s.modelPending)) {
       this.update(id, { model: status.model, modelPending: status.modelPending });
+    }
+    if (status.options) {
+      const merged = this.db.mergeProviderOptions(s.provider, status.options);
+      if (merged) this.broadcast({ type: "options", provider: s.provider, options: merged });
+      const options = { ...s.options, ...status.optionValues };
+      if (
+        JSON.stringify(options) !== JSON.stringify(s.options) ||
+        status.optionsPending !== s.optionsPending ||
+        JSON.stringify(status.options) !== JSON.stringify(s.availableOptions)
+      ) {
+        this.update(id, { options, optionsPending: status.optionsPending, availableOptions: status.options });
+      }
     }
   }
 

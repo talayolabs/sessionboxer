@@ -29,8 +29,9 @@ Options for new:
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
   -p, --prompt <text>    First prompt, sent once the Sandbox is ready
       --provider <id>    Provider: ${PROVIDERS.join(" | ")} (default claude-code)
-      --model <id>       Model to run, as the Provider names it (e.g. sonnet, opus[1m]);
+      --model <id>       Model to run, as the Provider names it (e.g. sonnet, fable);
                          see the New Session page for the list. Default: the Provider's default
+      --option <id=val>  Other Agent option (repeatable), e.g. --option effort=high --option fast=on
       --docker           Private Docker daemon inside the Sandbox (Sysbox, or --privileged
                          with a warning when Sysbox is not installed); --no-docker to disable.
                          Default: the "Docker inside Sandboxes" setting
@@ -99,6 +100,7 @@ async function newSession(args: string[]): Promise<void> {
       prompt: { type: "string", short: "p" },
       provider: { type: "string", default: "claude-code" },
       model: { type: "string" },
+      option: { type: "string", multiple: true },
       docker: { type: "boolean" },
       open: { type: "boolean", default: true },
     },
@@ -117,11 +119,19 @@ async function newSession(args: string[]): Promise<void> {
   const provider = Provider.safeParse(values.provider);
   if (!provider.success) throw new CliError(`new: --provider must be one of ${PROVIDERS.join(", ")}`);
 
+  const options: Record<string, string> = {};
+  for (const raw of values.option ?? []) {
+    const eq = raw.indexOf("=");
+    if (eq <= 0 || eq === raw.length - 1) throw new CliError(`new: --option expects id=value, got "${raw}"`);
+    options[raw.slice(0, eq)] = raw.slice(eq + 1);
+  }
+
   const body: CreateSessionRequest = {
     provider: provider.data,
     workspaceSource,
     ...(values.docker !== undefined ? { docker: values.docker } : {}),
     ...(values.model ? { model: values.model } : {}),
+    ...(Object.keys(options).length > 0 ? { options } : {}),
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),
   };

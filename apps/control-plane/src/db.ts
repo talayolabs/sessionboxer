@@ -1,9 +1,11 @@
 import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
 import {
+  AgentOption,
   BranchMethod,
   DockerMode,
   ModelOption,
+  OptionValues,
   PROVIDERS,
   Provider,
   ROOT_BRANCH_ID,
@@ -14,6 +16,7 @@ import {
   type Branch,
   type BranchScope,
   type ProviderModels,
+  type ProviderOptions,
   type SavedMessage,
   type SessionEvent,
   type SessionEventBody,
@@ -49,6 +52,11 @@ interface SessionRow {
   mcp_pending: number;
   model: string | null;
   model_pending: number;
+  /** JSON object of option values by id. */
+  options: string;
+  options_pending: number;
+  /** JSON array of `AgentOption`. */
+  available_options: string;
   active_branch_id: string;
   created_at: string;
   updated_at: string;
@@ -121,6 +129,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   mcp_pending INTEGER NOT NULL DEFAULT 0,
   model TEXT,
   model_pending INTEGER NOT NULL DEFAULT 0,
+  options TEXT NOT NULL DEFAULT '{}',
+  options_pending INTEGER NOT NULL DEFAULT 0,
+  available_options TEXT NOT NULL DEFAULT '[]',
   active_branch_id TEXT NOT NULL DEFAULT 'root',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -175,6 +186,11 @@ CREATE TABLE IF NOT EXISTS provider_models (
   models TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS provider_options (
+  provider TEXT PRIMARY KEY,
+  options TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 /** Columns added after the first release, applied to databases created before them. */
@@ -187,6 +203,9 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "mcp_pending", ddl: "ALTER TABLE sessions ADD COLUMN mcp_pending INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "model", ddl: "ALTER TABLE sessions ADD COLUMN model TEXT" },
   { table: "sessions", column: "model_pending", ddl: "ALTER TABLE sessions ADD COLUMN model_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "options", ddl: "ALTER TABLE sessions ADD COLUMN options TEXT NOT NULL DEFAULT '{}'" },
+  { table: "sessions", column: "options_pending", ddl: "ALTER TABLE sessions ADD COLUMN options_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "available_options", ddl: "ALTER TABLE sessions ADD COLUMN available_options TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
@@ -248,8 +267,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, active_branch_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @active_branch_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, active_branch_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @active_branch_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -263,6 +282,7 @@ export class Db {
         `UPDATE sessions SET title=@title, status=@status, container_id=@container_id, error=@error,
            queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes,
            mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, model=@model, model_pending=@model_pending,
+           options=@options, options_pending=@options_pending, available_options=@available_options,
            active_branch_id=@active_branch_id, updated_at=@updated_at
          WHERE id=@id`,
       )
@@ -530,6 +550,32 @@ export class Db {
     return true;
   }
 
+  /** Every option each Provider's Agent has advertised so far, merged by id; Providers never seen map to `[]`. */
+  providerOptions(): ProviderOptions {
+    const rows = this.db.prepare("SELECT provider, options FROM provider_options").all() as Array<{ provider: string; options: string }>;
+    const result = Object.fromEntries(PROVIDERS.map((p): [Provider, AgentOption[]] => [p, []])) as ProviderOptions;
+    for (const row of rows) {
+      const provider = Provider.safeParse(row.provider);
+      if (provider.success) result[provider.data] = AgentOption.array().parse(JSON.parse(row.options));
+    }
+    return result;
+  }
+
+  /** Merges freshly advertised options into the Provider's catalog (by id); returns the catalog when it changed, else `null`. */
+  mergeProviderOptions(provider: Provider, options: AgentOption[]): AgentOption[] | null {
+    const current = this.providerOptions()[provider];
+    const merged = [...current.filter((o) => !options.some((n) => n.id === o.id)), ...options];
+    const json = JSON.stringify(merged);
+    if (json === JSON.stringify(current)) return null;
+    this.db
+      .prepare(
+        `INSERT INTO provider_options (provider, options, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(provider) DO UPDATE SET options = excluded.options, updated_at = excluded.updated_at`,
+      )
+      .run(provider, json, new Date().toISOString());
+    return merged;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -549,6 +595,9 @@ export type SessionPatch = Partial<
     | "mcpPending"
     | "model"
     | "modelPending"
+    | "options"
+    | "optionsPending"
+    | "availableOptions"
     | "activeBranchId"
   >
 >;
@@ -594,6 +643,9 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     mcpPending: row.mcp_pending === 1,
     model: row.model,
     modelPending: row.model_pending === 1,
+    options: OptionValues.parse(JSON.parse(row.options)),
+    optionsPending: row.options_pending === 1,
+    availableOptions: AgentOption.array().parse(JSON.parse(row.available_options)),
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
     branches,
@@ -640,6 +692,9 @@ function sessionToRow(s: Session): SessionRow {
     mcp_pending: s.mcpPending ? 1 : 0,
     model: s.model,
     model_pending: s.modelPending ? 1 : 0,
+    options: JSON.stringify(s.options),
+    options_pending: s.optionsPending ? 1 : 0,
+    available_options: JSON.stringify(s.availableOptions),
     active_branch_id: s.activeBranchId,
     created_at: s.createdAt,
     updated_at: s.updatedAt,

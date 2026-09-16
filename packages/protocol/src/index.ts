@@ -125,6 +125,41 @@ export type ModelOption = z.infer<typeof ModelOption>;
 export type ProviderModels = Record<Provider, ModelOption[]>;
 
 // ---------------------------------------------------------------------------
+// Agent options: the other `select` config options an Agent advertises besides
+// the model and the permission mode (claude-agent-acp: `effort`, `fast`). They
+// are set the same way (`session/set_config_option`) and the set on offer can
+// change with the model, so a Session carries both the values it asked for and
+// what its Agent currently advertises.
+// ---------------------------------------------------------------------------
+
+export const OptionChoice = z.object({
+  value: z.string(),
+  name: z.string(),
+  description: z.string().nullable().default(null),
+});
+export type OptionChoice = z.infer<typeof OptionChoice>;
+
+export const AgentOption = z.object({
+  /** ACP config option id (`effort`, `fast`, …). */
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable().default(null),
+  category: z.string().nullable().default(null),
+  choices: z.array(OptionChoice),
+});
+export type AgentOption = z.infer<typeof AgentOption>;
+
+/** Option values by option id. */
+export const OptionValues = z.record(z.string().min(1), z.string().min(1));
+export type OptionValues = z.infer<typeof OptionValues>;
+
+/** Every option each Provider's Agent has ever advertised (merged by id), so New Session can offer them. */
+export type ProviderOptions = Record<Provider, AgentOption[]>;
+
+/** Claude aliases Sessionboxer allows by default (Claude's own list plus Fable, which the SDK hides otherwise). */
+export const DEFAULT_CLAUDE_MODELS = ["opus", "sonnet", "haiku", "fable"];
+
+// ---------------------------------------------------------------------------
 // Branches: "revert to here" at a turn boundary keeps the conversation that
 // followed as a branch and continues from that point on a new one. Branches
 // share the Session's Sandbox; only the active branch talks to the Agent.
@@ -198,6 +233,12 @@ export const Session = z.object({
   model: z.string().nullable().default(null),
   /** The Agent is busy; the model change is applied when the current turn ends. */
   modelPending: z.boolean().default(false),
+  /** Values asked for (or reported by the Agent) of its other options, by option id. */
+  options: OptionValues.default({}),
+  /** The Agent is busy; the option change is applied when the current turn ends. */
+  optionsPending: z.boolean().default(false),
+  /** Options the Session's Agent currently advertises (depends on the model). */
+  availableOptions: z.array(AgentOption).default([]),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
@@ -228,6 +269,8 @@ export const CreateSessionRequest = z.object({
   mcpEnabled: z.array(z.string()).optional(),
   /** Model to switch to once the Agent is up; omitted keeps the Provider's default. */
   model: z.string().min(1).optional(),
+  /** Other option values (effort, fast mode, …) to set once the Agent is up. */
+  options: OptionValues.optional(),
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -238,6 +281,8 @@ export const UpdateSessionRequest = z.object({
   autoSnapshot: z.boolean().nullable().optional(),
   mcpEnabled: z.array(z.string()).optional(),
   model: z.string().min(1).optional(),
+  /** Merged into the Session's option values. */
+  options: OptionValues.optional(),
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequest>;
 
@@ -357,6 +402,11 @@ export const Settings = z.object({
   /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */
   snapshotKeep: z.number().int().nonnegative().default(10),
   mcpServers: z.array(McpServerDef).default([]),
+  /**
+   * Model aliases Claude Code may offer (its `availableModels` setting, written to the Sandbox's
+   * `~/.claude/settings.json`); `default` is always kept. Empty leaves Claude's built-in list.
+   */
+  claudeModels: z.array(z.string().min(1)).default(DEFAULT_CLAUDE_MODELS),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
@@ -407,7 +457,9 @@ export type SessionEventBody =
   /** The Daemon restarted the Agent with a new MCP server set (names, `desktop` excluded). */
   | { type: "mcp_changed"; servers: string[] }
   /** The Agent switched model (`name` is the human label, `model` the value). */
-  | { type: "model_changed"; model: string; name: string };
+  | { type: "model_changed"; model: string; name: string }
+  /** One of the Agent's other options changed (`name`/`valueName` are the human labels). */
+  | { type: "option_changed"; id: string; name: string; value: string; valueName: string };
 
 export interface SessionEvent {
   /** Control Plane sequence, monotonic per Session (across branches). */
@@ -429,7 +481,9 @@ export type SessionBroadcast =
   /** A `docker commit` is in progress (the Sandbox is paused for a few seconds). */
   | { type: "snapshotting"; sessionId: string; active: boolean }
   /** A Provider's Agent reported its model list (differs from what was remembered). */
-  | { type: "models"; provider: Provider; models: ModelOption[] };
+  | { type: "models"; provider: Provider; models: ModelOption[] }
+  /** A Provider's Agent advertised options not remembered before (or changed ones). */
+  | { type: "options"; provider: Provider; options: AgentOption[] };
 
 // ---------------------------------------------------------------------------
 // Workspace files (UI <-> Control Plane <-> Daemon). Paths are relative to the
@@ -554,6 +608,8 @@ export const DAEMON_METHODS = {
   ask: "_sessionboxer/ask",
   mcpSet: "_sessionboxer/mcp/set",
   modelSet: "_sessionboxer/model/set",
+  optionSet: "_sessionboxer/option/set",
+  claudeModelsSet: "_sessionboxer/claude-models/set",
   sessionFork: "_sessionboxer/session/fork",
   sessionSwitch: "_sessionboxer/session/switch",
   cancel: "_sessionboxer/cancel",
@@ -598,6 +654,11 @@ export const DaemonStatus = z.object({
   /** Model requested via `model/set` (even if still pending), else the one the Agent reports; `null` if unknown. */
   model: z.string().nullable().default(null),
   modelPending: z.boolean().default(false),
+  /** Other options the Agent currently advertises; `null` until the Agent has reported its config. */
+  options: z.array(AgentOption).nullable().default(null),
+  /** Requested values (even if still pending), else what the Agent reports, by option id. */
+  optionValues: OptionValues.default({}),
+  optionsPending: z.boolean().default(false),
 });
 export type DaemonStatus = z.infer<typeof DaemonStatus>;
 
@@ -623,6 +684,31 @@ export type DaemonModelSetParams = z.infer<typeof DaemonModelSetParams>;
 
 export const DaemonModelSetResult = z.object({ applied: z.boolean() });
 export type DaemonModelSetResult = z.infer<typeof DaemonModelSetResult>;
+
+/**
+ * Sets other config options of the Agent (`session/set_config_option` per id), merged into
+ * the current values. Same timing as `model/set`; `option_changed` is emitted per option applied.
+ */
+export const DaemonOptionSetParams = z.object({
+  options: OptionValues,
+  /** Skip (instead of failing on) options or values the Agent does not offer with its current model. */
+  lenient: z.boolean().default(false),
+});
+export type DaemonOptionSetParams = z.infer<typeof DaemonOptionSetParams>;
+
+export const DaemonOptionSetResult = z.object({ applied: z.boolean() });
+export type DaemonOptionSetResult = z.infer<typeof DaemonOptionSetResult>;
+
+/**
+ * Sets Claude Code's `availableModels` allowlist in the Sandbox. Takes effect on the next Agent
+ * start: right away (restart in place, like `mcp/set`) when the Agent runs with another list and
+ * is idle, once the current turn ends otherwise. Ignored by Daemons of other Providers.
+ */
+export const DaemonClaudeModelsSetParams = z.object({ models: z.array(z.string().min(1)) });
+export type DaemonClaudeModelsSetParams = z.infer<typeof DaemonClaudeModelsSetParams>;
+
+export const DaemonClaudeModelsSetResult = z.object({ applied: z.boolean() });
+export type DaemonClaudeModelsSetResult = z.infer<typeof DaemonClaudeModelsSetResult>;
 
 /**
  * Rewinds the Agent to an earlier point and continues on a new ACP session: `session/fork` at

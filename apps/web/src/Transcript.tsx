@@ -266,6 +266,12 @@ function Item({
           Model now: {item.name}
         </div>
       );
+    case "option_changed":
+      return (
+        <div className="marker" title={`${item.option} = ${item.value}`}>
+          {item.option} now: {item.valueName}
+        </div>
+      );
   }
 }
 

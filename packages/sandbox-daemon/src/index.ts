@@ -5,9 +5,11 @@ import {
   DAEMON_METHODS,
   DAEMON_PORT,
   DaemonAskParams,
+  DaemonClaudeModelsSetParams,
   DaemonHelloParams,
   DaemonMcpSetParams,
   DaemonModelSetParams,
+  DaemonOptionSetParams,
   DaemonPromptParams,
   DaemonSessionForkParams,
   type DaemonSessionForkResult,
@@ -27,6 +29,7 @@ import {
   type JsonRpcId,
 } from "@sessionboxer/protocol";
 import { AgentManager } from "./agent.js";
+import { ClaudeSettings } from "./claude-settings.js";
 import { DevinMcpConfig } from "./mcp-config.js";
 import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
@@ -75,6 +78,8 @@ const devinMcpConfig =
   provider === "devin"
     ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer", mcpCommand)
     : null;
+/** Claude's model allowlist lives in its settings file; the Control Plane sends the list before the Agent starts. */
+const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/.claude/settings.json`, log) : null;
 
 const agent = new AgentManager(
   {
@@ -84,6 +89,7 @@ const agent = new AgentManager(
     mcpCommand,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
+    writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     log,
   },
   {
@@ -92,6 +98,8 @@ const agent = new AgentManager(
     onError: (message) => emit({ type: "agent_error", message }),
     onMcpChanged: (servers) => emit({ type: "mcp_changed", servers }),
     onModelChanged: (model) => emit({ type: "model_changed", model: model.value, name: model.name }),
+    onOptionChanged: (option, choice) =>
+      emit({ type: "option_changed", id: option.id, name: option.name, value: choice.value, valueName: choice.name }),
     onStateChange: () => {
       const params = status();
       for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
@@ -124,6 +132,9 @@ function status(): DaemonStatus {
     models: agent.models,
     model: agent.modelValue,
     modelPending: agent.modelPending,
+    options: agent.options,
+    optionValues: agent.optionValues,
+    optionsPending: agent.optionsPending,
   };
 }
 
@@ -158,6 +169,14 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.modelSet: {
       const p = DaemonModelSetParams.parse(params);
       return { applied: agent.setModel(p.model) };
+    }
+    case DAEMON_METHODS.optionSet: {
+      const p = DaemonOptionSetParams.parse(params);
+      return { applied: agent.setOptions(p.options, !p.lenient) };
+    }
+    case DAEMON_METHODS.claudeModelsSet: {
+      const p = DaemonClaudeModelsSetParams.parse(params);
+      return { applied: agent.setModelAllowlist(p.models) };
     }
     case DAEMON_METHODS.sessionFork: {
       const p = DaemonSessionForkParams.parse(params);

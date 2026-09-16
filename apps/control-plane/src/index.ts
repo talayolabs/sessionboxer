@@ -67,6 +67,7 @@ api.put("/settings", async (c) => {
   settings = applySettingsUpdate(settings, update);
   saveSettings(settings);
   if (update.mcpServers) void sessions.pushMcpServersToAll();
+  if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
 });
 
@@ -81,6 +82,7 @@ api.get("/host/dirs", async (c) => {
 });
 
 api.get("/models", (c) => c.json(sessions.providerModels()));
+api.get("/options", (c) => c.json(sessions.providerOptions()));
 
 api.get("/sessions", (c) => c.json(sessions.list()));
 api.post("/sessions", async (c) => {

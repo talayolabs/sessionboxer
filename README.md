@@ -66,7 +66,9 @@ Click **+ New**, pick the agent, choose where the code comes from:
 - **Clone a git URL**: any URL `git clone` accepts, optionally a branch or tag. Private repositories need credentials embedded in the URL or a public mirror for now.
 - **Copy a host directory**: a folder on your machine (type the path or pick it with **Browse…**). Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. The copy is one-way: changes in the box do not flow back.
 
-**Model** lists the models the chosen agent offers (Claude Code: Sonnet/Opus/Haiku and its default; Devin: the catalog your account has, grouped by family); leave it on *Provider default* to let the agent decide. The list is what the agent reported the last time a session of that provider started, so it is empty until you have run one.
+**Model** lists the models the chosen agent offers (Claude Code: Sonnet/Opus/Haiku/Fable and its default; Devin: the catalog your account has, grouped by family); leave it on *Provider default* to let the agent decide. The list is what the agent reported the last time a session of that provider started, so it is empty until you have run one. Next to it come the agent's other settings, when it has any: for Claude Code, **Effort** (default, low … max) and **Fast mode**. Devin's Cloud tiers (Lite, Normal, Ultra) are not something its CLI offers; pick a model with the effort level you want instead (`…-high`, `…-fast`, …).
+
+Claude Code only lets Sessionboxer pick from the aliases in **Settings → Claude model aliases** (`opus, sonnet, haiku, fable` by default; that list is written to Claude's `availableModels`). Add an alias there if your account has a model the picker does not show; it takes effect for new sessions and for idle sessions right away.
 
 Optionally type the first prompt right there; it is sent as soon as the box is ready. The session title defaults to the first prompt and can be edited later.
 
@@ -74,7 +76,7 @@ Optionally type the first prompt right there; it is sent as soon as the box is r
 
 The chat shows the agent's messages and, folded, each tool it used: commands, file edits, and the screenshots it took while using the desktop. Press Enter to send, Shift+Enter for a newline. While the agent works, **Send** turns into **Stop**, which interrupts the turn; what you typed stays in the box.
 
-The model picker at the bottom left of the prompt box switches the model for the rest of the conversation; while the agent is working the change waits until the current turn ends (the picker shows *pending*), and the chat shows a `Model now: …` marker when it takes effect. The choice survives Stop/Resume.
+The model picker at the bottom left of the prompt box switches the model for the rest of the conversation, and the pickers next to it (Claude Code: **Effort**, **Fast mode**) do the same for the agent's other settings; the agent decides which appear for the current model (Fable, for one, has no Effort or Fast mode). While the agent is working a change waits until the current turn ends (the picker shows *pending*), and the chat shows a `Model now: …` / `Effort now: …` marker when it takes effect. The choices survive Stop/Resume, and a setting the current model does not offer is kept for when you switch to one that does.
 
 The prompt box is Markdown: write it raw or switch to **Rich text**, use the toolbar for formatting either way, drag the divider to make the box taller, or go full screen with the zen button. **Save for later** (Ctrl+S) keeps a message in the session's *Saved for later* list instead of sending it; from there you can load it back, send it now, reorder, or press **▶ Play all** to send the saved messages one by one, each as soon as the agent finishes the previous one.
 
@@ -139,6 +141,7 @@ sessionboxer new .                                   # box the current directory
 sessionboxer new . -p "run the tests and fix what breaks"
 sessionboxer new . --provider devin --docker
 sessionboxer new . --model haiku                     # a model id as the provider names it
+sessionboxer new . --model opus --option effort=high --option fast=on
 sessionboxer new --git https://github.com/org/repo.git --ref main
 sessionboxer new --empty -t scratch --no-open
 sessionboxer ls

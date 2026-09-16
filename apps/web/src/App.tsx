@@ -24,6 +24,7 @@ import { formatMb } from "./format";
 import { McpDialog, McpPicker } from "./McpDialog";
 import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
+import { ProviderIcon } from "./ProviderIcon";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { TerminalPane } from "./Terminal";
@@ -252,17 +253,18 @@ export function App() {
                 <span className={`dot dot-${s.status}`} title={s.status} />
                 <span className="session-title">{s.title}</span>
                 <span className="session-provider">
-                  {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6 "}</span>}
-                  {PROVIDER_LABELS[s.provider]}
+                  {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6"}</span>}
                   {s.dockerMode !== "none" && (
                     <span
                       className={s.dockerMode === "privileged" ? "warn" : undefined}
                       title={DOCKER_MODE_LABELS[s.dockerMode]}
                     >
-                      {" \u00b7 "}
                       {s.dockerMode === "privileged" ? "\u26a0 " : ""}docker
                     </span>
                   )}
+                  <span title={PROVIDER_LABELS[s.provider]}>
+                    <ProviderIcon provider={s.provider} />
+                  </span>
                 </span>
               </div>
               <SessionSizes

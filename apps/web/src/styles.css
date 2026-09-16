@@ -63,7 +63,9 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .session-list li.active { background: #23293a; }
 .session-list li.empty { color: var(--muted); cursor: default; }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.session-provider { flex: none; font-size: 11px; color: var(--muted); }
+.session-provider { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.provider-icon { display: block; color: var(--text); opacity: 0.8; }
+li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .dot-idle { background: var(--ok); }

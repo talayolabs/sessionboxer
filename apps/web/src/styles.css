@@ -71,16 +71,14 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .chevron:hover { color: var(--text); }
 .chevron-blank { cursor: inherit; }
 .branch-tree { list-style: none; margin: 0; padding: 0; }
-.session-list li > .branch-tree { margin-top: 2px; margin-left: 10px; border-left: 1px solid var(--border); }
-.branch-node { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 6px; background: none; border: 1px solid transparent; border-radius: 4px; color: var(--text); font-size: 12px; text-align: left; white-space: nowrap; }
-.branch-node:hover:not(:disabled) { background: #1f232d; border-color: var(--border); }
+.session-list li > .branch-tree { margin: 1px 0 0 9px; border-left: 1px solid var(--border); }
+.branch-node { display: flex; align-items: center; gap: 4px; width: 100%; padding: 0 4px; background: none; border: none; border-radius: 3px; color: var(--text); font-size: 11px; line-height: 18px; text-align: left; white-space: nowrap; }
+.branch-node:hover:not(:disabled) { background: #1f232d; }
 .branch-node:disabled { color: var(--muted); cursor: default; }
 .branch-node.active { color: var(--accent); font-weight: 600; }
-.branch-node.active:disabled { color: var(--accent); }
-.branch-node-glyph { flex: none; width: 12px; text-align: center; color: var(--muted); }
+.branch-node-glyph { flex: none; width: 10px; text-align: center; color: var(--muted); }
+.branch-node.active .branch-node-glyph { color: var(--accent); }
 .branch-node-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.branch-node .muted { font-size: 11px; font-weight: 400; }
-.branch-node-current { margin-left: auto; font-size: 10px; font-weight: 400; color: var(--muted); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .dot-idle { background: var(--ok); }
@@ -140,6 +138,8 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .turn-divider { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; margin: 4px 0; }
 .turn-divider-line { flex: 1; height: 1px; background: var(--border); }
 .turn-divider-tail .turn-divider-line { background: var(--accent); opacity: 0.6; }
+.turn-divider-flash { animation: divider-flash 2s ease-out; }
+@keyframes divider-flash { 0%, 40% { background: rgba(79, 140, 255, 0.22); color: var(--text); } 100% { background: transparent; } }
 .turn-divider-label { white-space: nowrap; }
 .turn-divider .small { padding: 1px 7px; font-size: 11px; white-space: nowrap; }
 .branch-select { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }

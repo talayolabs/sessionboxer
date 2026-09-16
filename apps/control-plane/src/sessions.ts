@@ -40,7 +40,7 @@ import {
 } from "@sessionboxer/protocol";
 import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveMcpServers } from "./config.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
-import type { Db, SessionPatch } from "./db.js";
+import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { HttpError } from "./http-error.js";
@@ -960,6 +960,11 @@ export class SessionManager {
     const stored = this.db.appendEvent(id, ev.body, ev.ts);
     this.db.setDaemonCursor(id, ev.epoch, ev.seq);
     this.broadcast({ type: "event", event: stored });
+    if (ev.body.type === "user_prompt" && stored.branchId !== ROOT_BRANCH_ID && this.db.countBranchPrompts(id, stored.branchId) === 1) {
+      this.db.renameBranch(id, stored.branchId, branchTitle(ev.body.text));
+      const s = this.db.getSession(id);
+      if (s) this.broadcast({ type: "session", session: s });
+    }
     if (ev.body.type === "turn_ended" || ev.body.type === "agent_error") {
       const s = this.db.getSession(id);
       if (s?.status === "running") this.setStatus(id, "idle");

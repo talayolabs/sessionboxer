@@ -21,6 +21,17 @@ import {
   type Snapshot,
 } from "@sessionboxer/protocol";
 
+const BRANCH_TITLE_MAX = 40;
+
+/** A branch is titled after the prompt that started it: its first words, on one line. */
+export function branchTitle(prompt: string): string {
+  const text = prompt.replace(/\s+/g, " ").trim();
+  if (text.length <= BRANCH_TITLE_MAX) return text || "(empty prompt)";
+  const cut = text.slice(0, BRANCH_TITLE_MAX);
+  const atWord = cut.lastIndexOf(" ");
+  return `${atWord > BRANCH_TITLE_MAX / 2 ? cut.slice(0, atWord) : cut}\u2026`;
+}
+
 interface SessionRow {
   id: string;
   title: string;
@@ -196,6 +207,19 @@ export class Db {
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
     this.migrate();
+    this.titleBranches();
+  }
+
+  /** Branches created before prompt-derived titles still carry "branch N"; title them from their first prompt. */
+  private titleBranches(): void {
+    const rows = this.db
+      .prepare(
+        `SELECT b.session_id, b.id, json_extract(e.body, '$.text') AS text, MIN(e.seq) AS first_seq FROM branches b
+         JOIN events e ON e.session_id = b.session_id AND e.branch_id = b.id AND json_extract(e.body, '$.type') = 'user_prompt'
+         WHERE b.name GLOB 'branch [0-9]*' GROUP BY b.session_id, b.id`,
+      )
+      .all() as Array<{ session_id: string; id: string; text: string }>;
+    for (const r of rows) this.renameBranch(r.session_id, r.id, branchTitle(r.text));
   }
 
   private migrate(): void {
@@ -270,6 +294,18 @@ export class Db {
 
   setBranchAcpSessionId(sessionId: string, branchId: string, acpSessionId: string): void {
     this.db.prepare("UPDATE branches SET acp_session_id = ? WHERE session_id = ? AND id = ?").run(acpSessionId, sessionId, branchId);
+  }
+
+  renameBranch(sessionId: string, branchId: string, name: string): void {
+    this.db.prepare("UPDATE branches SET name = ? WHERE session_id = ? AND id = ?").run(name, sessionId, branchId);
+  }
+
+  /** Prompts recorded on this branch itself (not inherited from its parent). */
+  countBranchPrompts(sessionId: string, branchId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND branch_id = ? AND json_extract(body, '$.type') = 'user_prompt'")
+      .get(sessionId, branchId) as { n: number };
+    return row.n;
   }
 
   /** The active branch's view of the transcript (every event when the Session has no branches). */

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
 import { Markdown } from "./Markdown";
+import type { DividerRef } from "./BranchTree";
 import type { TranscriptItem } from "./transcript-model";
 
 export interface SnapshotActions {
@@ -60,7 +61,7 @@ function TurnDivider({
   const disabled = !view.canBranch || view.busy;
   const why = view.busy ? "Switching branch…" : view.canBranch ? undefined : "Wait for the Agent to finish (needs a running, idle Session)";
   return (
-    <div className={`turn-divider${item.tail ? " turn-divider-tail" : ""}`} data-seq={item.seq}>
+    <div className={`turn-divider${item.tail ? " turn-divider-tail" : ""}`} data-branch={item.branchId} data-seq={item.seq}>
       <span className="turn-divider-line" />
       <span className="turn-divider-label" title={new Date(item.ts).toLocaleString()}>
         {item.stopReason === "end_turn" ? "turn ended" : `turn ended (${item.stopReason})`} {formatTime(item.ts)}
@@ -276,6 +277,8 @@ export function Transcript({
   activeBranchId,
   canBranch,
   branchBusy,
+  focus,
+  onFocused,
 }: {
   items: TranscriptItem[];
   actions: SnapshotActions;
@@ -284,14 +287,27 @@ export function Transcript({
   activeBranchId: string;
   canBranch: boolean;
   branchBusy: boolean;
+  /** Turn divider to scroll to and highlight once it is rendered. */
+  focus: DividerRef | null;
+  onFocused: () => void;
 }) {
+  const root = useRef<HTMLDivElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const branchView = useBranchView(branches, activeBranchId, canBranch, branchBusy);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [items]);
+  useEffect(() => {
+    if (!focus) return;
+    const el = root.current?.querySelector<HTMLElement>(`.turn-divider[data-branch="${focus.branchId}"][data-seq="${focus.seq}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center" });
+    el.classList.add("turn-divider-flash");
+    setTimeout(() => el.classList.remove("turn-divider-flash"), 2000);
+    onFocused();
+  }, [items, focus, onFocused]);
   return (
-    <div className="transcript">
+    <div className="transcript" ref={root}>
       {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
       {items.map((item) => (
         <Item key={item.key} item={item} actions={actions} branchActions={branchActions} branchView={branchView} />

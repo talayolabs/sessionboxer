@@ -19,7 +19,7 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { api, emitFsChanged, subscribe } from "./api";
-import { BranchTree } from "./BranchTree";
+import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
 import { Files } from "./Files";
@@ -116,6 +116,9 @@ export function App() {
   // Sidebar entries whose branch tree is unfolded, and the Session whose branch is being switched from the tree.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [treeSwitching, setTreeSwitching] = useState<string | null>(null);
+  // Turn divider the chat should scroll to (picked from a branch tree).
+  const [focus, setFocus] = useState<(DividerRef & { sessionId: string }) | null>(null);
+  const clearFocus = useCallback(() => setFocus(null), []);
   const { error, setError, run } = useErrorBanner();
 
   const selectedId = route.view === "session" ? route.id : null;
@@ -311,11 +314,17 @@ export function App() {
                 <BranchTree
                   session={s}
                   switching={treeSwitching === s.id}
-                  onSelect={(branchId) => {
+                  onFocus={(divider) => {
                     setRoute({ view: "session", id: s.id });
-                    if (branchId === s.activeBranchId || treeSwitching) return;
+                    setFocus(divider ? { sessionId: s.id, ...divider } : null);
+                  }}
+                  onSwitch={(b) => {
+                    setRoute({ view: "session", id: s.id });
+                    setFocus(null);
+                    if (treeSwitching) return;
+                    if (!confirm(`Switch the conversation to "${b.name}"?\n\nThe chat will show that branch and the Agent will continue from it. The current branch stays in the tree.`)) return;
                     setTreeSwitching(s.id);
-                    void run(() => api.switchBranch(s.id, { branchId })).finally(() => setTreeSwitching(null));
+                    void run(() => api.switchBranch(s.id, { branchId: b.id })).finally(() => setTreeSwitching(null));
                   }}
                 />
               )}
@@ -408,6 +417,8 @@ export function App() {
             snapshotting={snapshotting.has(selected.id)}
             forkRequest={forkRequest?.sessionId === selected.id ? forkRequest.snapshotId : null}
             onForkRequestHandled={clearForkRequest}
+            focus={focus?.sessionId === selected.id ? focus : null}
+            onFocused={clearFocus}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
           />
@@ -486,6 +497,8 @@ function SessionView({
   snapshotting,
   forkRequest,
   onForkRequestHandled,
+  focus,
+  onFocused,
   run,
   onForked,
 }: {
@@ -499,6 +512,9 @@ function SessionView({
   /** Snapshot id to open the fork dialog on (from the Snapshots popup). */
   forkRequest: string | null;
   onForkRequestHandled: () => void;
+  /** Turn divider to scroll the chat to (from the sidebar branch tree). */
+  focus: DividerRef | null;
+  onFocused: () => void;
   run: Runner;
   onForked: (s: Session) => void;
 }) {
@@ -722,6 +738,8 @@ function SessionView({
             activeBranchId={session.activeBranchId}
             canBranch={session.status === "idle"}
             branchBusy={branching}
+            focus={focus}
+            onFocused={onFocused}
           />
           <Composer
             value={text}

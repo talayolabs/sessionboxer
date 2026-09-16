@@ -104,6 +104,26 @@ export type PublicMcpServerDef = z.infer<typeof PublicMcpServerDef>;
 export const McpServerSpec = McpServerDef.omit({ enabledByDefault: true });
 export type McpServerSpec = z.infer<typeof McpServerSpec>;
 
+// ---------------------------------------------------------------------------
+// Models: each Provider's ACP adapter advertises the models it can run as the
+// `model` session config option (ACP `configOptions`), and switches with
+// `session/set_config_option`. The Control Plane remembers the last list seen
+// per Provider so New Session can offer it before a Sandbox exists.
+// ---------------------------------------------------------------------------
+
+export const ModelOption = z.object({
+  /** Value understood by the Agent (`sonnet`, `opus[1m]`, `claude-sonnet-5-low`, …). */
+  value: z.string(),
+  name: z.string(),
+  description: z.string().nullable().default(null),
+  /** Group label when the Agent organises its list (ACP select groups). */
+  group: z.string().nullable().default(null),
+});
+export type ModelOption = z.infer<typeof ModelOption>;
+
+/** Last model list seen from each Provider's Agent; empty until a Session of that Provider has started. */
+export type ProviderModels = Record<Provider, ModelOption[]>;
+
 export const Session = z.object({
   id: z.string(),
   title: z.string(),
@@ -115,6 +135,10 @@ export const Session = z.object({
   mcpEnabled: z.array(z.string()).default([]),
   /** The Agent is busy; the last MCP change is applied when the current turn ends. */
   mcpPending: z.boolean().default(false),
+  /** Model the Agent runs (a `ModelOption.value`); `null` until the Agent has reported its default. */
+  model: z.string().nullable().default(null),
+  /** The Agent is busy; the model change is applied when the current turn ends. */
+  modelPending: z.boolean().default(false),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
@@ -139,6 +163,8 @@ export const CreateSessionRequest = z.object({
   docker: z.boolean().optional(),
   /** MCP server ids to enable; defaults to the servers marked `enabledByDefault`. */
   mcpEnabled: z.array(z.string()).optional(),
+  /** Model to switch to once the Agent is up; omitted keeps the Provider's default. */
+  model: z.string().min(1).optional(),
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -148,6 +174,7 @@ export const UpdateSessionRequest = z.object({
   /** `null` clears the override (follow `Settings.autoSnapshot`). */
   autoSnapshot: z.boolean().nullable().optional(),
   mcpEnabled: z.array(z.string()).optional(),
+  model: z.string().min(1).optional(),
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequest>;
 
@@ -313,7 +340,9 @@ export type SessionEventBody =
   /** First event of a forked Session: everything before it was copied from the origin. */
   | { type: "forked"; fromSessionId: string; fromTitle: string; snapshotId: string; snapshotOrdinal: number }
   /** The Daemon restarted the Agent with a new MCP server set (names, `desktop` excluded). */
-  | { type: "mcp_changed"; servers: string[] };
+  | { type: "mcp_changed"; servers: string[] }
+  /** The Agent switched model (`name` is the human label, `model` the value). */
+  | { type: "model_changed"; model: string; name: string };
 
 export interface SessionEvent {
   /** Control Plane sequence, monotonic per Session. */
@@ -332,7 +361,9 @@ export type SessionBroadcast =
   | { type: "saved_messages"; sessionId: string; messages: SavedMessage[] }
   | { type: "snapshots"; sessionId: string; snapshots: Snapshot[] }
   /** A `docker commit` is in progress (the Sandbox is paused for a few seconds). */
-  | { type: "snapshotting"; sessionId: string; active: boolean };
+  | { type: "snapshotting"; sessionId: string; active: boolean }
+  /** A Provider's Agent reported its model list (differs from what was remembered). */
+  | { type: "models"; provider: Provider; models: ModelOption[] };
 
 // ---------------------------------------------------------------------------
 // Workspace files (UI <-> Control Plane <-> Daemon). Paths are relative to the
@@ -456,6 +487,7 @@ export const DAEMON_METHODS = {
   prompt: "_sessionboxer/prompt",
   ask: "_sessionboxer/ask",
   mcpSet: "_sessionboxer/mcp/set",
+  modelSet: "_sessionboxer/model/set",
   cancel: "_sessionboxer/cancel",
   status: "_sessionboxer/status",
   event: "_sessionboxer/event",
@@ -493,6 +525,11 @@ export const DaemonStatus = z.object({
   mcpServers: z.array(z.string()).nullable().default(null),
   /** An `mcp/set` is waiting for the current turn to end. */
   mcpPending: z.boolean().default(false),
+  /** Models the Agent advertises; `null` when it has not reported any (yet). */
+  models: z.array(ModelOption).nullable().default(null),
+  /** Model requested via `model/set` (even if still pending), else the one the Agent reports; `null` if unknown. */
+  model: z.string().nullable().default(null),
+  modelPending: z.boolean().default(false),
 });
 export type DaemonStatus = z.infer<typeof DaemonStatus>;
 
@@ -508,6 +545,16 @@ export const DaemonMcpSetResult = z.object({
   applied: z.boolean(),
 });
 export type DaemonMcpSetResult = z.infer<typeof DaemonMcpSetResult>;
+
+/**
+ * Switches the Agent's model (ACP `session/set_config_option` on the `model` option). Applied right
+ * away when idle, otherwise once the current turn ends; `model_changed` is emitted when it took effect.
+ */
+export const DaemonModelSetParams = z.object({ model: z.string().min(1) });
+export type DaemonModelSetParams = z.infer<typeof DaemonModelSetParams>;
+
+export const DaemonModelSetResult = z.object({ applied: z.boolean() });
+export type DaemonModelSetResult = z.infer<typeof DaemonModelSetResult>;
 
 export const DaemonPromptParams = z.object({ text: z.string().min(1) });
 export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;

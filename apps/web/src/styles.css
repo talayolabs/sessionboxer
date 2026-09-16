@@ -178,6 +178,8 @@ li.expanded .saved-text { white-space: normal; }
 .selection-tip .error { color: var(--error); font-size: 12px; max-width: 320px; white-space: normal; }
 .composer-footer { flex: none; display: flex; align-items: center; gap: 10px; }
 .composer-footer .hint { font-size: 12px; }
+.composer-footer .model-select { display: inline-flex; align-items: center; gap: 4px; }
+.composer-footer .model-select select { padding: 3px 6px; font-size: 12px; max-width: 220px; }
 .toolbar { flex: none; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .toolbar .tb { display: inline-flex; align-items: center; justify-content: center; height: 26px; min-width: 30px; padding: 0 7px;
   background: transparent; border-color: transparent; font-size: 13px; color: var(--muted); }

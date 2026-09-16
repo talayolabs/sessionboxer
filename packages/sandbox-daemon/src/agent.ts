@@ -9,9 +9,10 @@ import {
   type InitializeRequest,
   type NewSessionRequest,
   type NewSessionResponse,
+  type SessionConfigOption,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
-import type { McpServerSpec, SessionUpdate, StopReason } from "@sessionboxer/protocol";
+import type { McpServerSpec, ModelOption, SessionUpdate, StopReason } from "@sessionboxer/protocol";
 import { acpMcpServers } from "./mcp-config.js";
 
 export interface AgentConfig {
@@ -31,6 +32,8 @@ export interface AgentEvents {
   onError: (message: string) => void;
   /** The Agent was restarted with another user MCP server set (names). */
   onMcpChanged: (servers: string[]) => void;
+  /** The Agent now runs another model. */
+  onModelChanged: (model: ModelOption) => void;
   onStateChange: () => void;
 }
 
@@ -46,6 +49,21 @@ const BYPASS_MODE_IDS = ["bypassPermissions", "bypass"];
 /** session/new can fail on transient upstream fetches (Devin's team settings); retry before giving up. */
 const NEW_SESSION_ATTEMPTS = 3;
 const NEW_SESSION_RETRY_MS = 3000;
+
+/** The ACP config option that selects the model (claude-agent-acp and devin acp both use id `model`, category `model`). */
+function modelOption(options: SessionConfigOption[] | null | undefined): (SessionConfigOption & { type: "select" }) | null {
+  if (!options) return null;
+  const found = options.find((o) => o.type === "select" && (o.category === "model" || o.id === "model"));
+  return found?.type === "select" ? found : null;
+}
+
+function toModelOptions(option: SessionConfigOption & { type: "select" }): ModelOption[] {
+  return option.options.flatMap((entry): ModelOption[] =>
+    "group" in entry
+      ? entry.options.map((v) => ({ value: v.value, name: v.name, description: v.description ?? null, group: entry.name }))
+      : [{ value: entry.value, name: entry.name, description: entry.description ?? null, group: null }],
+  );
+}
 
 /**
  * Owns the Agent child process and its ACP connection. Creates a new ACP
@@ -71,6 +89,16 @@ export class AgentManager {
   private mcpStartedKey: string | null = null;
   private mcpApplyChain: Promise<void> = Promise.resolve();
 
+  /** Model the Control Plane asked for; `null` means "whatever the Agent defaults to". */
+  private model: string | null = null;
+  /** Requested while a turn was active; applied when it ends. */
+  private modelPendingValue: string | null = null;
+  private modelApplyChain: Promise<void> = Promise.resolve();
+  /** Id of the Agent's model config option, its choices and what it currently runs; `null` until advertised. */
+  private modelConfigId: string | null = null;
+  private modelOptions: ModelOption[] | null = null;
+  private currentModel: string | null = null;
+
   acpSessionId: string | null = null;
   agentInfo: { name: string; version: string } | null = null;
   turnActive = false;
@@ -83,6 +111,86 @@ export class AgentManager {
 
   get mcpPending(): boolean {
     return this.mcpPendingServers !== null;
+  }
+
+  get models(): ModelOption[] | null {
+    return this.modelOptions;
+  }
+
+  /** What the Control Plane should show: the requested model wins over the reported one until applied. */
+  get modelValue(): string | null {
+    return this.modelPendingValue ?? this.model ?? this.currentModel;
+  }
+
+  get modelPending(): boolean {
+    return this.modelPendingValue !== null;
+  }
+
+  /**
+   * Switches the Agent's model with ACP `session/set_config_option`, right away when idle
+   * (no restart: the Agent keeps its session) or once the active turn ends. Returns
+   * whether it was applied right away.
+   */
+  setModel(model: string): boolean {
+    if (this.turnActive) {
+      this.modelPendingValue = model;
+      this.events.onStateChange();
+      return false;
+    }
+    this.modelPendingValue = null;
+    const previous = this.model;
+    this.model = model;
+    this.modelApplyChain = this.modelApplyChain
+      .then(() => this.applyModel())
+      .catch((e: unknown) => {
+        this.cfg.log(`model switch failed: ${String(e)}`);
+        if (this.model === model) this.model = previous ?? this.currentModel;
+        this.events.onError(`Could not switch model to ${model}: ${e instanceof Error ? e.message : String(e)}`);
+        this.events.onStateChange();
+      });
+    this.events.onStateChange();
+    return true;
+  }
+
+  private async applyModel(): Promise<void> {
+    await this.mcpApplyChain.catch(() => undefined);
+    await this.ensureStarted();
+    if (this.turnActive) {
+      this.modelPendingValue = this.model;
+      this.events.onStateChange();
+      return;
+    }
+    if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+    await this.applyRequestedModel(this.conn, this.acpSessionId);
+  }
+
+  /** Sends the requested model to the Agent when it differs from what it runs; a no-op without a model option. */
+  private async applyRequestedModel(conn: ClientConnection, sessionId: string): Promise<void> {
+    const model = this.model;
+    if (!model || !this.modelConfigId || model === this.currentModel) return;
+    if (this.modelOptions && !this.modelOptions.some((o) => o.value === model)) {
+      throw new Error(`the Agent does not offer model "${model}"`);
+    }
+    const previous = this.currentModel;
+    const result = await conn.agent.request("session/set_config_option", { sessionId, configId: this.modelConfigId, value: model });
+    this.captureConfigOptions(result.configOptions);
+    if (this.currentModel === null) this.currentModel = model;
+    this.cfg.log(`model ${previous ?? "?"} -> ${this.currentModel}`);
+    if (previous !== null && previous !== this.currentModel) {
+      const option = this.modelOptions?.find((o) => o.value === this.currentModel);
+      this.events.onModelChanged(option ?? { value: this.currentModel, name: this.currentModel, description: null, group: null });
+    }
+    this.events.onStateChange();
+  }
+
+  /** Remembers the model option (choices + current value) from session/new, session/load, set_config_option or an update. */
+  private captureConfigOptions(options: SessionConfigOption[] | null | undefined): boolean {
+    const option = modelOption(options);
+    if (!option) return false;
+    this.modelConfigId = option.id;
+    this.modelOptions = toModelOptions(option);
+    this.currentModel = option.currentValue;
+    return true;
   }
 
   /**
@@ -140,6 +248,7 @@ export class AgentManager {
 
   private async start(): Promise<void> {
     this.error = null;
+    this.currentModel = null;
     const userServers = this.mcpServers ?? [];
     this.cfg.writeMcpConfig?.(userServers);
     this.cfg.log(
@@ -178,6 +287,18 @@ export class AgentManager {
           this.oneShotSinks.get(sessionId)?.(update);
           return;
         }
+        if (update.sessionUpdate === "config_option_update" && (sessionId === this.acpSessionId || this.acpSessionId === null)) {
+          // Devin advertises its models this way, after session/new has already returned.
+          if (this.captureConfigOptions(update.configOptions)) {
+            this.events.onStateChange();
+            if (this.ready && !this.turnActive && this.model && this.model !== this.currentModel) {
+              this.modelApplyChain = this.modelApplyChain
+                .then(() => this.applyModel())
+                .catch((e: unknown) => this.cfg.log(`model switch failed: ${String(e)}`));
+            }
+          }
+          return;
+        }
         if (this.creatingOneShots > 0 && sessionId !== this.acpSessionId) return;
         if (this.replaying) return;
         this.events.onUpdate(ctx.params.update);
@@ -211,6 +332,7 @@ export class AgentManager {
           });
           loaded = true;
           this.cfg.log(`loaded ACP session ${this.acpSessionId}`);
+          this.captureConfigOptions(result?.configOptions);
           await this.ensureBypassMode(conn, this.acpSessionId, result?.modes);
         } catch (e) {
           this.cfg.log(`session/load failed, creating a new session: ${String(e)}`);
@@ -224,7 +346,15 @@ export class AgentManager {
         this.acpSessionId = created.sessionId;
         this.writeState({ acpSessionId: created.sessionId });
         this.cfg.log(`created ACP session ${created.sessionId}`);
+        this.captureConfigOptions(created.configOptions);
         await this.ensureBypassMode(conn, created.sessionId, created.modes);
+      }
+      if (this.acpSessionId) {
+        await this.applyRequestedModel(conn, this.acpSessionId).catch((e: unknown) => {
+          this.cfg.log(`model switch at start failed: ${String(e)}`);
+          this.events.onError(`Could not switch model to ${this.model}: ${e instanceof Error ? e.message : String(e)}`);
+          this.model = null;
+        });
       }
       this.mcpStartedKey = JSON.stringify(userServers);
       this.ready = true;
@@ -283,6 +413,7 @@ export class AgentManager {
       this.turnActive = false;
       this.events.onStateChange();
       if (this.mcpPendingServers) this.setMcpServers(this.mcpPendingServers);
+      if (this.modelPendingValue) this.setModel(this.modelPendingValue);
     }
   }
 

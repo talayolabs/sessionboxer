@@ -29,6 +29,7 @@ Internal notes for people working on Sessionboxer: architecture, the MVP decisio
 - Docker inside a Sandbox is opt-in and runs under the Sysbox runtime when the host has it; without Sysbox it falls back to `--privileged` with a warning in every surface (ADR-0008).
 - After every Agent turn the Sandbox is `docker commit`ted (default-on Setting); a fork is a new Session on a new Sandbox created from one of those Snapshot images, so files, tools and the Provider's conversation state carry over and both Sessions stay independent (ADR-0009).
 - MCP servers are registered once in Settings (secrets write-only) and switched per Session; a toggle restarts the Agent in place and reloads the ACP session, or waits for the running turn to end (ADR-0010).
+- The model list comes from each Agent's ACP `model` config option and switches with `session/set_config_option`, no restart; a change during a turn waits for the turn to end (ADR-0011).
 
 ## MVP decisions
 

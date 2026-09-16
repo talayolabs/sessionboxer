@@ -27,6 +27,8 @@ export type ComposerProps = {
   chatRef: RefObject<HTMLDivElement | null>;
   /** Rendered above the toolbar (the saved-messages list). */
   above?: ReactNode;
+  /** Rendered at the start of the footer row (the model picker). */
+  footerStart?: ReactNode;
   /** Enables the "Translate to English" tooltip on selected text; resolves with the replacement. */
   onTranslate?: (text: string) => Promise<string>;
 };
@@ -149,7 +151,7 @@ function isSendKey(e: KeyboardEvent | globalThis.KeyboardEvent): boolean {
 }
 
 export function Composer(props: ComposerProps) {
-  const { value, onChange, onSend, onSave, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above, onTranslate } =
+  const { value, onChange, onSend, onSave, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above, footerStart, onTranslate } =
     props;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -470,6 +472,7 @@ export function Composer(props: ComposerProps) {
           </div>
         )}
         <div className="composer-footer">
+          {footerStart}
           <span className="muted hint">
             {mode === "raw" && !zen ? "Enter to send, Shift+Enter for a new line" : "Ctrl+Enter to send"}
             {" \u00b7 "}Markdown

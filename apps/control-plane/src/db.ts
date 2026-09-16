@@ -2,9 +2,13 @@ import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
 import {
   DockerMode,
+  ModelOption,
+  PROVIDERS,
+  Provider,
   Session,
   SnapshotReason,
   WorkspaceSource,
+  type ProviderModels,
   type SavedMessage,
   type SessionEvent,
   type SessionEventBody,
@@ -27,6 +31,8 @@ interface SessionRow {
   /** JSON array of MCP server ids. */
   mcp_enabled: string;
   mcp_pending: number;
+  model: string | null;
+  model_pending: number;
   created_at: string;
   updated_at: string;
 }
@@ -80,6 +86,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   disk_bytes INTEGER,
   mcp_enabled TEXT NOT NULL DEFAULT '[]',
   mcp_pending INTEGER NOT NULL DEFAULT 0,
+  model TEXT,
+  model_pending INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -115,6 +123,11 @@ CREATE TABLE IF NOT EXISTS daemon_cursors (
   epoch TEXT NOT NULL,
   last_seq INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS provider_models (
+  provider TEXT PRIMARY KEY,
+  models TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 /** Columns added after the first release, applied to databases created before them. */
@@ -125,6 +138,8 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "auto_snapshot", ddl: "ALTER TABLE sessions ADD COLUMN auto_snapshot INTEGER" },
   { table: "sessions", column: "mcp_enabled", ddl: "ALTER TABLE sessions ADD COLUMN mcp_enabled TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "mcp_pending", ddl: "ALTER TABLE sessions ADD COLUMN mcp_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "model", ddl: "ALTER TABLE sessions ADD COLUMN model TEXT" },
+  { table: "sessions", column: "model_pending", ddl: "ALTER TABLE sessions ADD COLUMN model_pending INTEGER NOT NULL DEFAULT 0" },
 ];
 
 const SESSION_SELECT = `
@@ -164,8 +179,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -178,7 +193,7 @@ export class Db {
       .prepare(
         `UPDATE sessions SET title=@title, status=@status, container_id=@container_id, error=@error,
            queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes,
-           mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, updated_at=@updated_at
+           mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, model=@model, model_pending=@model_pending, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -370,13 +385,41 @@ export class Db {
       .run(sessionId, epoch, lastSeq);
   }
 
+  /** Last model list each Provider's Agent reported; Providers never seen map to `[]`. */
+  providerModels(): ProviderModels {
+    const rows = this.db.prepare("SELECT provider, models FROM provider_models").all() as Array<{ provider: string; models: string }>;
+    const result = Object.fromEntries(PROVIDERS.map((p): [Provider, ModelOption[]] => [p, []])) as ProviderModels;
+    for (const row of rows) {
+      const provider = Provider.safeParse(row.provider);
+      if (provider.success) result[provider.data] = ModelOption.array().parse(JSON.parse(row.models));
+    }
+    return result;
+  }
+
+  /** Returns whether the stored list changed. */
+  setProviderModels(provider: Provider, models: ModelOption[]): boolean {
+    const row = this.db.prepare("SELECT models FROM provider_models WHERE provider = ?").get(provider) as { models: string } | undefined;
+    const json = JSON.stringify(models);
+    if (row?.models === json) return false;
+    this.db
+      .prepare(
+        `INSERT INTO provider_models (provider, models, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(provider) DO UPDATE SET models = excluded.models, updated_at = excluded.updated_at`,
+      )
+      .run(provider, json, new Date().toISOString());
+    return true;
+  }
+
   close(): void {
     this.db.close();
   }
 }
 
 export type SessionPatch = Partial<
-  Pick<Session, "title" | "status" | "containerId" | "error" | "queueRunning" | "autoSnapshot" | "diskBytes" | "mcpEnabled" | "mcpPending">
+  Pick<
+    Session,
+    "title" | "status" | "containerId" | "error" | "queueRunning" | "autoSnapshot" | "diskBytes" | "mcpEnabled" | "mcpPending" | "model" | "modelPending"
+  >
 >;
 
 function rowToSession(row: SessionQueryRow): Session {
@@ -394,6 +437,8 @@ function rowToSession(row: SessionQueryRow): Session {
     diskBytes: row.disk_bytes,
     mcpEnabled: JSON.parse(row.mcp_enabled) as string[],
     mcpPending: row.mcp_pending === 1,
+    model: row.model,
+    modelPending: row.model_pending === 1,
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
     createdAt: row.created_at,
@@ -435,6 +480,8 @@ function sessionToRow(s: Session): SessionRow {
     disk_bytes: s.diskBytes,
     mcp_enabled: JSON.stringify(s.mcpEnabled),
     mcp_pending: s.mcpPending ? 1 : 0,
+    model: s.model,
+    model_pending: s.modelPending ? 1 : 0,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };

@@ -29,6 +29,8 @@ Options for new:
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
   -p, --prompt <text>    First prompt, sent once the Sandbox is ready
       --provider <id>    Provider: ${PROVIDERS.join(" | ")} (default claude-code)
+      --model <id>       Model to run, as the Provider names it (e.g. sonnet, opus[1m]);
+                         see the New Session page for the list. Default: the Provider's default
       --docker           Private Docker daemon inside the Sandbox (Sysbox, or --privileged
                          with a warning when Sysbox is not installed); --no-docker to disable.
                          Default: the "Docker inside Sandboxes" setting
@@ -96,6 +98,7 @@ async function newSession(args: string[]): Promise<void> {
       title: { type: "string", short: "t" },
       prompt: { type: "string", short: "p" },
       provider: { type: "string", default: "claude-code" },
+      model: { type: "string" },
       docker: { type: "boolean" },
       open: { type: "boolean", default: true },
     },
@@ -118,6 +121,7 @@ async function newSession(args: string[]): Promise<void> {
     provider: provider.data,
     workspaceSource,
     ...(values.docker !== undefined ? { docker: values.docker } : {}),
+    ...(values.model ? { model: values.model } : {}),
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),
   };

@@ -7,6 +7,7 @@ import {
   DaemonAskParams,
   DaemonHelloParams,
   DaemonMcpSetParams,
+  DaemonModelSetParams,
   DaemonPromptParams,
   FsPathParams,
   FsWriteParams,
@@ -86,6 +87,7 @@ const agent = new AgentManager(
     onTurnEnded: (stopReason) => emit({ type: "turn_ended", stopReason }),
     onError: (message) => emit({ type: "agent_error", message }),
     onMcpChanged: (servers) => emit({ type: "mcp_changed", servers }),
+    onModelChanged: (model) => emit({ type: "model_changed", model: model.value, name: model.name }),
     onStateChange: () => {
       const params = status();
       for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
@@ -115,6 +117,9 @@ function status(): DaemonStatus {
     error: agent.error,
     mcpServers: agent.mcpServerNames,
     mcpPending: agent.mcpPending,
+    models: agent.models,
+    model: agent.modelValue,
+    modelPending: agent.modelPending,
   };
 }
 
@@ -145,6 +150,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       return { applied: agent.setMcpServers(p.servers) };
+    }
+    case DAEMON_METHODS.modelSet: {
+      const p = DaemonModelSetParams.parse(params);
+      return { applied: agent.setModel(p.model) };
     }
     case DAEMON_METHODS.cancel:
       await agent.cancel();

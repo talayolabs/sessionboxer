@@ -3,7 +3,9 @@ import {
   DOCKER_MODE_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
+  type ModelOption,
   type Provider,
+  type ProviderModels,
   type PublicMcpServerDef,
   type PublicSettings,
   type SavedMessage,
@@ -21,6 +23,7 @@ import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { McpDialog, McpPicker } from "./McpDialog";
 import { McpServersEditor } from "./McpServersEditor";
+import { ModelSelect } from "./ModelSelect";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { TerminalPane } from "./Terminal";
@@ -96,6 +99,7 @@ export function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [snapshotting, setSnapshotting] = useState<Set<string>>(() => new Set());
   const [settings, setSettings] = useState<PublicSettings | null>(null);
+  const [models, setModels] = useState<ProviderModels | null>(null);
   // Snapshots popup opened from the sidebar; it can be for a Session other than the selected one.
   const [snapshotsFor, setSnapshotsFor] = useState<string | null>(null);
   const [dialogSnapshots, setDialogSnapshots] = useState<Snapshot[] | null>(null);
@@ -114,6 +118,7 @@ export function App() {
   useEffect(() => {
     void reloadSessions();
     void run(async () => setSettings(await api.settings()));
+    void run(async () => setModels(await api.models()));
   }, [reloadSessions, run]);
 
   // Load events and saved messages when the selected session changes; the WS keeps them current.
@@ -198,11 +203,15 @@ export function App() {
               return next;
             });
             break;
+          case "models":
+            setModels((prev) => ({ ...(prev ?? EMPTY_MODELS), [msg.provider]: msg.models }));
+            break;
         }
       },
       () => {
         // Reconnected: refetch to fill any gap.
         void reloadSessions();
+        void run(async () => setModels(await api.models()));
         setSnapshotting(new Set());
         if (selectedId) {
           void run(async () => setEvents(await api.events(selectedId)));
@@ -321,6 +330,7 @@ export function App() {
         {route.view === "new" && settings && (
           <NewSession
             settings={settings}
+            models={models ?? EMPTY_MODELS}
             onCreated={(s) => setRoute({ view: "session", id: s.id })}
             onCancel={() => setRoute({ view: "session", id: null })}
             run={run}
@@ -343,6 +353,7 @@ export function App() {
           <SessionView
             session={selected}
             mcpServers={settings?.mcpServers ?? []}
+            models={models?.[selected.provider] ?? []}
             items={items}
             saved={saved}
             snapshots={snapshots}
@@ -359,6 +370,8 @@ export function App() {
 }
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
+
+const EMPTY_MODELS: ProviderModels = Object.fromEntries(PROVIDERS.map((p): [Provider, ModelOption[]] => [p, []])) as ProviderModels;
 
 /** Storage line under a sidebar entry (machine + Snapshots); click opens the Snapshots popup. */
 function SessionSizes({
@@ -423,6 +436,7 @@ function loadComposerHeight(): number | null {
 function SessionView({
   session,
   mcpServers,
+  models,
   items,
   saved,
   snapshots,
@@ -434,6 +448,7 @@ function SessionView({
 }: {
   session: Session;
   mcpServers: PublicMcpServerDef[];
+  models: ModelOption[];
   items: ReturnType<typeof buildTranscript>;
   saved: SavedMessage[];
   snapshots: Snapshot[];
@@ -451,6 +466,7 @@ function SessionView({
   const [forking, setForking] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
   const [mcpBusy, setMcpBusy] = useState(false);
+  const [modelBusy, setModelBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
@@ -504,6 +520,12 @@ function SessionView({
     setMcpBusy(true);
     void run(() => api.updateSession(session.id, { mcpEnabled: next })).finally(() => setMcpBusy(false));
   };
+  const changeModel = (model: string | null) => {
+    if (!model || model === session.model) return;
+    setModelBusy(true);
+    void run(() => api.updateSession(session.id, { model })).finally(() => setModelBusy(false));
+  };
+  const showModelSelect = models.length > 0 || session.model !== null;
   const snapshotActions = {
     onFork: (s: Snapshot) => setForkFrom(s.id),
     onDelete: (s: Snapshot) => {
@@ -638,6 +660,11 @@ function SessionView({
                 onQueueToggle={(running) => void run(() => api.setQueueRunning(session.id, running))}
               />
             }
+            footerStart={
+              showModelSelect && (
+                <ModelSelect compact models={models} value={session.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
+              )
+            }
             disabled={!canPrompt}
             placeholder={canPrompt ? "Message the agent\u2026" : `Session is ${session.status}`}
             mode={composerMode}
@@ -679,16 +706,19 @@ function DockerModeNote({ settings, enabled }: { settings: PublicSettings; enabl
 
 function NewSession({
   settings,
+  models,
   onCreated,
   onCancel,
   run,
 }: {
   settings: PublicSettings;
+  models: ProviderModels;
   onCreated: (s: Session) => void;
   onCancel: () => void;
   run: Runner;
 }) {
   const [provider, setProvider] = useState<Provider>("claude-code");
+  const [model, setModel] = useState<string | null>(null);
   const [docker, setDocker] = useState(settings.dockerInSandbox);
   const [sourceType, setSourceType] = useState<WorkspaceSource["type"]>("empty");
   const [gitUrl, setGitUrl] = useState("");
@@ -715,6 +745,7 @@ function NewSession({
         workspaceSource,
         docker,
         mcpEnabled,
+        ...(model ? { model } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
       });
@@ -728,7 +759,13 @@ function NewSession({
       <h2>New session</h2>
       <label>
         Provider
-        <select value={provider} onChange={(e) => setProvider(e.target.value as Provider)}>
+        <select
+          value={provider}
+          onChange={(e) => {
+            setProvider(e.target.value as Provider);
+            setModel(null);
+          }}
+        >
           {PROVIDERS.map((p) => (
             <option key={p} value={p}>
               {PROVIDER_LABELS[p]}
@@ -736,6 +773,14 @@ function NewSession({
           ))}
         </select>
       </label>
+      {models[provider].length > 0 ? (
+        <ModelSelect models={models[provider]} value={model} onChange={setModel} allowDefault />
+      ) : (
+        <p className="muted">
+          Model: {PROVIDER_LABELS[provider]}&apos;s default. The list of models appears here once a {PROVIDER_LABELS[provider]} session has started; you can
+          switch the model from the chat afterwards.
+        </p>
+      )}
       <label>
         Workspace
         <select value={sourceType} onChange={(e) => setSourceType(e.target.value as WorkspaceSource["type"])}>

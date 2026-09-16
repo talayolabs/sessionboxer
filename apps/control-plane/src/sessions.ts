@@ -5,6 +5,7 @@ import {
   DAEMON_METHODS,
   DAEMON_PORT,
   DaemonMcpSetResult,
+  DaemonModelSetResult,
   FsListResult,
   FsReadResult,
   FsWriteResult,
@@ -19,6 +20,7 @@ import {
   type DockerMode,
   type ForkSessionRequest,
   type FsChange,
+  type ProviderModels,
   type SavedMessage,
   type Session,
   type SessionBroadcast,
@@ -271,6 +273,8 @@ export class SessionManager {
       diskBytes: null,
       mcpEnabled: req.mcpEnabled ? knownMcpIds(settings, req.mcpEnabled) : defaultMcpEnabled(settings),
       mcpPending: false,
+      model: req.model ?? null,
+      modelPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
       createdAt: now,
@@ -329,6 +333,8 @@ export class SessionManager {
       diskBytes: null,
       mcpEnabled: knownMcpIds(settings, origin.mcpEnabled),
       mcpPending: false,
+      model: origin.model,
+      modelPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
       createdAt: now,
@@ -661,7 +667,7 @@ export class SessionManager {
     if (s.status === "stopped") return s;
     this.stopping.add(id);
     try {
-      if (s.queueRunning || s.mcpPending) this.update(id, { queueRunning: false, mcpPending: false });
+      if (s.queueRunning || s.mcpPending || s.modelPending) this.update(id, { queueRunning: false, mcpPending: false, modelPending: false });
       if (s.status === "running") await this.cancelAndWait(id);
       this.disconnect(id);
       await this.docker.stop(s.containerId);
@@ -723,9 +729,36 @@ export class SessionManager {
       ...(req.title !== undefined ? { title: req.title } : {}),
       ...(req.autoSnapshot !== undefined ? { autoSnapshot: req.autoSnapshot } : {}),
       ...(req.mcpEnabled !== undefined ? { mcpEnabled: knownMcpIds(this.settings(), req.mcpEnabled) } : {}),
+      ...(req.model !== undefined ? { model: req.model } : {}),
     });
-    if (req.mcpEnabled !== undefined) return this.pushMcpServers(id);
-    return s;
+    if (req.mcpEnabled !== undefined) await this.pushMcpServers(id);
+    if (req.model !== undefined) return this.pushModel(id);
+    return req.mcpEnabled !== undefined ? this.get(id) : s;
+  }
+
+  /**
+   * Sends the Session's model to its Daemon, which switches the Agent right away when idle
+   * or once the current turn ends. A no-op without a chosen model or a live Daemon (the
+   * model is pushed again when the Sandbox comes back, after the MCP set).
+   */
+  async pushModel(id: string): Promise<Session> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (!s.model || !client?.connected) return s;
+    try {
+      const result = DaemonModelSetResult.parse(await client.request(DAEMON_METHODS.modelSet, { model: s.model }));
+      return this.update(id, { modelPending: !result.applied });
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) {
+        throw new HttpError(502, "The Sandbox runs an older Daemon without model selection; Stop and Resume the session to refresh it.");
+      }
+      throw e;
+    }
+  }
+
+  /** Last model list each Provider's Agent reported (what New Session can offer). */
+  providerModels(): ProviderModels {
+    return this.db.providerModels();
   }
 
   /**
@@ -794,7 +827,9 @@ export class SessionManager {
     if (!cursor || cursor.epoch !== status.epoch) this.db.setDaemonCursor(id, status.epoch, 0);
     this.onDaemonStatus(id, status);
     // The Daemon waits for the MCP set before it starts the Agent; older Daemons ignore the call.
-    this.pushMcpServers(id).catch((e: unknown) => this.log(`mcp push ${id} failed: ${String(e)}`));
+    this.pushMcpServers(id)
+      .then(() => this.pushModel(id))
+      .catch((e: unknown) => this.log(`mcp/model push ${id} failed: ${String(e)}`));
     const pending = this.pendingPrompts.get(id);
     if (pending && !status.turnActive) {
       this.pendingPrompts.delete(id);
@@ -808,6 +843,12 @@ export class SessionManager {
     if (status.turnActive && s.status !== "running") this.setStatus(id, "running");
     else if (!status.turnActive && s.status === "running") this.setStatus(id, "idle");
     if (status.mcpPending !== s.mcpPending) this.update(id, { mcpPending: status.mcpPending });
+    if (status.models && this.db.setProviderModels(s.provider, status.models)) {
+      this.broadcast({ type: "models", provider: s.provider, models: status.models });
+    }
+    if (status.model !== null && (status.model !== s.model || status.modelPending !== s.modelPending)) {
+      this.update(id, { model: status.model, modelPending: status.modelPending });
+    }
   }
 
   private onDaemonEvent(id: string, ev: DaemonEvent): void {

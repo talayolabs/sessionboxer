@@ -28,7 +28,8 @@ export type TranscriptItem =
   | { kind: "status"; key: string; status: SessionStatus; error?: string }
   | { kind: "snapshot"; key: string; snapshot: Snapshot }
   | { kind: "forked"; key: string; fromSessionId: string; fromTitle: string; snapshotOrdinal: number }
-  | { kind: "mcp_changed"; key: string; servers: string[] };
+  | { kind: "mcp_changed"; key: string; servers: string[] }
+  | { kind: "model_changed"; key: string; model: string; name: string };
 
 function blockText(block: ContentBlock): string {
   switch (block.type) {
@@ -96,6 +97,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "mcp_changed":
         items.push({ kind: "mcp_changed", key, servers: body.servers });
+        break;
+      case "model_changed":
+        items.push({ kind: "model_changed", key, model: body.model, name: body.name });
         break;
       case "update": {
         const u = body.update;

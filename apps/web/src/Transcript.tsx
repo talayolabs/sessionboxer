@@ -154,6 +154,12 @@ function Item({ item, actions }: { item: TranscriptItem; actions: SnapshotAction
           MCP servers now: {item.servers.length === 0 ? "desktop only" : `desktop, ${item.servers.join(", ")}`}
         </div>
       );
+    case "model_changed":
+      return (
+        <div className="marker" title={item.model}>
+          Model now: {item.name}
+        </div>
+      );
   }
 }
 

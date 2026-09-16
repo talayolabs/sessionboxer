@@ -78,6 +78,8 @@ api.get("/host/dirs", async (c) => {
   }
 });
 
+api.get("/models", (c) => c.json(sessions.providerModels()));
+
 api.get("/sessions", (c) => c.json(sessions.list()));
 api.post("/sessions", async (c) => {
   const req = CreateSessionRequest.parse(await c.req.json());

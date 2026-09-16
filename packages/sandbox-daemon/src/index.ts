@@ -6,6 +6,7 @@ import {
   DAEMON_PORT,
   DaemonAskParams,
   DaemonHelloParams,
+  DaemonMcpSetParams,
   DaemonPromptParams,
   FsPathParams,
   FsWriteParams,
@@ -21,6 +22,7 @@ import {
   type JsonRpcId,
 } from "@sessionboxer/protocol";
 import { AgentManager } from "./agent.js";
+import { DevinMcpConfig } from "./mcp-config.js";
 import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 
@@ -62,20 +64,28 @@ const ACP_COMMANDS: Record<Provider, string[]> = {
 const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
   env.SESSIONBOXER_ACP_COMMAND?.split(" ") ?? ACP_COMMANDS[provider];
+const mcpCommand = env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp";
+/** Devin reads MCP servers from its config file; kept on tmpfs so Snapshots never carry MCP secrets. */
+const devinMcpConfig =
+  provider === "devin"
+    ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer", mcpCommand)
+    : null;
 
 const agent = new AgentManager(
   {
     command: acpCommand,
     args: acpArgs,
     cwd: workspace,
-    mcpCommand: env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp",
+    mcpCommand,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
+    writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     log,
   },
   {
     onUpdate: (update) => emit({ type: "update", update }),
     onTurnEnded: (stopReason) => emit({ type: "turn_ended", stopReason }),
     onError: (message) => emit({ type: "agent_error", message }),
+    onMcpChanged: (servers) => emit({ type: "mcp_changed", servers }),
     onStateChange: () => {
       const params = status();
       for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
@@ -103,6 +113,8 @@ function status(): DaemonStatus {
     agentInfo: agent.agentInfo,
     ready: agent.ready,
     error: agent.error,
+    mcpServers: agent.mcpServerNames,
+    mcpPending: agent.mcpPending,
   };
 }
 
@@ -129,6 +141,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.ask: {
       const p = DaemonAskParams.parse(params);
       return { text: await agent.ask(p.text) };
+    }
+    case DAEMON_METHODS.mcpSet: {
+      const p = DaemonMcpSetParams.parse(params);
+      return { applied: agent.setMcpServers(p.servers) };
     }
     case DAEMON_METHODS.cancel:
       await agent.cancel();
@@ -195,8 +211,11 @@ wss.on("connection", (ws) => {
 
 log(`listening on :${port}, epoch ${epoch}`);
 workspaceFs.startWatching();
-// Warm the Agent up so the first prompt does not pay the spawn + initialize cost.
-agent.ensureStarted().catch((e: unknown) => log(`agent start failed: ${String(e)}`));
+// The Control Plane sends the MCP server set right after connecting, which warms the Agent up.
+// Should it never come (older Control Plane), start without user servers so prompts still work.
+setTimeout(() => {
+  if (agent.mcpServerNames === null) agent.setMcpServers([]);
+}, 30_000).unref();
 
 const shutdown = (): void => {
   log("shutting down");

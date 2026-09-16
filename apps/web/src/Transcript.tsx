@@ -148,6 +148,12 @@ function Item({ item, actions }: { item: TranscriptItem; actions: SnapshotAction
           files, tools and conversation up to here; changes below stay in this Session.
         </div>
       );
+    case "mcp_changed":
+      return (
+        <div className="marker">
+          MCP servers now: {item.servers.length === 0 ? "desktop only" : `desktop, ${item.servers.join(", ")}`}
+        </div>
+      );
   }
 }
 

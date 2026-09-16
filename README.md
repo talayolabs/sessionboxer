@@ -109,6 +109,16 @@ There are two ways this can run, and Sessionboxer picks automatically:
 - With [Sysbox](https://github.com/nestybox/sysbox) installed on your machine (`sysbox-ce` package from its releases page), the box stays a normal, unprivileged container. Recommended.
 - Without Sysbox, the box has to run as a *privileged* container, which means the agent could break out of it onto your machine. Sessionboxer still lets you do it, but shows a ⚠ on the Settings button, explains it next to the option, and marks such sessions in the sidebar and header. Only use this with agents and tasks you trust, or install Sysbox.
 
+### MCP servers
+
+The agent always has the built-in `desktop` MCP server (screen, mouse, keyboard). You can give it more: register **MCP servers** once in Settings, then choose per session which ones are on.
+
+- **Settings → MCP servers**: **Add server** (a name, then either a command to run inside the box such as `npx -y @modelcontextprotocol/server-github` or `uvx mcp-server-fetch`, or the URL of an HTTP/SSE server, plus environment variables or headers) or **Import JSON…** and paste the `{"mcpServers": {...}}` block most servers document for Claude Desktop or Cursor. Mark values like tokens as **secret**: they are stored in `~/.sessionboxer/config.json`, never shown again in the UI, and never end up in snapshot images. **Default** decides whether new sessions start with the server on.
+- **New session** shows the registered servers as checkboxes.
+- **MCP** in the session header shows how many servers are on and opens a switch per server. Toggle at any time: when the agent is idle it restarts in place and keeps the conversation; while it is working the change waits until the current turn ends (the button shows *pending*). The chat shows an `MCP servers now: …` marker when the set changes.
+
+Servers running on your machine are reachable from the box: `localhost` in a URL means your machine, and `host.docker.internal` works too. `node`, `npx`, `python3`, `uv`/`uvx` and `docker` are available in the box for command-based servers.
+
 ## Command line
 
 The `sessionboxer` command talks to the running server and opens the browser on the new session. Run it as `npx sessionboxer` from the checkout, or `npm link -w @sessionboxer/cli` once to have it on your PATH.
@@ -130,7 +140,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 
 | | |
 | --- | --- |
-| Settings and tokens | `~/.sessionboxer/config.json` |
+| Settings, tokens, MCP servers | `~/.sessionboxer/config.json` |
 | Sessions and chat history | `~/.sessionboxer/db.sqlite` |
 | Session containers | `sbx-<session id>` on the `sessionboxer` Docker network, no published ports |
 | Project folder in the box | `/workspace` |

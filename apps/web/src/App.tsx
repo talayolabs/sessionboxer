@@ -4,6 +4,7 @@ import {
   PROVIDERS,
   PROVIDER_LABELS,
   type Provider,
+  type PublicMcpServerDef,
   type PublicSettings,
   type SavedMessage,
   type Session,
@@ -18,6 +19,8 @@ import { Files } from "./Files";
 import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
+import { McpDialog, McpPicker } from "./McpDialog";
+import { McpServersEditor } from "./McpServersEditor";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { TerminalPane } from "./Terminal";
@@ -339,6 +342,7 @@ export function App() {
         {route.view === "session" && selected && (
           <SessionView
             session={selected}
+            mcpServers={settings?.mcpServers ?? []}
             items={items}
             saved={saved}
             snapshots={snapshots}
@@ -418,6 +422,7 @@ function loadComposerHeight(): number | null {
 
 function SessionView({
   session,
+  mcpServers,
   items,
   saved,
   snapshots,
@@ -428,6 +433,7 @@ function SessionView({
   onForked,
 }: {
   session: Session;
+  mcpServers: PublicMcpServerDef[];
   items: ReturnType<typeof buildTranscript>;
   saved: SavedMessage[];
   snapshots: Snapshot[];
@@ -443,6 +449,8 @@ function SessionView({
   const [title, setTitle] = useState(session.title);
   const [forkFrom, setForkFrom] = useState<string | null>(null);
   const [forking, setForking] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
+  const [mcpBusy, setMcpBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
@@ -490,6 +498,12 @@ function SessionView({
           : "empty workspace";
   const isLive = session.status === "idle" || session.status === "running";
   const latestSnapshot = snapshots[snapshots.length - 1];
+  const mcpActive = mcpServers.filter((s) => session.mcpEnabled.includes(s.id));
+  const toggleMcp = (id: string, enabled: boolean) => {
+    const next = enabled ? [...session.mcpEnabled, id] : session.mcpEnabled.filter((x) => x !== id);
+    setMcpBusy(true);
+    void run(() => api.updateSession(session.id, { mcpEnabled: next })).finally(() => setMcpBusy(false));
+  };
   const snapshotActions = {
     onFork: (s: Snapshot) => setForkFrom(s.id),
     onDelete: (s: Snapshot) => {
@@ -557,6 +571,17 @@ function SessionView({
         >
           Fork…
         </button>
+        <button
+          className={session.mcpPending ? "pending" : ""}
+          title={
+            (mcpActive.length === 0 ? "MCP servers: desktop only" : `MCP servers: desktop, ${mcpActive.map((s) => s.name).join(", ")}`) +
+            (session.mcpPending ? " (change applies after this turn)" : "")
+          }
+          onClick={() => setMcpOpen(true)}
+        >
+          MCP {mcpActive.length > 0 && <span className="count">{mcpActive.length}</span>}
+          {session.mcpPending && <span className="warn-sign">pending</span>}
+        </button>
         {session.status === "running" && <button onClick={() => void run(() => api.cancel(session.id))}>Cancel turn</button>}
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
@@ -574,6 +599,7 @@ function SessionView({
         </button>
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
+      {mcpOpen && <McpDialog session={session} servers={mcpServers} busy={mcpBusy} onToggle={toggleMcp} onClose={() => setMcpOpen(false)} />}
       {forkFrom && (
         <ForkDialog
           session={session}
@@ -671,6 +697,7 @@ function NewSession({
   const [browsing, setBrowsing] = useState(false);
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [mcpEnabled, setMcpEnabled] = useState<string[]>(() => settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id));
   const [busy, setBusy] = useState(false);
 
   const submit = (e: React.FormEvent) => {
@@ -687,6 +714,7 @@ function NewSession({
         provider,
         workspaceSource,
         docker,
+        mcpEnabled,
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
       });
@@ -744,6 +772,7 @@ function NewSession({
         Docker inside the Sandbox ({DOCKER_MODE_LABELS[settings.dockerModeAvailable]})
       </label>
       {docker && <DockerModeNote settings={settings} enabled />}
+      <McpPicker servers={settings.mcpServers} enabled={mcpEnabled} onChange={setMcpEnabled} />
       <label>
         Title (optional, defaults to the first prompt)
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -785,6 +814,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
   const [docker, setDocker] = useState(settings.dockerInSandbox);
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
+  const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
 
@@ -799,6 +829,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         dockerInSandbox: docker,
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
+        mcpServers,
         providerSecrets: {
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
@@ -873,6 +904,7 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
         turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
       </p>
+      <McpServersEditor servers={mcpServers} onChange={setMcpServers} />
       <div className="actions">
         <button type="submit">Save</button>
       </div>

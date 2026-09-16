@@ -24,6 +24,9 @@ interface SessionRow {
   queue_running: number;
   auto_snapshot: number | null;
   disk_bytes: number | null;
+  /** JSON array of MCP server ids. */
+  mcp_enabled: string;
+  mcp_pending: number;
   created_at: string;
   updated_at: string;
 }
@@ -75,6 +78,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   queue_running INTEGER NOT NULL DEFAULT 0,
   auto_snapshot INTEGER,
   disk_bytes INTEGER,
+  mcp_enabled TEXT NOT NULL DEFAULT '[]',
+  mcp_pending INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -118,6 +123,8 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "queue_running", ddl: "ALTER TABLE sessions ADD COLUMN queue_running INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "disk_bytes", ddl: "ALTER TABLE sessions ADD COLUMN disk_bytes INTEGER" },
   { table: "sessions", column: "auto_snapshot", ddl: "ALTER TABLE sessions ADD COLUMN auto_snapshot INTEGER" },
+  { table: "sessions", column: "mcp_enabled", ddl: "ALTER TABLE sessions ADD COLUMN mcp_enabled TEXT NOT NULL DEFAULT '[]'" },
+  { table: "sessions", column: "mcp_pending", ddl: "ALTER TABLE sessions ADD COLUMN mcp_pending INTEGER NOT NULL DEFAULT 0" },
 ];
 
 const SESSION_SELECT = `
@@ -157,8 +164,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -170,7 +177,8 @@ export class Db {
     this.db
       .prepare(
         `UPDATE sessions SET title=@title, status=@status, container_id=@container_id, error=@error,
-           queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes, updated_at=@updated_at
+           queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes,
+           mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -368,7 +376,7 @@ export class Db {
 }
 
 export type SessionPatch = Partial<
-  Pick<Session, "title" | "status" | "containerId" | "error" | "queueRunning" | "autoSnapshot" | "diskBytes">
+  Pick<Session, "title" | "status" | "containerId" | "error" | "queueRunning" | "autoSnapshot" | "diskBytes" | "mcpEnabled" | "mcpPending">
 >;
 
 function rowToSession(row: SessionQueryRow): Session {
@@ -384,6 +392,8 @@ function rowToSession(row: SessionQueryRow): Session {
     queueRunning: row.queue_running === 1,
     autoSnapshot: row.auto_snapshot === null ? null : row.auto_snapshot === 1,
     diskBytes: row.disk_bytes,
+    mcpEnabled: JSON.parse(row.mcp_enabled) as string[],
+    mcpPending: row.mcp_pending === 1,
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
     createdAt: row.created_at,
@@ -423,6 +433,8 @@ function sessionToRow(s: Session): SessionRow {
     queue_running: s.queueRunning ? 1 : 0,
     auto_snapshot: s.autoSnapshot === null ? null : s.autoSnapshot ? 1 : 0,
     disk_bytes: s.diskBytes,
+    mcp_enabled: JSON.stringify(s.mcpEnabled),
+    mcp_pending: s.mcpPending ? 1 : 0,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };

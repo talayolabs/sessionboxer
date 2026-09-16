@@ -64,6 +64,7 @@ api.put("/settings", async (c) => {
   const update = UpdateSettingsRequest.parse(await c.req.json());
   settings = applySettingsUpdate(settings, update);
   saveSettings(settings);
+  if (update.mcpServers) void sessions.pushMcpServersToAll();
   return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
 });
 
@@ -85,7 +86,7 @@ api.post("/sessions", async (c) => {
 api.get("/sessions/:id", (c) => c.json(sessions.get(c.req.param("id"))));
 api.patch("/sessions/:id", async (c) => {
   const req = UpdateSessionRequest.parse(await c.req.json());
-  return c.json(sessions.edit(c.req.param("id"), req));
+  return c.json(await sessions.edit(c.req.param("id"), req));
 });
 api.delete("/sessions/:id", async (c) => {
   await sessions.delete(c.req.param("id"));

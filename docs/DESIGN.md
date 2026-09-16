@@ -28,6 +28,7 @@ Internal notes for people working on Sessionboxer: architecture, the MVP decisio
 - The Daemon speaks ACP to the Agent so other Providers are an adapter install away (ADR-0006); Devin is the second one, through Devin CLI's `devin acp` (ADR-0007).
 - Docker inside a Sandbox is opt-in and runs under the Sysbox runtime when the host has it; without Sysbox it falls back to `--privileged` with a warning in every surface (ADR-0008).
 - After every Agent turn the Sandbox is `docker commit`ted (default-on Setting); a fork is a new Session on a new Sandbox created from one of those Snapshot images, so files, tools and the Provider's conversation state carry over and both Sessions stay independent (ADR-0009).
+- MCP servers are registered once in Settings (secrets write-only) and switched per Session; a toggle restarts the Agent in place and reloads the ACP session, or waits for the running turn to end (ADR-0010).
 
 ## MVP decisions
 
@@ -113,6 +114,7 @@ Dev loop for the UI: `npm run dev -w @sessionboxer/web` (Vite on :5173, proxies 
 - **M6, done**: Devin as a second Provider: Devin CLI in the image, `devin acp` through the Daemon's ACP path (`bypass` mode, same `desktop` MCP), `WINDSURF_API_KEY` in Settings, Provider selector in New Session (ADR-0007).
 - **M7, done**: Docker inside Sandboxes: Docker CLI + `dockerd` in the image, per-Session `dockerMode` (`none`/`sysbox`/`privileged`), Sysbox detection with a warned `--privileged` fallback, Settings default + New Session/CLI override (ADR-0008).
 - **M8, done**: Saved-for-later queue with Play/Pause; automatic Snapshots after each turn (`docker commit`, tokens blanked, per-Session retention), sizes in the sidebar, manual Snapshot, fork from any Snapshot into a new Sandbox with an optional first prompt picked from the queue (ADR-0009).
+- **M9, done**: MCP servers: global registry in Settings (stdio/http/sse, write-only secrets, Import JSON), per-Session switches with restart-on-toggle / deferred-until-turn-end, Devin config on tmpfs, `host.docker.internal` for host services, `uvx` in the image (ADR-0010).
 
 ## Running the M0 spike by hand
 

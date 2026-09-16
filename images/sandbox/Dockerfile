@@ -64,6 +64,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       firefox-esr \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# uv/uvx system-wide: most Python MCP servers are launched as `uvx <package>`.
+ARG UV_VERSION=0.12.13
+RUN curl -fsSL https://astral.sh/uv/${UV_VERSION}/install.sh -o /tmp/uv-install.sh \
+    && env UV_UNMANAGED_INSTALL=/usr/local/bin sh /tmp/uv-install.sh \
+    && rm -f /tmp/uv-install.sh \
+    && uv --version && uvx --version
+
 # Claude Code CLI (for the user in the terminal tab) and its ACP adapter
 # (spawned by the Sandbox Daemon over stdio).
 RUN npm install -g \

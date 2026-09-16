@@ -7,12 +7,12 @@ import {
   ndJsonStream,
   type ClientConnection,
   type InitializeRequest,
-  type McpServer,
   type NewSessionRequest,
   type NewSessionResponse,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
-import type { SessionUpdate, StopReason } from "@sessionboxer/protocol";
+import type { McpServerSpec, SessionUpdate, StopReason } from "@sessionboxer/protocol";
+import { acpMcpServers } from "./mcp-config.js";
 
 export interface AgentConfig {
   command: string;
@@ -20,6 +20,8 @@ export interface AgentConfig {
   cwd: string;
   mcpCommand: string;
   stateFile: string;
+  /** Runs before every spawn with the user MCP servers (Devin reads them from a file, not over ACP). */
+  writeMcpConfig?: (servers: McpServerSpec[]) => void;
   log: (msg: string) => void;
 }
 
@@ -27,6 +29,8 @@ export interface AgentEvents {
   onUpdate: (update: SessionUpdate) => void;
   onTurnEnded: (stopReason: StopReason) => void;
   onError: (message: string) => void;
+  /** The Agent was restarted with another user MCP server set (names). */
+  onMcpChanged: (servers: string[]) => void;
   onStateChange: () => void;
 }
 
@@ -59,11 +63,63 @@ export class AgentManager {
   /** While an `ask()` is in session/new, updates from not-yet-known sessions are its. */
   private creatingOneShots = 0;
 
+  /** User MCP servers to start the Agent with; `null` until the Control Plane has sent them. */
+  private mcpServers: McpServerSpec[] | null = null;
+  /** Set received while a turn was active; applied when it ends. */
+  private mcpPendingServers: McpServerSpec[] | null = null;
+  /** Fingerprint of the set the running (or last started) Agent got; `null` before the first start. */
+  private mcpStartedKey: string | null = null;
+  private mcpApplyChain: Promise<void> = Promise.resolve();
+
   acpSessionId: string | null = null;
   agentInfo: { name: string; version: string } | null = null;
   turnActive = false;
   ready = false;
   error: string | null = null;
+
+  get mcpServerNames(): string[] | null {
+    return this.mcpServers?.map((s) => s.name) ?? null;
+  }
+
+  get mcpPending(): boolean {
+    return this.mcpPendingServers !== null;
+  }
+
+  /**
+   * Replaces the user MCP server set. Restarts the Agent in place (the ACP session is
+   * loaded back, so the conversation is kept) unless a turn is active, in which case
+   * the change waits for the turn to end. Returns whether it was applied right away.
+   */
+  setMcpServers(servers: McpServerSpec[]): boolean {
+    if (this.turnActive) {
+      this.mcpPendingServers = servers;
+      this.events.onStateChange();
+      return false;
+    }
+    this.mcpPendingServers = null;
+    this.mcpServers = [...servers].sort((a, b) => a.name.localeCompare(b.name));
+    this.mcpApplyChain = this.mcpApplyChain
+      .then(() => this.applyMcpServers())
+      .catch((e: unknown) => this.cfg.log(`agent start failed: ${String(e)}`));
+    this.events.onStateChange();
+    return true;
+  }
+
+  private async applyMcpServers(): Promise<void> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    const key = JSON.stringify(this.mcpServers);
+    const previous = this.mcpStartedKey;
+    if (this.child && previous === key) return;
+    if (this.turnActive) {
+      // A prompt slipped in while we waited for the previous start; the turn end re-applies.
+      this.mcpPendingServers = this.mcpServers;
+      this.events.onStateChange();
+      return;
+    }
+    if (this.child) this.kill();
+    await this.ensureStarted();
+    if (previous !== null && previous !== key) this.events.onMcpChanged(this.mcpServerNames ?? []);
+  }
 
   constructor(
     private readonly cfg: AgentConfig,
@@ -84,7 +140,11 @@ export class AgentManager {
 
   private async start(): Promise<void> {
     this.error = null;
-    this.cfg.log(`spawning ${[this.cfg.command, ...this.cfg.args].join(" ")}`);
+    const userServers = this.mcpServers ?? [];
+    this.cfg.writeMcpConfig?.(userServers);
+    this.cfg.log(
+      `spawning ${[this.cfg.command, ...this.cfg.args].join(" ")} (MCP: desktop${userServers.map((s) => `, ${s.name}`).join("")})`,
+    );
     const child = spawn(this.cfg.command, this.cfg.args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -94,7 +154,7 @@ export class AgentManager {
     child.stderr?.on("data", (d: Buffer) => this.cfg.log(`[agent] ${d.toString().trimEnd()}`));
     child.on("exit", (code, signal) => {
       this.cfg.log(`agent exited code=${code} signal=${signal}`);
-      this.onAgentGone(`agent process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
+      if (this.child === child) this.onAgentGone(`agent process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
     });
     if (!child.stdin || !child.stdout) throw new Error("agent stdio unavailable");
 
@@ -124,7 +184,9 @@ export class AgentManager {
       });
     const conn = app.connect(stream);
     this.conn = conn;
-    conn.closed.then(() => this.onAgentGone("ACP connection closed"));
+    conn.closed.then(() => {
+      if (this.conn === conn) this.onAgentGone("ACP connection closed");
+    });
 
     try {
       const initParams: InitializeRequest = {
@@ -136,7 +198,7 @@ export class AgentManager {
       this.agentInfo = init.agentInfo
         ? { name: init.agentInfo.name, version: init.agentInfo.version ?? "" }
         : null;
-      const mcpServers: McpServer[] = [{ name: "desktop", command: this.cfg.mcpCommand, args: [], env: [] }];
+      const mcpServers = acpMcpServers(this.cfg.mcpCommand, userServers);
 
       let loaded = false;
       if (this.acpSessionId && init.agentCapabilities?.loadSession) {
@@ -164,6 +226,7 @@ export class AgentManager {
         this.cfg.log(`created ACP session ${created.sessionId}`);
         await this.ensureBypassMode(conn, created.sessionId, created.modes);
       }
+      this.mcpStartedKey = JSON.stringify(userServers);
       this.ready = true;
       this.events.onStateChange();
     } catch (e) {
@@ -219,6 +282,7 @@ export class AgentManager {
     } finally {
       this.turnActive = false;
       this.events.onStateChange();
+      if (this.mcpPendingServers) this.setMcpServers(this.mcpPendingServers);
     }
   }
 

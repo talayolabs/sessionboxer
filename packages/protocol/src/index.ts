@@ -50,6 +50,60 @@ export const WorkspaceSource = z.discriminatedUnion("type", [
 ]);
 export type WorkspaceSource = z.infer<typeof WorkspaceSource>;
 
+// ---------------------------------------------------------------------------
+// MCP servers: registered once in Settings, enabled per Session. The built-in
+// `desktop` server is implicit and always on. Enabling/disabling restarts the
+// Agent in place (ACP `session/load`), so the conversation is kept.
+// ---------------------------------------------------------------------------
+
+export const MCP_TRANSPORTS = ["stdio", "http", "sse"] as const;
+export const McpTransport = z.enum(MCP_TRANSPORTS);
+export type McpTransport = z.infer<typeof McpTransport>;
+
+/** Environment variable (stdio) or HTTP header (http/sse); `secret` values are never sent back to the UI. */
+export const McpKeyValue = z.object({
+  name: z.string().min(1).max(200),
+  value: z.string().max(10_000).default(""),
+  secret: z.boolean().default(false),
+});
+export type McpKeyValue = z.infer<typeof McpKeyValue>;
+
+/** Names become tool prefixes (`mcp__<name>__<tool>`), so keep them identifier-like; `desktop` is reserved. */
+export const MCP_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+export const MCP_RESERVED_NAMES = ["desktop"] as const;
+
+export const McpServerDef = z.object({
+  id: z.string().min(1),
+  name: z.string().regex(MCP_NAME_PATTERN, "letters, digits, `_` and `-` only"),
+  transport: McpTransport,
+  /** stdio: program run inside the Sandbox (`npx`, `uvx`, `node`, …). */
+  command: z.string().max(4000).default(""),
+  args: z.array(z.string().max(4000)).default([]),
+  env: z.array(McpKeyValue).default([]),
+  /** http/sse: `localhost` and `127.0.0.1` are rewritten to the Sandbox's host alias. */
+  url: z.string().max(4000).default(""),
+  headers: z.array(McpKeyValue).default([]),
+  /** Pre-selected for new Sessions. */
+  enabledByDefault: z.boolean().default(true),
+});
+export type McpServerDef = z.infer<typeof McpServerDef>;
+
+/**
+ * `McpServerDef` as seen by the UI: secret values are replaced by `null` when set (and by `""` when
+ * empty). Sending `null` back keeps the stored value, so the form can round-trip without knowing it.
+ */
+export const PublicMcpKeyValue = McpKeyValue.extend({ value: z.string().max(10_000).nullable() });
+export type PublicMcpKeyValue = z.infer<typeof PublicMcpKeyValue>;
+export const PublicMcpServerDef = McpServerDef.extend({
+  env: z.array(PublicMcpKeyValue).default([]),
+  headers: z.array(PublicMcpKeyValue).default([]),
+});
+export type PublicMcpServerDef = z.infer<typeof PublicMcpServerDef>;
+
+/** What the Daemon gets: resolved definitions of the Session's enabled servers, secrets included. */
+export const McpServerSpec = McpServerDef.omit({ enabledByDefault: true });
+export type McpServerSpec = z.infer<typeof McpServerSpec>;
+
 export const Session = z.object({
   id: z.string(),
   title: z.string(),
@@ -57,6 +111,10 @@ export const Session = z.object({
   status: SessionStatus,
   workspaceSource: WorkspaceSource,
   dockerMode: DockerMode.default("none"),
+  /** Ids of the `Settings.mcpServers` entries enabled for this Session. */
+  mcpEnabled: z.array(z.string()).default([]),
+  /** The Agent is busy; the last MCP change is applied when the current turn ends. */
+  mcpPending: z.boolean().default(false),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
@@ -79,6 +137,8 @@ export const CreateSessionRequest = z.object({
   workspaceSource: WorkspaceSource.default({ type: "empty" }),
   /** Docker daemon inside the Sandbox; defaults to the `dockerInSandbox` setting. */
   docker: z.boolean().optional(),
+  /** MCP server ids to enable; defaults to the servers marked `enabledByDefault`. */
+  mcpEnabled: z.array(z.string()).optional(),
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -87,6 +147,7 @@ export const UpdateSessionRequest = z.object({
   title: z.string().min(1).max(200).optional(),
   /** `null` clears the override (follow `Settings.autoSnapshot`). */
   autoSnapshot: z.boolean().nullable().optional(),
+  mcpEnabled: z.array(z.string()).optional(),
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequest>;
 
@@ -203,6 +264,7 @@ export const Settings = z.object({
   autoSnapshot: z.boolean().default(true),
   /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */
   snapshotKeep: z.number().int().nonnegative().default(10),
+  mcpServers: z.array(McpServerDef).default([]),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
@@ -213,7 +275,8 @@ export const Settings = z.object({
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true }).extend({
+  mcpServers: z.array(PublicMcpServerDef),
   providerSecretsSet: z.object({
     "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
     devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
@@ -223,7 +286,9 @@ export const PublicSettings = Settings.omit({ providerSecrets: true }).extend({
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true }).partial().extend({
+  /** Whole registry; `null` secret values keep what is stored for that server/name. */
+  mcpServers: z.array(PublicMcpServerDef).optional(),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string() }).partial(),
@@ -246,7 +311,9 @@ export type SessionEventBody =
   | { type: "agent_error"; message: string }
   | { type: "status"; status: SessionStatus; error?: string }
   /** First event of a forked Session: everything before it was copied from the origin. */
-  | { type: "forked"; fromSessionId: string; fromTitle: string; snapshotId: string; snapshotOrdinal: number };
+  | { type: "forked"; fromSessionId: string; fromTitle: string; snapshotId: string; snapshotOrdinal: number }
+  /** The Daemon restarted the Agent with a new MCP server set (names, `desktop` excluded). */
+  | { type: "mcp_changed"; servers: string[] };
 
 export interface SessionEvent {
   /** Control Plane sequence, monotonic per Session. */
@@ -388,6 +455,7 @@ export const DAEMON_METHODS = {
   hello: "_sessionboxer/hello",
   prompt: "_sessionboxer/prompt",
   ask: "_sessionboxer/ask",
+  mcpSet: "_sessionboxer/mcp/set",
   cancel: "_sessionboxer/cancel",
   status: "_sessionboxer/status",
   event: "_sessionboxer/event",
@@ -421,8 +489,25 @@ export const DaemonStatus = z.object({
   agentInfo: z.object({ name: z.string(), version: z.string() }).nullable(),
   ready: z.boolean(),
   error: z.string().nullable(),
+  /** Names of the user MCP servers the running Agent was started with; `null` until the first `mcp/set`. */
+  mcpServers: z.array(z.string()).nullable().default(null),
+  /** An `mcp/set` is waiting for the current turn to end. */
+  mcpPending: z.boolean().default(false),
 });
 export type DaemonStatus = z.infer<typeof DaemonStatus>;
+
+/**
+ * Replaces the user MCP server set. The Agent (re)starts with it right away when idle,
+ * otherwise once the current turn ends; `mcp_changed` is emitted when it has been applied.
+ */
+export const DaemonMcpSetParams = z.object({ servers: z.array(McpServerSpec) });
+export type DaemonMcpSetParams = z.infer<typeof DaemonMcpSetParams>;
+
+export const DaemonMcpSetResult = z.object({
+  /** False when the change was deferred to the end of the active turn. */
+  applied: z.boolean(),
+});
+export type DaemonMcpSetResult = z.infer<typeof DaemonMcpSetResult>;
 
 export const DaemonPromptParams = z.object({ text: z.string().min(1) });
 export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;

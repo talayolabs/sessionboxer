@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { DAEMON_PORT, NOVNC_PORT, type DockerMode } from "@sessionboxer/protocol";
-import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
+import { SANDBOX_HOST_ALIAS, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
 export const LABEL_SNAPSHOT = "sessionboxer.snapshot";
@@ -115,6 +115,8 @@ export class SandboxDocker {
         Memory: Math.round(spec.memoryGb * 1024 ** 3),
         ShmSize: 1024 ** 3,
         NetworkMode: SANDBOX_NETWORK,
+        // The host machine by name, for MCP servers (and anything else) running on it.
+        ExtraHosts: [`${SANDBOX_HOST_ALIAS}:host-gateway`],
         // Sandboxes publish no host ports (ADR-0005), except on loopback with
         // an ephemeral host port each when the container address is unreachable.
         PortBindings:

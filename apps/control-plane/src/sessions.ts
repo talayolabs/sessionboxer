@@ -4,6 +4,7 @@ import {
   AskResult,
   DAEMON_METHODS,
   DAEMON_PORT,
+  DaemonMcpSetResult,
   FsListResult,
   FsReadResult,
   FsWriteResult,
@@ -29,20 +30,14 @@ import {
   type UpdateSessionRequest,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
-import { providerEnv, providerSetupHint } from "./config.js";
+import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveMcpServers } from "./config.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import type { Db, SessionPatch } from "./db.js";
 import { SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
+import { HttpError } from "./http-error.js";
 
-export class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { HttpError };
 
 const CANCEL_GRACE_MS = 8000;
 const DAEMON_WAIT_MS = 15_000;
@@ -274,6 +269,8 @@ export class SessionManager {
       queueRunning: false,
       autoSnapshot: null,
       diskBytes: null,
+      mcpEnabled: req.mcpEnabled ? knownMcpIds(settings, req.mcpEnabled) : defaultMcpEnabled(settings),
+      mcpPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
       createdAt: now,
@@ -330,6 +327,8 @@ export class SessionManager {
       queueRunning: false,
       autoSnapshot: origin.autoSnapshot,
       diskBytes: null,
+      mcpEnabled: knownMcpIds(settings, origin.mcpEnabled),
+      mcpPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
       createdAt: now,
@@ -662,7 +661,7 @@ export class SessionManager {
     if (s.status === "stopped") return s;
     this.stopping.add(id);
     try {
-      if (s.queueRunning) this.update(id, { queueRunning: false });
+      if (s.queueRunning || s.mcpPending) this.update(id, { queueRunning: false, mcpPending: false });
       if (s.status === "running") await this.cancelAndWait(id);
       this.disconnect(id);
       await this.docker.stop(s.containerId);
@@ -719,11 +718,44 @@ export class SessionManager {
     for (const snap of snapshots) await this.docker.removeImage(snap.imageId).catch(() => false);
   }
 
-  edit(id: string, req: UpdateSessionRequest): Session {
-    return this.update(id, {
+  async edit(id: string, req: UpdateSessionRequest): Promise<Session> {
+    const s = this.update(id, {
       ...(req.title !== undefined ? { title: req.title } : {}),
       ...(req.autoSnapshot !== undefined ? { autoSnapshot: req.autoSnapshot } : {}),
+      ...(req.mcpEnabled !== undefined ? { mcpEnabled: knownMcpIds(this.settings(), req.mcpEnabled) } : {}),
     });
+    if (req.mcpEnabled !== undefined) return this.pushMcpServers(id);
+    return s;
+  }
+
+  /**
+   * Sends the Session's enabled MCP servers (resolved, secrets included) to its Daemon,
+   * which restarts the Agent with them once idle. Called after every Daemon connect and
+   * whenever the set or the registry changes; a no-op for Sessions without a live Daemon
+   * (they get the current set when their Sandbox comes back).
+   */
+  async pushMcpServers(id: string): Promise<Session> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (!client?.connected) return s;
+    const servers = resolveMcpServers(this.settings(), s.mcpEnabled);
+    try {
+      const result = DaemonMcpSetResult.parse(await client.request(DAEMON_METHODS.mcpSet, { servers }));
+      return this.update(id, { mcpPending: !result.applied });
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) {
+        throw new HttpError(502, "The Sandbox runs an older Daemon without MCP support; Stop and Resume the session to refresh it.");
+      }
+      throw e;
+    }
+  }
+
+  /** The registry changed: every live Session gets its set resolved again. */
+  async pushMcpServersToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.status !== "idle" && s.status !== "running") continue;
+      await this.pushMcpServers(s.id).catch((e: unknown) => this.log(`mcp push ${s.id} failed: ${String(e)}`));
+    }
   }
 
   private async connect(id: string, containerId: string): Promise<void> {
@@ -761,6 +793,8 @@ export class SessionManager {
     const cursor = this.db.getDaemonCursor(id);
     if (!cursor || cursor.epoch !== status.epoch) this.db.setDaemonCursor(id, status.epoch, 0);
     this.onDaemonStatus(id, status);
+    // The Daemon waits for the MCP set before it starts the Agent; older Daemons ignore the call.
+    this.pushMcpServers(id).catch((e: unknown) => this.log(`mcp push ${id} failed: ${String(e)}`));
     const pending = this.pendingPrompts.get(id);
     if (pending && !status.turnActive) {
       this.pendingPrompts.delete(id);
@@ -773,6 +807,7 @@ export class SessionManager {
     if (!s || s.status === "stopped" || s.status === "error") return;
     if (status.turnActive && s.status !== "running") this.setStatus(id, "running");
     else if (!status.turnActive && s.status === "running") this.setStatus(id, "idle");
+    if (status.mcpPending !== s.mcpPending) this.update(id, { mcpPending: status.mcpPending });
   }
 
   private onDaemonEvent(id: string, ev: DaemonEvent): void {

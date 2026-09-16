@@ -285,11 +285,32 @@ export class SandboxDocker {
     await Promise.race([container.putArchive(tar, { path: dest }), failed]);
   }
 
-  /** Emits container ids whose Sandbox died on its own (not via a stop we requested). */
-  async watchDeaths(onDie: (containerId: string, sessionId: string, exitCode: string) => void): Promise<void> {
+  /**
+   * Emits container ids whose Sandbox died on its own (not via a stop we requested).
+   * The Docker event stream is re-opened if it ends or fails (e.g. a daemon restart).
+   */
+  async watchDeaths(
+    onDie: (containerId: string, sessionId: string, exitCode: string) => void,
+    onLost: (error: string) => void,
+  ): Promise<void> {
     const stream = await this.docker.getEvents({
       filters: { type: ["container"], event: ["die"], label: [LABEL_SESSION] },
     });
+    let lost = false;
+    const reopen = (why: string): void => {
+      if (lost) return;
+      lost = true;
+      onLost(why);
+      const retry = (): void => {
+        this.watchDeaths(onDie, onLost).catch((e: unknown) => {
+          onLost(String(e));
+          setTimeout(retry, 5000);
+        });
+      };
+      setTimeout(retry, 5000);
+    };
+    stream.once("error", (e: Error) => reopen(e.message));
+    stream.once("end", () => reopen("stream ended"));
     stream.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString("utf8").split("\n")) {
         if (!line.trim()) continue;

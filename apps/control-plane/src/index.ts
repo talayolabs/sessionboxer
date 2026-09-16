@@ -236,11 +236,19 @@ injectWebSocket(server);
 
 const shutdown = (): void => {
   log("shutting down");
-  void sessions.shutdown().finally(() => {
+  const exit = (): void => {
     db.close();
     server.close();
     process.exit(0);
-  });
+  };
+  sessions.shutdown().then(exit, exit);
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// A background task that fails without a handler must not take the whole Control Plane down.
+process.on("unhandledRejection", (reason) => {
+  log(`unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`);
+});
+process.on("uncaughtException", (e) => {
+  log(`uncaught exception: ${e.stack ?? e.message}`);
+});

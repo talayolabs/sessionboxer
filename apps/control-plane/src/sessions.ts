@@ -216,13 +216,16 @@ export class SessionManager {
   async boot(): Promise<void> {
     this.log(`sandbox reach: ${await this.docker.detectReach()}`);
     await this.docker.ensureNetwork();
-    await this.docker.watchDeaths((containerId, sessionId, exitCode) => {
-      if (this.stopping.has(sessionId)) return;
-      const s = this.db.getSession(sessionId);
-      if (!s || s.containerId !== containerId) return;
-      this.disconnect(sessionId);
-      this.setStatus(sessionId, "error", `Sandbox exited unexpectedly (exit code ${exitCode})`);
-    });
+    await this.docker.watchDeaths(
+      (containerId, sessionId, exitCode) => {
+        if (this.stopping.has(sessionId)) return;
+        const s = this.db.getSession(sessionId);
+        if (!s || s.containerId !== containerId) return;
+        this.disconnect(sessionId);
+        this.setStatus(sessionId, "error", `Sandbox exited unexpectedly (exit code ${exitCode})`);
+      },
+      (error) => this.log(`docker event stream lost (${error}); retrying in 5s`),
+    );
     void this.collectSnapshotImages().catch((e: unknown) => this.log(`snapshot gc failed: ${String(e)}`));
     for (const s of this.db.listSessions()) {
       if (!s.containerId) {
@@ -539,9 +542,10 @@ export class SessionManager {
       () => this.doSnapshot(id, reason, eventSeq),
     );
     this.snapshotChains.set(id, run);
-    void run.finally(() => {
+    const settle = (): void => {
       if (this.snapshotChains.get(id) === run) this.snapshotChains.delete(id);
-    });
+    };
+    run.then(settle, settle);
     return run;
   }
 

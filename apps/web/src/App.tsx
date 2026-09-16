@@ -375,7 +375,7 @@ type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
 const EMPTY_MODELS: ProviderModels = Object.fromEntries(PROVIDERS.map((p): [Provider, ModelOption[]] => [p, []])) as ProviderModels;
 
-/** Storage line under a sidebar entry (machine + Snapshots); click opens the Snapshots popup. */
+/** Total storage (machine + Snapshots) under a sidebar entry; click opens the Snapshots popup with the breakdown. */
 function SessionSizes({
   session,
   snapshotting,
@@ -387,24 +387,18 @@ function SessionSizes({
   autoSnapshot: boolean;
   onClick: () => void;
 }) {
-  const parts: string[] = [];
-  if (session.diskBytes !== null) parts.push(`${formatMb(session.diskBytes)} machine`);
-  if (session.snapshotCount > 0) {
-    parts.push(`${formatMb(session.snapshotBytes)} in ${session.snapshotCount} snap${session.snapshotCount === 1 ? "" : "s"}`);
-  } else {
-    parts.push("no snapshots");
-  }
+  const total = (session.diskBytes ?? 0) + session.snapshotBytes;
   return (
     <button
       type="button"
       className="session-sizes"
-      title="Snapshots: list, fork, delete and the per-session auto-snapshot switch. Machine: the Sandbox's writable layer on top of the image."
+      title="Disk used by the machine and its snapshots. Click for the breakdown, the snapshot list and the auto-snapshot switch."
       onClick={(e) => {
         e.stopPropagation();
         onClick();
       }}
     >
-      <span>{parts.join(" \u00b7 ")}</span>
+      <span>{formatMb(total)}</span>
       {snapshotting ? (
         <span className="warn">{"\u{1F4F7} snapshotting\u2026"}</span>
       ) : (

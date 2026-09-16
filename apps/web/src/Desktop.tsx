@@ -1,11 +1,21 @@
-import { useEffect, useRef, useState } from "react";
-import RFB from "@novnc/novnc";
+import { useCallback, useEffect, useRef, useState } from "react";
+import RFB, { type ClipboardEventDetail } from "@novnc/novnc";
 import type { Session } from "@sessionboxer/protocol";
 import { DESKTOP_HEIGHT, DESKTOP_WIDTH } from "@sessionboxer/protocol";
 
 type ConnState = "connecting" | "connected" | "disconnected";
 
 const RECONNECT_MS = 2000;
+const XK_Control_L = 0xffe3;
+const XK_v = 0x0076;
+
+async function readBrowserClipboard(): Promise<string | null> {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    return null;
+  }
+}
 
 export function desktopUrl(sessionId: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -22,10 +32,52 @@ export function Desktop({ session }: { session: Session }) {
   const [state, setState] = useState<ConnState>("connecting");
   const [attempt, setAttempt] = useState(0);
   const [control, setControl] = useState(false);
+  const [clipOpen, setClipOpen] = useState(false);
+  const [clipText, setClipText] = useState("");
+  const [clipNote, setClipNote] = useState<string | null>(null);
 
   const live = session.status === "idle" || session.status === "running";
   const running = session.status === "running";
   const viewOnly = running && !control;
+  const viewOnlyRef = useRef(viewOnly);
+  viewOnlyRef.current = viewOnly;
+
+  const note = useCallback((text: string) => {
+    setClipNote(text);
+    setTimeout(() => setClipNote((n) => (n === text ? null : n)), 2500);
+  }, []);
+
+  const sendToBox = useCallback(
+    (text: string) => {
+      const client = rfb.current;
+      if (!client || viewOnlyRef.current) return false;
+      client.clipboardPasteFrom(text);
+      setClipText(text);
+      return true;
+    },
+    []
+  );
+
+  // Ctrl+V (Cmd+V on macOS) inside the Desktop: push the browser clipboard to the
+  // box first, then deliver the paste keystroke, so the box pastes what the user
+  // copied outside. Runs in the capture phase, ahead of noVNC's own key handler.
+  const onKeyDownCapture = (e: React.KeyboardEvent) => {
+    const client = rfb.current;
+    if (!client || viewOnlyRef.current || e.code !== "KeyV" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void readBrowserClipboard().then((text) => {
+      if (rfb.current !== client) return;
+      if (text !== null && text.length > 0) sendToBox(text);
+      else if (text === null) note("Clipboard read blocked by the browser; use the Clipboard panel");
+      // Ctrl is sent explicitly: the clipboard read may have blurred the canvas
+      // (permission prompt), which makes noVNC release the user's held Ctrl.
+      client.sendKey(XK_Control_L, "ControlLeft", true);
+      client.sendKey(XK_v, "KeyV", true);
+      client.sendKey(XK_v, "KeyV", false);
+      client.sendKey(XK_Control_L, "ControlLeft", false);
+    });
+  };
 
   // A new turn hands the Desktop back to the Agent.
   useEffect(() => {
@@ -53,6 +105,18 @@ export function Desktop({ session }: { session: Session }) {
       if (disposed) return;
       setState("disconnected");
       timer = setTimeout(() => setAttempt((a) => a + 1), RECONNECT_MS);
+    });
+    // Text copied inside the box lands in the browser clipboard, but only while
+    // the user is driving the Desktop (not what the Agent copies in the background).
+    client.addEventListener("clipboard", (ev) => {
+      if (disposed) return;
+      const { text } = (ev as CustomEvent<ClipboardEventDetail>).detail;
+      setClipText(text);
+      if (viewOnlyRef.current || !document.hasFocus() || !target.contains(document.activeElement)) return;
+      navigator.clipboard.writeText(text).then(
+        () => note("Copied from the box"),
+        () => note("Copied in the box; open the Clipboard panel to get the text")
+      );
     });
     rfb.current = client;
     return () => {
@@ -84,10 +148,56 @@ export function Desktop({ session }: { session: Session }) {
         )}
         {live && state === "connected" && !running && <span className="muted">interactive</span>}
         {live && state === "connected" && viewOnly && <span className="muted">view only</span>}
+        {clipNote && <span className="muted clip-note">{clipNote}</span>}
+        {live && state === "connected" && (
+          <button className={clipOpen ? "active" : ""} onClick={() => setClipOpen((o) => !o)} title="Text clipboard shared with the box">
+            Clipboard
+          </button>
+        )}
       </div>
       <div className="desktop-body">
-        <div className="desktop-screen" ref={screen} />
+        <div className="desktop-screen" ref={screen} onKeyDownCapture={onKeyDownCapture} />
         {!live && <div className="desktop-overlay">Sandbox is {session.status}; the Desktop is available while it runs.</div>}
+        {clipOpen && live && (
+          <div className="clip-panel">
+            <div className="clip-panel-header">
+              <span>Box clipboard</span>
+              <span className="spacer" />
+              <button className="small" onClick={() => setClipOpen(false)} aria-label="Close clipboard panel">
+                {"\u00d7"}
+              </button>
+            </div>
+            <textarea
+              value={clipText}
+              onChange={(e) => setClipText(e.target.value)}
+              rows={5}
+              spellCheck={false}
+              placeholder="Text copied in the box shows up here; type or paste here to send text to the box."
+            />
+            <div className="clip-panel-actions">
+              <button
+                className="small"
+                onClick={() => navigator.clipboard.writeText(clipText).then(() => note("Copied"), () => note("Browser refused the clipboard write"))}
+                disabled={!clipText}
+              >
+                Copy to my clipboard
+              </button>
+              <button
+                className="small"
+                onClick={() => void readBrowserClipboard().then((t) => (t === null ? note("Clipboard read blocked by the browser; paste into the box above") : setClipText(t)))}
+              >
+                Read my clipboard
+              </button>
+              <span className="spacer" />
+              <button className="small primary" disabled={viewOnly || !clipText} onClick={() => sendToBox(clipText) && note("Sent to the box; paste there with Ctrl+V")}>
+                Send to box
+              </button>
+            </div>
+            <div className="muted clip-hint">
+              Ctrl+C / Ctrl+V work directly in the Desktop while you have control. Text only (Latin-1; other characters become ?).
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -19,5 +19,13 @@ declare module "@novnc/novnc" {
     disconnect(): void;
     focus(): void;
     blur(): void;
+    sendKey(keysym: number, code: string | null, down?: boolean): void;
+    /** Sends text to the server clipboard (no-op while view-only). */
+    clipboardPasteFrom(text: string): void;
+  }
+
+  /** Payload of the `clipboard` event (text the server put in its clipboard). */
+  export interface ClipboardEventDetail {
+    text: string;
   }
 }

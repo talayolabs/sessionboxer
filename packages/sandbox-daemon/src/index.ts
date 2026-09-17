@@ -30,6 +30,7 @@ import {
 } from "@sessionboxer/protocol";
 import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
+import { GhCredentials } from "./gh-credentials.js";
 import { DevinMcpConfig } from "./mcp-config.js";
 import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
@@ -73,11 +74,11 @@ const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
   env.SESSIONBOXER_ACP_COMMAND?.split(" ") ?? ACP_COMMANDS[provider];
 const mcpCommand = env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp";
+const tmpfsDir = env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
 /** Devin reads MCP servers from its config file; kept on tmpfs so Snapshots never carry MCP secrets. */
-const devinMcpConfig =
-  provider === "devin"
-    ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer", mcpCommand)
-    : null;
+const devinMcpConfig = provider === "devin" ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, mcpCommand) : null;
+/** `gh`/git logins for the Sandbox; the image points `GH_CONFIG_DIR` at this tmpfs dir. */
+const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, log);
 /** Claude's model allowlist lives in its settings file; the Control Plane sends the list before the Agent starts. */
 const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/.claude/settings.json`, log) : null;
 
@@ -164,6 +165,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
+      ghCredentials.apply(p.credentials);
       return { applied: agent.setMcpServers(p.servers) };
     }
     case DAEMON_METHODS.modelSet: {

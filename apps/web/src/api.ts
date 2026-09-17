@@ -1,6 +1,7 @@
 import type {
   AskResult,
   ConnectorFlow,
+  GhCliStatus,
   ConnectorKind,
   ConnectorStartRequest,
   CreateSessionRequest,
@@ -56,6 +57,7 @@ export const api = {
   connectorStart: (kind: ConnectorKind, req: ConnectorStartRequest) =>
     request<ConnectorFlow>(`/connectors/${kind}/start`, { method: "POST", body: JSON.stringify(req) }),
   connectorFlow: (id: string) => request<ConnectorFlow>(`/connectors/flows/${id}`),
+  connectorGh: () => request<GhCliStatus>("/connectors/github/gh"),
   connectorDisconnect: (serverId: string) =>
     request<PublicSettings>(`/connectors/servers/${serverId}/disconnect`, { method: "POST" }),
   sessions: () => request<Session[]>("/sessions"),

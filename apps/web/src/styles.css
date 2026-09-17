@@ -349,6 +349,11 @@ button.link:hover { text-decoration: underline; }
 .connector-code-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .connector-code { font-size: 24px; letter-spacing: 3px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); user-select: all; }
 .connector-done { margin: 0; line-height: 1.45; }
+.connector-ways { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.connector-way { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 12px; white-space: normal; }
+.connector-way > span:first-child { font-weight: 600; }
+.connector-way .muted { font-size: 12px; font-weight: 400; line-height: 1.35; }
+.connector-way.primary .muted { color: inherit; opacity: 0.85; }
 .session-header button.pending { border-color: var(--warn); }
 .session-header .count { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
 

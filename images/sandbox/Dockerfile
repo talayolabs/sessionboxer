@@ -127,10 +127,16 @@ COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.j
 COPY images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
 RUN chmod +x /usr/local/bin/sessionboxer-entrypoint
 
+# GitHub logins arrive from the Control Plane while a GitHub Connector entry is enabled: the
+# Daemon writes gh's hosts.yml on tmpfs (nothing in Snapshots) and git asks gh for github.com.
+RUN git config --system credential.https://github.com.helper '!gh auth git-credential'
+
 ENV DISPLAY=:1 \
     SESSIONBOXER_DISPLAY_WIDTH=1024 \
     SESSIONBOXER_DISPLAY_HEIGHT=768 \
     HOME=/home/agent \
+    GH_CONFIG_DIR=/dev/shm/sessionboxer/gh \
+    GH_NO_UPDATE_NOTIFIER=1 \
     IS_SANDBOX=1 \
     PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  type BoxCredential,
   CONNECTORS,
   MCP_RESERVED_NAMES,
   Settings,
@@ -185,6 +186,19 @@ export function resolveMcpServers(settings: Settings, enabledIds: string[]): Mcp
   return settings.mcpServers
     .filter((s) => enabled.has(s.id))
     .map(({ enabledByDefault: _default, connector: _connector, ...spec }) => ({ ...spec, url: spec.url ? rewriteHostUrl(spec.url) : spec.url }));
+}
+
+/** Logins the Sandbox gets from the enabled Connector entries (registry order), tokens included. */
+export function resolveBoxCredentials(settings: Settings, enabledIds: string[]): BoxCredential[] {
+  const enabled = new Set(enabledIds);
+  const out: BoxCredential[] = [];
+  for (const s of settings.mcpServers) {
+    if (!enabled.has(s.id) || !s.connector?.account) continue;
+    const header = CONNECTORS[s.connector.kind].tokenHeader;
+    const token = s.headers.find((h) => h.name === header)?.value.replace(/^Bearer\s+/i, "") ?? "";
+    if (token !== "") out.push({ kind: s.connector.kind, account: s.connector.account, token });
+  }
+  return out;
 }
 
 /** `localhost` from the user's point of view is the host machine, not the Sandbox. */

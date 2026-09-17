@@ -89,6 +89,7 @@ api.put("/settings", async (c) => {
   return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
 });
 
+api.get("/connectors/github/gh", async (c) => c.json(await connectors.ghStatus()));
 api.post("/connectors/:kind/start", async (c) => {
   const kind = ConnectorKind.parse(c.req.param("kind"));
   const req = ConnectorStartRequest.parse(await c.req.json());

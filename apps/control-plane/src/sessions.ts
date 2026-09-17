@@ -44,7 +44,7 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
-import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveMcpServers } from "./config.js";
+import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveBoxCredentials, resolveMcpServers } from "./config.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
@@ -959,8 +959,9 @@ export class SessionManager {
     const client = this.clients.get(id);
     if (!client?.connected) return s;
     const servers = resolveMcpServers(this.settings(), s.mcpEnabled);
+    const credentials = resolveBoxCredentials(this.settings(), s.mcpEnabled);
     try {
-      const result = DaemonMcpSetResult.parse(await client.request(DAEMON_METHODS.mcpSet, { servers }));
+      const result = DaemonMcpSetResult.parse(await client.request(DAEMON_METHODS.mcpSet, { servers, credentials }));
       return this.update(id, { mcpPending: !result.applied });
     } catch (e) {
       if (e instanceof DaemonRpcError && e.code === -32601) {

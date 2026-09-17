@@ -504,17 +504,41 @@ export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequest>;
 // Connector login flows (Control Plane `/api/connectors/...`)
 // ---------------------------------------------------------------------------
 
+/**
+ * How a Connector login mints its token:
+ * - `gh`: GitHub CLI's own device login (GitHub's first-party app, so organization OAuth-App
+ *   restrictions don't apply); `gh` is downloaded if the machine lacks it.
+ * - `gh-existing`: reuse a login `gh` already has on this machine (`account` picks which).
+ * - `app`: the Sessionboxer OAuth App (or the one from Settings); organizations may block it.
+ */
+export const ConnectorVia = z.enum(["gh", "gh-existing", "app"]);
+export type ConnectorVia = z.infer<typeof ConnectorVia>;
+
 /** Starts a login for a registry entry; a missing/unknown `serverId` creates the entry from the preset. */
 export const ConnectorStartRequest = z.object({
   serverId: z.string().nullable().default(null),
   name: z.string().regex(MCP_NAME_PATTERN, "letters, digits, `_` and `-` only"),
+  via: ConnectorVia.default("gh"),
+  /** `gh-existing`: the `gh` account whose token to reuse. */
+  account: z.string().nullable().default(null),
 });
 export type ConnectorStartRequest = z.infer<typeof ConnectorStartRequest>;
+
+/** What the GitHub CLI on this machine offers to Connector logins. */
+export const GhCliStatus = z.object({
+  /** `gh` found on PATH or already downloaded by Sessionboxer. */
+  available: z.boolean(),
+  version: z.string().nullable(),
+  /** Accounts `gh` is logged in to on this machine (reusable with `via: "gh-existing"`). */
+  logins: z.array(z.string()),
+});
+export type GhCliStatus = z.infer<typeof GhCliStatus>;
 
 export const ConnectorFlow = z.object({
   id: z.string(),
   kind: ConnectorKind,
   serverId: z.string(),
+  via: ConnectorVia,
   /** `redirect`: open `url` and come back; `device`: enter `userCode` at `verificationUri`. */
   mode: z.enum(["redirect", "device"]),
   url: z.string().nullable(),
@@ -750,10 +774,27 @@ export const DaemonStatus = z.object({
 export type DaemonStatus = z.infer<typeof DaemonStatus>;
 
 /**
+ * A login the Sandbox itself gets while the matching Connector entry is enabled: `gh` and
+ * `git push` to github.com work as `account`, in the Agent's shell and in the Terminal pane.
+ * Kept on tmpfs in the Sandbox, so it is gone from Snapshots and after the entry is switched off.
+ */
+export const BoxCredential = z.object({
+  kind: ConnectorKind,
+  account: z.string(),
+  token: z.string(),
+});
+export type BoxCredential = z.infer<typeof BoxCredential>;
+
+/**
  * Replaces the user MCP server set. The Agent (re)starts with it right away when idle,
  * otherwise once the current turn ends; `mcp_changed` is emitted when it has been applied.
+ * Sandbox credentials are applied immediately either way (nothing needs a restart to see them).
  */
-export const DaemonMcpSetParams = z.object({ servers: z.array(McpServerSpec) });
+export const DaemonMcpSetParams = z.object({
+  servers: z.array(McpServerSpec),
+  /** First entry is the active one when several accounts of a kind are enabled. */
+  credentials: z.array(BoxCredential).default([]),
+});
 export type DaemonMcpSetParams = z.infer<typeof DaemonMcpSetParams>;
 
 export const DaemonMcpSetResult = z.object({

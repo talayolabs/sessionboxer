@@ -5,10 +5,12 @@ import {
   type ConnectorFlow,
   type ConnectorKind,
   type ConnectorStartRequest,
+  type GhCliStatus,
   type McpServerDef,
   type Settings,
 } from "@sessionboxer/protocol";
 import { toPublicMcpServer } from "./config.js";
+import { deviceLogin, ensureGh, findGh, hostLogins, hostToken, type GhCli, type GhDeviceLogin } from "./gh-cli.js";
 import { HttpError } from "./http-error.js";
 
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
@@ -31,6 +33,8 @@ interface Flow extends ConnectorFlow {
   interval: number;
   clientId: string;
   clientSecret: string;
+  /** The `gh auth login` process behind a `via: "gh"` flow. */
+  gh: GhDeviceLogin | null;
 }
 
 interface TokenResponse {
@@ -43,11 +47,13 @@ interface TokenResponse {
 }
 
 /**
- * OAuth logins for Connector presets (GitHub for now). Both GitHub flows end the same way: the
- * token is stored as the entry's secret `Authorization` header and the account name next to it,
- * so the Daemon sees an ordinary HTTP MCP server. GitHub has no dynamic client registration, so
- * an OAuth App is needed: the built-in one (client id only, device-code flow) or the user's own
- * from Settings (with a client secret, the redirect flow is used instead).
+ * Logins for Connector presets (GitHub for now). Every flow ends the same way: the token is
+ * stored as the entry's secret `Authorization` header and the account name next to it, so the
+ * Daemon sees an ordinary HTTP MCP server. GitHub's MCP server accepts any GitHub token, and
+ * organizations commonly block third-party OAuth Apps, so the default login borrows GitHub CLI's
+ * (first-party) device login, or reuses a login `gh` already has on this machine; the Sessionboxer
+ * OAuth App (client id only, device-code flow) or the user's own app from Settings (with a client
+ * secret, redirect flow) remain as `via: "app"`.
  */
 export class Connectors {
   private readonly flows = new Map<string, Flow>();
@@ -59,16 +65,28 @@ export class Connectors {
     private readonly log: (msg: string) => void,
   ) {}
 
+  /** What `gh` on this machine offers (for the dialog's "use my gh login" shortcuts). */
+  async ghStatus(): Promise<GhCliStatus> {
+    const gh = await findGh();
+    if (!gh) return { available: false, version: null, logins: [] };
+    return { available: true, version: gh.version, logins: await hostLogins(gh) };
+  }
+
   /** Starts a login; creates the registry entry from the preset when `serverId` is unknown. */
   async start(kind: ConnectorKind, req: ConnectorStartRequest): Promise<ConnectorFlow> {
     const server = this.ensureServer(kind, req);
     const { clientId, clientSecret } = this.credentials(kind);
     this.prune();
-    for (const [id, f] of this.flows) if (f.serverId === server.id && f.status === "pending") this.flows.delete(id);
+    for (const [id, f] of this.flows) {
+      if (f.serverId !== server.id || f.status !== "pending") continue;
+      f.gh?.cancel();
+      this.flows.delete(id);
+    }
     const base = {
       id: randomUUID(),
       kind,
       serverId: server.id,
+      via: req.via,
       status: "pending" as const,
       error: null,
       server: toPublicMcpServer(server),
@@ -77,9 +95,51 @@ export class Connectors {
       interval: 5,
       deviceCode: null,
       codeVerifier: null,
+      gh: null,
     };
     let flow: Flow;
-    if (clientSecret !== "") {
+    if (req.via === "gh-existing") {
+      if (!req.account) throw new HttpError(400, "Pick which gh account to reuse.");
+      const gh = await findGh();
+      if (!gh) throw new HttpError(400, "gh is not installed on this machine.");
+      flow = { ...base, mode: "device", url: null, userCode: null, verificationUri: null, expiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() };
+      this.flows.set(flow.id, flow);
+      try {
+        await this.finish(flow, { access_token: await hostToken(gh, req.account) }, req.account);
+      } catch (e) {
+        fail(flow, e instanceof Error ? e.message : String(e));
+      }
+      this.log(`connector ${kind} login (gh-existing) for "${server.name}": ${flow.status}`);
+      return publicFlow(flow);
+    }
+    if (req.via === "gh") {
+      let gh: GhCli;
+      try {
+        gh = await ensureGh(this.log);
+      } catch (e) {
+        throw new HttpError(502, `Could not get the GitHub CLI: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      const login = deviceLogin(gh, this.log);
+      let code: { userCode: string; verificationUri: string };
+      try {
+        code = await Promise.race([login.code, sleep(30_000).then(() => Promise.reject(new Error("gh did not print a login code within 30 s.")))]);
+      } catch (e) {
+        login.cancel();
+        throw new HttpError(502, `GitHub CLI login failed to start: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      flow = {
+        ...base,
+        mode: "device",
+        url: null,
+        userCode: code.userCode,
+        verificationUri: code.verificationUri,
+        expiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString(),
+        gh: login,
+      };
+      void login.token
+        .then((t) => this.finish(flow, { access_token: t.token }, t.account))
+        .catch((e: unknown) => fail(flow, e instanceof Error ? e.message : String(e)));
+    } else if (clientSecret !== "") {
       const codeVerifier = randomBytes(32).toString("base64url");
       const url = new URL(GITHUB_AUTHORIZE_URL);
       url.searchParams.set("client_id", clientId);
@@ -136,7 +196,10 @@ export class Connectors {
   get(flowId: string): ConnectorFlow {
     const flow = this.flows.get(flowId);
     if (!flow) throw new HttpError(404, "Unknown or expired login.");
-    if (flow.status === "pending" && Date.parse(flow.expiresAt) < Date.now()) fail(flow, "The login expired; start again.");
+    if (flow.status === "pending" && Date.parse(flow.expiresAt) < Date.now()) {
+      flow.gh?.cancel();
+      fail(flow, "The login expired; start again.");
+    }
     return publicFlow(flow);
   }
 
@@ -250,7 +313,7 @@ export class Connectors {
     }
   }
 
-  private async finish(flow: Flow, token: TokenResponse): Promise<void> {
+  private async finish(flow: Flow, token: TokenResponse, knownAccount?: string): Promise<void> {
     if (!token.access_token) {
       throw new Error(
         token.error === "access_denied"
@@ -263,9 +326,10 @@ export class Connectors {
     const userRes = await fetch(GITHUB_USER_URL, {
       headers: { authorization: `Bearer ${token.access_token}`, accept: "application/vnd.github+json", "user-agent": USER_AGENT },
     });
-    if (!userRes.ok) throw new Error(`GitHub rejected the new token (${userRes.status}).`);
-    const user = (await userRes.json()) as { login?: string };
-    const account = user.login ?? "?";
+    // Installation/fine-grained tokens may not be allowed to call /user; gh already told us who they belong to.
+    if (!userRes.ok && knownAccount === undefined) throw new Error(`GitHub rejected the token (${userRes.status}).`);
+    const user = userRes.ok ? ((await userRes.json()) as { login?: string }) : {};
+    const account = user.login ?? knownAccount ?? "?";
     const settings = this.settings.get();
     const server = settings.mcpServers.find((s) => s.id === flow.serverId);
     if (!server?.connector) throw new Error("The MCP server entry was deleted meanwhile.");
@@ -287,7 +351,7 @@ export class Connectors {
     this.settings.set({ ...settings, mcpServers: settings.mcpServers.map((s) => (s.id === server.id ? next : s)) });
     flow.status = "done";
     flow.server = toPublicMcpServer(next);
-    this.log(`connector ${flow.kind}: "${server.name}" connected as ${account}${next.connector?.expiresAt ? " (expiring token)" : ""}`);
+    this.log(`connector ${flow.kind}: "${server.name}" connected as ${account} via ${flow.via}${next.connector?.expiresAt ? " (expiring token)" : ""}`);
     this.onChanged();
   }
 
@@ -304,7 +368,7 @@ function fail(flow: Flow, message: string): void {
 }
 
 function publicFlow(flow: Flow): ConnectorFlow {
-  const { codeVerifier: _v, deviceCode: _d, interval: _i, clientId: _c, clientSecret: _s, ...pub } = flow;
+  const { codeVerifier: _v, deviceCode: _d, interval: _i, clientId: _c, clientSecret: _s, gh: _g, ...pub } = flow;
   return pub;
 }
 

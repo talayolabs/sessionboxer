@@ -1027,6 +1027,8 @@ function SettingsView({
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
   const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
+  const [trustHostCaCerts, setTrustHostCaCerts] = useState(settings.trustHostCaCerts);
+  const [extraCaCerts, setExtraCaCerts] = useState(settings.extraCaCerts);
   const [githubClientId, setGithubClientId] = useState(settings.connectors.github.clientId);
   const [githubClientSecret, setGithubClientSecret] = useState("");
   const [forgetGithubSecret, setForgetGithubSecret] = useState(false);
@@ -1047,6 +1049,8 @@ function SettingsView({
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         mcpServers,
         claudeModels: parseAliasList(claudeModels),
+        trustHostCaCerts,
+        extraCaCerts,
         connectors: {
           github: {
             clientId: githubClientId.trim(),
@@ -1138,6 +1142,36 @@ function SettingsView({
         A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
         turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
       </p>
+      <fieldset className="choice">
+        <legend>TLS certificates in Sandboxes</legend>
+        <p className="muted">
+          Sandboxes trust the public CAs only. If this machine goes through a proxy that re-signs HTTPS (Cloudflare WARP, Zscaler, a corporate
+          gateway, mitmproxy…), the Agent and MCP servers inside see “self signed certificate in certificate chain” unless its CA is trusted there
+          too. Installed at Sandbox start: Stop → Resume running Sessions to apply.
+        </p>
+        <label className="check">
+          <input type="checkbox" checked={trustHostCaCerts} onChange={(e) => setTrustHostCaCerts(e.target.checked)} />
+          Trust the CA certificates this machine trusts beyond the public ones{" "}
+          {settings.hostCaCerts.length === 0 ? (
+            <span className="muted">(none found in the system trust store)</span>
+          ) : (
+            <span className="muted">
+              ({settings.hostCaCerts.length} found: {settings.hostCaCerts.map((s) => s.replace(/^CN=/, "")).join(", ")})
+            </span>
+          )}
+        </label>
+        <label>
+          Additional CA certificates (PEM; for CAs not installed on this machine)
+          <textarea
+            className="pem"
+            rows={4}
+            spellCheck={false}
+            value={extraCaCerts}
+            onChange={(e) => setExtraCaCerts(e.target.value)}
+            placeholder={"-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
+          />
+        </label>
+      </fieldset>
       <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
       <fieldset className="choice">
         <legend>GitHub login (OAuth App)</legend>

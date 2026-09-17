@@ -33,6 +33,7 @@ input, select, textarea {
   border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%;
 }
 textarea { resize: vertical; }
+textarea.pem { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre; }
 pre {
   margin: 0; padding: 8px; background: #0b0d11; border-radius: 6px;
   white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 400px; overflow: auto;

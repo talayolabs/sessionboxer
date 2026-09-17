@@ -137,6 +137,10 @@ GitHub's own remote MCP server (issues, pull requests, code search, Actions…) 
 
 By default the login goes through Sessionboxer's public GitHub OAuth App. To use your own instead, register an OAuth App on GitHub (callback `http://127.0.0.1:4000/api/connectors/github/callback`, Device Flow enabled) and put its Client ID in **Settings → GitHub login**; with the Client secret set too, the login switches from the device code to a plain browser redirect.
 
+#### Behind Cloudflare WARP, Zscaler or another TLS-inspecting proxy
+
+If your machine goes through a proxy that re-signs HTTPS, the agent and MCP servers inside a box would see `self signed certificate in certificate chain`, because the box only trusts the public CAs. Sessionboxer therefore copies the CA certificates your machine trusts *beyond* the public ones (the proxy's root) into every box at start and points Node, Python and OpenSSL at them, so HTTPS from the box works like from your machine. **Settings → TLS certificates in Sandboxes** lists what was found, lets you turn the copy off, and takes extra PEM certificates for CAs not installed on this machine. Changes apply at Sandbox start: Stop → Resume running sessions.
+
 ## Command line
 
 The `sessionboxer` command talks to the running server and opens the browser on the new session. Run it as `npx sessionboxer` from the checkout, or `npm link -w @sessionboxer/cli` once to have it on your PATH.
@@ -175,6 +179,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 - **Session goes to *error* with "sandbox image not found"**: run `npm run build:image`.
 - **"method not found: _sessionboxer/…"** after updating Sessionboxer: the box still runs the previous version's internals. Stop and Resume the session; the current build is copied into the box on every start, so `npm run build:image` is only needed when the image itself changes (system packages, agent CLIs).
 - **Devin session fails right after creation**: Devin occasionally times out while loading team settings on a cold start. Sessionboxer retries a few times; if it still fails, Resume the session.
+- **"self signed certificate in certificate chain"** from an MCP server or the agent inside a box: your machine goes through a TLS-inspecting proxy (Cloudflare WARP, Zscaler…). Check **Settings → TLS certificates in Sandboxes** lists its CA (paste the PEM there if not), then Stop → Resume the session.
 - **Docker inside the box can't pull images**: Docker Hub rate-limits anonymous pulls per IP; log in with `docker login` in the box's Terminal or pull from another registry.
 
 ### macOS

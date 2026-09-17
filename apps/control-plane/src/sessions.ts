@@ -43,6 +43,7 @@ import {
   type UpdateSessionRequest,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
+import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveMcpServers } from "./config.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
@@ -410,25 +411,39 @@ export class SessionManager {
       image,
     });
     this.update(session.id, { containerId });
-    await this.startSandbox(containerId);
+    await this.startSandbox(containerId, settings);
     await this.seedWorkspace(containerId, session.workspaceSource);
     this.setStatus(session.id, "idle");
     await this.connect(session.id, containerId);
     void this.refreshDiskUsage(session.id);
   }
 
-  /** Refreshes the Daemon inside the Sandbox to this checkout's build, then starts it. */
-  private async startSandbox(containerId: string): Promise<void> {
+  /**
+   * Refreshes the Daemon inside the Sandbox to this checkout's build and its trust store to
+   * the host's extra CA certificates, then starts it.
+   */
+  private async startSandbox(containerId: string, settings: Settings): Promise<void> {
+    const short = containerId.slice(0, 12);
     try {
       await this.docker.syncDaemon(containerId);
     } catch (e) {
-      this.log(
-        `could not refresh the Sandbox Daemon in ${containerId.slice(0, 12)} (${e instanceof Error ? e.message : String(e)}); using the image's copy`,
-      );
+      this.log(`could not refresh the Sandbox Daemon in ${short} (${e instanceof Error ? e.message : String(e)}); using the image's copy`);
+    }
+    const caBundle = sandboxCaBundle(settings);
+    try {
+      await this.docker.stageCaCerts(containerId, caBundle);
+    } catch (e) {
+      this.log(`could not copy the extra CA certificates into ${short}: ${e instanceof Error ? e.message : String(e)}`);
     }
     await this.docker.start(containerId);
     if ((await this.docker.state(containerId)) !== "running") {
       throw new HttpError(502, "Sandbox exited right after starting; see `docker logs` for the container.");
+    }
+    try {
+      await this.docker.activateCaCerts(containerId, caBundle);
+      if (caBundle !== "") this.log(`${short} trusts ${countCerts(caBundle)} extra CA certificate(s)`);
+    } catch (e) {
+      this.log(`could not install the extra CA certificates in ${short}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -817,7 +832,7 @@ export class SessionManager {
     if ((await this.docker.state(s.containerId)) === "missing") {
       throw new HttpError(409, "Sandbox container is missing; delete the session.");
     }
-    await this.startSandbox(s.containerId);
+    await this.startSandbox(s.containerId, this.settings());
     const next = this.setStatus(id, "idle");
     await this.connect(id, s.containerId);
     return next;

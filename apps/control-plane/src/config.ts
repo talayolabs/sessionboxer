@@ -16,6 +16,7 @@ import {
   type PublicSettings,
   type UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
+import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
 import { HttpError } from "./http-error.js";
 
 export const DATA_DIR = process.env.SESSIONBOXER_HOME ?? join(homedir(), ".sessionboxer");
@@ -49,6 +50,13 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
   const { providerSecrets, mcpServers, connectors, ...rest } = update;
   const next: Settings = { ...current, ...stripUndefined(rest) };
   if (mcpServers) next.mcpServers = mergeMcpServers(current.mcpServers, mcpServers);
+  if (update.extraCaCerts !== undefined) {
+    try {
+      next.extraCaCerts = parseExtraCaCerts(update.extraCaCerts).join("\n");
+    } catch (e) {
+      throw new HttpError(400, e instanceof Error ? e.message : String(e));
+    }
+  }
   if (connectors) {
     next.connectors = {
       github: { ...current.connectors.github, ...stripUndefined(connectors.github ?? {}) },
@@ -84,6 +92,7 @@ export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclud
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
     dockerModeAvailable,
+    hostCaCerts: hostExtraCaCerts().map((c) => c.subject),
   };
 }
 

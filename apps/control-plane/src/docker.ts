@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { PassThrough, type Readable } from "node:stream";
+import { basename, dirname, join } from "node:path";
+import { PassThrough, Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
+import { pack as packStream } from "tar-stream";
 import { DAEMON_PORT, NOVNC_PORT, type DockerMode } from "@sessionboxer/protocol";
+import { SANDBOX_CA_FILE } from "./ca-certs.js";
 import { SANDBOX_HOST_ALIAS, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
@@ -151,6 +153,29 @@ export class SandboxDocker {
         dest,
       );
     }
+  }
+
+  /**
+   * Stages the extra CA bundle in the (stopped) Sandbox; `activateCaCerts` links it into the
+   * system store once the Sandbox runs. An empty bundle stages nothing (removal happens there too).
+   */
+  async stageCaCerts(containerId: string, pem: string): Promise<void> {
+    if (pem === "") return;
+    const tar = packStream();
+    tar.entry({ name: basename(SANDBOX_CA_FILE), mode: 0o644, uid: 0, gid: 0, mtime: new Date() }, pem);
+    tar.finalize();
+    const chunks: Buffer[] = [];
+    for await (const chunk of tar) chunks.push(chunk as Buffer);
+    await this.putArchive(containerId, Readable.from([Buffer.concat(chunks)]), dirname(SANDBOX_CA_FILE));
+  }
+
+  /** Runs `update-ca-certificates` in the running Sandbox, dropping a stale bundle when `pem` is empty. */
+  async activateCaCerts(containerId: string, pem: string): Promise<void> {
+    const script =
+      pem === ""
+        ? `[ ! -e "$0" ] || { rm -f "$0" "/etc/ssl/certs/$(basename "$0" .crt).pem" && update-ca-certificates >/dev/null; }`
+        : `update-ca-certificates >/dev/null`;
+    await this.exec(containerId, ["sh", "-c", script, SANDBOX_CA_FILE], "/", "root");
   }
 
   async start(containerId: string): Promise<void> {

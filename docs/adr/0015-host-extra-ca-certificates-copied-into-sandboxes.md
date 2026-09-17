@@ -1,0 +1,22 @@
+# Sandboxes trust the CA certificates the host trusts beyond the public ones
+
+The GitHub connector (ADR-0014) failed for a user with `self signed certificate in certificate chain`: the agent's MCP client inside the Sandbox rejected `https://api.githubcopilot.com/mcp/`. The host reaches GitHub through Cloudflare WARP, which re-signs HTTPS with an organization CA that is installed in the host's trust store but not in the Sandbox's (`node:22-bookworm-slim` ships Debian's `ca-certificates` only). The same happens with Zscaler, corporate gateways or mitmproxy, and it affects every HTTPS request from the box: the Agent's own API calls, `npx`/`uvx` downloads, `git clone`, MCP servers.
+
+## Considered Options
+
+- Tell users to paste the proxy CA (rejected as the only path): works, but finding and exporting the CA is the hard part for most people, and it is exactly what the host already knows.
+- Disable verification (`NODE_TLS_REJECT_UNAUTHORIZED=0`, `curl -k`): rejected, the box talks to the internet with the user's tokens.
+- Bind-mount the host's trust store into the box: rejected; the layout differs per OS (macOS has no PEM bundle at all, Keychain only), it would leak the whole host store and change under the box.
+- **Compute the host's "extra" CAs and install them in every box at start (chosen)**, plus a PEM field for CAs the host does not have:
+  - Node ≥ 22.15 exposes `tls.getCACertificates("system" | "bundled" | "extra")`. Everything in `system` (the OS store, Keychain on macOS, `/etc/ssl/certs` on Linux, the Windows store) or `extra` (`NODE_EXTRA_CA_CERTS`) whose SHA-256 fingerprint is not in Node's `bundled` Mozilla list is treated as a private CA. On a plain machine that set is empty; behind WARP it is the WARP root. No hard-coded vendor paths.
+  - The Control Plane `putArchive`s the bundle as root-owned `/usr/local/share/ca-certificates/sessionboxer-extra.crt` before `docker start` (so it also lands in the first Docker layer of the container) and runs `update-ca-certificates` right after start; an empty bundle removes a stale file (and its `/etc/ssl/certs` link) instead, so turning the setting off is applied on the next Stop → Resume like every other box-start change.
+  - The Daemon adds `NODE_EXTRA_CA_CERTS` (Node does not read the system store by default), `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` to the Agent and terminal environments when the file exists, so `claude-agent-acp`/`devin acp` and everything they spawn (MCP servers via `npx`, `uvx`) trust the CA too. `curl`, `git`, `apt`, `pip` already use the system store.
+
+## Consequences
+
+- Protocol: `Settings.trustHostCaCerts` (default `true`), `Settings.extraCaCerts` (PEM text, validated on save, one `X509Certificate` per block), `PublicSettings.hostCaCerts` (subjects only; PEM never goes to the UI beyond the user's own paste-back).
+- Control Plane: `ca-certs.ts` (`hostExtraCaCerts`, `parseExtraCaCerts`, `sandboxCaBundle`), `Docker.stageCaCerts`/`activateCaCerts`, `SessionManager.startSandbox(containerId, settings)` on create, fork and resume. Errors installing the bundle are logged (count and container only) and do not stop the box. Dependency `tar-stream` builds the one-file archive.
+- Daemon: `ca-env.ts` `caEnv()` merged into the Agent spawn and PTY environments.
+- Web: Settings → **TLS certificates in Sandboxes**: the switch with the discovered subjects, the PEM textarea, and the Stop → Resume note.
+- Verified on Linux: a private CA installed in the host store was found (not the bundled ones), an HTTPS MCP server on the host signed by it was rejected by Node in the box before and called successfully by Claude through ACP after (on a session created before the change, via Resume); turning the switch off removed the trust again; `garbage` in the PEM field is a 400.
+- Not verified: macOS Keychain and Windows store discovery (relies on Node's `system` store implementation), WARP itself (no WARP here; the PEM field is the fallback), TLS-inspecting proxies that also require an explicit `HTTPS_PROXY` (the box routes through the host's network stack, so WARP's transparent mode needs none).

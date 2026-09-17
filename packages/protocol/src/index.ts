@@ -441,6 +441,13 @@ export const Settings = z.object({
    * `~/.claude/settings.json`); `default` is always kept. Empty leaves Claude's built-in list.
    */
   claudeModels: z.array(z.string().min(1)).default(DEFAULT_CLAUDE_MODELS),
+  /**
+   * Copy the CA certificates this machine trusts beyond the public ones (corporate proxies,
+   * Cloudflare WARP, mitmproxy…) into every Sandbox's trust store, so TLS works there too.
+   */
+  trustHostCaCerts: z.boolean().default(true),
+  /** Additional CA certificates for Sandboxes, PEM (`-----BEGIN CERTIFICATE-----` blocks). */
+  extraCaCerts: z.string().default(""),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
@@ -468,6 +475,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   }),
   /** Mode a Docker-enabled Session created now would get, given the host's runtimes. */
   dockerModeAvailable: DockerMode.exclude(["none"]),
+  /** Subjects of the non-public CA certificates found in this machine's trust store. */
+  hostCaCerts: z.array(z.string()),
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 

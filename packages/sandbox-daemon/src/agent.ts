@@ -23,6 +23,7 @@ import type {
   SessionUpdate,
   StopReason,
 } from "@sessionboxer/protocol";
+import { caEnv } from "./ca-env.js";
 import { acpMcpServers } from "./mcp-config.js";
 
 export interface AgentConfig {
@@ -458,7 +459,7 @@ export class AgentManager {
     );
     const child = spawn(this.cfg.command, this.cfg.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: { ...process.env, ...caEnv() },
       cwd: this.cfg.cwd,
     });
     this.child = child;

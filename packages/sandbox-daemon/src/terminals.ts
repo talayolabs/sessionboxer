@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as pty from "node-pty";
 import { PTY_SCROLLBACK_BYTES, type PtyAttachResult, type PtyInfo } from "@sessionboxer/protocol";
+import { caEnv } from "./ca-env.js";
 
 const EXITED_RETENTION_MS = 5 * 60_000;
 const SHELL = process.env.SHELL && process.env.SHELL !== "" ? process.env.SHELL : "/bin/bash";
@@ -51,7 +52,7 @@ export class Terminals {
       cols,
       rows,
       cwd: this.cwd,
-      env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
+      env: { ...process.env, ...caEnv(), TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
     });
     const term: Terminal = {
       info: { id, cols, rows, exitCode: null, createdAt: new Date().toISOString() },

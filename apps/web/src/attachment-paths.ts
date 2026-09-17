@@ -29,18 +29,35 @@ export function findAttachments(text: string): Attachment[] {
   return out;
 }
 
-/** Workspace-relative form of a path the Agent wrote, or `null` for URLs and paths outside it. */
-export function workspacePath(href: string): string | null {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+/**
+ * Workspace-relative form of a path the Agent wrote, or `null` for URLs, anchors and paths outside
+ * the Workspace. Relative paths resolve against `base` (the directory of the document they appear in).
+ */
+export function workspacePath(href: string, base = ""): string | null {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("#") || href.startsWith("//")) return null;
   if (href.startsWith("/")) return href.startsWith(WORKSPACE_PREFIX) ? normalize(href) : null;
-  return normalize(href);
+  return normalize(base ? `${base}/${href}` : href);
 }
 
+/** Collapses `.`/`..` segments; `""` when the path climbs out of the Workspace. */
 function normalize(p: string): string {
-  let rel = p.startsWith(WORKSPACE_PREFIX) ? p.slice(WORKSPACE_PREFIX.length) : p;
-  while (rel.startsWith("./")) rel = rel.slice(2);
-  if (rel.split("/").includes("..")) return "";
-  return rel;
+  const rel = p.startsWith(WORKSPACE_PREFIX) ? p.slice(WORKSPACE_PREFIX.length) : p;
+  const out: string[] = [];
+  for (const seg of rel.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (!out.pop()) return "";
+      continue;
+    }
+    out.push(seg);
+  }
+  return out.join("/");
+}
+
+/** Directory part of a Workspace-relative path (`""` at the root). */
+export function dirOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
 }
 
 export function rawFileUrl(sessionId: string, path: string, download = false): string {

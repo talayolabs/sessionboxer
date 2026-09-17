@@ -103,6 +103,10 @@ Ask the agent to *show* you something ("record a video of the login flow", "take
 
 Recordings use the desktop MCP's `start_recording` / `stop_recording` tools (ffmpeg, H.264 .mp4, 15 fps by default, saved under `recordings/`); the agent drives the desktop as usual in between.
 
+### Markdown, diagrams and code
+
+Replies and your prompts render as Markdown. Fenced code with a language (```ts, ```python, ```bash…) is syntax-highlighted in the chat, in the rich prompt editor and in documents; a ```mermaid block is drawn as a diagram (flowcharts, sequence diagrams, Gantt…), with the error and the source shown if the syntax is off. Ask the agent for a document ("write the architecture to docs/arch.md with a diagram") and the `.md` (or `.mmd`) it names in its reply appears rendered in the chat; in the **Files** pane Markdown files open rendered with **Preview | Edit** to switch to the editor, and relative links and images inside them resolve against the box's files.
+
 ### Watch and take over the desktop
 
 **Show desktop** opens the box's screen next to the chat. While the agent is working the view is read-only so you don't fight over the mouse; **Take control** hands it to you until the agent's next turn. When the agent is idle the desktop is always interactive: log into a site for it, open a program, arrange windows.

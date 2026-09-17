@@ -1,13 +1,14 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { formatBytes } from "./format";
 import { rawFileUrl, type Attachment } from "./attachment-paths";
+import { DocumentView } from "./Document";
 
 /** Session whose Workspace files the chat may embed; `null` outside a Session. */
 export const AttachmentSession = createContext<string | null>(null);
 
 type Probe = { state: "loading" } | { state: "ready"; bytes: number | null } | { state: "error"; message: string };
 
-/** Video / image / PDF from the Sandbox's Workspace, inline with a download button. */
+/** Video / image / PDF / Markdown document from the Sandbox's Workspace, inline with a download button. */
 export function AttachmentCard({ sessionId, attachment }: { sessionId: string; attachment: Attachment }) {
   const src = rawFileUrl(sessionId, attachment.path);
   const [probe, setProbe] = useState<Probe>({ state: "loading" });
@@ -59,12 +60,12 @@ export function AttachmentCard({ sessionId, attachment }: { sessionId: string; a
           </a>
         </span>
       </figcaption>
-      {probe.state === "ready" && <Media kind={attachment.kind} src={src} name={attachment.name} />}
+      {probe.state === "ready" && <Media kind={attachment.kind} src={src} path={attachment.path} name={attachment.name} />}
     </figure>
   );
 }
 
-function Media({ kind, src, name }: { kind: Attachment["kind"]; src: string; name: string }) {
+function Media({ kind, src, path, name }: { kind: Attachment["kind"]; src: string; path: string; name: string }) {
   switch (kind) {
     case "video":
       return <video controls preload="metadata" src={src} />;
@@ -74,6 +75,9 @@ function Media({ kind, src, name }: { kind: Attachment["kind"]; src: string; nam
       return <img src={src} alt={name} loading="lazy" />;
     case "pdf":
       return <iframe src={src} title={name} />;
+    case "markdown":
+    case "mermaid":
+      return <DocumentView src={src} path={path} kind={kind} />;
   }
 }
 

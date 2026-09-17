@@ -3,6 +3,9 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import { mediaKind, type FsChange, type FsEntry, type FsReadResult, type Session } from "@sessionboxer/protocol";
 import { api, onFsChanged } from "./api";
 import { AttachmentCard } from "./Attachments";
+import { dirOf } from "./attachment-paths";
+import { Markdown } from "./Markdown";
+import { Mermaid } from "./Mermaid";
 import { languageFor, monaco } from "./monaco";
 
 type Listing = { entries: FsEntry[] } | { error: string } | "loading";
@@ -43,6 +46,8 @@ export function Files({ session }: { session: Session }) {
   const [diskNotice, setDiskNotice] = useState<"changed" | "deleted" | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Markdown / Mermaid files open rendered; Edit switches to the editor (the preview follows the draft).
+  const [view, setView] = useState<"preview" | "edit">("preview");
 
   const loadDir = useCallback(
     async (path: string) => {
@@ -170,6 +175,9 @@ export function Files({ session }: { session: Session }) {
   };
 
   const editable = Boolean(file && !file.binary && !file.truncated && live);
+  const docKind = openPath ? mediaKind(openPath) : null;
+  const previewable = editable && (docKind === "markdown" || docKind === "mermaid");
+  const showPreview = previewable && view === "preview";
 
   return (
     <div className="files">
@@ -199,6 +207,16 @@ export function Files({ session }: { session: Session }) {
               </span>
               {file && <span className="muted">{file.size} B</span>}
               <span className="spacer" />
+              {previewable && (
+                <span className="segmented small">
+                  <button className={view === "preview" ? "active" : ""} onClick={() => setView("preview")}>
+                    Preview
+                  </button>
+                  <button className={view === "edit" ? "active" : ""} onClick={() => setView("edit")}>
+                    Edit
+                  </button>
+                </span>
+              )}
               <button onClick={() => void save()} disabled={!editable || !dirty || saving}>
                 {saving ? "Saving…" : "Save"}
               </button>
@@ -226,7 +244,12 @@ export function Files({ session }: { session: Session }) {
         {diskNotice === "deleted" && <div className="banner banner-warn">This file was deleted on disk. Saving will recreate it.</div>}
         <div className="editor-body">
           {openPath && file && (file.binary || file.truncated) && <BinaryPreview sessionId={session.id} path={openPath} />}
-          {openPath && file && !file.binary && !file.truncated && (
+          {openPath && showPreview && (
+            <div className="file-preview file-document">
+              {docKind === "mermaid" ? <Mermaid code={draft} /> : <Markdown text={draft} base={dirOf(openPath)} />}
+            </div>
+          )}
+          {openPath && file && !file.binary && !file.truncated && !showPreview && (
             <Editor
               path={`${session.id}/${openPath}`}
               language={languageFor(nameOf(openPath))}

@@ -45,8 +45,11 @@ root unless told otherwise.
   `/workspace` that you mention by path in a reply (for example
   `/workspace/recordings/login.mp4` or `docs/report.pdf`) is shown inline
   there: videos with a player, images and SVGs as pictures, PDFs embedded,
-  all with a download button. So to deliver a video, screenshot, diagram or
-  document, save it under `/workspace` and name its path in your final reply.
+  Markdown (`.md`) and Mermaid (`.mmd`) files rendered, all with a download
+  button. So to deliver a video, screenshot, diagram or document, save it
+  under `/workspace` and name its path in your final reply.
+- Replies render as Markdown: fenced code with a language is highlighted and
+  a ```mermaid block is drawn as a diagram, in the chat and inside `.md` files.
 
 ## Docker
 

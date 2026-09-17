@@ -259,6 +259,33 @@ li.expanded .saved-text { white-space: normal; }
 .md th, .md td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; }
 .md th { background: var(--panel); }
 .md img { max-width: 100%; }
+
+/* Syntax highlighting (lowlight / highlight.js classes), GitHub-dark-like palette; shared by chat and the prompt editor. */
+.hljs-comment, .hljs-quote { color: #8b949e; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag, .hljs-meta .hljs-keyword { color: #ff7b72; }
+.hljs-title, .hljs-title.class_, .hljs-title.function_, .hljs-section { color: #d2a8ff; }
+.hljs-string, .hljs-regexp, .hljs-attr, .hljs-addition, .hljs-meta .hljs-string { color: #a5d6ff; }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet, .hljs-link { color: #79c0ff; }
+.hljs-variable, .hljs-template-variable, .hljs-attribute, .hljs-property, .hljs-params, .hljs-type, .hljs-built_in { color: #ffa657; }
+.hljs-name, .hljs-selector-id, .hljs-selector-class, .hljs-selector-attr, .hljs-selector-pseudo, .hljs-tag { color: #7ee787; }
+.hljs-meta, .hljs-subst { color: #79c0ff; }
+.hljs-deletion { color: #ffa198; background: rgba(248, 81, 73, 0.15); }
+.hljs-addition { background: rgba(63, 185, 80, 0.15); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+/* Mermaid diagrams (```mermaid blocks, .mmd files) */
+.mermaid { margin: 0 0 0.5em; padding: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: auto; }
+.mermaid svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.mermaid-error { border-color: var(--error); }
+.mermaid-error-message { color: var(--error); font-size: 13px; margin-bottom: 6px; white-space: pre-wrap; }
+.mermaid-error pre { margin: 0; }
+
+/* Markdown / Mermaid documents from the Workspace, as chat cards and in the Files pane */
+.attachment .document { padding: 10px 12px; border-top: 1px solid var(--border); max-height: 520px; overflow: auto; }
+.attachment .document.muted, .attachment .document.attachment-error { padding: 8px 12px; font-size: 13px; }
+.file-preview .attachment .document { flex: 1; min-height: 0; max-height: none; }
+.file-document { padding: 16px 20px; max-width: 900px; }
 .rich-editor ul[data-type="taskList"] { list-style: none; padding-left: 4px; }
 .rich-editor ul[data-type="taskList"] li { display: flex; gap: 8px; align-items: flex-start; }
 .rich-editor ul[data-type="taskList"] li > label { flex: none; margin-top: 2px; }

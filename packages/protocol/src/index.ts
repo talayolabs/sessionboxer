@@ -640,7 +640,7 @@ export type FsWriteResult = z.infer<typeof FsWriteResult>;
 export const FS_RAW_PATH = "/fs/raw";
 
 /** How the chat embeds a Workspace file the Agent mentions; `null` = shown as a plain link. */
-export type MediaKind = "video" | "audio" | "image" | "pdf";
+export type MediaKind = "video" | "audio" | "image" | "pdf" | "markdown" | "mermaid";
 
 const MEDIA_TYPES: Record<string, [MediaKind, string]> = {
   mp4: ["video", "video/mp4"],
@@ -658,6 +658,10 @@ const MEDIA_TYPES: Record<string, [MediaKind, string]> = {
   webp: ["image", "image/webp"],
   svg: ["image", "image/svg+xml"],
   pdf: ["pdf", "application/pdf"],
+  md: ["markdown", "text/markdown; charset=utf-8"],
+  markdown: ["markdown", "text/markdown; charset=utf-8"],
+  mmd: ["mermaid", "text/plain; charset=utf-8"],
+  mermaid: ["mermaid", "text/plain; charset=utf-8"],
 };
 
 /** Regular expression source matching any embeddable file extension (no anchors, no dot). */

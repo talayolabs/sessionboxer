@@ -1,5 +1,8 @@
 import type {
   AskResult,
+  ConnectorFlow,
+  ConnectorKind,
+  ConnectorStartRequest,
   CreateSessionRequest,
   DeleteSnapshotsResult,
   ForkSessionRequest,
@@ -50,6 +53,11 @@ export const api = {
   options: () => request<ProviderOptions>("/options"),
   updateSettings: (update: UpdateSettingsRequest) =>
     request<PublicSettings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
+  connectorStart: (kind: ConnectorKind, req: ConnectorStartRequest) =>
+    request<ConnectorFlow>(`/connectors/${kind}/start`, { method: "POST", body: JSON.stringify(req) }),
+  connectorFlow: (id: string) => request<ConnectorFlow>(`/connectors/flows/${id}`),
+  connectorDisconnect: (serverId: string) =>
+    request<PublicSettings>(`/connectors/servers/${serverId}/disconnect`, { method: "POST" }),
   sessions: () => request<Session[]>("/sessions"),
   createSession: (req: CreateSessionRequest) =>
     request<Session>("/sessions", { method: "POST", body: JSON.stringify(req) }),

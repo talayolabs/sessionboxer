@@ -1,4 +1,4 @@
-import type { McpTransport, PublicMcpKeyValue, PublicMcpServerDef } from "@sessionboxer/protocol";
+import { CONNECTORS, type McpTransport, type PublicMcpKeyValue, type PublicMcpServerDef } from "@sessionboxer/protocol";
 
 export const TRANSPORT_LABELS: Record<McpTransport, string> = {
   stdio: "stdio (command)",
@@ -20,6 +20,7 @@ export function newMcpServer(): PublicMcpServerDef {
     url: "",
     headers: [],
     enabledByDefault: true,
+    connector: null,
   };
 }
 
@@ -59,6 +60,10 @@ export function joinArgs(args: string[]): string {
 }
 
 export function summarize(s: PublicMcpServerDef): string {
+  if (s.connector) {
+    const label = CONNECTORS[s.connector.kind].label;
+    return s.connector.account ? `${label} · @${s.connector.account}` : `${label} · not connected`;
+  }
   if (s.transport === "stdio") return [s.command, ...s.args].join(" ");
   return s.url;
 }
@@ -108,6 +113,7 @@ export function importMcpJson(text: string): PublicMcpServerDef[] {
       url,
       headers: kvFromRecord(def.headers, `"${name}".headers`),
       enabledByDefault: !(def.disabled === true),
+      connector: null,
     });
   }
   if (out.length === 0) throw new Error("No servers found in the JSON.");

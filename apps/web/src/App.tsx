@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  CONNECTORS,
   DEFAULT_CLAUDE_MODELS,
   DOCKER_MODE_LABELS,
   PROVIDERS,
@@ -408,6 +409,7 @@ export function App() {
         {route.view === "settings" && settings && (
           <SettingsView
             settings={settings}
+            onStored={setSettings}
             onSaved={(s) => {
               setSettings(s);
               setRoute({ view: "session", id: null });
@@ -1002,7 +1004,18 @@ function parseAliasList(text: string): string[] {
   return [...new Set(text.split(/[\s,]+/).map((s) => s.trim()).filter((s) => s.length > 0))];
 }
 
-function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; onSaved: (s: PublicSettings) => void; run: Runner }) {
+function SettingsView({
+  settings,
+  onSaved,
+  onStored,
+  run,
+}: {
+  settings: PublicSettings;
+  onSaved: (s: PublicSettings) => void;
+  /** Settings the Control Plane stored on its own (connector logins), without the form being saved. */
+  onStored: (s: PublicSettings) => void;
+  run: Runner;
+}) {
   const [token, setToken] = useState("");
   const [devinToken, setDevinToken] = useState("");
   const [gitUserName, setGitUserName] = useState(settings.gitUserName);
@@ -1014,6 +1027,10 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
   const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
+  const [githubClientId, setGithubClientId] = useState(settings.connectors.github.clientId);
+  const [githubClientSecret, setGithubClientSecret] = useState("");
+  const [forgetGithubSecret, setForgetGithubSecret] = useState(false);
+  const githubSecretSet = settings.connectors.github.clientSecretSet && !forgetGithubSecret;
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
 
@@ -1030,6 +1047,12 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         mcpServers,
         claudeModels: parseAliasList(claudeModels),
+        connectors: {
+          github: {
+            clientId: githubClientId.trim(),
+            ...(githubClientSecret.trim() ? { clientSecret: githubClientSecret.trim() } : forgetGithubSecret ? { clientSecret: "" } : {}),
+          },
+        },
         providerSecrets: {
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
@@ -1037,6 +1060,8 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
       });
       setToken("");
       setDevinToken("");
+      setGithubClientSecret("");
+      setForgetGithubSecret(false);
       onSaved(saved);
     });
   };
@@ -1113,7 +1138,38 @@ function SettingsView({ settings, onSaved, run }: { settings: PublicSettings; on
         A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
         turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
       </p>
-      <McpServersEditor servers={mcpServers} onChange={setMcpServers} />
+      <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
+      <fieldset className="choice">
+        <legend>GitHub login (OAuth App)</legend>
+        <p className="muted">
+          “Add GitHub” above logs in through a GitHub OAuth App. The built-in one (client id <code>{CONNECTORS.github.defaultClientId}</code>) needs
+          nothing here and uses the device-code flow. To use your own app instead, register one at github.com → Settings → Developer settings with
+          callback URL <code>{window.location.origin}/api/connectors/github/callback</code> and Device Flow enabled; with its client secret set,
+          the browser redirect flow is used.
+        </p>
+        <div className="row">
+          <label>
+            Client ID (empty = built-in)
+            <input value={githubClientId} autoComplete="off" onChange={(e) => setGithubClientId(e.target.value)} placeholder={CONNECTORS.github.defaultClientId} />
+          </label>
+          <label>
+            Client secret (optional) {githubSecretSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+            <input
+              type="password"
+              autoComplete="off"
+              value={githubClientSecret}
+              onChange={(e) => setGithubClientSecret(e.target.value)}
+              placeholder={githubSecretSet ? "Leave empty to keep the current secret" : "Only for the redirect flow"}
+            />
+          </label>
+        </div>
+        {settings.connectors.github.clientSecretSet && (
+          <label className="check">
+            <input type="checkbox" checked={forgetGithubSecret} onChange={(e) => setForgetGithubSecret(e.target.checked)} />
+            Forget the stored client secret on Save (back to the device-code flow)
+          </label>
+        )}
+      </fieldset>
       <div className="actions">
         <button type="submit">Save</button>
       </div>

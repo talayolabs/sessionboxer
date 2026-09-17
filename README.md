@@ -131,6 +131,12 @@ The agent always has the built-in `desktop` MCP server (screen, mouse, keyboard)
 
 Servers running on your machine are reachable from the box: `localhost` in a URL means your machine, and `host.docker.internal` works too. `node`, `npx`, `python3`, `uv`/`uvx` and `docker` are available in the box for command-based servers.
 
+#### GitHub with one click
+
+GitHub's own remote MCP server (issues, pull requests, code search, Actions…) needs a login token, and you do not have to paste one: click **Add GitHub** in Settings → MCP servers, give the entry a name, and follow GitHub's device login (open the link, type the code, approve). The card then shows **Connected as @you**. Add it **more than once with different names** (`github-work`, `github-personal`…) to log in with different GitHub accounts and pick per session which one the agent uses. **Reconnect** logs in again, **Disconnect** forgets the token but keeps the entry. The token is stored like any other secret header and never shown or snapshotted.
+
+By default the login goes through Sessionboxer's public GitHub OAuth App. To use your own instead, register an OAuth App on GitHub (callback `http://127.0.0.1:4000/api/connectors/github/callback`, Device Flow enabled) and put its Client ID in **Settings → GitHub login**; with the Client secret set too, the login switches from the device code to a plain browser redirect.
+
 ## Command line
 
 The `sessionboxer` command talks to the running server and opens the browser on the new session. Run it as `npx sessionboxer` from the checkout, or `npm link -w @sessionboxer/cli` once to have it on your PATH.

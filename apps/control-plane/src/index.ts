@@ -9,6 +9,8 @@ import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
   AskRequest,
+  ConnectorKind,
+  ConnectorStartRequest,
   CreateSessionRequest,
   ForkSessionRequest,
   RevertRequest,
@@ -31,6 +33,7 @@ import {
   saveSettings,
   toPublicSettings,
 } from "./config.js";
+import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
@@ -42,10 +45,25 @@ const log = (msg: string): void => {
   process.stderr.write(`[control-plane ${new Date().toISOString()}] ${msg}\n`);
 };
 
+const escapeHtml = (s: string): string =>
+  s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
+
 let settings = loadSettings();
 const db = new Db(DB_FILE);
 const docker = new SandboxDocker();
 const sessions = new SessionManager(db, docker, () => settings, log);
+const connectors = new Connectors(
+  {
+    get: () => settings,
+    set: (next) => {
+      settings = next;
+      saveSettings(settings);
+    },
+  },
+  (kind) => `http://${HOST === "0.0.0.0" || HOST === "::" ? "127.0.0.1" : HOST}:${PORT}/api/connectors/${kind}/callback`,
+  () => void sessions.pushMcpServersToAll(),
+  log,
+);
 
 const app = new Hono();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -69,6 +87,30 @@ api.put("/settings", async (c) => {
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
+});
+
+api.post("/connectors/:kind/start", async (c) => {
+  const kind = ConnectorKind.parse(c.req.param("kind"));
+  const req = ConnectorStartRequest.parse(await c.req.json());
+  return c.json(await connectors.start(kind, req), 201);
+});
+api.get("/connectors/flows/:id", (c) => c.json(connectors.get(c.req.param("id"))));
+api.post("/connectors/servers/:id/disconnect", async (c) => {
+  connectors.disconnect(c.req.param("id"));
+  return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
+});
+// Browser lands here after authorizing on the provider's site (redirect flow).
+api.get("/connectors/:kind/callback", async (c) => {
+  const kind = ConnectorKind.parse(c.req.param("kind"));
+  const result = await connectors.callback(kind, c.req.query());
+  return c.html(
+    `<!doctype html><meta charset="utf-8"><title>Sessionboxer</title>
+<body style="font:15px system-ui;margin:3em auto;max-width:32em;text-align:center">
+<h2>${result.ok ? "Connected" : "Login failed"}</h2><p>${escapeHtml(result.message)}</p>
+<p style="color:#666">You can close this tab and go back to Sessionboxer.</p>
+<script>setTimeout(function(){window.close()},1500)</script></body>`,
+    result.ok ? 200 : 400,
+  );
 });
 
 api.get("/host/dirs", async (c) => {

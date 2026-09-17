@@ -72,6 +72,39 @@ export type McpKeyValue = z.infer<typeof McpKeyValue>;
 export const MCP_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 export const MCP_RESERVED_NAMES = ["desktop"] as const;
 
+// Connectors: presets for well-known remote MCP servers whose login the Control
+// Plane runs itself (OAuth), so the user clicks "Connect" instead of pasting a
+// token. The same preset can be added several times, once per account.
+export const CONNECTOR_KINDS = ["github"] as const;
+export const ConnectorKind = z.enum(CONNECTOR_KINDS);
+export type ConnectorKind = z.infer<typeof ConnectorKind>;
+
+export const CONNECTORS: Record<
+  ConnectorKind,
+  { label: string; url: string; readonlyUrl: string; scopes: string[]; defaultClientId: string; tokenHeader: string }
+> = {
+  github: {
+    label: "GitHub",
+    url: "https://api.githubcopilot.com/mcp/",
+    readonlyUrl: "https://api.githubcopilot.com/mcp/readonly",
+    scopes: ["repo", "workflow", "read:org", "read:user", "user:email", "gist", "notifications", "project"],
+    /** The "Sessionboxer" OAuth App on github.com (Device Flow enabled); Settings can point at another. */
+    defaultClientId: "Ov23liy480AEYdv2nOiD",
+    tokenHeader: "Authorization",
+  },
+};
+
+/** Login state of a registry entry made from a Connector; the token itself lives in `headers`. */
+export const McpConnector = z.object({
+  kind: ConnectorKind,
+  /** Account the stored token belongs to (`login`), `null` until connected. */
+  account: z.string().nullable().default(null),
+  connectedAt: z.string().nullable().default(null),
+  /** Set when the OAuth App issues expiring tokens; Sessionboxer does not refresh them. */
+  expiresAt: z.string().nullable().default(null),
+});
+export type McpConnector = z.infer<typeof McpConnector>;
+
 export const McpServerDef = z.object({
   id: z.string().min(1),
   name: z.string().regex(MCP_NAME_PATTERN, "letters, digits, `_` and `-` only"),
@@ -85,6 +118,7 @@ export const McpServerDef = z.object({
   headers: z.array(McpKeyValue).default([]),
   /** Pre-selected for new Sessions. */
   enabledByDefault: z.boolean().default(true),
+  connector: McpConnector.nullable().default(null),
 });
 export type McpServerDef = z.infer<typeof McpServerDef>;
 
@@ -101,7 +135,7 @@ export const PublicMcpServerDef = McpServerDef.extend({
 export type PublicMcpServerDef = z.infer<typeof PublicMcpServerDef>;
 
 /** What the Daemon gets: resolved definitions of the Session's enabled servers, secrets included. */
-export const McpServerSpec = McpServerDef.omit({ enabledByDefault: true });
+export const McpServerSpec = McpServerDef.omit({ enabledByDefault: true, connector: true });
 export type McpServerSpec = z.infer<typeof McpServerSpec>;
 
 // ---------------------------------------------------------------------------
@@ -413,22 +447,31 @@ export const Settings = z.object({
       devin: z.object({ WINDSURF_API_KEY: z.string().default("") }).default({}),
     })
     .default({}),
+  /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
+  connectors: z
+    .object({
+      github: z.object({ clientId: z.string().default(""), clientSecret: z.string().default("") }).default({}),
+    })
+    .default({}),
 });
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
   providerSecretsSet: z.object({
     "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
     devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
+  }),
+  connectors: z.object({
+    github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
   /** Mode a Docker-enabled Session created now would get, given the host's runtimes. */
   dockerModeAvailable: DockerMode.exclude(["none"]),
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.omit({ mcpServers: true }).partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true }).partial().extend({
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
   providerSecrets: z
@@ -438,8 +481,43 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true }).partial
     })
     .partial()
     .optional(),
+  /** `clientSecret: ""` forgets the stored secret (device-code login is used then). */
+  connectors: z
+    .object({
+      github: z.object({ clientId: z.string(), clientSecret: z.string() }).partial(),
+    })
+    .partial()
+    .optional(),
 });
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequest>;
+
+// ---------------------------------------------------------------------------
+// Connector login flows (Control Plane `/api/connectors/...`)
+// ---------------------------------------------------------------------------
+
+/** Starts a login for a registry entry; a missing/unknown `serverId` creates the entry from the preset. */
+export const ConnectorStartRequest = z.object({
+  serverId: z.string().nullable().default(null),
+  name: z.string().regex(MCP_NAME_PATTERN, "letters, digits, `_` and `-` only"),
+});
+export type ConnectorStartRequest = z.infer<typeof ConnectorStartRequest>;
+
+export const ConnectorFlow = z.object({
+  id: z.string(),
+  kind: ConnectorKind,
+  serverId: z.string(),
+  /** `redirect`: open `url` and come back; `device`: enter `userCode` at `verificationUri`. */
+  mode: z.enum(["redirect", "device"]),
+  url: z.string().nullable(),
+  userCode: z.string().nullable(),
+  verificationUri: z.string().nullable(),
+  expiresAt: z.string(),
+  status: z.enum(["pending", "done", "error"]),
+  error: z.string().nullable(),
+  /** The registry entry being connected, as stored (token hidden like any secret header). */
+  server: PublicMcpServerDef,
+});
+export type ConnectorFlow = z.infer<typeof ConnectorFlow>;
 
 // ---------------------------------------------------------------------------
 // Session event stream. Persisted by the Control Plane, rendered by the UI.

@@ -332,6 +332,22 @@ button.link:hover { text-decoration: underline; }
 .mcp-switches li.empty a, .mcp-dialog .actions a { color: var(--accent); }
 .mcp-switches .switch { flex-wrap: nowrap; min-width: 0; font-size: 13px; }
 .mcp-switches .mcp-summary { flex: 1; }
+/* Connectors: preset MCP servers logged in with OAuth (GitHub) */
+.connector-icon { flex: none; vertical-align: -3px; }
+.connector-button { display: inline-flex; align-items: center; gap: 6px; }
+.mcp-card.connector { flex-wrap: wrap; }
+.mcp-card.connector .mcp-summary { flex: 1 1 auto; min-width: max-content; overflow: visible; }
+.connector-status { font-family: inherit; font-size: 13px; }
+.connector-status strong { font-weight: 600; }
+.connector-expired { color: var(--warn); }
+.connector-dialog { max-width: 520px; }
+.connector-title { display: flex; align-items: center; gap: 8px; }
+.connector-device { display: flex; flex-direction: column; gap: 8px; }
+.connector-device p { margin: 0; line-height: 1.45; }
+.connector-device a { color: var(--accent); }
+.connector-code-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.connector-code { font-size: 24px; letter-spacing: 3px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); user-select: all; }
+.connector-done { margin: 0; line-height: 1.45; }
 .session-header button.pending { border-color: var(--warn); }
 .session-header .count { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
 

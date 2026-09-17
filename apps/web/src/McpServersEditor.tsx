@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { MCP_TRANSPORTS, type PublicMcpKeyValue, type PublicMcpServerDef } from "@sessionboxer/protocol";
+import {
+  CONNECTOR_KINDS,
+  CONNECTORS,
+  MCP_TRANSPORTS,
+  type ConnectorKind,
+  type PublicMcpKeyValue,
+  type PublicMcpServerDef,
+  type PublicSettings,
+} from "@sessionboxer/protocol";
+import { api } from "./api";
+import { ConnectorDialog } from "./ConnectorDialog";
+import { ConnectorIcon } from "./ConnectorIcon";
 import { TRANSPORT_LABELS, importMcpJson, joinArgs, newMcpServer, splitArgs, summarize } from "./mcp";
 
 /**
@@ -7,11 +18,41 @@ import { TRANSPORT_LABELS, importMcpJson, joinArgs, newMcpServer, splitArgs, sum
  * the edit form), Add, Import JSON. Secret env vars / headers are write-only: the
  * Control Plane returns `null` for a set secret and keeps it when we send `null` back.
  */
-export function McpServersEditor({ servers, onChange }: { servers: PublicMcpServerDef[]; onChange: (next: PublicMcpServerDef[]) => void }) {
+export function McpServersEditor({
+  servers,
+  onChange,
+  onStored,
+}: {
+  servers: PublicMcpServerDef[];
+  onChange: (next: PublicMcpServerDef[]) => void;
+  /** Connector logins are saved by the Control Plane right away (no Save needed); reports the stored Settings. */
+  onStored?: (settings: PublicSettings) => void;
+}) {
   const [editing, setEditing] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [connecting, setConnecting] = useState<{ kind: ConnectorKind; server: PublicMcpServerDef | null } | null>(null);
+  const [connectorError, setConnectorError] = useState<string | null>(null);
 
   const update = (id: string, patch: Partial<PublicMcpServerDef>) => onChange(servers.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  // Connector entries are stored by the Control Plane as soon as a login starts; mirror
+  // them here so saving the form does not drop or stale them.
+  const upsert = (server: PublicMcpServerDef) =>
+    onChange(servers.some((s) => s.id === server.id) ? servers.map((s) => (s.id === server.id ? server : s)) : [...servers, server]);
+  const stored = (server: PublicMcpServerDef) => {
+    upsert(server);
+    if (onStored) void api.settings().then(onStored, () => undefined);
+  };
+  const disconnect = async (id: string) => {
+    setConnectorError(null);
+    try {
+      const saved = await api.connectorDisconnect(id);
+      const server = saved.mcpServers.find((s) => s.id === id);
+      if (server) upsert(server);
+      onStored?.(saved);
+    } catch (e) {
+      setConnectorError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const remove = (id: string) => {
     onChange(servers.filter((s) => s.id !== id));
     if (editing === id) setEditing(null);
@@ -39,21 +80,45 @@ export function McpServersEditor({ servers, onChange }: { servers: PublicMcpServ
               <McpServerForm server={s} onChange={(patch) => update(s.id, patch)} onDone={() => setEditing(null)} onDelete={() => remove(s.id)} />
             </li>
           ) : (
-            <li key={s.id} className="mcp-card">
+            <li key={s.id} className={s.connector ? "mcp-card connector" : "mcp-card"}>
               <label className="check" title="New Sessions start with this server on">
                 <input type="checkbox" checked={s.enabledByDefault} onChange={(e) => update(s.id, { enabledByDefault: e.target.checked })} />
               </label>
+              {s.connector && <ConnectorIcon kind={s.connector.kind} />}
               <span className="mcp-name">{s.name || <em className="muted">unnamed</em>}</span>
-              <span className="muted mcp-transport">{s.transport}</span>
-              <span className="muted mcp-summary" title={summarize(s)}>
-                {summarize(s)}
-              </span>
-              {(s.env.length > 0 || s.headers.length > 0) && (
+              {s.connector ? (
+                s.connector.account ? (
+                  <span className="mcp-summary connector-status" title={`Connected ${new Date(s.connector.connectedAt ?? 0).toLocaleString()}`}>
+                    Connected as <strong>@{s.connector.account}</strong>
+                    {s.connector.expiresAt && Date.parse(s.connector.expiresAt) < Date.now() && <span className="connector-expired"> (token expired)</span>}
+                  </span>
+                ) : (
+                  <span className="muted mcp-summary">Not connected</span>
+                )
+              ) : (
+                <>
+                  <span className="muted mcp-transport">{s.transport}</span>
+                  <span className="muted mcp-summary" title={summarize(s)}>
+                    {summarize(s)}
+                  </span>
+                </>
+              )}
+              {!s.connector && (s.env.length > 0 || s.headers.length > 0) && (
                 <span className="muted" title="Environment variables / headers">
                   {s.env.length + s.headers.length} var{s.env.length + s.headers.length === 1 ? "" : "s"}
                 </span>
               )}
               <span className="spacer" />
+              {s.connector && (
+                <button type="button" className="small" onClick={() => s.connector && setConnecting({ kind: s.connector.kind, server: s })}>
+                  {s.connector.account ? "Reconnect" : "Connect"}
+                </button>
+              )}
+              {s.connector?.account && (
+                <button type="button" className="small" title="Forget the token; the entry stays" onClick={() => void disconnect(s.id)}>
+                  Disconnect
+                </button>
+              )}
               <button type="button" className="small" onClick={() => setEditing(s.id)}>
                 Edit
               </button>
@@ -71,8 +136,33 @@ export function McpServersEditor({ servers, onChange }: { servers: PublicMcpServ
         <button type="button" onClick={() => setImporting(true)} title='Paste a {"mcpServers": {...}} block (Claude Desktop, Cursor, VS Code style)'>
           Import JSON…
         </button>
+        {CONNECTOR_KINDS.map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            className="connector-button"
+            title={`Add ${CONNECTORS[kind].label}'s MCP server and log in with OAuth (no tokens to paste)`}
+            onClick={() => setConnecting({ kind, server: null })}
+          >
+            <ConnectorIcon kind={kind} /> Add {CONNECTORS[kind].label}
+          </button>
+        ))}
         <span className="muted mcp-hint">Default column = on for new Sessions. Saved with the form below.</span>
       </div>
+      {connectorError && (
+        <div className="banner banner-error" role="alert">
+          {connectorError}
+        </div>
+      )}
+      {connecting && (
+        <ConnectorDialog
+          kind={connecting.kind}
+          server={connecting.server}
+          takenNames={servers.map((s) => s.name)}
+          onClose={() => setConnecting(null)}
+          onServer={stored}
+        />
+      )}
       {importing && (
         <ImportDialog
           onClose={() => setImporting(false)}

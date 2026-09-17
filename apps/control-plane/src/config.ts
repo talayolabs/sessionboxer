@@ -2,9 +2,11 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  CONNECTORS,
   MCP_RESERVED_NAMES,
   Settings,
   type DockerMode,
+  type McpConnector,
   type McpKeyValue,
   type McpServerDef,
   type McpServerSpec,
@@ -44,9 +46,16 @@ export function saveSettings(settings: Settings): void {
 }
 
 export function applySettingsUpdate(current: Settings, update: UpdateSettingsRequest): Settings {
-  const { providerSecrets, mcpServers, ...rest } = update;
+  const { providerSecrets, mcpServers, connectors, ...rest } = update;
   const next: Settings = { ...current, ...stripUndefined(rest) };
   if (mcpServers) next.mcpServers = mergeMcpServers(current.mcpServers, mcpServers);
+  if (connectors) {
+    next.connectors = {
+      github: { ...current.connectors.github, ...stripUndefined(connectors.github ?? {}) },
+    };
+    next.connectors.github.clientId = next.connectors.github.clientId.trim();
+    next.connectors.github.clientSecret = next.connectors.github.clientSecret.trim();
+  }
   if (providerSecrets) {
     next.providerSecrets = {
       "claude-code": {
@@ -63,13 +72,16 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
 }
 
 export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">): PublicSettings {
-  const { providerSecrets, mcpServers, ...rest } = settings;
+  const { providerSecrets, mcpServers, connectors, ...rest } = settings;
   return {
     ...rest,
     mcpServers: mcpServers.map(toPublicMcpServer),
     providerSecretsSet: {
       "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings) !== "" },
       devin: { WINDSURF_API_KEY: devinToken(settings) !== "" },
+    },
+    connectors: {
+      github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
     dockerModeAvailable,
   };
@@ -138,14 +150,24 @@ export function mergeMcpServers(current: McpServerDef[], incoming: PublicMcpServ
           secret: kv.secret,
           value: kv.value ?? prevList.find((p) => p.name === kv.name.trim())?.value ?? "",
         }));
+    const headers = fill(pub.headers, prev?.headers ?? []);
     return {
       ...pub,
       command: pub.command.trim(),
       url: pub.url.trim(),
       env: fill(pub.env, prev?.env ?? []),
-      headers: fill(pub.headers, prev?.headers ?? []),
+      headers,
+      connector: mergeConnector(pub.connector, prev?.connector ?? null, headers),
     };
   });
+}
+
+/** Login state is owned by the Control Plane: the form can keep or drop a Connector, not log it in. */
+function mergeConnector(incoming: McpConnector | null, prev: McpConnector | null, headers: McpKeyValue[]): McpConnector | null {
+  if (!incoming) return null;
+  const kept = prev?.kind === incoming.kind ? prev : { kind: incoming.kind, account: null, connectedAt: null, expiresAt: null };
+  const hasToken = headers.some((h) => h.name === CONNECTORS[incoming.kind].tokenHeader && h.value !== "");
+  return hasToken ? kept : { ...kept, account: null, connectedAt: null, expiresAt: null };
 }
 
 /** Full definitions (secrets included) of the enabled ids, as the Daemon needs them; unknown ids are dropped. */
@@ -153,7 +175,7 @@ export function resolveMcpServers(settings: Settings, enabledIds: string[]): Mcp
   const enabled = new Set(enabledIds);
   return settings.mcpServers
     .filter((s) => enabled.has(s.id))
-    .map(({ enabledByDefault: _default, ...spec }) => ({ ...spec, url: spec.url ? rewriteHostUrl(spec.url) : spec.url }));
+    .map(({ enabledByDefault: _default, connector: _connector, ...spec }) => ({ ...spec, url: spec.url ? rewriteHostUrl(spec.url) : spec.url }));
 }
 
 /** `localhost` from the user's point of view is the host machine, not the Sandbox. */

@@ -114,6 +114,19 @@ export class WorkspaceFs {
     return { ...base, content: buf.toString("utf8"), binary: false, truncated: false };
   }
 
+  /** Absolute path and size of a regular file, for streaming it as-is (`GET /fs/raw`). */
+  async raw(rel: string): Promise<{ abs: string; size: number; mtime: Date }> {
+    const abs = await this.contained(rel);
+    let st;
+    try {
+      st = await fs.stat(abs);
+    } catch (e) {
+      throw mapError(e, rel);
+    }
+    if (!st.isFile()) throw new FsError(-32602, `${rel} is not a file`);
+    return { abs, size: st.size, mtime: st.mtime };
+  }
+
   async write(rel: string, content: string): Promise<FsWriteResult> {
     const abs = this.absolute(rel);
     if (abs === this.root) throw new FsError(-32602, "cannot write the workspace root");

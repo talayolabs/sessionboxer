@@ -24,6 +24,7 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { api, emitFsChanged, subscribe } from "./api";
+import { AttachmentSession } from "./Attachments";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
@@ -631,6 +632,7 @@ function SessionView({
   };
 
   return (
+    <AttachmentSession.Provider value={session.id}>
     <div className="session">
       <header className="session-header">
         {editingTitle ? (
@@ -813,6 +815,7 @@ function SessionView({
         {pane === "terminal" && <TerminalPane session={session} />}
       </div>
     </div>
+    </AttachmentSession.Provider>
   );
 }
 

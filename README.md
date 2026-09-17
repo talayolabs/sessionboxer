@@ -16,6 +16,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a fu
 - **A real desktop.** The container runs a Linux desktop with Firefox. The agent can take screenshots, click and type, so it can test web apps, read documentation or use any GUI tool. You see the same screen in the browser and can take the controls at any time.
 - **Agents that don't ask.** Inside the box the agent runs with all permissions granted, so it doesn't stop every few seconds to ask whether it may run a command. The container is the safety boundary.
 - **Files and terminals.** A file tree with an editor that follows the agent's changes live, and as many shells in the box as you want.
+- **Videos and documents in the chat.** Ask for a screen recording of a feature and the agent records the box's desktop to an .mp4 you can play right there; images, SVGs and PDFs it produces show up the same way, with a download button.
 - **Stop and resume.** Stop a session to free CPU and memory; resume it later with the conversation, files and installed tools exactly where they were.
 - **Docker inside the box** (optional). Agents can run `docker`, `docker compose` and `docker build` inside their own container.
 - **Your subscription.** Sessionboxer uses your own Claude or Devin account; there is no Sessionboxer account and nothing leaves your machine except the agent's own traffic.
@@ -95,6 +96,12 @@ In Settings you set the default for automatic snapshots and how many to keep per
 Each time the agent finishes a turn, a line divides the chat: *turn ended 14:03*. The last one marks where the agent is waiting for you. Every earlier line has **↶ Revert to here**: the chat is cut back to that point and you continue from there, in the same box, with the agent remembering only what came before. Nothing is lost: what followed is kept as another **branch** of the conversation. The divider where they part shows a button to jump to the other branch (**↪ Continue on main**, **⑂ Try it with…**), and a **⑂** selector in the header lists all of them. A branch is named after the first words of the prompt that started it. Sessions with branches get a **▸** chevron in the sidebar: expand it to see the branches as a tree (main, and under it what forked from where). Clicking a branch that parts from the chat you are looking at scrolls to that divider, where the jump button is; clicking one that is out of sight asks to confirm before switching the conversation to it. Only one branch talks to the agent at a time, and you can only revert or switch while it is idle.
 
 Claude keeps the branch's memory exact (its session is forked at that point); Devin is given a transcript of the conversation up to the point instead. Branches share the box, so files changed on one branch stay changed on the others; take a snapshot and fork a new session if you want the files to go back too.
+
+### Videos, images and documents from the box
+
+Ask the agent to *show* you something ("record a video of the login flow", "take a screenshot of the chart", "export the report as PDF") and it saves the file in the project folder and names it in its reply. Any such file mentioned in a reply (`/workspace/recordings/login.mp4`, `docs/report.pdf`) is shown inline in the chat: videos with a player, images and SVGs as pictures, PDFs embedded, audio with controls, each with **Open** and **Download** links. The file is streamed from the box, so the session must be running to view it (a stopped one says so; **Resume** brings it back). The **Files** pane shows the same viewer when you click a media file.
+
+Recordings use the desktop MCP's `start_recording` / `stop_recording` tools (ffmpeg, H.264 .mp4, 15 fps by default, saved under `recordings/`); the agent drives the desktop as usual in between.
 
 ### Watch and take over the desktop
 

@@ -17,7 +17,8 @@ root unless told otherwise.
   or `desktop/*`, depending on your harness) to operate it like a human would:
   `screenshot`, `left_click`, `type`, `key`, `scroll`, `zoom`, `mouse_move`,
   `left_click_drag`, `right_click`, `double_click`, `triple_click`,
-  `hold_key`, `wait`, `cursor_position`.
+  `hold_key`, `wait`, `cursor_position`, `start_recording`, `stop_recording`,
+  `recording_status`.
 - Always take a `screenshot` before your first action and after any action
   whose result you need to see. Other tools only return "OK".
 - Coordinates are pixels from the top-left corner; `[0, 0]` to `[1023, 767]`.
@@ -28,6 +29,24 @@ root unless told otherwise.
 - Prefer the shell for anything that does not need a GUI (files, git, tests).
   Use the desktop for browsers and other graphical applications, or when the
   user asks you to.
+
+## Recording the screen
+
+- To show the user a feature in motion, record the desktop: call
+  `start_recording` (optionally with a `path` under `/workspace`), drive the
+  desktop as usual, then `stop_recording`, which returns the path of an .mp4.
+  Recordings default to `/workspace/recordings/<timestamp>.mp4`.
+- Keep recordings short and purposeful: start right before the interesting
+  part, stop right after. One recording at a time.
+
+## Handing files to the user
+
+- The user sees your replies in a chat next to the desktop. Any file under
+  `/workspace` that you mention by path in a reply (for example
+  `/workspace/recordings/login.mp4` or `docs/report.pdf`) is shown inline
+  there: videos with a player, images and SVGs as pictures, PDFs embedded,
+  all with a download button. So to deliver a video, screenshot, diagram or
+  document, save it under `/workspace` and name its path in your final reply.
 
 ## Docker
 
@@ -42,4 +61,4 @@ root unless told otherwise.
 ## Tools available
 
 git, gh, node 22, npm, python3, pip, build-essential, curl, jq, xdotool,
-imagemagick, firefox-esr, xfce4-terminal, docker (CLI, compose, buildx).
+imagemagick, ffmpeg, firefox-esr, xfce4-terminal, docker (CLI, compose, buildx).

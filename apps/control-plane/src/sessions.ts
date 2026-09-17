@@ -125,6 +125,16 @@ export class SessionManager {
     return `ws://${host}:${port}/websockify`;
   }
 
+  /** HTTP base URL of a live Sandbox's Daemon (raw Workspace files), reachable only from the host. */
+  async daemonHttpUrl(id: string): Promise<string> {
+    const s = this.get(id);
+    if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {
+      throw new HttpError(409, `session ${id} is ${s.status}; Workspace files are only available while the Sandbox runs`);
+    }
+    const { host, port } = await this.docker.endpoint(s.containerId, DAEMON_PORT);
+    return `http://${host}:${port}`;
+  }
+
   // --- Workspace files -----------------------------------------------------
 
   /** The Daemon of a live Session, waiting a little for it to come up right after create/resume. */

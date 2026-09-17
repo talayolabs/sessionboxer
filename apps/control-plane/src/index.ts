@@ -15,6 +15,7 @@ import {
   ForkSessionRequest,
   RevertRequest,
   SwitchBranchRequest,
+  FS_RAW_PATH,
   FsWriteParams,
   PromptRequest,
   PtyOpenParams,
@@ -212,6 +213,24 @@ api.get("/sessions/:id/fs/file", async (c) => c.json(await sessions.fsRead(c.req
 api.put("/sessions/:id/fs/file", async (c) => {
   const req = FsWriteParams.parse(await c.req.json());
   return c.json(await sessions.fsWrite(c.req.param("id"), req.path, req.content));
+});
+// Raw bytes of a Workspace file (videos, images, PDFs the Agent produced), streamed from the
+// Daemon with Range support so the browser's <video> can seek; `download=1` for an attachment.
+api.on(["GET", "HEAD"], "/sessions/:id/fs/raw", async (c) => {
+  const base = await sessions.daemonHttpUrl(c.req.param("id"));
+  const target = new URL(FS_RAW_PATH, base);
+  target.searchParams.set("path", c.req.query("path") ?? "");
+  if (c.req.query("download")) target.searchParams.set("download", "1");
+  const headers: Record<string, string> = {};
+  const range = c.req.header("range");
+  if (range) headers.range = range;
+  const upstream = await fetch(target, { method: c.req.method, headers });
+  const passed = new Headers();
+  for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition", "last-modified", "cache-control"]) {
+    const v = upstream.headers.get(name);
+    if (v) passed.set(name, v);
+  }
+  return new Response(upstream.body, { status: upstream.status, headers: passed });
 });
 
 // Terminals: shells in the Workspace, owned by the Daemon. The WebSocket carries

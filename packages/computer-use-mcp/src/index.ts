@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { currentRecording, startRecording, stopRecording } from "./recording.js";
 import {
   click,
   cursorPosition,
@@ -176,6 +177,33 @@ server.registerTool(
     await sleep(duration * 1000);
     return image(await screenshotPng(display));
   },
+);
+
+server.registerTool(
+  "start_recording",
+  {
+    description: "Start recording the desktop to an .mp4 video (H.264) until stop_recording is called. Use it to show the user a feature in motion; mention the returned path in your reply and the user gets a player for it. One recording at a time.",
+    inputSchema: {
+      path: z.string().optional().describe("Output file under /workspace, ending in .mp4; default recordings/<timestamp>.mp4"),
+      fps: z.number().int().min(1).max(30).default(15).describe("Frames per second"),
+    },
+  },
+  async ({ path, fps }) => okText(JSON.stringify(await startRecording(display, path, fps))),
+);
+
+server.registerTool(
+  "stop_recording",
+  {
+    description: "Stop the running desktop recording and finalize the .mp4; returns its path, duration and size.",
+    inputSchema: {},
+  },
+  async () => okText(JSON.stringify(await stopRecording())),
+);
+
+server.registerTool(
+  "recording_status",
+  { description: "Whether a desktop recording is running, and since when.", inputSchema: {} },
+  async () => okText(JSON.stringify(currentRecording() ?? { recording: false })),
 );
 
 const transport = new StdioServerTransport();

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import type { FsChange, FsEntry, FsReadResult, Session } from "@sessionboxer/protocol";
+import { mediaKind, type FsChange, type FsEntry, type FsReadResult, type Session } from "@sessionboxer/protocol";
 import { api, onFsChanged } from "./api";
+import { AttachmentCard } from "./Attachments";
 import { languageFor, monaco } from "./monaco";
 
 type Listing = { entries: FsEntry[] } | { error: string } | "loading";
@@ -9,6 +10,17 @@ type Listing = { entries: FsEntry[] } | { error: string } | "loading";
 function parentOf(path: string): string {
   const i = path.lastIndexOf("/");
   return i < 0 ? "" : path.slice(0, i);
+}
+
+/** Media files get the same inline viewer as chat attachments; other binaries a notice. */
+function BinaryPreview({ sessionId, path }: { sessionId: string; path: string }) {
+  const kind = mediaKind(path);
+  if (!kind) return <div className="desktop-overlay">Binary or large file, not shown as text.</div>;
+  return (
+    <div className="file-preview">
+      <AttachmentCard sessionId={sessionId} attachment={{ path, name: nameOf(path), kind }} />
+    </div>
+  );
 }
 
 function nameOf(path: string): string {
@@ -213,9 +225,7 @@ export function Files({ session }: { session: Session }) {
         )}
         {diskNotice === "deleted" && <div className="banner banner-warn">This file was deleted on disk. Saving will recreate it.</div>}
         <div className="editor-body">
-          {openPath && file && (file.binary || file.truncated) && (
-            <div className="desktop-overlay">{file.binary ? "Binary file, not shown." : "File is larger than 2 MB, not shown."}</div>
-          )}
+          {openPath && file && (file.binary || file.truncated) && <BinaryPreview sessionId={session.id} path={openPath} />}
           {openPath && file && !file.binary && !file.truncated && (
             <Editor
               path={`${session.id}/${openPath}`}

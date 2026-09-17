@@ -8,6 +8,13 @@ export function formatMb(bytes: number): string {
   return `${mb >= 100 ? mb.toFixed(0) : mb.toFixed(1)} MB`;
 }
 
+/** Exact-ish file size ("312 B", "26 KB", "4.2 MB"), for single files rather than disk totals. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < MB) return `${Math.round(bytes / 1024)} KB`;
+  return formatMb(bytes);
+}
+
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }

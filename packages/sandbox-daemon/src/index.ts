@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   DAEMON_METHODS,
@@ -32,6 +33,7 @@ import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { DevinMcpConfig } from "./mcp-config.js";
+import { serveRawFile } from "./raw-files.js";
 import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 
@@ -227,7 +229,16 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
   }
 }
 
-const wss = new WebSocketServer({ host: "0.0.0.0", port });
+// One port: JSON-RPC over WebSocket for the Control Plane, plain HTTP for raw Workspace files.
+const http = createServer((req, res) => {
+  serveRawFile(workspaceFs, req, res).catch((e: unknown) => {
+    log(`raw file error: ${String(e)}`);
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  });
+});
+const wss = new WebSocketServer({ server: http });
+http.listen(port, "0.0.0.0");
 wss.on("connection", (ws) => {
   clients.add(ws);
   log(`control plane connected (${clients.size})`);
@@ -267,6 +278,7 @@ const shutdown = (): void => {
   terminals.closeAll();
   void workspaceFs.close();
   wss.close();
+  http.close();
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);

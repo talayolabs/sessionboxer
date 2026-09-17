@@ -634,6 +634,49 @@ export type FsWriteParams = z.infer<typeof FsWriteParams>;
 export const FsWriteResult = z.object({ path: z.string(), size: z.number().int().nonnegative(), mtime: z.string() });
 export type FsWriteResult = z.infer<typeof FsWriteResult>;
 
+// Raw (binary) Workspace files are served over HTTP rather than JSON-RPC, so the browser can
+// stream a video with Range requests: Daemon `GET /fs/raw?path=…`, proxied by the Control Plane
+// as `GET /api/sessions/:id/fs/raw?path=…[&download=1]`.
+export const FS_RAW_PATH = "/fs/raw";
+
+/** How the chat embeds a Workspace file the Agent mentions; `null` = shown as a plain link. */
+export type MediaKind = "video" | "audio" | "image" | "pdf";
+
+const MEDIA_TYPES: Record<string, [MediaKind, string]> = {
+  mp4: ["video", "video/mp4"],
+  m4v: ["video", "video/mp4"],
+  webm: ["video", "video/webm"],
+  mov: ["video", "video/quicktime"],
+  mp3: ["audio", "audio/mpeg"],
+  wav: ["audio", "audio/wav"],
+  ogg: ["audio", "audio/ogg"],
+  m4a: ["audio", "audio/mp4"],
+  png: ["image", "image/png"],
+  jpg: ["image", "image/jpeg"],
+  jpeg: ["image", "image/jpeg"],
+  gif: ["image", "image/gif"],
+  webp: ["image", "image/webp"],
+  svg: ["image", "image/svg+xml"],
+  pdf: ["pdf", "application/pdf"],
+};
+
+/** Regular expression source matching any embeddable file extension (no anchors, no dot). */
+export const MEDIA_EXTENSIONS = Object.keys(MEDIA_TYPES).join("|");
+
+function extensionOf(path: string): string {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot < 0 ? "" : base.slice(dot + 1).toLowerCase();
+}
+
+export function mediaKind(path: string): MediaKind | null {
+  return MEDIA_TYPES[extensionOf(path)]?.[0] ?? null;
+}
+
+export function contentTypeFor(path: string): string {
+  return MEDIA_TYPES[extensionOf(path)]?.[1] ?? "application/octet-stream";
+}
+
 export const FsChange = z.object({
   path: z.string(),
   kind: z.enum(["created", "modified", "deleted"]),

@@ -212,7 +212,7 @@ function Item({
     case "agent":
       return (
         <div className="msg msg-agent">
-          <Markdown text={item.text} />
+          <Markdown text={item.text} attachments />
         </div>
       );
     case "thought":

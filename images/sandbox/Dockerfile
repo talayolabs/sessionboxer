@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       # desktop stack
       xvfb xfce4 xfce4-terminal dbus-x11 x11-utils x11-xserver-utils \
       x11vnc novnc websockify \
-      xdotool imagemagick \
+      xdotool imagemagick ffmpeg \
       fonts-dejavu fonts-liberation \
       firefox-esr \
     && apt-get clean && rm -rf /var/lib/apt/lists/*

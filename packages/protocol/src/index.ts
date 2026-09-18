@@ -780,6 +780,16 @@ const MEDIA_TYPES: Record<string, [MediaKind, string]> = {
 /** Regular expression source matching any embeddable file extension (no anchors, no dot). */
 export const MEDIA_EXTENSIONS = Object.keys(MEDIA_TYPES).join("|");
 
+/** Files served with a known type but not embedded on their own (a video's caption sidecar). */
+const SIDECAR_TYPES: Record<string, string> = {
+  vtt: "text/vtt; charset=utf-8",
+};
+
+/** Caption track a video may come with: `<name>.vtt` next to `<name>.mp4`. */
+export function captionTrackFor(videoPath: string): string {
+  return videoPath.replace(/\.[^./]+$/, ".vtt");
+}
+
 function extensionOf(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");
@@ -791,7 +801,8 @@ export function mediaKind(path: string): MediaKind | null {
 }
 
 export function contentTypeFor(path: string): string {
-  return MEDIA_TYPES[extensionOf(path)]?.[1] ?? "application/octet-stream";
+  const ext = extensionOf(path);
+  return MEDIA_TYPES[ext]?.[1] ?? SIDECAR_TYPES[ext] ?? "application/octet-stream";
 }
 
 // ---------------------------------------------------------------------------

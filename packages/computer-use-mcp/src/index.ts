@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { currentRecording, startRecording, stopRecording } from "./recording.js";
+import { annotateRecording, currentRecording, startRecording, stopRecording } from "./recording.js";
 import {
   click,
   cursorPosition,
@@ -182,7 +182,8 @@ server.registerTool(
 server.registerTool(
   "start_recording",
   {
-    description: "Start recording the desktop to an .mp4 video (H.264) until stop_recording is called. Use it to show the user a feature in motion; mention the returned path in your reply and the user gets a player for it. One recording at a time.",
+    description:
+      "Start recording the desktop to an .mp4 video (H.264) until stop_recording is called. Use it to show the user a feature in motion; mention the returned path in your reply and the user gets a player for it. While recording, call annotate_recording before each step so the video carries captions of what is happening. One recording at a time.",
     inputSchema: {
       path: z.string().optional().describe("Output file under /workspace, ending in .mp4; default recordings/<timestamp>.mp4"),
       fps: z.number().int().min(1).max(30).default(15).describe("Frames per second"),
@@ -192,21 +193,35 @@ server.registerTool(
 );
 
 server.registerTool(
+  "annotate_recording",
+  {
+    description:
+      "Add a caption to the running desktop recording at this moment: one short sentence saying what you are about to do or what the screen now shows (e.g. 'Submitting the form with an empty email'). It stays on screen until the next annotation. Call it right before each step; captions are burned into the video and written as a subtitle track when the recording stops.",
+    inputSchema: { text: z.string().min(1).max(300).describe("Caption text, one short sentence") },
+  },
+  async ({ text }) => okText(JSON.stringify(annotateRecording(text))),
+);
+
+server.registerTool(
   "stop_recording",
   {
     description:
-      "Stop the running desktop recording and finalize the .mp4; returns its path, duration and size. By default the video is condensed: stretches where nothing changes on screen are cut to a short hold each, so waiting (page loads, builds) does not pad the video while every state stays readable.",
+      "Stop the running desktop recording and finalize the .mp4; returns its path, duration, size and the captions with their final times. By default the video is condensed: stretches where nothing changes on screen are cut to a short hold each, so waiting (page loads, builds) does not pad the video while every state stays readable. Captions from annotate_recording are burned into a band under the desktop and saved as a .vtt subtitle file next to the video.",
     inputSchema: {
       condense: z.boolean().default(true).describe("Collapse static stretches; false keeps the real timing (for animations or performance demos)"),
       hold_seconds: z.number().min(0.5).max(10).default(1.5).describe("How long a static stretch stays on screen after condensing"),
+      captions: z
+        .enum(["both", "burn", "track", "none"])
+        .default("both")
+        .describe("What to do with annotations: burn them into the frames, write a .vtt subtitle track, both, or drop them"),
     },
   },
-  async ({ condense, hold_seconds }) => okText(JSON.stringify(await stopRecording({ condense, holdSeconds: hold_seconds }))),
+  async ({ condense, hold_seconds, captions }) => okText(JSON.stringify(await stopRecording({ condense, holdSeconds: hold_seconds, captions }))),
 );
 
 server.registerTool(
   "recording_status",
-  { description: "Whether a desktop recording is running, and since when.", inputSchema: {} },
+  { description: "Whether a desktop recording is running, since when, and how many captions it has.", inputSchema: {} },
   async () => okText(JSON.stringify(currentRecording() ?? { recording: false })),
 );
 

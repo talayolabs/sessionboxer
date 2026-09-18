@@ -17,8 +17,8 @@ root unless told otherwise.
   or `desktop/*`, depending on your harness) to operate it like a human would:
   `screenshot`, `left_click`, `type`, `key`, `scroll`, `zoom`, `mouse_move`,
   `left_click_drag`, `right_click`, `double_click`, `triple_click`,
-  `hold_key`, `wait`, `cursor_position`, `start_recording`, `stop_recording`,
-  `recording_status`.
+  `hold_key`, `wait`, `cursor_position`, `start_recording`,
+  `annotate_recording`, `stop_recording`, `recording_status`.
 - Always take a `screenshot` before your first action and after any action
   whose result you need to see. Other tools only return "OK".
 - Coordinates are pixels from the top-left corner; `[0, 0]` to `[1023, 767]`.
@@ -38,6 +38,15 @@ root unless told otherwise.
   Recordings default to `/workspace/recordings/<timestamp>.mp4`.
 - Keep recordings short and purposeful: start right before the interesting
   part, stop right after. One recording at a time.
+- Narrate while you record: right before each step call `annotate_recording`
+  with one short sentence saying what you are about to do or what the screen
+  now shows ("Submitting the form with an empty email", "The error banner
+  appears under the field"). Each caption stays on screen until the next one.
+  When the recording stops, the captions are burned into a band under the
+  desktop and saved as `<video>.vtt`; the user gets them as a clickable list of
+  steps under the player, and the result lists them with their final times, so
+  base your summary of the video on them. Aim for one caption per step, not
+  per click.
 - `stop_recording` condenses the video by default: stretches where nothing
   changes on screen (page loads, builds, you thinking) are cut to a short hold
   of 1.5 s (`hold_seconds`), so waiting does not pad the video but every state

@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { mediaKind, type PromptAttachment } from "@sessionboxer/protocol";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { captionTrackFor, mediaKind, type PromptAttachment } from "@sessionboxer/protocol";
 import { formatBytes } from "./format";
 import { rawFileUrl, type Attachment } from "./attachment-paths";
 import { DocumentView } from "./Document";
@@ -61,15 +61,15 @@ export function AttachmentCard({ sessionId, attachment }: { sessionId: string; a
           </a>
         </span>
       </figcaption>
-      {probe.state === "ready" && <Media kind={attachment.kind} src={src} path={attachment.path} name={attachment.name} />}
+      {probe.state === "ready" && <Media sessionId={sessionId} kind={attachment.kind} src={src} path={attachment.path} name={attachment.name} />}
     </figure>
   );
 }
 
-function Media({ kind, src, path, name }: { kind: Attachment["kind"]; src: string; path: string; name: string }) {
+function Media({ sessionId, kind, src, path, name }: { sessionId: string; kind: Attachment["kind"]; src: string; path: string; name: string }) {
   switch (kind) {
     case "video":
-      return <video controls preload="metadata" src={src} />;
+      return <Video src={src} track={rawFileUrl(sessionId, captionTrackFor(path))} />;
     case "audio":
       return <audio controls preload="metadata" src={src} />;
     case "image":
@@ -80,6 +80,91 @@ function Media({ kind, src, path, name }: { kind: Attachment["kind"]; src: strin
     case "mermaid":
       return <DocumentView src={src} path={path} kind={kind} />;
   }
+}
+
+interface Cue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * Player with the recording's captions, when a `.vtt` sits next to it: offered as a subtitle track
+ * (off by default, since recordings carry them burned in) and listed as clickable steps that
+ * follow playback.
+ */
+function Video({ src, track }: { src: string; track: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [cues, setCues] = useState<Cue[]>([]);
+  const [time, setTime] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCues([]);
+    fetch(track)
+      .then(async (res) => (res.ok ? parseVtt(await res.text()) : []))
+      .catch(() => [])
+      .then((c) => {
+        if (!cancelled) setCues(c);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [track]);
+
+  const seek = (t: number) => {
+    const v = ref.current;
+    if (!v) return;
+    v.currentTime = t;
+    if (v.paused) void v.play().catch(() => undefined);
+  };
+
+  return (
+    <>
+      <video ref={ref} controls preload="metadata" src={src} onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}>
+        {cues.length > 0 && <track kind="captions" src={track} srcLang="en" label="Agent captions" />}
+      </video>
+      {cues.length > 0 && (
+        <ol className="video-steps">
+          {cues.map((c, i) => (
+            <li key={i} className={time >= c.start && time < c.end ? "current" : undefined}>
+              <button type="button" onClick={() => seek(c.start)} title="Jump to this moment">
+                <span className="video-step-time">{formatTime(c.start)}</span>
+                <span>{c.text}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  );
+}
+
+/** WebVTT cues (timing line + text); the header, notes and styling blocks are skipped. */
+function parseVtt(text: string): Cue[] {
+  if (!text.startsWith("WEBVTT")) return [];
+  const cues: Cue[] = [];
+  for (const block of text.replace(/\r/g, "").split(/\n\n+/)) {
+    const lines = block.split("\n");
+    const i = lines.findIndex((l) => l.includes("-->"));
+    if (i < 0) continue;
+    const [a, b] = (lines[i] ?? "").split("-->").map((s) => vttSeconds(s.trim().split(/\s+/)[0] ?? ""));
+    const body = lines.slice(i + 1).join("\n").trim();
+    if (typeof a !== "number" || typeof b !== "number" || body === "") continue;
+    cues.push({ start: a, end: b, text: body });
+  }
+  return cues;
+}
+
+function vttSeconds(stamp: string): number | null {
+  const m = /^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$/.exec(stamp);
+  if (!m) return null;
+  return Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000;
+}
+
+function formatTime(seconds: number): string {
+  const s = Math.floor(seconds);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 /** Files the user attached to a prompt: media inline, anything else as a chip with its Sandbox path. */

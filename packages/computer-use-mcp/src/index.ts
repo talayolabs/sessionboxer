@@ -194,10 +194,14 @@ server.registerTool(
 server.registerTool(
   "stop_recording",
   {
-    description: "Stop the running desktop recording and finalize the .mp4; returns its path, duration and size.",
-    inputSchema: {},
+    description:
+      "Stop the running desktop recording and finalize the .mp4; returns its path, duration and size. By default the video is condensed: stretches where nothing changes on screen are cut to a short hold each, so waiting (page loads, builds) does not pad the video while every state stays readable.",
+    inputSchema: {
+      condense: z.boolean().default(true).describe("Collapse static stretches; false keeps the real timing (for animations or performance demos)"),
+      hold_seconds: z.number().min(0.5).max(10).default(1.5).describe("How long a static stretch stays on screen after condensing"),
+    },
   },
-  async () => okText(JSON.stringify(await stopRecording())),
+  async ({ condense, hold_seconds }) => okText(JSON.stringify(await stopRecording({ condense, holdSeconds: hold_seconds }))),
 );
 
 server.registerTool(

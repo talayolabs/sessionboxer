@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { promisify } from "node:util";
 import type { Display } from "./x11.js";
 
 const WORKSPACE = process.env.SESSIONBOXER_WORKSPACE ?? "/workspace";
@@ -11,6 +12,10 @@ const WORKSPACE = process.env.SESSIONBOXER_WORKSPACE ?? "/workspace";
 const STATE_FILE = `${process.env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer"}/recording.json`;
 const LOG_FILE = `${process.env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer"}/recording.log`;
 const STOP_TIMEOUT_MS = 20_000;
+/** The condensing pass re-encodes only the frames that changed; even long recordings take seconds. */
+const CONDENSE_TIMEOUT_MS = 180_000;
+
+const execFileAsync = promisify(execFile);
 
 interface RecordingState {
   pid: number;
@@ -26,6 +31,17 @@ export interface RecordingInfo {
 
 export interface RecordingResult extends RecordingInfo {
   bytes: number;
+  /** Wall-clock length of the recording; `seconds` is the video's length after condensing. */
+  recordedSeconds: number;
+  condensed: boolean;
+  /** Why the video was left as recorded, when condensing was asked for but did not happen. */
+  warning?: string;
+}
+
+export interface StopOptions {
+  /** Collapse stretches where nothing changes on screen to at most `holdSeconds` each. */
+  condense: boolean;
+  holdSeconds: number;
 }
 
 function readState(): RecordingState | null {
@@ -124,8 +140,11 @@ export async function startRecording(display: Display, requested: string | undef
   return { path, startedAt, seconds: 0 };
 }
 
-/** Asks ffmpeg to finish (SIGINT writes the trailer), waits for the file to be complete. */
-export async function stopRecording(): Promise<RecordingResult> {
+/**
+ * Asks ffmpeg to finish (SIGINT writes the trailer), waits for the file to be complete, then
+ * condenses it unless told otherwise.
+ */
+export async function stopRecording(opts: StopOptions): Promise<RecordingResult> {
   const s = readState();
   if (!s) throw new Error("no recording is running");
   process.kill(s.pid, "SIGINT");
@@ -139,7 +158,48 @@ export async function stopRecording(): Promise<RecordingResult> {
     await new Promise((r) => setTimeout(r, 100));
   }
   rmSync(STATE_FILE, { force: true });
-  const bytes = existsSync(s.path) ? statSync(s.path).size : 0;
-  if (bytes === 0) throw new Error(`recording produced no data at ${s.path}`);
-  return { path: s.path, startedAt: s.startedAt, seconds: elapsed(s.startedAt), bytes };
+  if (!existsSync(s.path) || statSync(s.path).size === 0) throw new Error(`recording produced no data at ${s.path}`);
+  const recordedSeconds = elapsed(s.startedAt);
+  const base = { path: s.path, startedAt: s.startedAt, recordedSeconds };
+  if (!opts.condense) return { ...base, seconds: recordedSeconds, bytes: statSync(s.path).size, condensed: false };
+  try {
+    const seconds = await condense(s.path, opts.holdSeconds);
+    return { ...base, seconds, bytes: statSync(s.path).size, condensed: true };
+  } catch (e) {
+    const warning = `left uncondensed: ${e instanceof Error ? e.message : String(e)}`;
+    return { ...base, seconds: recordedSeconds, bytes: statSync(s.path).size, condensed: false, warning };
+  }
+}
+
+/**
+ * Rewrites the video in place with every stretch of identical frames cut down to `holdSeconds`:
+ * `mpdecimate` drops frames that match the last kept one, `setpts` then re-times the survivors so
+ * each gap is at most the hold (instead of removing it, which would make states flash by), and
+ * `tpad` holds the final frame so the end result stays readable too. Returns the new duration.
+ */
+async function condense(path: string, holdSeconds: number): Promise<number> {
+  const hold = holdSeconds.toFixed(3);
+  const filter = [
+    "mpdecimate",
+    `setpts=if(eq(N\\,0)\\,0\\,PREV_OUTPTS+min(PTS-PREV_INPTS\\,${hold}/TB))`,
+    `tpad=stop_mode=clone:stop_duration=${hold}`,
+  ].join(",");
+  const tmp = `${path.slice(0, -4)}.condensing.mp4`;
+  rmSync(tmp, { force: true });
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      ["-hide_banner", "-loglevel", "error", "-i", path, "-vf", filter, "-fps_mode", "vfr", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", tmp],
+      { timeout: CONDENSE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+    );
+    const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", tmp], { timeout: 30_000 });
+    const seconds = Number.parseFloat(stdout.trim());
+    if (!Number.isFinite(seconds) || seconds <= 0 || statSync(tmp).size === 0) throw new Error("condensed video is empty");
+    renameSync(tmp, path);
+    return Math.round(seconds * 10) / 10;
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    const stderr = typeof e === "object" && e !== null && "stderr" in e && typeof e.stderr === "string" ? e.stderr.trim() : "";
+    throw new Error(stderr || (e instanceof Error ? e.message : String(e)));
+  }
 }

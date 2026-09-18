@@ -38,6 +38,11 @@ root unless told otherwise.
   Recordings default to `/workspace/recordings/<timestamp>.mp4`.
 - Keep recordings short and purposeful: start right before the interesting
   part, stop right after. One recording at a time.
+- `stop_recording` condenses the video by default: stretches where nothing
+  changes on screen (page loads, builds, you thinking) are cut to a short hold
+  of 1.5 s (`hold_seconds`), so waiting does not pad the video but every state
+  stays readable. Pass `condense: false` if the real timing matters (a
+  performance demo, an animation).
 
 ## Handing files to the user
 

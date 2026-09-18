@@ -105,7 +105,7 @@ Claude keeps the branch's memory exact (its session is forked at that point); De
 
 Ask the agent to *show* you something ("record a video of the login flow", "take a screenshot of the chart", "export the report as PDF") and it saves the file in the project folder and names it in its reply. Any such file mentioned in a reply (`/workspace/recordings/login.mp4`, `docs/report.pdf`) is shown inline in the chat: videos with a player, images and SVGs as pictures, PDFs embedded, audio with controls, each with **Open** and **Download** links. The file is streamed from the box, so the session must be running to view it (a stopped one says so; **Resume** brings it back).
 
-Recordings use the desktop MCP's `start_recording` / `stop_recording` tools (ffmpeg, H.264 .mp4, 15 fps by default, saved under `recordings/`); the agent drives the desktop as usual in between.
+Recordings use the desktop MCP's `start_recording` / `stop_recording` tools (ffmpeg, H.264 .mp4, 15 fps by default, saved under `recordings/`); the agent drives the desktop as usual in between. When a recording stops it is condensed: every stretch where nothing changes on screen (a page loading, a build, the agent thinking between clicks) is cut down to a 1.5 s hold instead of being removed, so the waiting is gone but each state stays on screen long enough to read; motion plays at real speed. The tool result reports both the recorded and the final length. The agent can pass `condense: false` when real timing matters, or change `hold_seconds`.
 
 ### Markdown, diagrams and code
 

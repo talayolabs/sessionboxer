@@ -1,0 +1,8 @@
+/* Linked from openvscode-server's workbench.html by the Dockerfile. Hides the parts of the
+   VS Code chrome that have no use inside a Sandbox: the Extensions view in the activity bar
+   (the marketplace still answers Ctrl+Shift+X) and the "remote" indicator/menu in the status bar
+   (everything here is remote). */
+.monaco-workbench .activitybar .action-item:has(> .action-label.codicon-extensions-view-icon),
+.monaco-workbench .statusbar-item#status\.host {
+  display: none !important;
+}

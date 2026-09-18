@@ -104,6 +104,14 @@ RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; ar
     && tar -xzf /tmp/openvscode-server.tar.gz -C /opt/openvscode-server --strip-components=1 \
     && rm -f /tmp/openvscode-server.tar.gz \
     && ln -s /opt/openvscode-server/bin/openvscode-server /usr/local/bin/openvscode-server
+# Sandbox defaults for the workbench (settings defaults incl. AI features off, no Get Started; a
+# stylesheet hiding the Extensions activity item and the remote indicator), linked from the
+# workbench page and served by the server's own static route.
+COPY images/sandbox/openvscode-defaults.js /opt/openvscode-server/out/vs/code/browser/workbench/sessionboxer.js
+COPY images/sandbox/openvscode-workbench.css /opt/openvscode-server/out/vs/code/browser/workbench/sessionboxer.css
+RUN html=/opt/openvscode-server/out/vs/code/browser/workbench/workbench.html \
+    && sed -i 's|</head>|\t<script src="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.js"></script>\n\t<link rel="stylesheet" href="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.css">\n\t</head>|' "$html" \
+    && grep -q sessionboxer.js "$html" && grep -q sessionboxer.css "$html"
 
 # Computer-use MCP server (compiled in stage 1).
 COPY --from=build /src/packages/computer-use-mcp/package.json /opt/sessionboxer/computer-use-mcp/
@@ -184,10 +192,6 @@ RUN curl -fsSL https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/setup.sh -o /tmp
 # so the desktop MCP is also registered at user scope.
 COPY --chown=agent:agent images/sandbox/devin-config.json /home/agent/.config/devin/config.json
 COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.config/devin/mcp_config.json
-
-# Machine-level settings for the Code pane's server: no telemetry, no welcome page, no
-# extension auto-updates. No extensions are preinstalled; users add them from Open VSX.
-COPY --chown=agent:agent images/sandbox/openvscode-machine-settings.json /home/agent/.openvscode-server/data/Machine/settings.json
 
 # 6080: noVNC/websockify, 7000: Sandbox Daemon (RPC, raw files and the Code pane's
 # VS Code). Both are reached only over the Docker network, never published on the host.

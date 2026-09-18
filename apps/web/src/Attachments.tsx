@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { mediaKind, type PromptAttachment } from "@sessionboxer/protocol";
 import { formatBytes } from "./format";
 import { rawFileUrl, type Attachment } from "./attachment-paths";
 import { DocumentView } from "./Document";
@@ -79,6 +80,30 @@ function Media({ kind, src, path, name }: { kind: Attachment["kind"]; src: strin
     case "mermaid":
       return <DocumentView src={src} path={path} kind={kind} />;
   }
+}
+
+/** Files the user attached to a prompt: media inline, anything else as a chip with its Sandbox path. */
+export function UploadedAttachments({ attachments }: { attachments: PromptAttachment[] }) {
+  const sessionId = useContext(AttachmentSession);
+  if (!sessionId || attachments.length === 0) return null;
+  return (
+    <div className="attachments uploaded">
+      {attachments.map((a) => {
+        const kind = mediaKind(a.path);
+        return kind ? (
+          <AttachmentCard key={a.path} sessionId={sessionId} attachment={{ path: a.path, name: a.name, kind }} />
+        ) : (
+          <span key={a.path} className="attach-chip ready" title={`/workspace/${a.path} \u00b7 ${a.mimeType}`}>
+            <span className="attach-name">{a.name}</span>
+            <span className="attach-meta">{formatBytes(a.size)}</span>
+            <a className="attach-meta" href={rawFileUrl(sessionId, a.path, true)} download={a.name} title="Download">
+              Download
+            </a>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 /** Embeds for every Workspace media file a message mentions (no-op outside a Session). */

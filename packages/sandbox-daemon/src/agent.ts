@@ -9,6 +9,7 @@ import {
   type InitializeRequest,
   type NewSessionRequest,
   type NewSessionResponse,
+  type PromptCapabilities,
   type SessionConfigOption,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
@@ -21,11 +22,13 @@ import type {
   ModelOption,
   OptionChoice,
   OptionValues,
+  PromptAttachment,
   SessionUpdate,
   StopReason,
 } from "@sessionboxer/protocol";
 import { caEnv } from "./ca-env.js";
 import { acpMcpServers } from "./mcp-config.js";
+import { promptBlocks } from "./prompt-blocks.js";
 
 export interface AgentConfig {
   command: string;
@@ -169,6 +172,8 @@ export class AgentManager {
   agentInfo: { name: string; version: string } | null = null;
   /** The Agent advertised ACP `session/fork` (unstable; claude-agent-acp does, devin acp does not). */
   canFork = false;
+  /** Which non-text prompt blocks the Agent takes (both claude-agent-acp and devin acp: images + embedded context). */
+  private promptCaps: PromptCapabilities = {};
   turnActive = false;
   ready = false;
   error: string | null = null;
@@ -540,6 +545,7 @@ export class AgentManager {
         ? { name: init.agentInfo.name, version: init.agentInfo.version ?? "" }
         : null;
       this.canFork = Boolean(init.agentCapabilities?.sessionCapabilities?.fork);
+      this.promptCaps = init.agentCapabilities?.promptCapabilities ?? {};
       const mcpServers = acpMcpServers(this.cfg.mcpCommand, userServers);
 
       let loaded = false;
@@ -621,7 +627,7 @@ export class AgentManager {
     this.cfg.log(`switched to mode ${bypass.id}`);
   }
 
-  async prompt(text: string): Promise<void> {
+  async prompt(text: string, attachments: PromptAttachment[] = []): Promise<void> {
     if (this.turnActive) throw new Error("a turn is already active");
     if (this.branching) throw new Error("the conversation is being branched; retry in a moment");
     this.turnActive = true;
@@ -629,11 +635,14 @@ export class AgentManager {
     try {
       await this.ensureStarted();
       if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
-      text = this.firstPromptText(text);
+      const built = await promptBlocks(text, attachments, this.cfg.cwd, this.promptCaps, this.cfg.log);
+      if (attachments.length > 0) {
+        this.cfg.log(`prompt carries ${attachments.length} attachment(s): ${built.blocks.map((b) => b.type).join(", ") || "none"} sent inline`);
+      }
       this.markPrompted(this.acpSessionId);
       const result = await this.conn.agent.request("session/prompt", {
         sessionId: this.acpSessionId,
-        prompt: [{ type: "text", text }],
+        prompt: [{ type: "text", text: this.firstPromptText(built.text) }, ...built.blocks],
       });
       this.events.onTurnEnded(result.stopReason);
     } catch (e) {

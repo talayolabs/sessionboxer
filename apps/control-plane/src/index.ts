@@ -17,6 +17,8 @@ import {
   RevertRequest,
   SwitchBranchRequest,
   FS_RAW_PATH,
+  FS_UPLOAD_PATH,
+  PromptAttachment,
   SyncRequest,
   PromptRequest,
   PtyOpenParams,
@@ -150,7 +152,7 @@ api.get("/sessions/:id/events", (c) => {
 });
 api.post("/sessions/:id/prompt", async (c) => {
   const req = PromptRequest.parse(await c.req.json());
-  await sessions.prompt(c.req.param("id"), req.text);
+  await sessions.prompt(c.req.param("id"), req);
   return c.json({ ok: true }, 202);
 });
 api.post("/sessions/:id/ask", async (c) => {
@@ -233,6 +235,24 @@ api.on(["GET", "HEAD"], "/sessions/:id/fs/raw", async (c) => {
     if (v) passed.set(name, v);
   }
   return new Response(upstream.body, { status: upstream.status, headers: passed });
+});
+
+// A file for the next prompt: bytes in the body, stored by the Daemon under the Workspace's
+// uploads folder; answers with the `PromptAttachment` to put on `POST /sessions/:id/prompt`.
+api.put("/sessions/:id/uploads", async (c) => {
+  const base = await sessions.daemonHttpUrl(c.req.param("id"));
+  const target = new URL(FS_UPLOAD_PATH, base);
+  target.searchParams.set("name", c.req.query("name") ?? "");
+  const headers: Record<string, string> = {};
+  for (const name of ["content-type", "content-length"]) {
+    const v = c.req.header(name);
+    if (v) headers[name] = v;
+  }
+  const upstream = await fetch(target, { method: "PUT", headers, body: c.req.raw.body, ...{ duplex: "half" as const } }).catch(() => {
+    throw new HttpError(503, "The Sandbox is still starting; retry the upload in a moment.");
+  });
+  if (!upstream.ok) return c.json({ error: (await upstream.text()) || `upload failed (${upstream.status})` }, upstream.status === 413 || upstream.status === 400 ? upstream.status : 502);
+  return c.json(PromptAttachment.parse(await upstream.json()), 201);
 });
 
 // Terminals: shells in the Workspace, owned by the Daemon. The WebSocket carries

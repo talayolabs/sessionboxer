@@ -191,7 +191,7 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .attachment-actions a:hover { text-decoration: underline; }
 .attachment video, .attachment img, .attachment iframe, .attachment audio { display: block; width: 100%; background: #000; border-top: 1px solid var(--border); }
 .attachment video { max-height: 480px; }
-.attachment img { background: transparent; object-fit: contain; max-height: 480px; }
+.attachment img { background: transparent; object-fit: contain; width: auto; max-width: 100%; max-height: 480px; }
 .attachment audio { background: transparent; padding: 6px; }
 .attachment iframe { height: 520px; border: 0; border-top: 1px solid var(--border); background: #fff; }
 
@@ -207,6 +207,28 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .composer textarea { width: 100%; resize: none; line-height: 1.45; }
 .composer.sized textarea, .composer.zen textarea { height: 100%; flex: 1; }
 .composer.zen textarea, .composer.zen .rich-editor { font-size: 16px; }
+.composer.dragging .composer-body { position: relative; }
+.composer.dragging textarea, .composer.dragging .rich-editor { border-color: var(--accent); }
+.drop-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
+  border: 2px dashed var(--accent); border-radius: 6px; background: rgba(0, 0, 0, 0.55); color: var(--text); font-size: 14px; }
+
+/* Files attached to the next prompt (composer) and to a sent one (transcript). */
+.attach-list { flex: none; list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.attach-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 320px; padding: 3px 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-size: 12px; overflow: hidden; }
+.attach-chip.error { border-color: var(--error); }
+.attach-chip.ready { border-color: var(--border); }
+.attach-bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); opacity: 0.2; transition: width 0.2s; }
+.attach-name { position: relative; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.attach-meta { position: relative; color: var(--muted); white-space: nowrap; }
+.attach-chip.error .attach-meta { color: var(--error); }
+a.attach-meta { color: var(--accent); text-decoration: none; }
+a.attach-meta:hover { text-decoration: underline; }
+.attach-remove { position: relative; padding: 0 4px; border: 0; background: none; color: var(--muted); font-size: 14px; line-height: 1; }
+.attach-remove:hover { color: var(--text); border: 0; }
+.attachments.uploaded { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+.attachments.uploaded .attachment { flex: 1 1 100%; }
+.msg-user .attachments.uploaded:first-child { margin-top: 0; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.primary:hover { filter: brightness(1.1); }
 button.primary.stop { background: var(--error); border-color: var(--error); }

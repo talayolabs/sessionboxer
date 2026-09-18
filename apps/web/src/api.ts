@@ -14,6 +14,8 @@ import type {
   ProviderOptions,
   PtyInfo,
   PtyListResult,
+  PromptAttachment,
+  PromptRequest,
   PublicSettings,
   RevertRequest,
   SavedMessage,
@@ -68,8 +70,36 @@ export const api = {
     request<Session>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteSession: (id: string) => request<void>(`/sessions/${id}`, { method: "DELETE" }),
   events: (id: string, after = 0) => request<SessionEvent[]>(`/sessions/${id}/events?after=${after}`),
-  prompt: (id: string, text: string) =>
-    request<{ ok: true }>(`/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify({ text }) }),
+  prompt: (id: string, req: PromptRequest) =>
+    request<{ ok: true }>(`/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify(req) }),
+  /** Stores a file in the Session's Workspace for the next prompt; `onProgress` gets 0..1. */
+  upload: (id: string, file: File, onProgress: (frac: number) => void, signal: AbortSignal): Promise<PromptAttachment> =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", `/api/sessions/${id}/uploads?name=${encodeURIComponent(file.name)}`);
+      xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+      xhr.onerror = () => reject(new Error("upload failed: network error"));
+      xhr.onabort = () => reject(new DOMException("upload cancelled", "AbortError"));
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(JSON.parse(xhr.responseText) as PromptAttachment);
+          return;
+        }
+        let message = `${xhr.status} ${xhr.statusText}`;
+        try {
+          const body = JSON.parse(xhr.responseText) as { error?: string };
+          if (body.error) message = body.error;
+        } catch {
+          // non-JSON error body
+        }
+        reject(new Error(message));
+      };
+      signal.addEventListener("abort", () => xhr.abort());
+      xhr.send(file);
+    }),
   ask: (id: string, text: string) => request<AskResult>(`/sessions/${id}/ask`, { method: "POST", body: JSON.stringify({ text }) }),
   cancel: (id: string) => request<{ ok: true }>(`/sessions/${id}/cancel`, { method: "POST" }),
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),

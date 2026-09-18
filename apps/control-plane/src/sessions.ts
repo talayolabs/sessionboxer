@@ -31,10 +31,12 @@ import {
   type Branch,
   type CreateSessionRequest,
   type DaemonEvent,
+  type DaemonPromptParams,
   type DeleteSnapshotsResult,
   type DockerMode,
   type ForkSessionRequest,
   type OptionValues,
+  type PromptRequest,
   type ProviderModels,
   type ProviderOptions,
   type SavedMessage,
@@ -85,7 +87,7 @@ export class SessionManager {
   private readonly clients = new Map<string, DaemonClient>();
   private readonly terminalSinks = new Map<string, Set<TerminalSink>>();
   private readonly stopping = new Set<string>();
-  private readonly pendingPrompts = new Map<string, string>();
+  private readonly pendingPrompts = new Map<string, PromptRequest>();
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
   /** Per-Session chain so Snapshots of one Sandbox never overlap. */
   private readonly snapshotChains = new Map<string, Promise<unknown>>();
@@ -398,7 +400,7 @@ export class SessionManager {
     };
     this.db.insertSession(session);
     this.broadcast({ type: "session", session });
-    if (req.prompt) this.pendingPrompts.set(id, req.prompt);
+    if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
 
     void this.provision(session, settings).catch((e: unknown) => {
       this.log(`provision ${id} failed: ${String(e)}`);
@@ -475,7 +477,7 @@ export class SessionManager {
     for (const text of req.savedMessages) this.db.insertSavedMessage(id, text);
     this.broadcast({ type: "session", session });
     this.broadcast({ type: "event", event: marker });
-    if (req.prompt) this.pendingPrompts.set(id, req.prompt);
+    if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
 
     void this.provision(session, settings, snapshot.imageId).catch((e: unknown) => {
       this.log(`provision fork ${id} failed: ${String(e)}`);
@@ -581,7 +583,7 @@ export class SessionManager {
     }
   }
 
-  async prompt(id: string, text: string): Promise<void> {
+  async prompt(id: string, req: PromptRequest): Promise<void> {
     const s = this.get(id);
     if (s.status === "stopped") throw new HttpError(409, "Session is stopped; resume it first.");
     if (s.status === "running") throw new HttpError(409, "The Agent is still working on the previous prompt.");
@@ -589,12 +591,13 @@ export class SessionManager {
     const client = this.clients.get(id);
     if (!client?.connected) {
       if (s.status === "creating") {
-        this.pendingPrompts.set(id, text);
+        this.pendingPrompts.set(id, req);
         return;
       }
       throw new HttpError(503, "Sandbox Daemon is not connected yet; retry in a moment.");
     }
-    await client.request(DAEMON_METHODS.prompt, { text });
+    const params: DaemonPromptParams = req.attachments?.length ? { text: req.text, attachments: req.attachments } : { text: req.text };
+    await client.request(DAEMON_METHODS.prompt, params);
     this.setStatus(id, "running");
   }
 
@@ -730,7 +733,7 @@ export class SessionManager {
     this.get(id);
     const saved = this.db.getSavedMessage(id, messageId);
     if (!saved) throw new HttpError(404, `saved message ${messageId} not found`);
-    await this.prompt(id, saved.text);
+    await this.prompt(id, { text: saved.text });
     this.db.deleteSavedMessage(id, messageId);
     this.broadcastSaved(id);
   }
@@ -761,7 +764,7 @@ export class SessionManager {
       return;
     }
     try {
-      await this.prompt(id, next.text);
+      await this.prompt(id, { text: next.text });
     } catch (e) {
       this.log(`queue ${id} paused: ${e instanceof Error ? e.message : String(e)}`);
       this.update(id, { queueRunning: false });

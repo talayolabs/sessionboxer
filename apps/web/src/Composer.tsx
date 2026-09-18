@@ -6,6 +6,8 @@ import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
 import { Markdown } from "@tiptap/markdown";
 import { lowlight } from "./highlight";
+import { formatBytes } from "./format";
+import type { PendingAttachments } from "./attachments-pending";
 
 export type ComposerMode = "raw" | "rich";
 
@@ -36,6 +38,8 @@ export type ComposerProps = {
   footerStart?: ReactNode;
   /** Enables the "Translate to English" tooltip on selected text; resolves with the replacement. */
   onTranslate?: (text: string) => Promise<string>;
+  /** Files for the next message (attach button, drag & drop, paste); uploaded into the Sandbox as they are picked. */
+  attachments: PendingAttachments;
 };
 
 /** A non-empty selection in the active editor and where its first line sits on screen. */
@@ -135,7 +139,14 @@ const ICONS = {
   taskList: "M2 3.5l1.5 1.5L6 2.5M9 4h5M2 9.5l1.5 1.5L6 8.5M9 10h5",
   zen: "M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4",
   exitZen: "M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4",
+  attach: "M10.5 4.5l-4.8 4.8a1.9 1.9 0 0 0 2.7 2.7l5.3-5.3a3.1 3.1 0 0 0-4.4-4.4L3.6 8a4.3 4.3 0 0 0 6.1 6.1L13 10.8",
 };
+
+/** Files carried by a drag or a paste (`null` when there are none, e.g. plain text). */
+function droppedFiles(transfer: DataTransfer | null): File[] | null {
+  const files = transfer?.files;
+  return files && files.length > 0 ? [...files] : null;
+}
 
 const TOOLS: Array<{ id: ToolAction; label: ReactNode; title: string; className?: string }> = [
   { id: "heading", label: "H", title: "Heading", className: "tb-bold" },
@@ -156,8 +167,30 @@ function isSendKey(e: KeyboardEvent | globalThis.KeyboardEvent): boolean {
 }
 
 export function Composer(props: ComposerProps) {
-  const { value, onChange, onSend, onSave, running = false, onStop, disabled, placeholder, mode, onModeChange, zen, onZenChange, heightFrac, onHeightFracChange, chatRef, above, footerStart, onTranslate } =
-    props;
+  const {
+    value,
+    onChange,
+    onSend,
+    onSave,
+    running = false,
+    onStop,
+    disabled,
+    placeholder,
+    mode,
+    onModeChange,
+    zen,
+    onZenChange,
+    heightFrac,
+    onHeightFracChange,
+    chatRef,
+    above,
+    footerStart,
+    onTranslate,
+    attachments,
+  } = props;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const addFiles = attachments.add;
   const submit = useCallback(() => {
     if (!running) onSend();
   }, [running, onSend]);
@@ -368,7 +401,9 @@ export function Composer(props: ComposerProps) {
   };
 
   const hasText = value.trim().length > 0;
-  const canSend = !disabled && hasText && !running;
+  const files = attachments.items;
+  const filesSettled = files.length === 0 || attachments.ready;
+  const canSend = !disabled && !running && (hasText || attachments.ready) && filesSettled;
   const sized = heightFrac !== null && !zen;
   const onSaveKey = (e: KeyboardEvent): boolean => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
@@ -392,16 +427,45 @@ export function Composer(props: ComposerProps) {
         />
       )}
       <form
-        className={`composer${zen ? " zen" : ""}${sized ? " sized" : ""}`}
+        className={`composer${zen ? " zen" : ""}${sized ? " sized" : ""}${dragging ? " dragging" : ""}`}
         style={sized ? { height: `${heightFrac * 100}%` } : undefined}
         onSubmit={(e) => {
           e.preventDefault();
           submit();
         }}
         onKeyDown={onSaveKey}
+        onDragOver={(e) => {
+          if (disabled || !e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          if (!dragging) setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={(e) => {
+          setDragging(false);
+          const dropped = droppedFiles(e.dataTransfer);
+          if (!dropped || disabled) return;
+          e.preventDefault();
+          addFiles(dropped);
+        }}
       >
         {above}
         <div className="toolbar" role="toolbar" aria-label="Formatting">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button type="button" className="tb" title="Attach files (or drop / paste them here)" disabled={disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => fileInputRef.current?.click()}>
+            <Icon d={ICONS.attach} />
+          </button>
           {TOOLS.map((t) => (
             <button
               key={t.id}
@@ -440,6 +504,12 @@ export function Composer(props: ComposerProps) {
               onSelect={trackRawSelection}
               onScroll={trackRawSelection}
               onBlur={dismiss}
+              onPaste={(e) => {
+                const pasted = droppedFiles(e.clipboardData);
+                if (!pasted) return;
+                e.preventDefault();
+                addFiles(pasted);
+              }}
               onKeyDown={(e) => {
                 if (isSendKey(e) || (e.key === "Enter" && !e.shiftKey && !zen)) {
                   e.preventDefault();
@@ -454,9 +524,26 @@ export function Composer(props: ComposerProps) {
               }}
             />
           ) : (
-            <RichEditor value={value} onChange={onChange} onSend={submit} disabled={disabled} placeholder={placeholder} onReady={setEditor} />
+            <RichEditor value={value} onChange={onChange} onSend={submit} onFiles={addFiles} disabled={disabled} placeholder={placeholder} onReady={setEditor} />
           )}
+          {dragging && <div className="drop-hint">Drop files to attach them</div>}
         </div>
+        {files.length > 0 && (
+          <ul className="attach-list" aria-label="Attached files">
+            {files.map((f) => (
+              <li key={f.id} className={`attach-chip ${f.state.kind}`} title={f.state.kind === "error" ? f.state.message : `${f.mimeType} \u00b7 ${formatBytes(f.size)}`}>
+                {f.state.kind === "uploading" && <span className="attach-bar" style={{ width: `${Math.round(f.state.progress * 100)}%` }} />}
+                <span className="attach-name">{f.name}</span>
+                <span className="attach-meta">
+                  {f.state.kind === "uploading" ? `${Math.round(f.state.progress * 100)}%` : f.state.kind === "error" ? f.state.message : formatBytes(f.size)}
+                </span>
+                <button type="button" className="attach-remove" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => attachments.remove(f.id)}>
+                  {"\u00d7"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {selection && onTranslate && !disabled && (
           <div
             className="selection-tip"
@@ -482,7 +569,15 @@ export function Composer(props: ComposerProps) {
         <div className="composer-footer">
           {footerStart}
           <span className="muted hint">
-            {running ? "Agent is working; the message waits here" : mode === "raw" && !zen ? "Enter to send, Shift+Enter for a new line" : "Ctrl+Enter to send"}
+            {running
+              ? "Agent is working; the message waits here"
+              : attachments.uploading
+                ? "Uploading files into the Sandbox\u2026"
+                : files.length > 0 && !attachments.ready
+                  ? "Remove the failed files to send"
+                  : mode === "raw" && !zen
+                    ? "Enter to send, Shift+Enter for a new line"
+                    : "Ctrl+Enter to send"}
             {" \u00b7 "}Markdown
           </span>
           <span className="spacer" />
@@ -508,6 +603,7 @@ function RichEditor({
   value,
   onChange,
   onSend,
+  onFiles,
   disabled,
   placeholder,
   onReady,
@@ -515,6 +611,7 @@ function RichEditor({
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
+  onFiles: (files: File[]) => void;
   disabled: boolean;
   placeholder: string;
   onReady: (editor: Editor | null) => void;
@@ -522,6 +619,8 @@ function RichEditor({
   const lastEmitted = useRef(value);
   const sendRef = useRef(onSend);
   sendRef.current = onSend;
+  const filesRef = useRef(onFiles);
+  filesRef.current = onFiles;
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ link: { openOnClick: false, autolink: true }, codeBlock: false }),
@@ -544,6 +643,15 @@ function RichEditor({
         }
         return false;
       },
+      // Files go to the attachment list, not into the document (the form handles drops).
+      handlePaste: (_view, event) => {
+        const pasted = droppedFiles(event.clipboardData);
+        if (!pasted) return false;
+        event.preventDefault();
+        filesRef.current(pasted);
+        return true;
+      },
+      handleDrop: (_view, event) => droppedFiles(event.dataTransfer) !== null,
     },
     onUpdate: ({ editor: ed }) => {
       const md = ed.isEmpty ? "" : ed.getMarkdown();

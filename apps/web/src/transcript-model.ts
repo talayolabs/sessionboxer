@@ -1,5 +1,6 @@
 import type {
   ContentBlock,
+  PromptAttachment,
   SessionEvent,
   SessionStatus,
   Snapshot,
@@ -9,7 +10,7 @@ import type {
 } from "@sessionboxer/protocol";
 
 export type TranscriptItem =
-  | { kind: "user"; key: string; text: string }
+  | { kind: "user"; key: string; text: string; attachments?: PromptAttachment[] }
   | { kind: "agent"; key: string; text: string }
   | { kind: "thought"; key: string; text: string }
   | {
@@ -111,7 +112,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
     switch (body.type) {
       case "user_prompt":
         markContinued(items);
-        items.push({ kind: "user", key, text: body.text });
+        items.push(body.attachments?.length ? { kind: "user", key, text: body.text, attachments: body.attachments } : { kind: "user", key, text: body.text });
         break;
       case "turn_ended":
         items.push({ kind: "turn_ended", key, stopReason: body.stopReason, seq: ev.seq, branchId: ev.branchId, ts: ev.ts, tail: true });

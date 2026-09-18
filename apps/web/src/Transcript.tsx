@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
+import { UploadedAttachments } from "./Attachments";
 import { CopyableMessage } from "./CopyMessage";
 import { FileLink } from "./FileLink";
 import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
@@ -273,7 +274,8 @@ function Item({
     case "user":
       return (
         <CopyableMessage className="msg-user" text={item.text}>
-          <Markdown text={item.text} />
+          {item.text.trim() !== "" && <Markdown text={item.text} />}
+          {item.attachments && <UploadedAttachments attachments={item.attachments} />}
         </CopyableMessage>
       );
     case "agent":

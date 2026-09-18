@@ -35,6 +35,7 @@ import { CodeServer } from "./code-server.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { DevinMcpConfig } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
+import { Uploads } from "./uploads.js";
 import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 import { serveTar, workspaceManifest } from "./workspace-sync.js";
@@ -129,6 +130,7 @@ const terminals = new Terminals(
 );
 
 const codeServer = new CodeServer(workspace, log);
+const uploads = new Uploads(workspace, log);
 
 function status(): DaemonStatus {
   return {
@@ -166,8 +168,8 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.prompt: {
       const p = DaemonPromptParams.parse(params);
       if (agent.turnActive) throw new Error("a turn is already active");
-      emit({ type: "user_prompt", text: p.text });
-      void agent.prompt(p.text);
+      emit(p.attachments?.length ? { type: "user_prompt", text: p.text, attachments: p.attachments } : { type: "user_prompt", text: p.text });
+      void agent.prompt(p.text, p.attachments ?? []);
       return { accepted: true };
     }
     case DAEMON_METHODS.ask: {
@@ -246,6 +248,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
 const http = createServer((req, res) => {
   if (codeServer.handleHttp(req, res)) return;
   if (serveTar(workspace, req, res, log)) return;
+  if (uploads.handle(req, res)) return;
   serveRawFile(workspaceFs, req, res).catch((e: unknown) => {
     log(`raw file error: ${String(e)}`);
     if (!res.headersSent) res.writeHead(500);

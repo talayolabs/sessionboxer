@@ -8,8 +8,8 @@ import { FS_TAR_PATH, FsTarRequest, type SyncFile, type SyncManifest } from "@se
 
 const execFileAsync = promisify(execFile);
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
-/** Never part of a manifest: `.git` is not synced, the rest is build output nobody wants copied back. */
-const SKIPPED_DIRS = new Set([".git", "node_modules", ".venv", "__pycache__"]);
+/** Never part of a manifest: `.git` is not synced, `.sessionboxer` holds prompt uploads, the rest is build output nobody wants copied back. */
+const SKIPPED_DIRS = new Set([".git", ".sessionboxer", "node_modules", ".venv", "__pycache__"]);
 
 /**
  * Describes the Workspace for "Pull changes to my folder": every file with its hash, listed
@@ -37,7 +37,7 @@ async function gitListing(root: string): Promise<string[] | null> {
   const { stdout } = await execFileAsync("git", ["-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
     maxBuffer: 256 * 1024 * 1024,
   });
-  return stdout.split("\0").filter((p) => p.length > 0 && p !== ".git" && !p.startsWith(".git/"));
+  return stdout.split("\0").filter((p) => p.length > 0 && p !== ".git" && !p.startsWith(".git/") && !p.startsWith(".sessionboxer/"));
 }
 
 async function walk(root: string): Promise<string[]> {

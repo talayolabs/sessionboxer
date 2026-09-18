@@ -356,9 +356,28 @@ export const UpdateSessionRequest = z.object({
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequest>;
 
-export const PromptRequest = z.object({
-  text: z.string().min(1),
+/** Where files attached to prompts land in the Workspace (`<UPLOADS_DIR>/<random>/<name>`). */
+export const UPLOADS_DIR = ".sessionboxer/uploads";
+
+/** A file the user attached to a prompt, uploaded into the Sandbox's Workspace. */
+export const PromptAttachment = z.object({
+  /** Workspace-relative path (`.sessionboxer/uploads/ab12cd34/photo.png`). */
+  path: z.string().min(1),
+  name: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  mimeType: z.string().min(1),
 });
+export type PromptAttachment = z.infer<typeof PromptAttachment>;
+
+export const MAX_PROMPT_ATTACHMENTS = 20;
+
+/** Text, attached files, or both; the Daemon adds the files' paths to the text it sends the Agent. */
+export const PromptRequest = z
+  .object({
+    text: z.string(),
+    attachments: z.array(PromptAttachment).max(MAX_PROMPT_ATTACHMENTS).optional(),
+  })
+  .refine((r) => r.text.trim().length > 0 || (r.attachments?.length ?? 0) > 0, { message: "a prompt needs text or an attachment" });
 export type PromptRequest = z.infer<typeof PromptRequest>;
 
 /** One-shot question to the Session's Provider in a fresh, context-free ACP session; not part of the transcript. */
@@ -601,7 +620,7 @@ export type ConnectorFlow = z.infer<typeof ConnectorFlow>;
 // ---------------------------------------------------------------------------
 
 export type SessionEventBody =
-  | { type: "user_prompt"; text: string }
+  | { type: "user_prompt"; text: string; attachments?: PromptAttachment[] }
   | { type: "update"; update: SessionUpdate }
   | { type: "turn_ended"; stopReason: StopReason }
   | { type: "agent_error"; message: string }
@@ -646,6 +665,12 @@ export type SessionBroadcast =
 // stream a video with Range requests: Daemon `GET /fs/raw?path=…`, proxied by the Control Plane
 // as `GET /api/sessions/:id/fs/raw?path=…[&download=1]`.
 export const FS_RAW_PATH = "/fs/raw";
+/**
+ * `PUT /fs/upload?name=<file name>` with the bytes as the body (and their `Content-Type`) stores a
+ * prompt attachment under `UPLOADS_DIR` and answers with the `PromptAttachment`.
+ */
+export const FS_UPLOAD_PATH = "/fs/upload";
+export const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Pulling the Workspace back into the host folder of a "copy" Session. Both sides
@@ -1015,7 +1040,7 @@ export type DaemonSessionSwitchParams = z.infer<typeof DaemonSessionSwitchParams
 export const DaemonSessionSwitchResult = z.object({ acpSessionId: z.string() });
 export type DaemonSessionSwitchResult = z.infer<typeof DaemonSessionSwitchResult>;
 
-export const DaemonPromptParams = z.object({ text: z.string().min(1) });
+export const DaemonPromptParams = PromptRequest;
 export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;
 
 /** The turn runs asynchronously; its outcome arrives as `turn_ended`/`agent_error` events. */

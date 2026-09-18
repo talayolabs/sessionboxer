@@ -26,6 +26,7 @@ import {
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
 import { AttachmentSession } from "./Attachments";
+import { usePendingAttachments } from "./attachments-pending";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
@@ -579,11 +580,23 @@ function SessionView({
   }, [composerHeight]);
 
   const canPrompt = session.status === "idle" || session.status === "running";
+  const attachError = useCallback((message: string) => void run(() => Promise.reject(new Error(message))), [run]);
+  const attachments = usePendingAttachments(session.id, canPrompt, attachError);
   const send = () => {
     const t = text.trim();
-    if (!t || !canPrompt) return;
+    const files = attachments.attachments;
+    if (!canPrompt || (!t && files.length === 0)) return;
+    if (attachments.items.length !== files.length) return;
     setText("");
-    void run(() => api.prompt(session.id, t));
+    void run(async () => {
+      try {
+        await api.prompt(session.id, files.length > 0 ? { text: t, attachments: files } : { text: t });
+      } catch (e) {
+        setText((cur) => (cur.trim() === "" ? text : cur));
+        throw e;
+      }
+      attachments.clear();
+    });
   };
   const saveForLater = () => {
     const t = text.trim();
@@ -845,6 +858,7 @@ function SessionView({
             onHeightFracChange={setComposerHeight}
             chatRef={chatRef}
             onTranslate={translateToEnglish}
+            attachments={attachments}
           />
         </div>
         {pane === "desktop" && <Desktop session={session} />}

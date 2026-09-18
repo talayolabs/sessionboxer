@@ -1,0 +1,30 @@
+# Prompt attachments: every file lands in the Sandbox, and those the agent accepts also ride in the prompt
+
+Until now the only way to give the agent a file was to type its contents or to put it somewhere the box could fetch it. The user asked for uploads on the prompt, with a twist worth keeping: files the model can take as input (images, text) should go to it directly, everything else should at least be reachable by path, so the agent can use it with a tool or a shell script.
+
+## Where uploads go
+
+- **Into the Workspace of the Session's box**, under `.sessionboxer/uploads/<8 hex>/<name>`, written by the Daemon (`PUT /fs/upload?name=` on the Daemon port, proxied as `PUT /api/sessions/:id/uploads` by the Control Plane, body streamed through both, never buffered: the size cap of 512 MiB is enforced while counting bytes and a partial file is removed on failure). One random directory per upload keeps two `screenshot.png` apart and keeps the original name, which is what the agent sees in the prompt. The name is reduced to a basename (separators and control characters stripped, `.`/`..`/empty refused), so `../../etc/passwd` becomes `passwd` inside the uploads folder. Not the Control Plane's disk and not a volume: the file has to be where the agent runs, and it is then part of the box like anything else (snapshots carry it, forks get it).
+- **Excluded from Git and from host sync**: the Daemon appends `.sessionboxer/` to `.git/info/exclude` when the Workspace is a repository (not `.gitignore`: that is the user's file), the manifest that *Pull to folder* uses skips the folder, and so does the host-copy baseline. The folder is transient scratch; removing a chip before sending does not delete the file (the next Sandbox process may still be writing the neighbour), so the README tells the user the folder is theirs to clean.
+- **Only for live boxes**: a stopped or still-starting Sandbox answers 409/503 ("still starting; retry in a moment"), which the Composer shows on the chip.
+
+## What the model gets
+
+`PromptRequest` carries `attachments: PromptAttachment[]` (`{ path, name, size, mimeType }`, the metadata the upload returned; at most 20). The Daemon's `promptBlocks` turns them into the ACP `session/prompt`:
+
+- **Always a path.** The user's text is followed by "The user attached these files (saved in the Sandbox; use the paths with your tools):" and one line per file with its absolute path, MIME type and size. The path is what makes any file useful: a `.xlsx` the model cannot read is still one `python3 -c` away.
+- **Inline when the agent says it can take it.** ACP `promptCapabilities` from `initialize` decide: `image: true` → PNG/JPEG/GIF/WebP up to 5 MiB are added as `{ type: "image", data: base64, mimeType }` blocks; `embeddedContext: true` → non-image files up to 64 KiB whose bytes are valid UTF-8 without NUL (the MIME type a browser reports for `.env` or `Makefile` is unreliable, the bytes are not) are added as `{ type: "resource", resource: { uri: "file://…", mimeType, text } }` blocks. The path line then says "shown to you below" / "contents included below" so the model does not read the file again. Claude Code (`claude-agent-acp`) maps both to Anthropic image and document/context blocks; Devin's ACP advertises both too. `audio` is not inlined (neither agent takes it). Anything else, larger, undecodable, or whose path resolves outside the Workspace, is path-only; failures to read fall back to path-only with a Daemon log line, never a failed turn.
+- **Standing instructions unaffected**: the Devin first-prompt prefix (ADR-0022) wraps the generated text, the extra blocks follow.
+
+The `user_prompt` event stores the attachment metadata, so the transcript shows the message with its files: images/videos/PDFs as the same inline cards the agent's own files use (streamed from the box), anything else as a chip with a **Download** link (the chip's tooltip has the path in the box).
+
+## Composer
+
+Files arrive through the 📎 button (`<input type=file multiple>`), a drop on the form (the ProseMirror drop handler claims file drops so the editor does not insert them, and lets the form's handler add them), or a paste (`clipboardData.files`, so a screenshot in the clipboard works in both the raw and rich editors). Each file starts uploading at once (`XMLHttpRequest`, for upload progress) and shows as a chip with a progress bar, then its size, or its error. Sending waits until every chip is *ready*; a message may be attachments only. The text stays in the box while uploads run and comes back if the prompt itself fails, and the chips are cleared only when the prompt was accepted. Switching Session drops pending chips (the files are in that Session's box, not the new one).
+
+## Consequences
+
+- Verified with Claude Code and Devin: a prompt with a text file, a binary and a 1×1 PNG had the passphrase from the text file, the colour of the image (from the inline block: Claude's only tool calls were for the binary) and `stat`/`od` output of the binary in the reply; the Daemon logged `resource, image sent inline`; `../../etc/passwd` as the name stored `passwd` inside the uploads folder; Stop → Resume kept the files and the next prompt worked. In the browser: picker, paste and drop produce chips, removal, an attachments+text send, the image card and the download chip on the message.
+- Path-only fallback was verified against `promptBlocks` with empty capabilities (both agents currently advertise everything we inline, so no live provider exercises it).
+- Saved-for-later messages and the play queue carry text only: a message saved while chips are attached does not remember them (the Composer only offers Save for later on text). Extending `saved_messages` with attachments is straightforward if wanted.
+- Right after Create or Resume the Daemon's HTTP port can be a second away; the Composer shows the 503 text on the chip and the user retries. Queuing uploads in the Control Plane until the Daemon connects was left out (the bytes would have to be held on the host).

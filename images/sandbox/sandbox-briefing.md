@@ -65,3 +65,7 @@ root unless told otherwise.
 
 git, gh, node 22, npm, python3, pip, build-essential, curl, jq, xdotool,
 imagemagick, ffmpeg, firefox-esr, xfce4-terminal, docker (CLI, compose, buildx).
+
+The user may have VS Code open on `/workspace` in their browser (served by
+`openvscode-server` from this Sandbox); edits from either side show up on the
+other. Do not start, stop or reconfigure `openvscode-server` yourself.

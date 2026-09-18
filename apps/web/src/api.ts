@@ -1,5 +1,6 @@
 import type {
   AskResult,
+  CodeServerStatus,
   ConnectorFlow,
   GhCliStatus,
   ConnectorKind,
@@ -103,7 +104,15 @@ export const api = {
     request<PtyInfo>(`/sessions/${id}/terminals`, { method: "POST", body: JSON.stringify({ cols, rows }) }),
   closeTerminal: (id: string, ptyId: string) =>
     request<void>(`/sessions/${id}/terminals/${ptyId}`, { method: "DELETE" }),
+  codeStart: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "POST" }),
+  codeStatus: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`),
+  codeStop: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "DELETE" }),
 };
+
+/** Same-origin URL of a Session's VS Code (the Code pane's iframe), proxied by the Control Plane. */
+export function codeUrl(sessionId: string): string {
+  return `/api/sessions/${sessionId}/code/`;
+}
 
 export function terminalSocketUrl(sessionId: string, ptyId: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";

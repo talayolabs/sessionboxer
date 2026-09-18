@@ -15,7 +15,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a fu
 - **One box per session.** Every conversation runs in its own container with its own copy of the code. Nothing the agent does touches your machine; delete the session and it is all gone.
 - **A real desktop.** The container runs a Linux desktop with Firefox. The agent can take screenshots, click and type, so it can test web apps, read documentation or use any GUI tool. You see the same screen in the browser and can take the controls at any time.
 - **Agents that don't ask.** Inside the box the agent runs with all permissions granted, so it doesn't stop every few seconds to ask whether it may run a command. The container is the safety boundary.
-- **Files and terminals.** A file tree with an editor that follows the agent's changes live, and as many shells in the box as you want.
+- **Files, VS Code and terminals.** A file tree with an editor that follows the agent's changes live, full VS Code running inside the box (with the Claude Code extension), and as many shells as you want.
 - **Videos and documents in the chat.** Ask for a screen recording of a feature and the agent records the box's desktop to an .mp4 you can play right there; images, SVGs and PDFs it produces show up the same way, with a download button.
 - **Stop and resume.** Stop a session to free CPU and memory; resume it later with the conversation, files and installed tools exactly where they were.
 - **Docker inside the box** (optional). Agents can run `docker`, `docker compose` and `docker build` inside their own container.
@@ -115,6 +115,8 @@ Replies and your prompts render as Markdown. Fenced code with a language (```ts,
 
 **Files** lists the project folder in the box and opens files in an editor. Save with Ctrl+S. When the agent changes a file you have open, the editor reloads it, or warns you if you had unsaved edits.
 
+**Code** opens VS Code on the project folder, running inside the box ([openvscode-server](https://github.com/gitpod-io/openvscode-server), same editor as VS Code for the Web): search, Git view, extensions from [Open VSX](https://open-vsx.org), integrated terminal, and the Claude Code extension preinstalled. The server starts the first time you open the pane (a few seconds) and stops with the box; **Restart** relaunches it and **Open in new tab** gives it a whole window. Settings and extensions you install live in the box, so they survive Stop → Resume and travel with snapshots; the agent sees the same files, so its edits show up as you watch.
+
 **Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
 
 ### Stop, resume, delete
@@ -191,6 +193,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 - **"docker: permission denied"** when starting: add your user to the `docker` group (`sudo usermod -aG docker $USER`, then log out and in).
 - **Session goes to *error* with "sandbox image not found"**: run `npm run build:image`.
 - **"method not found: _sessionboxer/…"** after updating Sessionboxer: the box still runs the previous version's internals. Stop and Resume the session; the current build is copied into the box on every start, so `npm run build:image` is only needed when the image itself changes (system packages, agent CLIs).
+- **Code pane says "openvscode-server is not installed in this Sandbox image"**: run `npm run build:image`, then Stop → Resume the session.
 - **Devin session fails right after creation**: Devin occasionally times out while loading team settings on a cold start. Sessionboxer retries a few times; if it still fails, Resume the session.
 - **"self signed certificate in certificate chain"** from an MCP server or the agent inside a box: your machine goes through a TLS-inspecting proxy (Cloudflare WARP, Zscaler…). Check **Settings → TLS certificates in Sandboxes** lists its CA (paste the PEM there if not), then Stop → Resume the session.
 - **Docker inside the box can't pull images**: Docker Hub rate-limits anonymous pulls per IP; log in with `docker login` in the box's Terminal or pull from another registry.

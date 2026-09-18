@@ -11,6 +11,7 @@ import {
   type DaemonOptionSetParams,
   DaemonSessionForkResult,
   DaemonSessionSwitchResult,
+  CodeServerStatus,
   DaemonStatus,
   FsListResult,
   FsReadResult,
@@ -61,6 +62,8 @@ const ASK_TIMEOUT_MS = 120_000;
 const BRANCH_TIMEOUT_MS = 300_000;
 /** Longest transcript handed to an Agent that cannot fork (the tail is kept). */
 const REPLAY_MAX_CHARS = 60_000;
+/** openvscode-server's first start unpacks its extensions; generous on slow disks. */
+const CODE_START_TIMEOUT_MS = 120_000;
 
 /** One UI connection attached to a terminal. */
 export interface TerminalSink {
@@ -125,7 +128,7 @@ export class SessionManager {
     return `ws://${host}:${port}/websockify`;
   }
 
-  /** HTTP base URL of a live Sandbox's Daemon (raw Workspace files), reachable only from the host. */
+  /** HTTP base URL of a live Sandbox's Daemon (raw Workspace files, VS Code), reachable only from the host. */
   async daemonHttpUrl(id: string): Promise<string> {
     const s = this.get(id);
     if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {
@@ -177,6 +180,20 @@ export class SessionManager {
 
   async fsWrite(id: string, path: string, content: string): Promise<FsWriteResult> {
     return FsWriteResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsWrite, { path, content }));
+  }
+
+  // --- Code pane (VS Code in the Sandbox) ----------------------------------
+
+  async codeStart(id: string): Promise<CodeServerStatus> {
+    return CodeServerStatus.parse(await this.daemonCall(id, DAEMON_METHODS.codeStart, {}, CODE_START_TIMEOUT_MS));
+  }
+
+  async codeStatus(id: string): Promise<CodeServerStatus> {
+    return CodeServerStatus.parse(await this.daemonCall(id, DAEMON_METHODS.codeStatus, {}));
+  }
+
+  async codeStop(id: string): Promise<CodeServerStatus> {
+    return CodeServerStatus.parse(await this.daemonCall(id, DAEMON_METHODS.codeStop, {}));
   }
 
   // --- Terminals -----------------------------------------------------------

@@ -30,6 +30,8 @@ ARG NODE_MAJOR=22
 ARG CLAUDE_CODE_VERSION=2.1.272
 ARG CLAUDE_AGENT_ACP_VERSION=0.77.0
 ARG DEVIN_CLI_VERSION=3000.10.27
+ARG OPENVSCODE_SERVER_VERSION=1.109.5
+ARG CLAUDE_CODE_EXTENSION_VERSION=2.1.272
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -77,6 +79,15 @@ RUN npm install -g \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
       @agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION} \
     && npm cache clean --force
+
+# VS Code in the browser (the Code pane): openvscode-server is started on demand by the
+# Sandbox Daemon on the loopback interface and reached only through the Daemon's port.
+RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "unsupported arch $arch" >&2; exit 1 ;; esac \
+    && curl -fsSL "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${OPENVSCODE_SERVER_VERSION}/openvscode-server-v${OPENVSCODE_SERVER_VERSION}-linux-${arch}.tar.gz" -o /tmp/openvscode-server.tar.gz \
+    && mkdir -p /opt/openvscode-server \
+    && tar -xzf /tmp/openvscode-server.tar.gz -C /opt/openvscode-server --strip-components=1 \
+    && rm -f /tmp/openvscode-server.tar.gz \
+    && ln -s /opt/openvscode-server/bin/openvscode-server /usr/local/bin/openvscode-server
 
 # Computer-use MCP server (compiled in stage 1).
 COPY --from=build /src/packages/computer-use-mcp/package.json /opt/sessionboxer/computer-use-mcp/
@@ -158,8 +169,14 @@ RUN curl -fsSL https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/setup.sh -o /tmp
 COPY --chown=agent:agent images/sandbox/devin-config.json /home/agent/.config/devin/config.json
 COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.config/devin/mcp_config.json
 
-# 6080: noVNC/websockify, 7000: Sandbox Daemon. Both are reached only over the
-# Docker network, never published on the host.
+# Claude Code's VS Code extension (from Open VSX) for the Code pane, plus machine-level
+# settings for the server: no telemetry, no welcome page, no extension auto-updates.
+RUN openvscode-server --install-extension "anthropic.claude-code@${CLAUDE_CODE_EXTENSION_VERSION}" \
+    && rm -rf /home/agent/.openvscode-server/data/logs /home/agent/.openvscode-server/data/CachedExtensionVSIXs
+COPY --chown=agent:agent images/sandbox/openvscode-machine-settings.json /home/agent/.openvscode-server/data/Machine/settings.json
+
+# 6080: noVNC/websockify, 7000: Sandbox Daemon (RPC, raw files and the Code pane's
+# VS Code). Both are reached only over the Docker network, never published on the host.
 EXPOSE 6080 7000
 
 ENTRYPOINT ["tini", "--", "/usr/local/bin/sessionboxer-entrypoint"]

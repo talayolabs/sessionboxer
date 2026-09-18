@@ -40,6 +40,7 @@ import { ProviderIcon } from "./ProviderIcon";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { TerminalPane } from "./Terminal";
+import { CodePane } from "./Code";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript-model";
 
@@ -485,16 +486,17 @@ function SessionSizes({
   );
 }
 
-type Pane = "desktop" | "files" | "terminal" | "hidden";
+type Pane = "desktop" | "files" | "code" | "terminal" | "hidden";
 const PANES: Array<{ id: Exclude<Pane, "hidden">; label: string }> = [
   { id: "desktop", label: "Desktop" },
   { id: "files", label: "Files" },
+  { id: "code", label: "Code" },
   { id: "terminal", label: "Terminal" },
 ];
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "desktop" || v === "files" || v === "terminal" || v === "hidden" ? v : "desktop";
+  return v === "desktop" || v === "files" || v === "code" || v === "terminal" || v === "hidden" ? v : "desktop";
 }
 
 function loadComposerMode(): ComposerMode {
@@ -812,6 +814,7 @@ function SessionView({
         </div>
         {pane === "desktop" && <Desktop session={session} />}
         {pane === "files" && <Files session={session} />}
+        {pane === "code" && <CodePane session={session} />}
         {pane === "terminal" && <TerminalPane session={session} />}
       </div>
     </div>

@@ -1,0 +1,9 @@
+{
+  "telemetry.telemetryLevel": "off",
+  "workbench.startupEditor": "none",
+  "workbench.tips.enabled": false,
+  "extensions.autoUpdate": false,
+  "extensions.autoCheckUpdates": false,
+  "files.autoSave": "afterDelay",
+  "git.openRepositoryInParentFolders": "always"
+}

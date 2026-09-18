@@ -750,6 +750,25 @@ export type TerminalServerMessage =
   | { type: "error"; message: string };
 
 // ---------------------------------------------------------------------------
+// Code pane (UI <-> Control Plane <-> Daemon). VS Code runs inside the Sandbox as
+// `openvscode-server` on the loopback interface, started on demand by the Daemon; its
+// HTTP and WebSocket traffic is reverse-proxied under `CODE_PATH` on the Daemon port and
+// again by the Control Plane under `/api/sessions/:id/code`, which is what the iframe loads.
+// ---------------------------------------------------------------------------
+
+export const CODE_PATH = "/code";
+
+export const CodeServerStatus = z.object({
+  state: z.enum(["stopped", "starting", "running", "failed"]),
+  /** Server version (`openvscode-server --version` first line) once known. */
+  version: z.string().nullable(),
+  /** Why the last start failed, for the UI. */
+  error: z.string().nullable(),
+  startedAt: z.string().nullable(),
+});
+export type CodeServerStatus = z.infer<typeof CodeServerStatus>;
+
+// ---------------------------------------------------------------------------
 // Sandbox Daemon RPC (Control Plane <-> Daemon, JSON-RPC 2.0 over WebSocket).
 // Method names use ACP's `_<vendor>/` extension convention.
 // ---------------------------------------------------------------------------
@@ -785,6 +804,9 @@ export const DAEMON_METHODS = {
   ptyClose: "_sessionboxer/pty/close",
   ptyOutput: "_sessionboxer/pty/output",
   ptyExit: "_sessionboxer/pty/exit",
+  codeStart: "_sessionboxer/code/start",
+  codeStatus: "_sessionboxer/code/status",
+  codeStop: "_sessionboxer/code/stop",
 } as const;
 
 export const DaemonHelloParams = z.object({

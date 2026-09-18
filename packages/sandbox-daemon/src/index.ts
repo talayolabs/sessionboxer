@@ -31,6 +31,7 @@ import {
 } from "@sessionboxer/protocol";
 import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
+import { CodeServer } from "./code-server.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { DevinMcpConfig } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
@@ -120,6 +121,8 @@ const terminals = new Terminals(
   },
   log,
 );
+
+const codeServer = new CodeServer(workspace, log);
 
 function status(): DaemonStatus {
   return {
@@ -224,20 +227,32 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.ptyClose:
       terminals.close(PtyIdParams.parse(params).id);
       return {};
+    case DAEMON_METHODS.codeStart:
+      return codeServer.start();
+    case DAEMON_METHODS.codeStatus:
+      return codeServer.status();
+    case DAEMON_METHODS.codeStop:
+      return codeServer.stop();
     default:
       throw Object.assign(new Error(`method not found: ${method}`), { code: -32601 });
   }
 }
 
-// One port: JSON-RPC over WebSocket for the Control Plane, plain HTTP for raw Workspace files.
+// One port: JSON-RPC over WebSocket for the Control Plane, plain HTTP for raw Workspace
+// files, and both kinds of traffic under /code for the VS Code server.
 const http = createServer((req, res) => {
+  if (codeServer.handleHttp(req, res)) return;
   serveRawFile(workspaceFs, req, res).catch((e: unknown) => {
     log(`raw file error: ${String(e)}`);
     if (!res.headersSent) res.writeHead(500);
     res.end();
   });
 });
-const wss = new WebSocketServer({ server: http });
+const wss = new WebSocketServer({ noServer: true });
+http.on("upgrade", (req, socket, head) => {
+  if (codeServer.handleUpgrade(req, socket, head)) return;
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+});
 http.listen(port, "0.0.0.0");
 wss.on("connection", (ws) => {
   clients.add(ws);
@@ -276,6 +291,7 @@ const shutdown = (): void => {
   log("shutting down");
   agent.kill();
   terminals.closeAll();
+  codeServer.stop();
   void workspaceFs.close();
   wss.close();
   http.close();

@@ -34,6 +34,7 @@ import {
   saveSettings,
   toPublicSettings,
 } from "./config.js";
+import { bridgeCodeSocket, codePrefix, codeTarget, forwardedHeaders, proxyCodeRequest } from "./code-proxy.js";
 import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
@@ -260,6 +261,41 @@ api.get(
     };
   }),
 );
+
+// Code pane: VS Code (openvscode-server) inside the Sandbox. Lifecycle under /code-server;
+// the workbench itself, assets and its WebSocket are proxied under /code/* with the browser
+// prefix forwarded, which is what the pane's iframe loads.
+api.post("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStart(c.req.param("id"))));
+api.get("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStatus(c.req.param("id"))));
+api.delete("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStop(c.req.param("id"))));
+const forwardedFor = (c: { req: { header: (name: string) => string | undefined } }, id: string): Record<string, string> =>
+  forwardedHeaders(codePrefix(id), c.req.header("x-forwarded-host") ?? c.req.header("host"), c.req.header("x-forwarded-proto") ?? "http");
+api.get(
+  "/sessions/:id/code/*",
+  upgradeWebSocket(async (c) => {
+    const id = c.req.param("id") ?? "";
+    const target = codeTarget(await sessions.daemonHttpUrl(id), codePrefix(id), new URL(c.req.url));
+    const forwarded = forwardedFor(c, id);
+    const protocols = c.req.header("sec-websocket-protocol");
+    return {
+      onOpen(_evt, ws) {
+        if (!ws.raw) return;
+        bridgeCodeSocket(ws.raw, target, forwarded, protocols, log);
+      },
+      onError(err) {
+        log(`code ws error: ${String(err)}`);
+      },
+    };
+  }),
+);
+api.all("/sessions/:id/code", async (c) => {
+  const id = c.req.param("id");
+  return proxyCodeRequest(c.req.raw, codeTarget(await sessions.daemonHttpUrl(id), codePrefix(id), new URL(c.req.url)), forwardedFor(c, id));
+});
+api.all("/sessions/:id/code/*", async (c) => {
+  const id = c.req.param("id");
+  return proxyCodeRequest(c.req.raw, codeTarget(await sessions.daemonHttpUrl(id), codePrefix(id), new URL(c.req.url)), forwardedFor(c, id));
+});
 
 api.post("/sessions/:id/resume", async (c) => c.json(await sessions.resume(c.req.param("id"))));
 

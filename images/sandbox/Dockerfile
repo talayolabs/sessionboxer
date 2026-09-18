@@ -31,7 +31,6 @@ ARG CLAUDE_CODE_VERSION=2.1.272
 ARG CLAUDE_AGENT_ACP_VERSION=0.77.0
 ARG DEVIN_CLI_VERSION=3000.10.27
 ARG OPENVSCODE_SERVER_VERSION=1.109.5
-ARG CLAUDE_CODE_EXTENSION_VERSION=2.1.272
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -169,10 +168,8 @@ RUN curl -fsSL https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/setup.sh -o /tmp
 COPY --chown=agent:agent images/sandbox/devin-config.json /home/agent/.config/devin/config.json
 COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.config/devin/mcp_config.json
 
-# Claude Code's VS Code extension (from Open VSX) for the Code pane, plus machine-level
-# settings for the server: no telemetry, no welcome page, no extension auto-updates.
-RUN openvscode-server --install-extension "anthropic.claude-code@${CLAUDE_CODE_EXTENSION_VERSION}" \
-    && rm -rf /home/agent/.openvscode-server/data/logs /home/agent/.openvscode-server/data/CachedExtensionVSIXs
+# Machine-level settings for the Code pane's server: no telemetry, no welcome page, no
+# extension auto-updates. No extensions are preinstalled; users add them from Open VSX.
 COPY --chown=agent:agent images/sandbox/openvscode-machine-settings.json /home/agent/.openvscode-server/data/Machine/settings.json
 
 # 6080: noVNC/websockify, 7000: Sandbox Daemon (RPC, raw files and the Code pane's

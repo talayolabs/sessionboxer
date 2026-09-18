@@ -79,7 +79,9 @@ export function CodePane({ session }: { session: Session }) {
   return (
     <div className="code">
       <div className="terminal-toolbar">
-        <span className="muted">VS Code{status?.version ? ` ${status.version}` : ""}</span>
+        <span className="muted" title="Running inside the Sandbox, not on your machine">
+          Remote VS Code{status?.version ? ` ${status.version}` : ""}
+        </span>
         <span className="spacer" />
         {running && (
           <button className="small" onClick={() => window.open(url, "_blank", "noopener")} title="Open VS Code in its own tab">

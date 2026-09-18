@@ -122,8 +122,15 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .clip-panel-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .clip-hint { font-size: 11px; line-height: 1.4; }
 
-.transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-.transcript > * { flex: none; }
+.transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
+.transcript-items { display: flex; flex-direction: column; gap: 10px; }
+.transcript-items > * { flex: none; }
+/* Floats over the bottom edge of the scroll area (sticky, zero height so the list does not grow); a wheel over it still scrolls. */
+.transcript-jump { position: sticky; bottom: 0; height: 0; display: flex; justify-content: center; z-index: 2; }
+.transcript-jump .small {
+  transform: translateY(calc(-100% - 6px)); padding: 4px 12px; border-radius: 999px;
+  background: var(--panel); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
 .msg { position: relative; padding: 10px 12px; border-radius: 8px; word-break: break-word; max-width: 900px; line-height: 1.45; }
 .msg-copy {
   position: absolute; top: -9px; right: 8px; display: flex; gap: 4px;

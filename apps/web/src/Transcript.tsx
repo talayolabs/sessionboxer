@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { CopyableMessage } from "./CopyMessage";
 import { FileLink } from "./FileLink";
@@ -342,6 +342,9 @@ function Item({
   }
 }
 
+/** How far from the bottom (px) still counts as "at the bottom", so a trackpad flick does not unpin the view. */
+const FOLLOW_SLACK_PX = 32;
+
 export function Transcript({
   items,
   actions,
@@ -365,27 +368,77 @@ export function Transcript({
   onFocused: () => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const bottom = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const branchView = useBranchView(branches, activeBranchId, canBranch, branchBusy);
+  // The view follows new content only while the reader is at the bottom; scrolling up pins it
+  // where it is until they scroll back down or press the button. `following` is a ref for the
+  // resize/scroll handlers, mirrored in state for the button.
+  const following = useRef(true);
+  const lastScrollTop = useRef(0);
+  const [pinned, setPinned] = useState(false);
+  const scrollToBottom = useCallback(() => {
+    const el = root.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+  const follow = useCallback(() => {
+    following.current = true;
+    setPinned(false);
+    scrollToBottom();
+  }, [scrollToBottom]);
+  // Content growing under a following view leaves scrollTop where it was (the observer below
+  // catches up a frame later), so only a scroll that moved *up* is the reader taking over.
+  const setFollowing = (next: boolean) => {
+    if (next === following.current) return;
+    following.current = next;
+    setPinned(!next);
+  };
+  const atBottom = (el: HTMLDivElement) => el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX;
+  const onScroll = () => {
+    const el = root.current;
+    if (!el) return;
+    const movedUp = el.scrollTop < lastScrollTop.current;
+    lastScrollTop.current = el.scrollTop;
+    setFollowing(atBottom(el) ? true : movedUp ? false : following.current);
+  };
+  // Content grows without `items` changing too (streaming text, images and diagrams loading),
+  // so keep the bottom in view on any size change of the list while following.
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
-  }, [items]);
+    const el = list.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (following.current) scrollToBottom();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
+  useEffect(() => {
+    if (following.current) scrollToBottom();
+  }, [items, scrollToBottom]);
   useEffect(() => {
     if (!focus) return;
     const el = root.current?.querySelector<HTMLElement>(`.turn-divider[data-branch="${focus.branchId}"][data-seq="${focus.seq}"]`);
     if (!el) return;
     el.scrollIntoView({ block: "center" });
+    if (root.current) setFollowing(atBottom(root.current));
     el.classList.add("turn-divider-flash");
     setTimeout(() => el.classList.remove("turn-divider-flash"), 2000);
     onFocused();
   }, [items, focus, onFocused]);
   return (
-    <div className="transcript" ref={root}>
-      {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
-      {items.map((item) => (
-        <Item key={item.key} item={item} actions={actions} branchActions={branchActions} branchView={branchView} />
-      ))}
-      <div ref={bottom} />
+    <div className="transcript" ref={root} onScroll={onScroll}>
+      <div className="transcript-items" ref={list}>
+        {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
+        {items.map((item) => (
+          <Item key={item.key} item={item} actions={actions} branchActions={branchActions} branchView={branchView} />
+        ))}
+      </div>
+      {pinned && (
+        <div className="transcript-jump">
+          <button className="small" onClick={follow} title="Scroll to the latest message and follow new content">
+            ↓ Latest
+          </button>
+        </div>
+      )}
     </div>
   );
 }

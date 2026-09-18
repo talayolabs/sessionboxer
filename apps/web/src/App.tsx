@@ -795,6 +795,7 @@ function SessionView({
       <div className="session-body">
         <div className="chat" ref={chatRef}>
           <Transcript
+            key={session.id}
             items={items}
             actions={snapshotActions}
             branchActions={branchActions}

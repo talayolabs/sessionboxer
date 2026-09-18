@@ -2,21 +2,18 @@ import WebSocket from "ws";
 import {
   DAEMON_METHODS,
   DaemonStatus,
-  FsChangedParams,
   PtyExitParams,
   PtyOutputParams,
   isJsonRpcResponse,
   parseJsonRpc,
   type DaemonEvent,
   type DaemonHelloParams,
-  type FsChange,
   type JsonRpcId,
 } from "@sessionboxer/protocol";
 
 export interface DaemonClientHandlers {
   onEvent: (event: DaemonEvent) => void;
   onStatus: (status: DaemonStatus) => void;
-  onFsChanged: (changes: FsChange[]) => void;
   onPtyOutput: (ptyId: string, data: Buffer) => void;
   onPtyExit: (ptyId: string, exitCode: number) => void;
   onConnected: (status: DaemonStatus) => void;
@@ -112,7 +109,6 @@ export class DaemonClient {
     if ("method" in msg) {
       if (msg.method === DAEMON_METHODS.event) this.handlers.onEvent(msg.params as DaemonEvent);
       else if (msg.method === DAEMON_METHODS.status) this.handlers.onStatus(DaemonStatus.parse(msg.params));
-      else if (msg.method === DAEMON_METHODS.fsChanged) this.handlers.onFsChanged(FsChangedParams.parse(msg.params).changes);
       else if (msg.method === DAEMON_METHODS.ptyOutput) {
         const p = PtyOutputParams.parse(msg.params);
         this.handlers.onPtyOutput(p.id, Buffer.from(p.data, "base64"));

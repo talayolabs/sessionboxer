@@ -15,7 +15,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a fu
 - **One box per session.** Every conversation runs in its own container with its own copy of the code. Nothing the agent does touches your machine; delete the session and it is all gone.
 - **A real desktop.** The container runs a Linux desktop with Firefox. The agent can take screenshots, click and type, so it can test web apps, read documentation or use any GUI tool. You see the same screen in the browser and can take the controls at any time.
 - **Agents that don't ask.** Inside the box the agent runs with all permissions granted, so it doesn't stop every few seconds to ask whether it may run a command. The container is the safety boundary.
-- **Files, VS Code and terminals.** A file tree with an editor that follows the agent's changes live, full VS Code running inside the box, and as many shells as you want.
+- **VS Code and terminals.** Full VS Code running inside the box (with its AI features switched off, the agent in the chat is the one you talk to), and as many shells as you want.
 - **Videos and documents in the chat.** Ask for a screen recording of a feature and the agent records the box's desktop to an .mp4 you can play right there; images, SVGs and PDFs it produces show up the same way, with a download button.
 - **Stop and resume.** Stop a session to free CPU and memory; resume it later with the conversation, files and installed tools exactly where they were.
 - **Docker inside the box** (optional). Agents can run `docker`, `docker compose` and `docker build` inside their own container.
@@ -99,23 +99,21 @@ Claude keeps the branch's memory exact (its session is forked at that point); De
 
 ### Videos, images and documents from the box
 
-Ask the agent to *show* you something ("record a video of the login flow", "take a screenshot of the chart", "export the report as PDF") and it saves the file in the project folder and names it in its reply. Any such file mentioned in a reply (`/workspace/recordings/login.mp4`, `docs/report.pdf`) is shown inline in the chat: videos with a player, images and SVGs as pictures, PDFs embedded, audio with controls, each with **Open** and **Download** links. The file is streamed from the box, so the session must be running to view it (a stopped one says so; **Resume** brings it back). The **Files** pane shows the same viewer when you click a media file.
+Ask the agent to *show* you something ("record a video of the login flow", "take a screenshot of the chart", "export the report as PDF") and it saves the file in the project folder and names it in its reply. Any such file mentioned in a reply (`/workspace/recordings/login.mp4`, `docs/report.pdf`) is shown inline in the chat: videos with a player, images and SVGs as pictures, PDFs embedded, audio with controls, each with **Open** and **Download** links. The file is streamed from the box, so the session must be running to view it (a stopped one says so; **Resume** brings it back).
 
 Recordings use the desktop MCP's `start_recording` / `stop_recording` tools (ffmpeg, H.264 .mp4, 15 fps by default, saved under `recordings/`); the agent drives the desktop as usual in between.
 
 ### Markdown, diagrams and code
 
-Replies and your prompts render as Markdown. Fenced code with a language (```ts, ```python, ```bash…) is syntax-highlighted in the chat, in the rich prompt editor and in documents; a ```mermaid block is drawn as a diagram (flowcharts, sequence diagrams, Gantt…), with the error and the source shown if the syntax is off. Ask the agent for a document ("write the architecture to docs/arch.md with a diagram") and the `.md` (or `.mmd`) it names in its reply appears rendered in the chat; in the **Files** pane Markdown files open rendered with **Preview | Edit** to switch to the editor, and relative links and images inside them resolve against the box's files.
+Replies and your prompts render as Markdown. Fenced code with a language (```ts, ```python, ```bash…) is syntax-highlighted in the chat, in the rich prompt editor and in documents; a ```mermaid block is drawn as a diagram (flowcharts, sequence diagrams, Gantt…), with the error and the source shown if the syntax is off. Ask the agent for a document ("write the architecture to docs/arch.md with a diagram") and the `.md` (or `.mmd`) it names in its reply appears rendered in the chat, and relative links and images inside it resolve against the box's files.
 
 ### Watch and take over the desktop
 
 **Show desktop** opens the box's screen next to the chat. While the agent is working the view is read-only so you don't fight over the mouse; **Take control** hands it to you until the agent's next turn. When the agent is idle the desktop is always interactive: log into a site for it, open a program, arrange windows.
 
-### Files and terminals
+### VS Code and terminals
 
-**Files** lists the project folder in the box and opens files in an editor. Save with Ctrl+S. When the agent changes a file you have open, the editor reloads it, or warns you if you had unsaved edits.
-
-**Code** opens VS Code on the project folder, running inside the box ([openvscode-server](https://github.com/gitpod-io/openvscode-server), same editor as VS Code for the Web): search, Git view, extensions from [Open VSX](https://open-vsx.org), integrated terminal. The server starts the first time you open the pane (a few seconds) and stops with the box; **Restart** relaunches it and **Open in new tab** gives it a whole window. Settings and extensions you install live in the box, so they survive Stop → Resume and travel with snapshots; the agent sees the same files, so its edits show up as you watch.
+**Code** opens VS Code on the project folder, running inside the box ([openvscode-server](https://github.com/gitpod-io/openvscode-server), same editor as VS Code for the Web): search, Git view, extensions from [Open VSX](https://open-vsx.org), integrated terminal. The server starts the first time you open the pane (a few seconds) and stops with the box; **Restart** relaunches it and **Open in new tab** gives it a whole window. Settings and extensions you install live in the box, so they survive Stop → Resume and travel with snapshots; the agent sees the same files, so its edits show up as you watch. VS Code's own AI features (Copilot chat, agent mode, inline completions) are turned off in the box so there is one agent per session, the one in the chat; flip `chat.disableAIFeatures` in VS Code's settings if you want them back.
 
 **Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
 

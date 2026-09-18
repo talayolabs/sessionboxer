@@ -23,12 +23,11 @@ import {
   type Snapshot,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
-import { api, emitFsChanged, subscribe } from "./api";
+import { api, subscribe } from "./api";
 import { AttachmentSession } from "./Attachments";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
-import { Files } from "./Files";
 import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
@@ -209,9 +208,6 @@ export function App() {
               if (last && msg.event.seq <= last.seq) return prev;
               return [...prev, msg.event];
             });
-            break;
-          case "fs_changed":
-            emitFsChanged(msg.sessionId, msg.changes);
             break;
           case "saved_messages":
             if (msg.sessionId === selectedId) setSaved(msg.messages);
@@ -489,17 +485,16 @@ function SessionSizes({
   );
 }
 
-type Pane = "desktop" | "files" | "code" | "terminal" | "hidden";
+type Pane = "desktop" | "code" | "terminal" | "hidden";
 const PANES: Array<{ id: Exclude<Pane, "hidden">; label: string }> = [
   { id: "desktop", label: "Desktop" },
-  { id: "files", label: "Files" },
   { id: "code", label: "Code" },
   { id: "terminal", label: "Terminal" },
 ];
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "desktop" || v === "files" || v === "code" || v === "terminal" || v === "hidden" ? v : "desktop";
+  return v === "desktop" || v === "code" || v === "terminal" || v === "hidden" ? v : "desktop";
 }
 
 function loadComposerMode(): ComposerMode {
@@ -834,7 +829,6 @@ function SessionView({
           />
         </div>
         {pane === "desktop" && <Desktop session={session} />}
-        {pane === "files" && <Files session={session} />}
         {pane === "code" && <CodePane session={session} />}
         {pane === "terminal" && <TerminalPane session={session} />}
       </div>

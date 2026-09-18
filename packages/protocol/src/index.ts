@@ -586,7 +586,6 @@ export type SessionBroadcast =
   | { type: "session"; session: Session }
   | { type: "session_deleted"; id: string }
   | { type: "event"; event: SessionEvent }
-  | { type: "fs_changed"; sessionId: string; changes: FsChange[] }
   | { type: "saved_messages"; sessionId: string; messages: SavedMessage[] }
   | { type: "snapshots"; sessionId: string; snapshots: Snapshot[] }
   /** A `docker commit` is in progress (the Sandbox is paused for a few seconds). */
@@ -597,42 +596,8 @@ export type SessionBroadcast =
   | { type: "options"; provider: Provider; options: AgentOption[] };
 
 // ---------------------------------------------------------------------------
-// Workspace files (UI <-> Control Plane <-> Daemon). Paths are relative to the
-// Workspace root, `""` being the root itself; the Daemon rejects escapes.
+// Workspace files. Paths are relative to the Workspace root; the Daemon rejects escapes.
 // ---------------------------------------------------------------------------
-
-export const FS_MAX_FILE_BYTES = 2 * 1024 * 1024;
-
-export const FsEntry = z.object({
-  name: z.string(),
-  type: z.enum(["file", "dir", "symlink", "other"]),
-  size: z.number().int().nonnegative(),
-  mtime: z.string(),
-});
-export type FsEntry = z.infer<typeof FsEntry>;
-
-export const FsPathParams = z.object({ path: z.string() });
-export type FsPathParams = z.infer<typeof FsPathParams>;
-
-export const FsListResult = z.object({ path: z.string(), entries: z.array(FsEntry) });
-export type FsListResult = z.infer<typeof FsListResult>;
-
-/** `content` is absent for binary files and for files over `FS_MAX_FILE_BYTES`. */
-export const FsReadResult = z.object({
-  path: z.string(),
-  size: z.number().int().nonnegative(),
-  mtime: z.string(),
-  content: z.string().optional(),
-  binary: z.boolean(),
-  truncated: z.boolean(),
-});
-export type FsReadResult = z.infer<typeof FsReadResult>;
-
-export const FsWriteParams = z.object({ path: z.string(), content: z.string() });
-export type FsWriteParams = z.infer<typeof FsWriteParams>;
-
-export const FsWriteResult = z.object({ path: z.string(), size: z.number().int().nonnegative(), mtime: z.string() });
-export type FsWriteResult = z.infer<typeof FsWriteResult>;
 
 // Raw (binary) Workspace files are served over HTTP rather than JSON-RPC, so the browser can
 // stream a video with Range requests: Daemon `GET /fs/raw?path=…`, proxied by the Control Plane
@@ -761,17 +726,6 @@ export function contentTypeFor(path: string): string {
   return MEDIA_TYPES[extensionOf(path)]?.[1] ?? "application/octet-stream";
 }
 
-export const FsChange = z.object({
-  path: z.string(),
-  kind: z.enum(["created", "modified", "deleted"]),
-  isDir: z.boolean(),
-});
-export type FsChange = z.infer<typeof FsChange>;
-
-/** Daemon -> Control Plane notification, debounced; not buffered/replayed. */
-export const FsChangedParams = z.object({ changes: z.array(FsChange) });
-export type FsChangedParams = z.infer<typeof FsChangedParams>;
-
 // ---------------------------------------------------------------------------
 // Terminals (UI <-> Control Plane <-> Daemon). PTYs live in the Daemon, so they
 // survive UI reloads and Control Plane restarts; byte payloads are base64.
@@ -872,10 +826,6 @@ export const DAEMON_METHODS = {
   cancel: "_sessionboxer/cancel",
   status: "_sessionboxer/status",
   event: "_sessionboxer/event",
-  fsList: "_sessionboxer/fs/list",
-  fsRead: "_sessionboxer/fs/read",
-  fsWrite: "_sessionboxer/fs/write",
-  fsChanged: "_sessionboxer/fs/changed",
   fsManifest: "_sessionboxer/fs/manifest",
   ptyList: "_sessionboxer/pty/list",
   ptyOpen: "_sessionboxer/pty/open",

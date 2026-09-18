@@ -15,9 +15,6 @@ import {
   DaemonSessionSwitchResult,
   CodeServerStatus,
   DaemonStatus,
-  FsListResult,
-  FsReadResult,
-  FsWriteResult,
   NOVNC_PORT,
   PtyAttachResult,
   PtyInfo,
@@ -36,7 +33,6 @@ import {
   type DeleteSnapshotsResult,
   type DockerMode,
   type ForkSessionRequest,
-  type FsChange,
   type OptionValues,
   type ProviderModels,
   type ProviderOptions,
@@ -182,18 +178,6 @@ export class SessionManager {
       }
       throw e;
     }
-  }
-
-  async fsList(id: string, path: string): Promise<FsListResult> {
-    return FsListResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsList, { path }));
-  }
-
-  async fsRead(id: string, path: string): Promise<FsReadResult> {
-    return FsReadResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsRead, { path }));
-  }
-
-  async fsWrite(id: string, path: string, content: string): Promise<FsWriteResult> {
-    return FsWriteResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsWrite, { path, content }));
   }
 
   // --- Pull changes to my folder ("copy" Sessions) -----------------------------
@@ -1112,7 +1096,6 @@ export class SessionManager {
       onConnected: (status) => this.onDaemonConnected(id, status),
       onStatus: (status) => this.onDaemonStatus(id, status),
       onEvent: (event) => this.onDaemonEvent(id, event),
-      onFsChanged: (changes: FsChange[]) => this.broadcast({ type: "fs_changed", sessionId: id, changes }),
       onPtyOutput: (ptyId, data) => {
         for (const sink of this.sinksOf(id, ptyId)) sink.output(data);
       },

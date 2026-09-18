@@ -5,5 +5,9 @@
   "extensions.autoUpdate": false,
   "extensions.autoCheckUpdates": false,
   "files.autoSave": "afterDelay",
-  "git.openRepositoryInParentFolders": "always"
+  "git.openRepositoryInParentFolders": "always",
+  "chat.disableAIFeatures": true,
+  "chat.agent.enabled": false,
+  "editor.inlineSuggest.enabled": false,
+  "workbench.settings.showAISearchToggle": false
 }

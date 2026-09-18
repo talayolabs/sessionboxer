@@ -16,7 +16,6 @@ import {
   RevertRequest,
   SwitchBranchRequest,
   FS_RAW_PATH,
-  FsWriteParams,
   SyncRequest,
   PromptRequest,
   PtyOpenParams,
@@ -209,13 +208,6 @@ api.post("/sessions/:id/fork", async (c) => {
   return c.json(await sessions.fork(c.req.param("id"), req), 201);
 });
 
-// Workspace files, relative to the Workspace root (`path=` empty or missing for the root).
-api.get("/sessions/:id/fs", async (c) => c.json(await sessions.fsList(c.req.param("id"), c.req.query("path") ?? "")));
-api.get("/sessions/:id/fs/file", async (c) => c.json(await sessions.fsRead(c.req.param("id"), c.req.query("path") ?? "")));
-api.put("/sessions/:id/fs/file", async (c) => {
-  const req = FsWriteParams.parse(await c.req.json());
-  return c.json(await sessions.fsWrite(c.req.param("id"), req.path, req.content));
-});
 // "Pull changes to my folder" for Sessions started from a copy of a host folder: GET is the
 // dry run, POST applies it (conflicting files only with `overwriteLocal`).
 api.get("/sessions/:id/sync", async (c) => c.json(await sessions.syncPlan(c.req.param("id"))));

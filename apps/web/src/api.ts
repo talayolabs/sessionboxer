@@ -8,10 +8,6 @@ import type {
   CreateSessionRequest,
   DeleteSnapshotsResult,
   ForkSessionRequest,
-  FsChange,
-  FsListResult,
-  FsReadResult,
-  FsWriteResult,
   HostDirListing,
   ProviderModels,
   ProviderOptions,
@@ -98,10 +94,6 @@ export const api = {
   switchBranch: (id: string, req: SwitchBranchRequest) =>
     request<Session>(`/sessions/${id}/branch`, { method: "POST", body: JSON.stringify(req) }),
   hostDirs: (path?: string) => request<HostDirListing>(`/host/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  fsList: (id: string, path: string) => request<FsListResult>(`/sessions/${id}/fs?path=${encodeURIComponent(path)}`),
-  fsRead: (id: string, path: string) => request<FsReadResult>(`/sessions/${id}/fs/file?path=${encodeURIComponent(path)}`),
-  fsWrite: (id: string, path: string, content: string) =>
-    request<FsWriteResult>(`/sessions/${id}/fs/file`, { method: "PUT", body: JSON.stringify({ path, content }) }),
   syncPlan: (id: string) => request<SyncPlan>(`/sessions/${id}/sync`),
   syncPull: (id: string, req: SyncRequest) => request<SyncResult>(`/sessions/${id}/sync`, { method: "POST", body: JSON.stringify(req) }),
   terminals: (id: string) => request<PtyListResult>(`/sessions/${id}/terminals`),
@@ -122,17 +114,6 @@ export function codeUrl(sessionId: string): string {
 export function terminalSocketUrl(sessionId: string, ptyId: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}/api/sessions/${sessionId}/terminals/${ptyId}/ws`;
-}
-
-/** Workspace change notifications fan out from the single UI WebSocket to whoever has files open. */
-export type FsChangeListener = (sessionId: string, changes: FsChange[]) => void;
-const fsListeners = new Set<FsChangeListener>();
-export function onFsChanged(fn: FsChangeListener): () => void {
-  fsListeners.add(fn);
-  return () => fsListeners.delete(fn);
-}
-export function emitFsChanged(sessionId: string, changes: FsChange[]): void {
-  for (const fn of fsListeners) fn(sessionId, changes);
 }
 
 /** Subscribes to Control Plane pushes; reconnects with a fixed 1s backoff. */

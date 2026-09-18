@@ -10,7 +10,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@monaco-editor/react": "^4.7.0",
     "@novnc/novnc": "^1.7.0",
     "@sessionboxer/protocol": "0.0.0",
     "@tiptap/extension-code-block-lowlight": "^3.31.3",
@@ -25,7 +24,6 @@
     "@xterm/xterm": "^6.0.0",
     "lowlight": "^3.3.0",
     "mermaid": "~11.17.2",
-    "monaco-editor": "^0.56.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

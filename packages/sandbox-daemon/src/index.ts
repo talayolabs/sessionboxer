@@ -16,8 +16,6 @@ import {
   type DaemonSessionForkResult,
   DaemonSessionSwitchParams,
   type DaemonSessionSwitchResult,
-  FsPathParams,
-  FsWriteParams,
   Provider,
   PtyIdParams,
   PtyInputParams,
@@ -112,7 +110,7 @@ const agent = new AgentManager(
   },
 );
 
-const workspaceFs = new WorkspaceFs(workspace, (changes) => notify(DAEMON_METHODS.fsChanged, { changes }), log);
+const workspaceFs = new WorkspaceFs(workspace);
 
 const terminals = new Terminals(
   workspace,
@@ -199,14 +197,6 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.cancel:
       await agent.cancel();
       return { ok: true };
-    case DAEMON_METHODS.fsList:
-      return workspaceFs.list(FsPathParams.parse(params).path);
-    case DAEMON_METHODS.fsRead:
-      return workspaceFs.read(FsPathParams.parse(params).path);
-    case DAEMON_METHODS.fsWrite: {
-      const p = FsWriteParams.parse(params);
-      return workspaceFs.write(p.path, p.content);
-    }
     case DAEMON_METHODS.fsManifest:
       return workspaceManifest(workspace);
     case DAEMON_METHODS.ptyList:
@@ -284,7 +274,6 @@ wss.on("connection", (ws) => {
 });
 
 log(`listening on :${port}, epoch ${epoch}`);
-workspaceFs.startWatching();
 // The Control Plane sends the MCP server set right after connecting, which warms the Agent up.
 // Should it never come (older Control Plane), start without user servers so prompts still work.
 setTimeout(() => {
@@ -296,7 +285,6 @@ const shutdown = (): void => {
   agent.kill();
   terminals.closeAll();
   codeServer.stop();
-  void workspaceFs.close();
   wss.close();
   http.close();
   process.exit(0);

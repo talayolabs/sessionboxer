@@ -176,9 +176,6 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .attachment img { background: transparent; object-fit: contain; max-height: 480px; }
 .attachment audio { background: transparent; padding: 6px; }
 .attachment iframe { height: 520px; border: 0; border-top: 1px solid var(--border); background: #fff; }
-.file-preview { position: absolute; inset: 0; overflow: auto; padding: 12px; }
-.file-preview .attachment { max-width: none; height: 100%; display: flex; flex-direction: column; }
-.file-preview .attachment video, .file-preview .attachment img, .file-preview .attachment iframe { flex: 1; min-height: 0; max-height: none; height: auto; }
 
 /* Composer: draggable split, formatting toolbar, raw markdown or rich text, zen mode */
 .splitter { flex: none; height: 7px; margin: -3px 0; cursor: row-resize; position: relative; z-index: 1; }
@@ -281,11 +278,9 @@ li.expanded .saved-text { white-space: normal; }
 .mermaid-error-message { color: var(--error); font-size: 13px; margin-bottom: 6px; white-space: pre-wrap; }
 .mermaid-error pre { margin: 0; }
 
-/* Markdown / Mermaid documents from the Workspace, as chat cards and in the Files pane */
+/* Markdown / Mermaid documents from the Workspace, rendered as chat cards */
 .attachment .document { padding: 10px 12px; border-top: 1px solid var(--border); max-height: 520px; overflow: auto; }
 .attachment .document.muted, .attachment .document.attachment-error { padding: 8px 12px; font-size: 13px; }
-.file-preview .attachment .document { flex: 1; min-height: 0; max-height: none; }
-.file-document { padding: 16px 20px; max-width: 900px; }
 .rich-editor ul[data-type="taskList"] { list-style: none; padding-left: 4px; }
 .rich-editor ul[data-type="taskList"] li { display: flex; gap: 8px; align-items: flex-start; }
 .rich-editor ul[data-type="taskList"] li > label { flex: none; margin-top: 2px; }
@@ -409,22 +404,6 @@ button.link:hover { text-decoration: underline; }
 .segmented button + button { border-left: 1px solid var(--border); }
 .segmented button.active { background: var(--user); color: #fff; }
 button.small { padding: 2px 8px; font-size: 12px; }
-.pad { padding: 12px; }
-
-/* Files pane: tree + Monaco */
-.files { display: flex; flex: 0 0 55%; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }
-.file-tree { display: flex; flex-direction: column; flex: 0 0 240px; min-width: 0; border-right: 1px solid var(--border); background: var(--panel); font-size: 13px; }
-.file-tree-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-.file-tree-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 0; }
-.tree-row { display: flex; align-items: center; gap: 4px; padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; user-select: none; }
-.tree-row:hover { background: var(--agent); }
-.tree-row.active { background: var(--user); color: #fff; }
-.tree-caret { display: inline-block; width: 10px; color: var(--muted); }
-.editor { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.editor-toolbar { flex: none; display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
-.editor-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.editor .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: 13px; }
-.editor-body { position: relative; flex: 1; min-height: 0; }
 
 /* Terminal pane: xterm.js tabs */
 .terminal { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }

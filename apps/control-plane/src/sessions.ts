@@ -53,6 +53,7 @@ import {
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveBoxCredentials, resolveMcpServers } from "./config.js";
+import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
@@ -514,7 +515,7 @@ export class SessionManager {
     });
     this.update(session.id, { containerId });
     await this.startSandbox(containerId, settings);
-    await this.seedWorkspace(containerId, session.workspaceSource);
+    await this.seedWorkspace(containerId, session, settings);
     await this.recordSyncBaseline(session.id, session.workspaceSource);
     this.setStatus(session.id, "idle");
     await this.connect(session.id, containerId);
@@ -550,11 +551,21 @@ export class SessionManager {
     }
   }
 
-  private async seedWorkspace(containerId: string, source: WorkspaceSource): Promise<void> {
+  private async seedWorkspace(containerId: string, session: Session, settings: Settings): Promise<void> {
+    const source = session.workspaceSource;
     if (source.type === "git") {
-      const args = ["git", "clone", "--", source.url, "."];
+      const plan = planClone(source.url, resolveBoxCredentials(settings, session.mcpEnabled));
+      const args = ["git", "clone", "--", plan.url, "."];
       if (source.ref) args.splice(2, 0, "--branch", source.ref);
-      await this.docker.exec(containerId, args);
+      if (plan.account !== null) {
+        this.log(`cloning ${plan.url} into ${containerId.slice(0, 12)} as @${plan.account}`);
+      }
+      try {
+        await this.docker.exec(containerId, args, "/workspace", "agent", plan.env);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        throw new Error(message + cloneFailureHint(source.url, plan));
+      }
     } else if (source.type === "copy") {
       const dir = await resolveHostDir(source.path);
       const entries = await planHostDir(dir);

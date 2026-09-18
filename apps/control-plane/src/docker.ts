@@ -279,7 +279,13 @@ export class SandboxDocker {
   }
 
   /** Runs a command in the Sandbox (as the agent user by default); rejects on non-zero exit. */
-  async exec(containerId: string, cmd: string[], workdir = "/workspace", user = "agent"): Promise<string> {
+  async exec(
+    containerId: string,
+    cmd: string[],
+    workdir = "/workspace",
+    user = "agent",
+    env: Record<string, string> = {},
+  ): Promise<string> {
     const container = this.docker.getContainer(containerId);
     const exec = await container.exec({
       Cmd: cmd,
@@ -287,6 +293,7 @@ export class SandboxDocker {
       AttachStdout: true,
       AttachStderr: true,
       User: user,
+      Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
     });
     const stream = await exec.start({ hijack: true, stdin: false });
     const chunks: Buffer[] = [];

@@ -423,8 +423,9 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .terminal-toolbar .tab.active { background: var(--user); color: #fff; border-color: var(--user); }
 .terminal .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: 13px; }
 .terminal-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.terminal-screen { flex: 1; min-height: 0; padding: 6px 0 0 6px; }
-.terminal-screen .xterm { height: 100%; }
+.terminal-screen { flex: 1; min-height: 0; overflow: hidden; }
+/* Padding on .xterm itself: the fit addon subtracts it, so the rows never spill past the pane. */
+.terminal-screen .xterm { height: 100%; box-sizing: border-box; padding: 6px 0 0 6px; }
 .code { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 0; border-left: 1px solid var(--border); background: #1f1f1f; }
 .code .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: 13px; }
 .code-body { position: relative; flex: 1; min-height: 0; display: flex; }

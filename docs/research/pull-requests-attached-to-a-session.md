@@ -9,28 +9,30 @@ comments (checkbox for bulk actions, buttons per row).
 Short answer: everything needed is already in place — the Sandbox has `gh` + git credentials (whatever the
 Control Plane injected from the connector *plus* anything logged in inside the box, ADR-0014/0016), and the
 Control Plane already sees every prompt and every agent message and knows when a turn ends. The feature is a
-**watcher in the Sandbox Daemon** (REST polling through the box's own `gh` login, with ETags so it is free
-while nothing changed) reporting to the Control Plane, which keeps the **`pull_requests` / `pr_items` tables**
-(the box is disposable, the Control Plane is the store), sends a **`pr_activity` WebSocket message** for the
-badge/notification, and serves a **PRs pane** whose actions are prompt templates sent through the existing
-prompt/queue path. The agent itself replies on GitHub with `gh` from inside the Sandbox; the Control Plane
-never posts. Watching pauses while a box is stopped unless the Control Plane's own connector token happens to
-see the repo (fallback). Daemon change → Stop → Resume, no image rebuild. About 2 sessions.
+**scheduler in the Control Plane** whose every poll step is **one `gh api` call executed inside the Session's
+container** (a small Daemon RPC), so the box's own GitHub login is what reads the PR while the Control Plane
+keeps all the logic and state: the **`pull_requests` / `pr_items` tables**, ETag cursors, a **`pr_activity`
+WebSocket message** for the badge/notification, and a **PRs pane** whose actions are prompt templates sent
+through the existing prompt/queue path. The agent itself replies on GitHub with `gh` from inside the Sandbox;
+the Control Plane never posts. Watching pauses while a box is stopped unless the Control Plane's own connector
+token happens to see the repo (fallback). Daemon change → Stop → Resume, no image rebuild. About 2 sessions.
 
-**Why the watcher is in the box, not the Control Plane** (revised after review): the Control Plane only holds
-the connector tokens from Settings. The box may have *more*: a `gh auth login` done in its Terminal, a
-`GH_TOKEN` exported by the user, an SSH key or a token embedded in the remote URL of a copied host directory.
-The agent's `gh pr create` works with exactly that set, so "whatever the box can reach" is the only
-definition of access that is guaranteed to match the PRs the Session is about. The Control Plane's token is
-kept as a *fallback* for stopped boxes, not as the primary path.
+**Why the request runs in the box and the schedule in the Control Plane** (revised twice after review): the
+Control Plane only holds the connector tokens from Settings. The box may have *more*: a `gh auth login` done
+in its Terminal, a `GH_TOKEN` exported by the user, an SSH key or a token embedded in the remote URL of a copied
+host directory. The agent's `gh pr create` works with exactly that set, so "whatever the box can reach" is the
+only definition of access guaranteed to match the PRs the Session is about — hence `gh` in the container does
+the HTTP. But the box is disposable and has no durable state, and the Control Plane already knows the
+Session's status, the queue and the UI clients — hence it owns the cron, the cursors and the parsing. The
+Daemon's part is a stateless "run this `gh api` request and give me status, headers, body".
 
 ## 1. What exists today that this builds on
 
 | Piece | Where | Relevance |
 | --- | --- | --- |
-| `gh` + `gh auth git-credential` inside the Sandbox, `GH_CONFIG_DIR=/dev/shm/sessionboxer/gh` (tmpfs) written by the Daemon from the Session's enabled GitHub entries; several accounts, `gh auth switch` | ADR-0016, `packages/sandbox-daemon/src/gh-credentials.ts` | **The watcher's credentials.** `gh auth status` / `gh auth token [--user]` give the Daemon every login the box has — injected or manual — and `gh api` / `fetch` with that token is how it polls. The same login lets the agent push, `gh pr comment`, `gh api …/replies`, `gh api graphql` (resolve threads): "Address & reply" needs no new write path anywhere. |
+| `gh` + `gh auth git-credential` inside the Sandbox, `GH_CONFIG_DIR=/dev/shm/sessionboxer/gh` (tmpfs) written by the Daemon from the Session's enabled GitHub entries; several accounts, `gh auth switch` | ADR-0016, `packages/sandbox-daemon/src/gh-credentials.ts` | **The watcher's credentials.** `gh api` run in the box uses every login the box has — injected or manual (`gh auth status` lists them, `gh auth token --user` picks one). The same login lets the agent push, `gh pr comment`, `gh api …/replies`, `gh api graphql` (resolve threads): "Address & reply" needs no new write path anywhere. |
 | GitHub connector token in Settings, scopes `repo workflow read:org read:user user:email gist notifications project` | `Settings.mcpServers[].headers` (secret), `resolveBoxCredentials()` in `apps/control-plane/src/config.ts` | Fallback for a *stopped* box only (§4). `gh`-based logins have `repo` too (its default scopes + `workflow,read:user,user:email`); `notifications` matters only for the optional Notifications API fast path. |
-| Daemon ↔ Control Plane JSON-RPC (`DAEMON_METHODS`, `_sessionboxer/*`), boot payload with MCP servers + credentials, status/event notifications | `packages/protocol`, `sessions.ts` `pushMcpServers` / `onDaemonEvent` | New `prs/watch` (Control Plane → Daemon: list of PRs + cursors) and `prs/activity` (Daemon → Control Plane: new/changed items + new cursors) ride on it. |
+| Daemon ↔ Control Plane JSON-RPC (`DAEMON_METHODS`, `_sessionboxer/*`), boot payload with MCP servers + credentials, status/event notifications | `packages/protocol`, `sessions.ts` `pushMcpServers` / `onDaemonEvent` | One new stateless RPC rides on it: `gh/api` (Control Plane → Daemon: a GitHub API request; back: status, headers, body). |
 | Every prompt (`user_prompt`) and every agent chunk / tool call (`update`) stored as events; `turn_ended` → status `idle` | `SessionManager.onDaemonEvent`, `apps/control-plane/src/sessions.ts` | PR-URL detection (both directions) and the "idle" signal fall out of what is already there. |
 | Saved-message queue pumped at `turn_ended` (`pumpQueue`) | `sessions.ts` | "Address" while the agent is busy → queue the prompt instead of failing. |
 | `session/prompt` text goes verbatim; attachments; `Composer` `setText` | Daemon `agent.ts`, `apps/web/src/App.tsx` | "To prompt" = `setText(template)`; "Address" = `prompt(template)`. |
@@ -84,11 +86,12 @@ detach, POST `:prId/refresh`, POST `:prId/seen`, POST `:prId/actions`).
 | Manual | "Attach a PR…" button on the PRs pane (URL or `#123` for the Workspace repo); "Detach". | Yes; also the escape hatch for a wrong auto-attach. |
 | Webhook (`pull_request_review*`, `issue_comment`) | Needs a public URL or `gh webhook forward` (beta, repo admin). | No — Sessionboxer is local; polling is the right shape. |
 
-Which login: the Daemon asks the box — `gh auth status --json` (or the users listed in `hosts.yml`) and tries
-`GET /repos/{o}/{r}/pulls/{n}` with `gh auth token --user <u>` for each until one works; `GH_TOKEN` and
-`GITHUB_TOKEN` in the box's environment are tried first (they override `gh`'s stored logins anyway). The
-working account name is stored on the row (`via_account`) so the UI can say "watching as @x" and so items by
-that account are marked `self`. If nothing works (private repo, no login in the box), the PR is attached in
+Which login: `gh api` in the box uses `GH_TOKEN`/`GITHUB_TOKEN` if set, else the active `gh` login; the
+Control Plane first tries `GET /repos/{o}/{r}/pulls/{n}` that way, and if it gets `404`/`403` retries once per
+other login the box lists (`gh auth status`, passing `GH_TOKEN=$(gh auth token --user <u>)` for the request —
+the token never leaves the container). The working account name is stored on the row (`via_account`) so the
+UI can say "watching as @x", later requests for that PR run as it, and items by that account are marked
+`self`. If nothing works (private repo, no login in the box), the PR is attached in
 state `unauthorized` with a hint: enable a GitHub entry in the MCP popover *or* run `gh auth login` in the
 Terminal pane — same UX family as today's private-clone hint.
 
@@ -105,30 +108,33 @@ When any of them returned `200`, one GraphQL query (`pullRequest.reviewThreads(f
 isOutdated comments{ databaseId } }` + `reviewDecision`) brings the thread state that REST lacks. Cost: one
 point per changed poll; the `304`s cost nothing.
 
-**Where and how often.** A `PrWatcher` in the **Sandbox Daemon**, fed by the Control Plane over RPC:
+**Where and how often.** A `PullRequests` module in the **Control Plane** owns a per-Session timer, the
+cursors and the parsing; the HTTP itself happens **inside the container** through one new Daemon RPC:
 
-- Control Plane → Daemon `_sessionboxer/prs/watch { prs: [{id, owner, repo, number, cursors: {etag…, since}}] }`
-  at boot (in the hello/boot payload next to MCP servers and credentials) and whenever a PR is attached,
-  detached or its cursors change. The Daemon holds only this list in memory: no state of its own to lose.
-- Daemon → Control Plane `_sessionboxer/prs/activity { prId, pr: {title, state, …}, items: [...], cursors }` after
-  each poll that returned `200`; the Control Plane upserts rows, computes `unread`, broadcasts. Also
-  `{prId, error: 'unauthorized' | 'rate_limited' | 'not_found', retryAt}` so the pane can show why a PR is stale.
-- Requests: Node `fetch` with the token from `gh auth token --user <via_account>` (re-read when a request gets
-  `401`, so a fresh `gh auth login` is picked up without restarting anything), `If-None-Match` per endpoint,
-  serial, honouring `retry-after` / `x-ratelimit-remaining: 0`. Using `fetch` rather than shelling out to
-  `gh api` keeps ETag/304 handling and header parsing in code; `gh` is still the source of the credential.
+- `_sessionboxer/gh/api { method, path, query?, headers?, body?, account? }` → `{ status, headers, body }`.
+  The Daemon runs `gh api --include --method … -H 'If-None-Match: …' <path>` as the `agent` user (with
+  `GH_TOKEN=$(gh auth token --user <account>)` when `account` is given), parses the status line and headers
+  from `--include`, and returns them with the raw body; no interpretation. `gh api` exits non-zero on `304`
+  and `4xx`, which is fine: the status is still in the output and the Daemon passes it through. GraphQL goes
+  through the same RPC (`path: 'graphql'`, body with the query). Paths are restricted to `api.github.com`
+  (relative, no scheme) so the RPC cannot be turned into a generic HTTP client.
+- The Control Plane does the rest exactly as it would with `fetch`: `If-None-Match` per endpoint, serial
+  requests, `retry-after` / `x-ratelimit-remaining: 0` honoured, `since` from the newest `updated_at`, one
+  GraphQL query when a list changed, upsert `pr_items`, compute `unread`, broadcast. Errors
+  (`unauthorized` / `rate_limited` / `not_found` / `box_stopped`) land in `sync_error` so the pane can say why a
+  PR is stale. A fresh `gh auth login` in the Terminal is picked up by the next request — nothing to restart.
 - Cadence: every **60 s** while the Session is `idle` and has open watched PRs; **every 5 min** while
-  `running` (the agent is busy; nothing to do with the news yet besides the badge). The Daemon knows the
-  agent's turn state directly. Stop watching a PR 7 days after it is closed/merged (state refreshed on
-  demand). Ten open PRs → 30 conditional requests a minute, essentially none of them counted against the
-  5 000/h limit. "Refresh" in the UI is an RPC that polls now.
+  `running` (the agent is busy; nothing to do with the news yet besides the badge; also keeps `gh` out of the
+  agent's way). Stop watching a PR 7 days after it is closed/merged (state refreshed on demand). Ten open PRs →
+  30 conditional requests a minute, essentially none of them counted against the 5 000/h limit. "Refresh" in
+  the UI polls now.
 
-**Stopped box.** No Daemon → no watcher. The Control Plane then runs the *same* poller code (shared module in
-`packages/protocol` or a small `packages/github-poll`) with the Session's enabled connector token, for the PRs
-whose `via_account` is one of the connector accounts (i.e. where we know that token can see the repo). PRs
-watched through a box-only login show "watching paused — box stopped" with the last-synced time, and resume
-on Resume. This is the honest version of "track while idle": idle-with-box-running is fully covered; stopped
-is covered when the Control Plane happens to have access.
+**Stopped box.** No container → the RPC is unavailable. The Control Plane then makes the same requests itself
+with the Session's enabled connector token — same code, a different "transport" (`fetch` instead of the RPC)
+— for the PRs whose `via_account` is one of the connector accounts (i.e. where we know that token can see the
+repo). PRs watched through a box-only login show "watching paused — box stopped" with the last-synced time,
+and resume on Resume. This is the honest version of "track while idle": idle-with-box-running is fully
+covered; stopped is covered when the Control Plane happens to have access.
 
 **Optional fast path (later).** `GET /notifications` (Last-Modified, `X-Poll-Interval`, one request for *all*
 Sessions) tells us "something happened on PR #n" in one call — but only for threads the account is subscribed
@@ -223,8 +229,8 @@ externally visible step, which is the proportionate guard for a single-user loca
 ## 7. Security and scope
 
 - Tokens stay where they are today: connector tokens reach the box as before (ADR-0016), box-only logins never
-  leave the box — the Daemon reports *items*, never credentials, and the Control Plane stores `via_account`,
-  not a token. Nothing PR-related is in Snapshots or prompts except URLs, comment text and thread ids.
+  leave the box — the `gh/api` RPC returns *responses*, never credentials, and the Control Plane stores
+  `via_account`, not a token. The RPC only accepts relative `api.github.com` paths. Nothing PR-related is in Snapshots or prompts except URLs, comment text and thread ids.
 - Side fix worth doing first: a manual `gh auth login` in the box lands in the same tmpfs `hosts.yml` the
   Daemon writes, so today it is lost on Stop → Resume and overwritten when the enabled connector set changes
   (`GhCredentials.apply` rewrites the whole file). The Daemon should merge — keep users it did not add — and
@@ -241,7 +247,8 @@ externally visible step, which is the proportionate guard for a single-user loca
 | Instead of… | Why not |
 | --- | --- |
 | Polling only from the Control Plane with the connector token (first draft of this note) | The box may have access the Control Plane does not (manual `gh auth login`, `GH_TOKEN`, SSH, a token in a copied repo's remote) — and the agent's `gh pr create` works with exactly that set. A watcher that cannot see the PR the agent just opened is useless. Kept as the stopped-box fallback. |
-| Polling from the box by shelling out to `gh api` per request | Works, but 304/ETag handling and rate-limit headers are easier with `fetch`; `gh` stays the credential source (`gh auth token`). Fine as a first cut if `fetch` through a proxy is a problem. |
+| A full `PrWatcher` living in the Daemon with its own timer (second draft) | Duplicates what the Control Plane already knows (Session status, queue, clients) inside a process that is disposable and stateless; needs a watch-list push at boot and an activity stream back. One stateless `gh/api` RPC is smaller and keeps all the logic in one place. |
+| `docker exec gh api …` from the Control Plane instead of a Daemon RPC | Same effect, but a second control channel into the box (dockerode exec streams, user/env setup) when the Daemon connection already exists and runs as the right user. |
 | A Control Plane-side `gh auth login` to mirror the box's access | Doubles the logins the user must do and still misses env/SSH credentials in the box. |
 | The GitHub remote MCP server | It is the *agent's* tool surface, not an API for our UI; and it has no push/notification. |
 | Only the Notifications API | Misses PRs the account is not subscribed to; per-PR ETag polling is free anyway. Keep as a trigger later. |
@@ -251,10 +258,10 @@ externally visible step, which is the proportionate guard for a single-user loca
 ## 9. Effort and order
 
 1. **Watcher + attach + overview + notify** (~1 session, Daemon change → Stop → Resume; no image rebuild):
-   migrations, shared GitHub poll module (ETags, GraphQL thread state), `PrWatcher` in the Daemon using the
-   box's `gh` logins, `prs/watch` + `prs/activity` RPC, `PullRequests` module in the Control Plane (store,
-   Control-Plane fallback poller for stopped boxes), URL detection on `user_prompt` / at `turn_ended` (head-
-   branch lookup done in the box, which has both git and gh), REST + WS, `PRs` pane with the table of PRs,
+   migrations, `gh/api` Daemon RPC (with `gh auth status` for the login list), `PullRequests` module in the
+   Control Plane (timer, ETags, GraphQL thread state, parsing, store; `fetch` transport with the connector
+   token for stopped boxes), URL detection on `user_prompt` / at `turn_ended` (head-branch lookup through
+   the same RPC), REST + WS, `PRs` pane with the table of PRs,
    sidebar badge, toast + browser notification held while `running`, `GhCredentials` merge fix,
    `sessionboxer prs` in the CLI.
 2. **Per-PR tabs + actions** (~1 session): dynamic panes, thread table with selection and filters, prompt block

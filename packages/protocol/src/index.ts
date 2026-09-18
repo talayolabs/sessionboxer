@@ -421,7 +421,8 @@ export type QueueRequest = z.infer<typeof QueueRequest>;
 // Session can start a fresh Sandbox from its image with the conversation so far.
 // ---------------------------------------------------------------------------
 
-export const SNAPSHOT_REASONS = ["turn", "manual"] as const;
+/** `rebuild`: a full image of the Sandbox's filesystem the Sandbox was moved onto (see `POST /sessions/:id/rebuild`). */
+export const SNAPSHOT_REASONS = ["turn", "manual", "rebuild"] as const;
 export const SnapshotReason = z.enum(SNAPSHOT_REASONS);
 export type SnapshotReason = z.infer<typeof SnapshotReason>;
 
@@ -652,6 +653,8 @@ export type SessionBroadcast =
   | { type: "snapshots"; sessionId: string; snapshots: Snapshot[] }
   /** A `docker commit` is in progress (the Sandbox is paused for a few seconds). */
   | { type: "snapshotting"; sessionId: string; active: boolean }
+  /** An automatic Snapshot could not be taken (manual ones report through their request). */
+  | { type: "snapshot_failed"; sessionId: string; message: string }
   /** A Provider's Agent reported its model list (differs from what was remembered). */
   | { type: "models"; provider: Provider; models: ModelOption[] }
   /** A Provider's Agent advertised options not remembered before (or changed ones). */

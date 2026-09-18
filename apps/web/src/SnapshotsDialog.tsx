@@ -5,7 +5,8 @@ import { formatMb, formatTime } from "./format";
 /**
  * Opened from a Session's size line in the sidebar: the per-Session
  * auto-snapshot switch, the storage totals and every Snapshot with its size,
- * Fork and Delete, plus "Delete all".
+ * Fork and Delete, plus "Delete all" and "Rebuild Sandbox" (recovery for a Sandbox
+ * whose image lost content in Docker and can no longer be committed).
  */
 export function SnapshotsDialog({
   session,
@@ -16,6 +17,7 @@ export function SnapshotsDialog({
   onDismissNotice,
   onAutoSnapshotChange,
   onSnapshotNow,
+  onRebuild,
   onFork,
   onDelete,
   onDeleteAll,
@@ -32,6 +34,7 @@ export function SnapshotsDialog({
   /** `null` clears the per-Session override. */
   onAutoSnapshotChange: (value: boolean | null) => void;
   onSnapshotNow: () => void;
+  onRebuild: () => void;
   onFork: (snapshot: Snapshot) => void;
   onDelete: (snapshot: Snapshot) => void;
   onDeleteAll: () => void;
@@ -48,6 +51,8 @@ export function SnapshotsDialog({
   const effective = session.autoSnapshot ?? globalAutoSnapshot;
   const overridden = session.autoSnapshot !== null;
   const isLive = session.status === "idle" || session.status === "running";
+  const canRebuild = session.status === "idle" || session.status === "stopped" || session.status === "error";
+  const rebuilding = session.status === "creating" && snapshotting;
   const list = snapshots ? [...snapshots].reverse() : [];
 
   return (
@@ -90,6 +95,12 @@ export function SnapshotsDialog({
               <span className="snapshot-name">
                 {"\u{1F4F7}"} #{s.ordinal}
                 {s.reason === "manual" && <span className="muted"> manual</span>}
+                {s.reason === "rebuild" && (
+                  <span className="muted" title="Full image of the Sandbox's filesystem it was rebuilt from">
+                    {" "}
+                    rebuild
+                  </span>
+                )}
               </span>
               <span className="muted">{formatTime(s.createdAt)}</span>
               <span className="snapshot-size">{formatMb(s.sizeBytes)}</span>
@@ -117,6 +128,14 @@ export function SnapshotsDialog({
             title="Delete every snapshot of this Session (ones a fork was started from are kept)"
           >
             Delete all
+          </button>
+          <button
+            type="button"
+            disabled={!canRebuild || snapshotting}
+            onClick={onRebuild}
+            title="Move the Session onto a new Sandbox built from a full image of the current one's filesystem: the fix when snapshots fail with a missing content digest. Takes minutes."
+          >
+            {rebuilding ? "Rebuilding\u2026" : "Rebuild Sandbox"}
           </button>
           <span className="spacer" />
           <button

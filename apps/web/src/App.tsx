@@ -263,6 +263,9 @@ export function App() {
               return next;
             });
             break;
+          case "snapshot_failed":
+            setError(msg.message);
+            break;
           case "models":
             setModels((prev) => ({ ...(prev ?? EMPTY_MODELS), [msg.provider]: msg.models }));
             break;
@@ -298,7 +301,7 @@ export function App() {
         if (dialogId) void run(async () => setDialogSnapshots(await api.snapshots(dialogId)));
       },
     );
-  }, [selectedId, reloadSessions, run, setRoute, openPr]);
+  }, [selectedId, reloadSessions, run, setError, setRoute, openPr]);
 
   const branches = selected?.branches ?? EMPTY_BRANCHES;
   const visibleSnapshots = useMemo(() => {
@@ -425,6 +428,15 @@ export function App() {
           onDismissNotice={() => setError(null)}
           onAutoSnapshotChange={(value) => void run(() => api.updateSession(snapshotsSession.id, { autoSnapshot: value }))}
           onSnapshotNow={() => void run(() => api.createSnapshot(snapshotsSession.id))}
+          onRebuild={() => {
+            if (
+              !confirm(
+                `Rebuild the Sandbox of "${snapshotsSession.title}"?\n\nIts filesystem is exported into a new image and a new Sandbox starts from it; the Session is unavailable meanwhile (minutes for a big Sandbox). Terminals and the Code pane reconnect afterwards.`,
+              )
+            )
+              return;
+            void run(() => api.rebuild(snapshotsSession.id));
+          }}
           onFork={(s) => {
             setSnapshotsFor(null);
             setRoute({ view: "session", id: snapshotsSession.id });

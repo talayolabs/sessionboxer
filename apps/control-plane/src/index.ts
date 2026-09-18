@@ -234,6 +234,8 @@ api.delete("/sessions/:id/snapshots/:snapshotId", async (c) => {
   await sessions.deleteSnapshot(c.req.param("id"), c.req.param("snapshotId"));
   return c.body(null, 204);
 });
+// Moves the Session onto a new Sandbox built from a full image of the current one (long: minutes).
+api.post("/sessions/:id/rebuild", async (c) => c.json(await sessions.rebuild(c.req.param("id"))));
 api.post("/sessions/:id/fork", async (c) => {
   const req = ForkSessionRequest.parse(await c.req.json());
   return c.json(await sessions.fork(c.req.param("id"), req), 201);

@@ -123,6 +123,7 @@ export const api = {
   createSnapshot: (id: string) => request<Snapshot>(`/sessions/${id}/snapshots`, { method: "POST" }),
   deleteSnapshot: (id: string, snapshotId: string) => request<void>(`/sessions/${id}/snapshots/${snapshotId}`, { method: "DELETE" }),
   deleteAllSnapshots: (id: string) => request<DeleteSnapshotsResult>(`/sessions/${id}/snapshots`, { method: "DELETE" }),
+  rebuild: (id: string) => request<Session>(`/sessions/${id}/rebuild`, { method: "POST" }),
   forkSession: (id: string, req: ForkSessionRequest) =>
     request<Session>(`/sessions/${id}/fork`, { method: "POST", body: JSON.stringify(req) }),
   revert: (id: string, req: RevertRequest) =>

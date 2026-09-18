@@ -88,6 +88,17 @@ export interface CommitSpec {
 
 export type ContainerState = "running" | "stopped" | "missing";
 
+/**
+ * Docker cannot read a blob of the image the container runs on (a layer, config or
+ * manifest gone from the content store, typically after a disk incident or an image
+ * removed underneath it). Commits of that container fail until it is rebuilt.
+ */
+export class MissingImageContentError extends Error {
+  constructor(readonly digest: string) {
+    super(`the Sandbox's image is missing ${digest.slice(0, 19)} from Docker's content store`);
+  }
+}
+
 export class SandboxDocker {
   readonly docker = new Docker();
   reach: SandboxReach = "ip";
@@ -230,6 +241,10 @@ export class SandboxDocker {
     }
   }
 
+  async rename(containerId: string, name: string): Promise<void> {
+    await this.docker.getContainer(containerId).rename({ name });
+  }
+
   async remove(containerId: string): Promise<void> {
     try {
       await this.docker.getContainer(containerId).remove({ force: true, v: true });
@@ -269,12 +284,50 @@ export class SandboxDocker {
    */
   async commit(containerId: string, spec: CommitSpec): Promise<{ imageId: string; sizeBytes: number }> {
     const changes = [`LABEL ${LABEL_SNAPSHOT}=${spec.snapshotId}`, ...spec.stripEnv.map((k) => `ENV ${k}=`)];
-    const res = (await this.docker.getContainer(containerId).commit({
-      _query: { container: containerId, repo: SNAPSHOT_REPO, tag: spec.tag, pause: true, changes },
-      _body: {},
-    })) as { Id: string };
-    const history = (await this.docker.getImage(res.Id).history()) as Array<{ Size: number }>;
-    return { imageId: res.Id, sizeBytes: history[0]?.Size ?? 0 };
+    let res: { Id: string };
+    try {
+      res = (await this.docker.getContainer(containerId).commit({
+        _query: { container: containerId, repo: SNAPSHOT_REPO, tag: spec.tag, pause: true, changes },
+        _body: {},
+      })) as { Id: string };
+    } catch (e) {
+      const digest = missingContentDigest(e);
+      if (digest) throw new MissingImageContentError(digest);
+      throw e;
+    }
+    return { imageId: res.Id, sizeBytes: await this.topLayerSize(res.Id) };
+  }
+
+  /**
+   * `docker export | docker import`: a single-layer image of the (stopped) container's
+   * whole filesystem, tagged like a Snapshot, that depends on nothing from the image the
+   * container was created from — the way out when that image lost content. `keepEnv` are
+   * the variables the container was created with; only the image's own stay in the config.
+   */
+  async flatten(containerId: string, spec: CommitSpec & { keepEnv: string[] }): Promise<{ imageId: string; sizeBytes: number }> {
+    const container = this.docker.getContainer(containerId);
+    const { Config: config } = await container.inspect();
+    const skip = new Set([...spec.stripEnv, ...spec.keepEnv]);
+    const changes = [
+      `LABEL ${LABEL_SNAPSHOT}=${spec.snapshotId}`,
+      ...config.Env.filter((kv) => !skip.has(kv.slice(0, kv.indexOf("=")))).map(envChange),
+      ...(config.User ? [`USER ${config.User}`] : []),
+      ...(config.WorkingDir ? [`WORKDIR ${config.WorkingDir}`] : []),
+      ...(config.Entrypoint ? [`ENTRYPOINT ${JSON.stringify(config.Entrypoint)}`] : []),
+      ...(config.Cmd ? [`CMD ${JSON.stringify(config.Cmd)}`] : []),
+    ];
+    const tar = await container.export();
+    const progress = await this.docker.importImage(tar, { repo: SNAPSHOT_REPO, tag: spec.tag, changes });
+    await new Promise<void>((resolve, reject) => {
+      this.docker.modem.followProgress(progress, (err: Error | null) => (err ? reject(err) : resolve()));
+    });
+    const { Id } = await this.docker.getImage(`${SNAPSHOT_REPO}:${spec.tag}`).inspect();
+    return { imageId: Id, sizeBytes: await this.topLayerSize(Id) };
+  }
+
+  private async topLayerSize(imageId: string): Promise<number> {
+    const history = (await this.docker.getImage(imageId).history()) as Array<{ Size: number }>;
+    return history[0]?.Size ?? 0;
   }
 
   async imageExists(ref: string): Promise<boolean> {
@@ -400,6 +453,20 @@ export class SandboxDocker {
       }
     });
   }
+}
+
+/** Dockerfile `ENV` for one `KEY=value` entry of a container config. */
+function envChange(kv: string): string {
+  const at = kv.indexOf("=");
+  const value = kv.slice(at + 1);
+  return `ENV ${kv.slice(0, at)}=${/^[\w./:@-]*$/.test(value) ? value : JSON.stringify(value)}`;
+}
+
+/** The digest Docker reported missing from its content store in a 404 from commit/create, or `null`. */
+function missingContentDigest(e: unknown): string | null {
+  if (!isStatus(e, 404) || !(e instanceof Error) || !/not found/.test(e.message)) return null;
+  // "content digest sha256:…: not found" (unknown to the metadata) or "blob sha256:… expected at …: blob not found" (file gone).
+  return /(?:content digest|blob) (sha256:[0-9a-f]{64})/.exec(e.message)?.[1] ?? null;
 }
 
 function isStatus(e: unknown, status: number): boolean {

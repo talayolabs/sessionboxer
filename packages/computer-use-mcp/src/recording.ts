@@ -346,7 +346,7 @@ function retiming(kept: number[], hold: number, frame: number): (t: number) => n
  * dropped from the text because they are ASS override syntax.
  */
 function assDocument(width: number, height: number, band: number, captions: Caption[], endSeconds: number): string {
-  const fontSize = Math.max(20, Math.round(band / 5));
+  const fontSize = Math.max(16, Math.round(band / 7));
   const margin = Math.round(fontSize * 0.5);
   const head = [
     "[Script Info]",

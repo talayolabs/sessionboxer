@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { SessionUpdate, StopReason } from "@agentclientprotocol/sdk";
 
-export type { SessionUpdate, StopReason, ContentBlock, ToolCallContent } from "@agentclientprotocol/sdk";
+export type { SessionUpdate, StopReason, ContentBlock, ToolCallContent, ToolCallLocation } from "@agentclientprotocol/sdk";
 
 // ---------------------------------------------------------------------------
 // Sessions (Control Plane <-> web UI)
@@ -832,6 +832,17 @@ export const CodeServerStatus = z.object({
 });
 export type CodeServerStatus = z.infer<typeof CodeServerStatus>;
 
+/** A place in a Workspace file to show in the Code pane: a path in the chat the user clicked. */
+export const CodeOpenParams = z.object({
+  /** Workspace-relative (`src/a.ts`) or absolute under `/workspace`. */
+  path: z.string().min(1),
+  /** 1-based. */
+  line: z.number().int().positive().optional(),
+  /** 1-based; only with `line`. */
+  column: z.number().int().positive().optional(),
+});
+export type CodeOpenParams = z.infer<typeof CodeOpenParams>;
+
 // ---------------------------------------------------------------------------
 // Sandbox Daemon RPC (Control Plane <-> Daemon, JSON-RPC 2.0 over WebSocket).
 // Method names use ACP's `_<vendor>/` extension convention.
@@ -868,6 +879,7 @@ export const DAEMON_METHODS = {
   codeStart: "_sessionboxer/code/start",
   codeStatus: "_sessionboxer/code/status",
   codeStop: "_sessionboxer/code/stop",
+  codeOpen: "_sessionboxer/code/open",
 } as const;
 
 export const DaemonHelloParams = z.object({

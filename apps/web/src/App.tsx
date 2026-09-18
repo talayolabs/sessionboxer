@@ -43,7 +43,9 @@ import { SnapshotsDialog } from "./SnapshotsDialog";
 import { SourceIcon, sourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
-import { CodePane } from "./Code";
+import { CodePane, type CodeTarget } from "./Code";
+import { OpenFile } from "./FileLink";
+import type { FileRef } from "./file-links";
 import { Transcript } from "./Transcript";
 import { buildTranscript } from "./transcript-model";
 
@@ -557,7 +559,12 @@ function SessionView({
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
   const [zen, setZen] = useState(false);
+  const [codeTarget, setCodeTarget] = useState<CodeTarget | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+  const openFile = useCallback((ref: FileRef) => {
+    setPane("code");
+    setCodeTarget({ ...ref, nonce: Date.now() });
+  }, []);
   useEffect(() => setTitle(session.title), [session.title]);
   useEffect(() => {
     if (!forkRequest) return;
@@ -637,6 +644,7 @@ function SessionView({
 
   return (
     <AttachmentSession.Provider value={session.id}>
+    <OpenFile.Provider value={openFile}>
     <div className="session">
       <header className="session-header">
         {editingTitle ? (
@@ -839,10 +847,11 @@ function SessionView({
           />
         </div>
         {pane === "desktop" && <Desktop session={session} />}
-        {pane === "code" && <CodePane session={session} />}
+        {pane === "code" && <CodePane session={session} target={codeTarget} />}
         {pane === "terminal" && <TerminalPane session={session} />}
       </div>
     </div>
+    </OpenFile.Provider>
     </AttachmentSession.Provider>
   );
 }

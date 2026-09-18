@@ -1,5 +1,6 @@
 import type {
   AskResult,
+  CodeOpenParams,
   CodeServerStatus,
   ConnectorFlow,
   GhCliStatus,
@@ -104,6 +105,8 @@ export const api = {
   codeStart: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "POST" }),
   codeStatus: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`),
   codeStop: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "DELETE" }),
+  codeOpen: (id: string, target: CodeOpenParams) =>
+    request<{ ok: true }>(`/sessions/${id}/code-server/open`, { method: "POST", body: JSON.stringify(target) }),
 };
 
 /** Same-origin URL of a Session's VS Code (the Code pane's iframe), proxied by the Control Plane. */

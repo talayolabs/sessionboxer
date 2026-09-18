@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
+import { FileLink } from "./FileLink";
+import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
 import { formatMb, formatTime } from "./format";
 import { Markdown } from "./Markdown";
 import type { DividerRef } from "./BranchTree";
@@ -119,17 +121,81 @@ function ToolContent({ content }: { content: ToolCallContent }) {
       }
       if (content.content.type === "text") return <pre>{content.content.text}</pre>;
       return <pre>{JSON.stringify(content.content, null, 2)}</pre>;
-    case "diff":
+    case "diff": {
+      const ref = knownFileRef(content.path);
       return (
         <pre>
-          <b>{content.path}</b>
+          <b>{ref ? <FileLink fileRef={ref}>{content.path}</FileLink> : content.path}</b>
           {"\n"}
           {content.newText}
         </pre>
       );
+    }
     case "terminal":
       return <pre>[terminal {content.terminalId}]</pre>;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** The file named in a tool's raw input (`file_path`, with Claude's `offset` as the line for reads). */
+function inputFileRef(rawInput: unknown): FileRef | null {
+  if (!isRecord(rawInput)) return null;
+  for (const key of ["file_path", "path", "notebook_path"]) {
+    const value = rawInput[key];
+    if (typeof value !== "string" || value === "") continue;
+    const offset = rawInput.offset;
+    return knownFileRef(value, typeof offset === "number" ? offset : null);
+  }
+  return null;
+}
+
+/** The file a tool call worked on, for the header link: ACP `locations`, the raw input, a diff's path. */
+function toolFileRef(item: Extract<TranscriptItem, { kind: "tool" }>): FileRef | null {
+  const location = item.locations[0];
+  if (location) {
+    const ref = knownFileRef(location.path, location.line);
+    if (ref) return ref;
+  }
+  const fromInput = inputFileRef(item.rawInput);
+  if (fromInput) return fromInput;
+  for (const c of item.content) {
+    if (c.type !== "diff") continue;
+    const ref = knownFileRef(c.path);
+    if (ref) return ref;
+  }
+  return null;
+}
+
+/** Tool title with the paths it names clickable; the tool's file appended when the title has none. */
+function ToolTitle({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> }) {
+  const parts = splitFileRefs(item.title);
+  const linked = parts.some((p) => typeof p !== "string");
+  const ref = linked ? null : toolFileRef(item);
+  return (
+    <span className="tool-title">
+      {parts.map((p, i) =>
+        typeof p === "string" ? (
+          p
+        ) : (
+          <FileLink key={i} fileRef={p.ref}>
+            {p.text}
+          </FileLink>
+        ),
+      )}
+      {ref && (
+        <>
+          {" "}
+          <FileLink fileRef={ref} className="tool-file">
+            {ref.path}
+            {ref.line !== undefined ? `:${ref.line}` : ""}
+          </FileLink>
+        </>
+      )}
+    </span>
+  );
 }
 
 function ToolCall({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> }) {
@@ -141,7 +207,7 @@ function ToolCall({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> })
       <button className="tool-header" onClick={() => setOpen(!open)}>
         <span className="tool-caret">{open ? "▾" : "▸"}</span>
         <span className="tool-kind">{item.toolKind}</span>
-        <span className="tool-title">{item.title}</span>
+        <ToolTitle item={item} />
         <span className="tool-status">{item.status}</span>
       </button>
       {images.map((c, i) => (

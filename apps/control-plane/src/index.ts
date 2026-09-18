@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
   AskRequest,
+  CodeOpenParams,
   ConnectorKind,
   ConnectorStartRequest,
   CreateSessionRequest,
@@ -268,6 +269,10 @@ api.get(
 api.post("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStart(c.req.param("id"))));
 api.get("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStatus(c.req.param("id"))));
 api.delete("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStop(c.req.param("id"))));
+api.post("/sessions/:id/code-server/open", async (c) => {
+  await sessions.codeOpen(c.req.param("id"), CodeOpenParams.parse(await c.req.json()));
+  return c.json({ ok: true });
+});
 const forwardedFor = (c: { req: { header: (name: string) => string | undefined } }, id: string): Record<string, string> =>
   forwardedHeaders(codePrefix(id), c.req.header("x-forwarded-host") ?? c.req.header("host"), c.req.header("x-forwarded-proto") ?? "http");
 api.get(

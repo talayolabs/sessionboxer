@@ -5,6 +5,7 @@ import type {
   Snapshot,
   StopReason,
   ToolCallContent,
+  ToolCallLocation,
 } from "@sessionboxer/protocol";
 
 export type TranscriptItem =
@@ -19,6 +20,7 @@ export type TranscriptItem =
       toolKind: string;
       status: string;
       content: ToolCallContent[];
+      locations: ToolCallLocation[];
       rawInput?: unknown;
       rawOutput?: unknown;
     }
@@ -165,6 +167,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
               toolKind: u.kind ?? "other",
               status: u.status ?? "pending",
               content: u.content ?? [],
+              locations: u.locations ?? [],
               rawInput: u.rawInput,
               rawOutput: u.rawOutput,
             };
@@ -183,6 +186,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
                 toolKind: u.kind ?? "other",
                 status: u.status ?? "pending",
                 content: [],
+                locations: [],
               };
               tools.set(u.toolCallId, item);
               items.push(item);
@@ -191,6 +195,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
             if (u.kind) item.toolKind = u.kind;
             if (u.status) item.status = u.status;
             if (u.content) item.content = u.content;
+            if (u.locations) item.locations = u.locations;
             if (u.rawInput !== undefined) item.rawInput = u.rawInput;
             if (u.rawOutput !== undefined) item.rawOutput = u.rawOutput;
             break;

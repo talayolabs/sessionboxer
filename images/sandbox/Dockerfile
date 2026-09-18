@@ -112,6 +112,9 @@ COPY images/sandbox/openvscode-workbench.css /opt/openvscode-server/out/vs/code/
 RUN html=/opt/openvscode-server/out/vs/code/browser/workbench/workbench.html \
     && sed -i 's|</head>|\t<script src="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.js"></script>\n\t<link rel="stylesheet" href="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.css">\n\t</head>|' "$html" \
     && grep -q sessionboxer.js "$html" && grep -q sessionboxer.css "$html"
+# Built-in extension: lets the Daemon open a file (at a line) in the connected editor, which
+# is how paths clicked in the chat land in the Code pane.
+COPY images/sandbox/vscode-sessionboxer /opt/openvscode-server/extensions/sessionboxer
 
 # Computer-use MCP server (compiled in stage 1).
 COPY --from=build /src/packages/computer-use-mcp/package.json /opt/sessionboxer/computer-use-mcp/

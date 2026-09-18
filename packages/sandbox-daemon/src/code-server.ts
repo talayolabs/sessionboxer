@@ -3,15 +3,19 @@ import { readFileSync, realpathSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import type { Duplex } from "node:stream";
-import { dirname, join } from "node:path";
-import { CODE_PATH, type CodeServerStatus } from "@sessionboxer/protocol";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { CODE_PATH, type CodeOpenParams, type CodeServerStatus } from "@sessionboxer/protocol";
 import { caEnv } from "./ca-env.js";
 
 const env = process.env;
 const COMMAND = env.SESSIONBOXER_CODE_COMMAND ?? "openvscode-server";
 /** Loopback only: the Daemon's reverse proxy is the sole way in. */
 const PORT = Number(env.SESSIONBOXER_CODE_PORT ?? 7100);
+/** Where the built-in Sessionboxer extension (in the remote extension host) takes open requests. */
+const OPEN_PORT = Number(env.SESSIONBOXER_CODE_OPEN_PORT ?? 7101);
 const START_TIMEOUT_MS = 90_000;
+/** A window has to connect and start its extension host before an open request can land. */
+const OPEN_TIMEOUT_MS = 45_000;
 const STOP_GRACE_MS = 5_000;
 const STDERR_TAIL_LINES = 20;
 
@@ -89,6 +93,39 @@ export class CodeServer {
     return this.status();
   }
 
+  /**
+   * Shows a Workspace file (at a line) in the editor a window is connected to: starts the
+   * server if needed, then hands the request to the Sessionboxer extension, waiting for an
+   * extension host to appear (the Code pane may be loading right now).
+   */
+  async open(params: CodeOpenParams): Promise<void> {
+    const path = this.resolvePath(params.path);
+    const status = await this.start();
+    if (status.state !== "running") throw new Error(status.error ?? "VS Code is not running in this Sandbox.");
+    const body = JSON.stringify({ path, line: params.line, column: params.column });
+    const deadline = Date.now() + OPEN_TIMEOUT_MS;
+    let last = "";
+    while (Date.now() < deadline) {
+      const result = await postOpen(body);
+      if (result.ok) {
+        this.log(`opened ${path}${params.line ? `:${params.line}` : ""}`);
+        return;
+      }
+      if (result.status === 400) throw new Error(result.error);
+      last = result.error;
+      await sleep(500);
+    }
+    throw new Error(`VS Code has no window connected to open the file in (${last}); open the Code pane and retry.`);
+  }
+
+  /** Absolute path inside the Workspace, whatever form the chat used. */
+  private resolvePath(path: string): string {
+    const abs = resolve(isAbsolute(path) ? path : join(this.workspace, path));
+    const rel = relative(this.workspace, abs);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`${path} is outside the Workspace`);
+    return abs;
+  }
+
   private async launch(): Promise<CodeServerStatus> {
     this.state = "starting";
     this.error = null;
@@ -112,7 +149,7 @@ export class CodeServer {
     try {
       proc = spawn(COMMAND, args, {
         cwd: this.workspace,
-        env: { ...process.env, ...caEnv() },
+        env: { ...process.env, ...caEnv(), SESSIONBOXER_CODE_OPEN_PORT: String(OPEN_PORT) },
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       });
@@ -246,6 +283,45 @@ export class CodeServer {
         return "VS Code is not running in this Sandbox.";
     }
   }
+}
+
+type OpenResult = { ok: true } | { ok: false; status: number | null; error: string };
+
+/** One attempt at the extension's `/open`; `status: null` when nothing is listening yet. */
+function postOpen(body: string): Promise<OpenResult> {
+  return new Promise((resolve) => {
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port: OPEN_PORT,
+        path: "/open",
+        method: "POST",
+        timeout: 10_000,
+        headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          if (res.statusCode === 200) return resolve({ ok: true });
+          let error = `extension answered ${res.statusCode ?? "?"}`;
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { error?: unknown };
+            if (typeof parsed.error === "string") error = parsed.error;
+          } catch {
+            // not JSON; keep the status text
+          }
+          resolve({ ok: false, status: res.statusCode ?? null, error });
+        });
+      },
+    );
+    req.on("error", (e) => resolve({ ok: false, status: null, error: e.message }));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ ok: false, status: null, error: "extension did not answer" });
+    });
+    req.end(body);
+  });
 }
 
 /** `/code/x?y` → `/x?y`, `/code` → `/`, anything else → `null`. */

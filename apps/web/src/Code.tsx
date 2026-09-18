@@ -1,23 +1,51 @@
 import { useCallback, useEffect, useState } from "react";
-import type { CodeServerStatus, Session } from "@sessionboxer/protocol";
+import type { CodeOpenParams, CodeServerStatus, Session } from "@sessionboxer/protocol";
 import { api, codeUrl } from "./api";
+
+/** A file to show; `nonce` makes clicking the same reference twice open it twice. */
+export type CodeTarget = CodeOpenParams & { nonce: number };
 
 function isLive(session: Session): boolean {
   return session.status === "idle" || session.status === "running";
+}
+
+function describe(target: CodeOpenParams): string {
+  return `${target.path}${target.line === undefined ? "" : `:${target.line}`}`;
 }
 
 /**
  * VS Code on the Workspace, served by openvscode-server from inside the Sandbox and shown in
  * an iframe. The server is started the first time the pane opens and stays up until the
  * Sandbox stops; the iframe URL is same-origin (Control Plane proxy), so clipboard and
- * keyboard work as in any tab.
+ * keyboard work as in any tab. A `target` (a path clicked in the chat) is opened in the editor
+ * through the Daemon, which starts the server and waits for the window if needed.
  */
-export function CodePane({ session }: { session: Session }) {
+export function CodePane({ session, target = null }: { session: Session; target?: CodeTarget | null }) {
   const live = isLive(session);
   const [status, setStatus] = useState<CodeServerStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [generation, setGeneration] = useState(0);
+  const [opening, setOpening] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!target || !live) return;
+    let cancelled = false;
+    const { nonce: _nonce, ...params } = target;
+    setOpening(describe(params));
+    setError(null);
+    void api
+      .codeOpen(session.id, params)
+      .catch((e: unknown) => {
+        if (!cancelled) setError(`Could not open ${describe(params)}: ${e instanceof Error ? e.message : String(e)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setOpening(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session.id, live, target]);
 
   const start = useCallback(async () => {
     setBusy(true);
@@ -82,6 +110,7 @@ export function CodePane({ session }: { session: Session }) {
         <span className="muted" title="Running inside the Sandbox, not on your machine">
           Remote VS Code{status?.version ? ` ${status.version}` : ""}
         </span>
+        {opening && <span className="muted">Opening {opening}…</span>}
         <span className="spacer" />
         {running && (
           <button className="small" onClick={() => window.open(url, "_blank", "noopener")} title="Open VS Code in its own tab">

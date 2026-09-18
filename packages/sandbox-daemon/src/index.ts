@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
+  CodeOpenParams,
   DAEMON_METHODS,
-  instructionsDelivery,
   DAEMON_PORT,
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
@@ -22,6 +22,7 @@ import {
   PtyInputParams,
   PtyOpenParams,
   PtyResizeParams,
+  instructionsDelivery,
   isJsonRpcRequest,
   parseJsonRpc,
   type DaemonEvent,
@@ -232,6 +233,9 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       return codeServer.status();
     case DAEMON_METHODS.codeStop:
       return codeServer.stop();
+    case DAEMON_METHODS.codeOpen:
+      await codeServer.open(CodeOpenParams.parse(params));
+      return {};
     default:
       throw Object.assign(new Error(`method not found: ${method}`), { code: -32601 });
   }

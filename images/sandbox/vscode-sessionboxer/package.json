@@ -1,0 +1,14 @@
+{
+  "name": "sessionboxer",
+  "displayName": "Sessionboxer",
+  "description": "Opens the files clicked in the Sessionboxer chat in this editor.",
+  "version": "0.0.1",
+  "publisher": "sessionboxer",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "capabilities": { "virtualWorkspaces": false, "untrustedWorkspaces": { "supported": true } },
+  "contributes": {}
+}

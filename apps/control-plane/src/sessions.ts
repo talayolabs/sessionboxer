@@ -13,6 +13,7 @@ import {
   type DaemonOptionSetParams,
   DaemonSessionForkResult,
   DaemonSessionSwitchResult,
+  CodeOpenParams,
   CodeServerStatus,
   DaemonStatus,
   NOVNC_PORT,
@@ -254,6 +255,11 @@ export class SessionManager {
 
   async codeStop(id: string): Promise<CodeServerStatus> {
     return CodeServerStatus.parse(await this.daemonCall(id, DAEMON_METHODS.codeStop, {}));
+  }
+
+  /** Shows a Workspace file in the Session's VS Code (starting it if needed). */
+  async codeOpen(id: string, params: CodeOpenParams): Promise<void> {
+    await this.daemonCall(id, DAEMON_METHODS.codeOpen, params, CODE_START_TIMEOUT_MS);
   }
 
   // --- Terminals -----------------------------------------------------------

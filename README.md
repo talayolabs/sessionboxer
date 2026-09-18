@@ -117,6 +117,8 @@ Replies and your prompts render as Markdown. Fenced code with a language (```ts,
 
 **Code** opens VS Code on the project folder, running inside the box ([openvscode-server](https://github.com/gitpod-io/openvscode-server), same editor as VS Code for the Web): search, Git view, integrated terminal (extensions from [Open VSX](https://open-vsx.org) via Ctrl+Shift+X; the Extensions icon and the remote indicator are hidden, everything here is remote). The server starts the first time you open the pane (a few seconds) and stops with the box; **Restart** relaunches it and **Open in new tab** gives it a whole window. Settings and extensions you install live in the box, so they survive Stop → Resume and travel with snapshots; the agent sees the same files, so its edits show up as you watch. VS Code's own AI features (Copilot chat, agent mode, inline completions) are turned off in the box so there is one agent per session, the one in the chat; flip `chat.disableAIFeatures` in VS Code's settings if you want them back. No Get Started page either.
 
+Files the chat names are links into that editor: a project path in a reply, a prompt or a tool call (`src/App.tsx`, `/workspace/src/App.tsx:42`, `src/App.tsx:42:7`, `src/App.tsx#L42`) opens the file in the Code pane, at that line and column; the **Read** / **Edit** tool rows link the file they touched. Videos, images and PDFs keep their inline card instead. Bare filenames without a folder (`index.ts`) are left alone in prose unless they carry a `:line`, to avoid turning every mention into a link.
+
 **Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
 
 ### Pull the box's changes into your folder

@@ -12,7 +12,7 @@
     "build:protocol": "tsc -b packages/protocol",
     "typecheck": "tsc -b && npm run typecheck -w @sessionboxer/web",
     "clean": "tsc -b --clean",
-    "build:image": "docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .",
+    "build:image": "node scripts/build-image.mjs",
     "start": "node apps/control-plane/dist/index.js",
     "spike:acp": "node scripts/spike-acp.mjs"
   },

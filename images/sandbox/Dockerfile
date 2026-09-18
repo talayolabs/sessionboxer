@@ -1,7 +1,12 @@
 # Sessionboxer Sandbox image: one container per Session, with an X11 Desktop
 # (Xvfb + xfce4 + x11vnc + noVNC), the Provider ACP adapters (Claude Code,
 # Devin CLI), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
-#   docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .
+#   npm run build:image        (scripts/build-image.mjs)
+# which is `docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .` plus the
+# `extra-ca` build secret: the CA certificates this machine trusts beyond the public ones
+# (Cloudflare WARP, a corporate proxy), so downloads during the build pass TLS inspection.
+# EXTRA_CA_FINGERPRINT only changes when that bundle changes; it makes the layers that
+# download things rebuild when it does (secret contents are not part of the layer cache key).
 
 # ---------------------------------------------------------------------------
 # Stage 1: compile Sessionboxer TypeScript packages
@@ -12,7 +17,10 @@ COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/computer-use-mcp/package.json packages/computer-use-mcp/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/sandbox-daemon/package.json packages/sandbox-daemon/
-RUN npm ci --workspace @sessionboxer/computer-use-mcp --workspace @sessionboxer/protocol \
+ARG EXTRA_CA_FINGERPRINT=
+RUN --mount=type=secret,id=extra-ca \
+    if [ -s /run/secrets/extra-ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra-ca; fi \
+    && npm ci --workspace @sessionboxer/computer-use-mcp --workspace @sessionboxer/protocol \
       --workspace @sessionboxer/sandbox-daemon --ignore-scripts
 COPY packages/computer-use-mcp packages/computer-use-mcp
 COPY packages/protocol packages/protocol
@@ -31,6 +39,10 @@ ARG CLAUDE_CODE_VERSION=2.1.272
 ARG CLAUDE_AGENT_ACP_VERSION=0.77.0
 ARG DEVIN_CLI_VERSION=3000.10.27
 ARG OPENVSCODE_SERVER_VERSION=1.109.5
+ARG EXTRA_CA_FINGERPRINT=
+# Build-time only (an ARG is not kept in the image): npm/node trust the system store, which
+# includes the extra CAs below, while downloading. At runtime the Control Plane manages this.
+ARG NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -39,8 +51,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Base tooling + Desktop stack. Firefox ESR comes from Mozilla's apt repo
 # because Ubuntu's firefox package is a snap shim that does not work in Docker.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=secret,id=extra-ca \
+    apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg wget \
+    && if [ -s /run/secrets/extra-ca ]; then \
+         install -m 0644 /run/secrets/extra-ca /usr/local/share/ca-certificates/sessionboxer-extra.crt \
+         && update-ca-certificates; \
+       fi \
     && install -d -m 0755 /etc/apt/keyrings \
     && curl -fsSL https://packages.mozilla.org/apt/repo-signing-key.gpg -o /etc/apt/keyrings/packages.mozilla.org.asc \
     && echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" > /etc/apt/sources.list.d/mozilla.list \

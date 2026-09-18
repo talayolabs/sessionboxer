@@ -672,7 +672,7 @@ function SessionView({
             {DOCKER_MODE_LABELS[session.dockerMode]}
           </span>
         )}
-        <span className="muted source" title={sourceTitle(source)}>
+        <span className="muted source" title={`${sourceTitle(source)}${gitIdentityNote(session)}`}>
           <SourceIcon source={source} size={14} />
           {sourceLabel}
         </span>
@@ -875,6 +875,12 @@ function DockerModeNote({ settings, enabled }: { settings: PublicSettings; enabl
   );
 }
 
+function gitIdentityNote(session: Session): string {
+  const { name, email } = session.gitIdentity;
+  if (!name && !email) return "";
+  return `\nGit commits as ${name}${email ? ` <${email}>` : ""}`;
+}
+
 function NewSession({
   settings,
   models,
@@ -903,6 +909,10 @@ function NewSession({
   const [prompt, setPrompt] = useState("");
   const [mcpEnabled, setMcpEnabled] = useState<string[]>(() => settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id));
   const [instructions, setInstructions] = useState(settings.instructions);
+  const defaultGitName = settings.gitUserName || settings.hostGitIdentity.name;
+  const defaultGitEmail = settings.gitUserEmail || settings.hostGitIdentity.email;
+  const [gitName, setGitName] = useState(defaultGitName);
+  const [gitEmail, setGitEmail] = useState(defaultGitEmail);
   const [busy, setBusy] = useState(false);
 
   const submit = (e: React.FormEvent) => {
@@ -925,6 +935,7 @@ function NewSession({
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
         instructions,
+        gitIdentity: { name: gitName.trim(), email: gitEmail.trim() },
       });
       onCreated(s);
     }).finally(() => setBusy(false));
@@ -992,6 +1003,35 @@ function NewSession({
             Branch / tag (optional)
             <input value={gitRef} onChange={(e) => setGitRef(e.target.value)} placeholder="main" />
           </label>
+          <span className="label-row">
+            Git author for commits made in the Sandbox
+            {(gitName !== defaultGitName || gitEmail !== defaultGitEmail) && (
+              <button
+                type="button"
+                className="link"
+                onClick={() => {
+                  setGitName(defaultGitName);
+                  setGitEmail(defaultGitEmail);
+                }}
+              >
+                Reset to the global identity
+              </button>
+            )}
+          </span>
+          <div className="row">
+            <label>
+              Name
+              <input value={gitName} onChange={(e) => setGitName(e.target.value)} placeholder="Jane Doe" autoComplete="name" />
+            </label>
+            <label>
+              Email
+              <input value={gitEmail} onChange={(e) => setGitEmail(e.target.value)} placeholder="jane@example.com" autoComplete="email" />
+            </label>
+          </div>
+          <p className="muted">
+            Used as git&apos;s <code>user.name</code> / <code>user.email</code> inside the Sandbox (author and committer). Prefilled from Settings
+            {!settings.gitUserName && settings.hostGitIdentity.name ? " (blank there, so from this machine's git config)" : ""}; fixed for this Session.
+          </p>
         </>
       )}
       {sourceType === "copy" && (
@@ -1181,12 +1221,17 @@ function SettingsView({
       </p>
       <label>
         Git user.name
-        <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} />
+        <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} placeholder={settings.hostGitIdentity.name} />
       </label>
       <label>
         Git user.email
-        <input value={gitUserEmail} onChange={(e) => setGitUserEmail(e.target.value)} />
+        <input value={gitUserEmail} onChange={(e) => setGitUserEmail(e.target.value)} placeholder={settings.hostGitIdentity.email} />
       </label>
+      <p className="muted">
+        Default author/committer for commits made in Sandboxes; blank takes this machine&apos;s git config
+        {settings.hostGitIdentity.name ? ` (${settings.hostGitIdentity.name}${settings.hostGitIdentity.email ? ` <${settings.hostGitIdentity.email}>` : ""})` : ""}.
+        Overridable per Session when creating it.
+      </p>
       <div className="row">
         <label>
           Sandbox CPUs

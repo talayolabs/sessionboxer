@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import {
   MCP_RESERVED_NAMES,
   Settings,
   type DockerMode,
+  type GitIdentity,
   type McpConnector,
   type McpKeyValue,
   type McpServerDef,
@@ -94,6 +96,33 @@ export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclud
     },
     dockerModeAvailable,
     hostCaCerts: hostExtraCaCerts().map((c) => c.subject),
+    hostGitIdentity: hostGitIdentity(),
+  };
+}
+
+let hostGit: GitIdentity | undefined;
+/** The host user's own `git config` identity (global/system scope), read once; blank parts when git or the keys are absent. */
+export function hostGitIdentity(): GitIdentity {
+  if (!hostGit) {
+    const read = (key: string): string => {
+      try {
+        return execFileSync("git", ["config", "--global", "--get", key], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).trim();
+      } catch {
+        return "";
+      }
+    };
+    hostGit = { name: read("user.name"), email: read("user.email") };
+  }
+  return hostGit;
+}
+
+/** Identity a new Session's Sandbox commits with: the request's, else Settings, else the host's git config, per part. */
+export function resolveGitIdentity(settings: Settings, requested: Partial<GitIdentity> | undefined): GitIdentity {
+  const host = hostGitIdentity();
+  const pick = (req: string | undefined, setting: string, fallback: string): string => (req ?? (setting || fallback)).trim();
+  return {
+    name: pick(requested?.name, settings.gitUserName, host.name),
+    email: pick(requested?.email, settings.gitUserEmail, host.email),
   };
 }
 

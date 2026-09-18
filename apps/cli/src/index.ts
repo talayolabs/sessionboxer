@@ -36,6 +36,9 @@ Options for new:
       --instructions <text|@file>
                          Standing instructions for the Agent (system prompt for Claude, first-prompt
                          prefix for Devin); "" for none. Default: the Settings text
+      --git-name <name>, --git-email <email>
+                         Git author/committer for commits made in the Sandbox. Default: the
+                         Settings identity, else this machine's git config
       --docker           Private Docker daemon inside the Sandbox (Sysbox, or --privileged
                          with a warning when Sysbox is not installed); --no-docker to disable.
                          Default: the "Docker inside Sandboxes" setting
@@ -106,6 +109,8 @@ async function newSession(args: string[]): Promise<void> {
       model: { type: "string" },
       option: { type: "string", multiple: true },
       instructions: { type: "string" },
+      "git-name": { type: "string" },
+      "git-email": { type: "string" },
       docker: { type: "boolean" },
       open: { type: "boolean", default: true },
     },
@@ -145,6 +150,14 @@ async function newSession(args: string[]): Promise<void> {
     ...(values.model ? { model: values.model } : {}),
     ...(Object.keys(options).length > 0 ? { options } : {}),
     ...(instructions !== undefined ? { instructions } : {}),
+    ...(values["git-name"] !== undefined || values["git-email"] !== undefined
+      ? {
+          gitIdentity: {
+            ...(values["git-name"] !== undefined ? { name: values["git-name"] } : {}),
+            ...(values["git-email"] !== undefined ? { email: values["git-email"] } : {}),
+          },
+        }
+      : {}),
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),
   };

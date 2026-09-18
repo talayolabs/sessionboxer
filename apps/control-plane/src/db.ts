@@ -58,6 +58,8 @@ interface SessionRow {
   /** JSON array of `AgentOption`. */
   available_options: string;
   instructions: string;
+  git_user_name: string;
+  git_user_email: string;
   active_branch_id: string;
   created_at: string;
   updated_at: string;
@@ -134,6 +136,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   options_pending INTEGER NOT NULL DEFAULT 0,
   available_options TEXT NOT NULL DEFAULT '[]',
   instructions TEXT NOT NULL DEFAULT '',
+  git_user_name TEXT NOT NULL DEFAULT '',
+  git_user_email TEXT NOT NULL DEFAULT '',
   active_branch_id TEXT NOT NULL DEFAULT 'root',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -210,6 +214,8 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "available_options", ddl: "ALTER TABLE sessions ADD COLUMN available_options TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "sessions", column: "instructions", ddl: "ALTER TABLE sessions ADD COLUMN instructions TEXT NOT NULL DEFAULT ''" },
+  { table: "sessions", column: "git_user_name", ddl: "ALTER TABLE sessions ADD COLUMN git_user_name TEXT NOT NULL DEFAULT ''" },
+  { table: "sessions", column: "git_user_email", ddl: "ALTER TABLE sessions ADD COLUMN git_user_email TEXT NOT NULL DEFAULT ''" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];
@@ -270,8 +276,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, instructions, active_branch_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @instructions, @active_branch_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, instructions, git_user_name, git_user_email, active_branch_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @instructions, @git_user_name, @git_user_email, @active_branch_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -650,6 +656,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     optionsPending: row.options_pending === 1,
     availableOptions: AgentOption.array().parse(JSON.parse(row.available_options)),
     instructions: row.instructions,
+    gitIdentity: { name: row.git_user_name, email: row.git_user_email },
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
     branches,
@@ -700,6 +707,8 @@ function sessionToRow(s: Session): SessionRow {
     options_pending: s.optionsPending ? 1 : 0,
     available_options: JSON.stringify(s.availableOptions),
     instructions: s.instructions,
+    git_user_name: s.gitIdentity.name,
+    git_user_email: s.gitIdentity.email,
     active_branch_id: s.activeBranchId,
     created_at: s.createdAt,
     updated_at: s.updatedAt,

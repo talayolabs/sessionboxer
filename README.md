@@ -55,7 +55,7 @@ Open **Settings** (bottom of the sidebar) and paste a token for the agent you wa
 - **Claude Code**: run `claude setup-token` on your machine and paste the result.
 - **Devin**: run `devin auth login` on your machine, then paste the token from `~/.local/share/devin/credentials.toml`.
 
-Tokens are stored in `~/.sessionboxer/config.json` (readable only by you) and are only handed to the containers of sessions that use that agent. Settings also holds the git name and email that commits made by agents will carry, and how much CPU and memory each session gets (2 CPUs and 4 GB by default).
+Tokens are stored in `~/.sessionboxer/config.json` (readable only by you) and are only handed to the containers of sessions that use that agent. Settings also holds the default git name and email that commits made by agents will carry (blank means your machine's `git config`; either can be overridden per session when creating it), and how much CPU and memory each session gets (2 CPUs and 4 GB by default).
 
 ## Using it
 
@@ -64,7 +64,7 @@ Tokens are stored in `~/.sessionboxer/config.json` (readable only by you) and ar
 Click **+ New**, pick the agent, choose where the code comes from:
 
 - **Empty directory**: start from scratch.
-- **Clone a git URL**: any URL `git clone` accepts, optionally a branch or tag. With a GitHub entry enabled for the new session (see [GitHub with one click](#github-with-one-click)), private GitHub repositories clone as that account, and `git@github.com:…` SSH URLs are cloned over HTTPS the same way (the box has no SSH keys). Other private hosts need credentials embedded in the URL for now.
+- **Clone a git URL**: any URL `git clone` accepts, optionally a branch or tag. With a GitHub entry enabled for the new session (see [GitHub with one click](#github-with-one-click)), private GitHub repositories clone as that account, and `git@github.com:…` SSH URLs are cloned over HTTPS the same way (the box has no SSH keys). Other private hosts need credentials embedded in the URL for now. Below the URL, **Git author for commits made in the Sandbox** shows the name and email the agent's commits will carry (`user.name` / `user.email` in the box, author and committer): prefilled from **Settings** (or, when blank there, from your machine's own `git config`), editable for this session only, with **Reset to the global identity** to go back; it is fixed once the session exists and travels with forks. The header's source tooltip shows what a session got.
 - **Copy a host directory**: a folder on your machine (type the path or pick it with **Browse…**). Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. Changes the agent makes stay in the box until you **Pull to folder…** (below).
 
 **Model** lists the models the chosen agent offers (Claude Code: Sonnet/Opus/Haiku/Fable and its default; Devin: the catalog your account has, grouped by family); leave it on *Provider default* to let the agent decide. The list is what the agent reported the last time a session of that provider started, so it is empty until you have run one. Next to it come the agent's other settings, when it has any: for Claude Code, **Effort** (default, low … max) and **Fast mode**. Devin's Cloud tiers (Lite, Normal, Ultra) are not something its CLI offers; pick a model with the effort level you want instead (`…-high`, `…-fast`, …).
@@ -175,6 +175,7 @@ sessionboxer new . --model haiku                     # a model id as the provide
 sessionboxer new . --model opus --option effort=high --option fast=on
 sessionboxer new . --instructions @rules.md          # standing instructions from a file ("" for none)
 sessionboxer new --git https://github.com/org/repo.git --ref main
+sessionboxer new --git https://github.com/org/repo.git --git-name "Jane Doe" --git-email jane@work.example
 sessionboxer new --empty -t scratch --no-open
 sessionboxer ls
 sessionboxer open <id> | stop <id> | resume <id> | rm <id>

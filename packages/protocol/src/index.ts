@@ -273,12 +273,21 @@ export type RevertRequest = z.infer<typeof RevertRequest>;
 export const SwitchBranchRequest = z.object({ branchId: z.string().min(1) });
 export type SwitchBranchRequest = z.infer<typeof SwitchBranchRequest>;
 
+/** Author/committer identity git in the Sandbox commits with; either part may be empty (git's own fallback then). */
+export const GitIdentity = z.object({
+  name: z.string().max(200).default(""),
+  email: z.string().max(200).default(""),
+});
+export type GitIdentity = z.infer<typeof GitIdentity>;
+
 export const Session = z.object({
   id: z.string(),
   title: z.string(),
   provider: Provider,
   status: SessionStatus,
   workspaceSource: WorkspaceSource,
+  /** Identity the Sandbox's git uses (`user.name` / `user.email`); fixed at creation. */
+  gitIdentity: GitIdentity.default({ name: "", email: "" }),
   dockerMode: DockerMode.default("none"),
   /** Ids of the `Settings.mcpServers` entries enabled for this Session. */
   mcpEnabled: z.array(z.string()).default([]),
@@ -330,6 +339,8 @@ export const CreateSessionRequest = z.object({
   options: OptionValues.optional(),
   /** Standing instructions for the Agent; omitted takes `Settings.instructions`, `""` sends none. */
   instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).optional(),
+  /** Git identity for the Sandbox; an omitted part takes `Settings.gitUserName` / `gitUserEmail`, else the host's git config; `""` sends none. */
+  gitIdentity: GitIdentity.partial().optional(),
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -507,6 +518,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   dockerModeAvailable: DockerMode.exclude(["none"]),
   /** Subjects of the non-public CA certificates found in this machine's trust store. */
   hostCaCerts: z.array(z.string()),
+  /** `user.name` / `user.email` of the host's own git config, the fallback when the Settings identity is blank. */
+  hostGitIdentity: GitIdentity,
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 

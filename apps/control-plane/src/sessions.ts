@@ -49,7 +49,7 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
-import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveBoxCredentials, resolveMcpServers } from "./config.js";
+import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveBoxCredentials, resolveGitIdentity, resolveMcpServers } from "./config.js";
 import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
@@ -374,6 +374,7 @@ export class SessionManager {
       provider: req.provider,
       status: "creating",
       workspaceSource,
+      gitIdentity: resolveGitIdentity(settings, req.gitIdentity),
       dockerMode,
       containerId: null,
       error: null,
@@ -440,6 +441,7 @@ export class SessionManager {
         snapshotId: snapshot.id,
         label: `${origin.title} @ snapshot ${snapshot.ordinal}`,
       },
+      gitIdentity: origin.gitIdentity,
       dockerMode: origin.dockerMode,
       containerId: null,
       error: null,
@@ -490,13 +492,13 @@ export class SessionManager {
       ...providerEnv(session.provider, settings),
     };
     if (session.dockerMode !== "none") env.SESSIONBOXER_DOCKER = session.dockerMode;
-    if (settings.gitUserName) {
-      env.GIT_AUTHOR_NAME = settings.gitUserName;
-      env.GIT_COMMITTER_NAME = settings.gitUserName;
+    if (session.gitIdentity.name) {
+      env.GIT_AUTHOR_NAME = session.gitIdentity.name;
+      env.GIT_COMMITTER_NAME = session.gitIdentity.name;
     }
-    if (settings.gitUserEmail) {
-      env.GIT_AUTHOR_EMAIL = settings.gitUserEmail;
-      env.GIT_COMMITTER_EMAIL = settings.gitUserEmail;
+    if (session.gitIdentity.email) {
+      env.GIT_AUTHOR_EMAIL = session.gitIdentity.email;
+      env.GIT_COMMITTER_EMAIL = session.gitIdentity.email;
     }
     const containerId = await this.docker.create({
       sessionId: session.id,

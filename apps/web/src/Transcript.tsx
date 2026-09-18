@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
+import { CopyableMessage } from "./CopyMessage";
 import { FileLink } from "./FileLink";
 import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
 import { formatMb, formatTime } from "./format";
@@ -271,15 +272,15 @@ function Item({
   switch (item.kind) {
     case "user":
       return (
-        <div className="msg msg-user">
+        <CopyableMessage className="msg-user" text={item.text}>
           <Markdown text={item.text} />
-        </div>
+        </CopyableMessage>
       );
     case "agent":
       return (
-        <div className="msg msg-agent">
+        <CopyableMessage className="msg-agent" text={item.text}>
           <Markdown text={item.text} attachments />
-        </div>
+        </CopyableMessage>
       );
     case "thought":
       return (

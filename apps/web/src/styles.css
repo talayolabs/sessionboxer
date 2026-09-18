@@ -124,7 +124,14 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 
 .transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .transcript > * { flex: none; }
-.msg { padding: 10px 12px; border-radius: 8px; word-break: break-word; max-width: 900px; line-height: 1.45; }
+.msg { position: relative; padding: 10px 12px; border-radius: 8px; word-break: break-word; max-width: 900px; line-height: 1.45; }
+.msg-copy {
+  position: absolute; top: -9px; right: 8px; display: flex; gap: 4px;
+  opacity: 0; transition: opacity 0.15s; pointer-events: none; z-index: 1;
+}
+.msg:hover .msg-copy, .msg:focus-within .msg-copy, .msg-copy:focus-within { opacity: 1; pointer-events: auto; }
+.msg-copy .small { padding: 1px 7px; font-size: 11px; color: var(--muted); background: var(--bg); }
+.msg-copy .small:hover { color: var(--text); }
 .msg-user { background: var(--user); align-self: flex-end; }
 .msg-agent { background: var(--agent); }
 .thought { color: var(--muted); font-size: 13px; }

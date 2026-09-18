@@ -275,4 +275,4 @@ Open decisions for you: (a) badge only vs also a browser notification while idle
 browser one opt-in); (b) whether *Address* on a PR from a *different* repo than the Workspace should be allowed
 by cloning it into a sibling directory (`/workspace/../<repo>` — the Workspace layout assumes one repo, so v1
 says no); (c) whether reviews with `CHANGES_REQUESTED` and no inline threads should be a row (yes in the note).
-smoke test for PR watching
+smoke test for PR watching, polling every 60 s while idle

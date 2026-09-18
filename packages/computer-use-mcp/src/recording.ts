@@ -15,8 +15,12 @@ const LOG_FILE = `${TMPFS}/recording.log`;
 const STOP_TIMEOUT_MS = 20_000;
 /** The finishing pass re-encodes only the frames that changed; even long recordings take seconds. */
 const FINISH_TIMEOUT_MS = 180_000;
-/** Caption band under the desktop, as a fraction of the display height; captions grow down into it. */
-const BAND_FRACTION = 0.25;
+/** Caption font size as a fraction of the display height (27 px at 768). */
+const FONT_FRACTION = 0.035;
+/** Lines of caption text the band under the desktop is sized for; longer captions stack up over the desktop. */
+const BAND_LINES = 3;
+/** DejaVu Sans line height relative to the font size (libass uses the font's ascent + descent). */
+const LINE_HEIGHT = 1.2;
 const MAX_CAPTION_CHARS = 300;
 /** Shortest cue the sidecar track gets, so two annotations inside one collapsed pause both show. */
 const MIN_CUE_SECONDS = 0.5;
@@ -238,7 +242,8 @@ export async function stopRecording(opts: StopOptions): Promise<RecordingResult>
 
 /**
  * Rewrites the video in place. Captions are drawn first (`pad` adds a band under the desktop,
- * `ass` renders them into it anchored at its top, so long ones grow down, never over the screen);
+ * `ass` renders them into it anchored at the frame's bottom, so a caption taller than the band
+ * grows up into view instead of being cut off);
  * they are authored in wall-clock time like the frames at that point, so condensing carries them
  * along. Condensing: `mpdecimate` drops frames that match the last kept one, `setpts` re-times
  * the survivors so each gap is at most the hold (instead of removing it, which would make states
@@ -252,8 +257,8 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
   const scriptFile = `${TMPFS}/recording-${process.pid}.filter`;
   const chain: string[] = [];
   if (burn) {
-    const band = Math.round(s.height * BAND_FRACTION);
-    writeFileSync(assFile, assDocument(s.width, s.height, band, captions, elapsed(s.startedAt)));
+    const { band } = captionGeometry(s.height);
+    writeFileSync(assFile, assDocument(s.width, s.height, captions, elapsed(s.startedAt)));
     chain.push(`pad=iw:ih+${band}:0:0:color=0x1a1a1a`, `ass=filename=${assFile}`);
   }
   if (holdSeconds !== null) {
@@ -340,14 +345,22 @@ function retiming(kept: number[], hold: number, frame: number): (t: number) => n
   };
 }
 
-/**
- * An ASS script sized to the padded frame: one style, top-centre aligned with the top margin at
- * the band's edge, so the text sits in the band and wraps downwards. Braces and backslashes are
- * dropped from the text because they are ASS override syntax.
- */
-function assDocument(width: number, height: number, band: number, captions: Caption[], endSeconds: number): string {
-  const fontSize = Math.max(16, Math.round(band / 7));
+/** Font size, its margin, and a band tall enough for BAND_LINES lines plus a margin above and below (even, for yuv420p). */
+function captionGeometry(displayHeight: number): { fontSize: number; margin: number; band: number } {
+  const fontSize = Math.max(16, Math.round(displayHeight * FONT_FRACTION));
   const margin = Math.round(fontSize * 0.5);
+  const band = Math.ceil((BAND_LINES * LINE_HEIGHT * fontSize + 2 * margin) / 2) * 2;
+  return { fontSize, margin, band };
+}
+
+/**
+ * An ASS script sized to the padded frame: one style, bottom-centre aligned with a small margin
+ * from the frame's bottom edge, so the text sits in the band and extra lines stack upwards (over
+ * the desktop's bottom if a caption is taller than the band, rather than off-screen). Braces and
+ * backslashes are dropped from the text because they are ASS override syntax.
+ */
+function assDocument(width: number, height: number, captions: Caption[], endSeconds: number): string {
+  const { fontSize, margin, band } = captionGeometry(height);
   const head = [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -358,7 +371,7 @@ function assDocument(width: number, height: number, band: number, captions: Capt
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Caption,DejaVu Sans,${fontSize},&H00F2F2F2,&H00F2F2F2,&H001A1A1A,&H001A1A1A,0,0,0,0,100,100,0,0,1,0,0,8,${fontSize},${fontSize},${height + margin},1`,
+    `Style: Caption,DejaVu Sans,${fontSize},&H00F2F2F2,&H00F2F2F2,&H001A1A1A,&H001A1A1A,0,0,0,0,100,100,0,0,1,1,0,2,${fontSize},${fontSize},${margin},1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",

@@ -65,7 +65,7 @@ Click **+ New**, pick the agent, choose where the code comes from:
 
 - **Empty directory**: start from scratch.
 - **Clone a git URL**: any URL `git clone` accepts, optionally a branch or tag. Private repositories need credentials embedded in the URL or a public mirror for now.
-- **Copy a host directory**: a folder on your machine (type the path or pick it with **Browse…**). Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. The copy is one-way: changes in the box do not flow back.
+- **Copy a host directory**: a folder on your machine (type the path or pick it with **Browse…**). Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. Changes the agent makes stay in the box until you **Pull to folder…** (below).
 
 **Model** lists the models the chosen agent offers (Claude Code: Sonnet/Opus/Haiku/Fable and its default; Devin: the catalog your account has, grouped by family); leave it on *Provider default* to let the agent decide. The list is what the agent reported the last time a session of that provider started, so it is empty until you have run one. Next to it come the agent's other settings, when it has any: for Claude Code, **Effort** (default, low … max) and **Fast mode**. Devin's Cloud tiers (Lite, Normal, Ultra) are not something its CLI offers; pick a model with the effort level you want instead (`…-high`, `…-fast`, …).
 
@@ -118,6 +118,10 @@ Replies and your prompts render as Markdown. Fenced code with a language (```ts,
 **Code** opens VS Code on the project folder, running inside the box ([openvscode-server](https://github.com/gitpod-io/openvscode-server), same editor as VS Code for the Web): search, Git view, extensions from [Open VSX](https://open-vsx.org), integrated terminal. The server starts the first time you open the pane (a few seconds) and stops with the box; **Restart** relaunches it and **Open in new tab** gives it a whole window. Settings and extensions you install live in the box, so they survive Stop → Resume and travel with snapshots; the agent sees the same files, so its edits show up as you watch.
 
 **Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
+
+### Pull the box's changes into your folder
+
+Sessions started from **Copy a host directory** (folder icon next to the agent logo in the list; a git mark means a clone) have **Pull to folder…** in the header. It compares the box's project folder with the folder on your machine and shows what would change before anything is written: new files (`+`), changed files (`~`), files the agent deleted (`−`). **Pull changes** applies them; files ignored by git (`node_modules`, build output) and `.git` itself stay in the box, and anything you added or changed only on your machine is left alone. A file that changed on both sides is a conflict: it is skipped and marked *kept yours*, unless you tick **Also overwrite…** (you are asked to confirm). Symlinks that would point outside your folder are never written. Pull as often as you like; each pull records the new common state, so the next one only shows what changed since. Pulling waits for the agent's turn to end and needs the box running.
 
 ### Stop, resume, delete
 
@@ -185,6 +189,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 | Project folder in the box | `/workspace` |
 | Sandbox image | `sessionboxer/sandbox:dev` (built locally) |
 | Snapshot images | `sessionboxer/snapshot:<session id>-<n>`; unreferenced ones are removed at startup |
+| What was last pulled into a copied folder | `~/.sessionboxer/sync/<session id>.json` |
 
 `CLAUDE_CODE_OAUTH_TOKEN` or `WINDSURF_API_KEY` set in the environment of `npm start` take precedence over the tokens in Settings.
 

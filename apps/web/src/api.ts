@@ -25,6 +25,9 @@ import type {
   SessionEvent,
   Snapshot,
   SwitchBranchRequest,
+  SyncPlan,
+  SyncRequest,
+  SyncResult,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
   UpdateSettingsRequest,
@@ -99,6 +102,8 @@ export const api = {
   fsRead: (id: string, path: string) => request<FsReadResult>(`/sessions/${id}/fs/file?path=${encodeURIComponent(path)}`),
   fsWrite: (id: string, path: string, content: string) =>
     request<FsWriteResult>(`/sessions/${id}/fs/file`, { method: "PUT", body: JSON.stringify({ path, content }) }),
+  syncPlan: (id: string) => request<SyncPlan>(`/sessions/${id}/sync`),
+  syncPull: (id: string, req: SyncRequest) => request<SyncResult>(`/sessions/${id}/sync`, { method: "POST", body: JSON.stringify(req) }),
   terminals: (id: string) => request<PtyListResult>(`/sessions/${id}/terminals`),
   openTerminal: (id: string, cols: number, rows: number) =>
     request<PtyInfo>(`/sessions/${id}/terminals`, { method: "POST", body: JSON.stringify({ cols, rows }) }),

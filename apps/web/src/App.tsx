@@ -39,6 +39,8 @@ import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
+import { SourceIcon, sourceTitle } from "./SourceIcon";
+import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
 import { CodePane } from "./Code";
 import { Transcript } from "./Transcript";
@@ -313,6 +315,7 @@ export function App() {
                       {s.dockerMode === "privileged" ? "\u26a0 " : ""}docker
                     </span>
                   )}
+                  <SourceIcon source={s.workspaceSource} />
                   <span title={PROVIDER_LABELS[s.provider]}>
                     <ProviderIcon provider={s.provider} />
                   </span>
@@ -549,6 +552,7 @@ function SessionView({
   const [forking, setForking] = useState(false);
   const [branching, setBranching] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
@@ -662,7 +666,8 @@ function SessionView({
             {DOCKER_MODE_LABELS[session.dockerMode]}
           </span>
         )}
-        <span className="muted" title={sourceLabel}>
+        <span className="muted source" title={sourceTitle(source)}>
+          <SourceIcon source={source} size={14} />
           {sourceLabel}
         </span>
         {session.branches.length > 1 && (
@@ -712,6 +717,21 @@ function SessionView({
         >
           Fork…
         </button>
+        {source.type === "copy" && (
+          <button
+            disabled={!isLive || session.status === "running"}
+            title={
+              !isLive
+                ? "Pulling needs a running Sandbox (Resume first)"
+                : session.status === "running"
+                  ? "Wait for the Agent to finish its turn"
+                  : `Copy the box's changes back into ${source.path} (you see what changes first)`
+            }
+            onClick={() => setSyncOpen(true)}
+          >
+            Pull to folder…
+          </button>
+        )}
         <button
           className={session.mcpPending ? "pending" : ""}
           title={
@@ -740,6 +760,7 @@ function SessionView({
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
       {mcpOpen && <McpDialog session={session} servers={mcpServers} busy={mcpBusy} onToggle={toggleMcp} onClose={() => setMcpOpen(false)} />}
+      {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
       {forkFrom && (
         <ForkDialog
           session={session}

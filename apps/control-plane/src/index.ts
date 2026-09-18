@@ -17,6 +17,7 @@ import {
   SwitchBranchRequest,
   FS_RAW_PATH,
   FsWriteParams,
+  SyncRequest,
   PromptRequest,
   PtyOpenParams,
   QueueRequest,
@@ -214,6 +215,13 @@ api.get("/sessions/:id/fs/file", async (c) => c.json(await sessions.fsRead(c.req
 api.put("/sessions/:id/fs/file", async (c) => {
   const req = FsWriteParams.parse(await c.req.json());
   return c.json(await sessions.fsWrite(c.req.param("id"), req.path, req.content));
+});
+// "Pull changes to my folder" for Sessions started from a copy of a host folder: GET is the
+// dry run, POST applies it (conflicting files only with `overwriteLocal`).
+api.get("/sessions/:id/sync", async (c) => c.json(await sessions.syncPlan(c.req.param("id"))));
+api.post("/sessions/:id/sync", async (c) => {
+  const req = SyncRequest.parse(await c.req.json());
+  return c.json(await sessions.syncPull(c.req.param("id"), req));
 });
 // Raw bytes of a Workspace file (videos, images, PDFs the Agent produced), streamed from the
 // Daemon with Range support so the browser's <video> can seek; `download=1` for an attachment.

@@ -639,6 +639,86 @@ export type FsWriteResult = z.infer<typeof FsWriteResult>;
 // as `GET /api/sessions/:id/fs/raw?path=…[&download=1]`.
 export const FS_RAW_PATH = "/fs/raw";
 
+// ---------------------------------------------------------------------------
+// Pulling the Workspace back into the host folder of a "copy" Session. Both sides
+// describe their files the same way (git's view when it is a work tree: tracked +
+// untracked-but-not-ignored, `.git` itself excluded); the Control Plane compares the
+// two against the state after the copy / last pull and applies the difference.
+// ---------------------------------------------------------------------------
+
+/** One file of a Workspace: regular files carry a content hash, symlinks their target. */
+export const SyncFile = z.object({
+  path: z.string(),
+  size: z.number().int().nonnegative(),
+  /** Only the executable bit matters (like git). */
+  executable: z.boolean(),
+  sha256: z.string().nullable(),
+  link: z.string().nullable(),
+});
+export type SyncFile = z.infer<typeof SyncFile>;
+
+export const SyncManifest = z.object({
+  files: z.array(SyncFile),
+  /** Listed through git (ignored files left out) rather than by walking everything. */
+  git: z.boolean(),
+});
+export type SyncManifest = z.infer<typeof SyncManifest>;
+
+/** Daemon `POST /fs/tar` body: Workspace-relative files to stream back as a tar archive. */
+export const FS_TAR_PATH = "/fs/tar";
+export const FsTarRequest = z.object({ paths: z.array(z.string()).max(200_000) });
+export type FsTarRequest = z.infer<typeof FsTarRequest>;
+
+export const SYNC_ACTIONS = ["add", "update", "delete"] as const;
+export const SyncAction = z.enum(SYNC_ACTIONS);
+export type SyncAction = z.infer<typeof SyncAction>;
+
+export const SyncEntry = z.object({
+  path: z.string(),
+  action: SyncAction,
+  /** Size in the box (0 for deletes). */
+  size: z.number().int().nonnegative(),
+  /**
+   * The host file changed too (or was deleted / is only known from the host) since the copy or
+   * the last pull, so applying this would discard local work; skipped unless the user asks.
+   */
+  conflict: z.boolean(),
+  /** Why this entry can never be applied (a symlink leaving the folder); null when it can. */
+  blocked: z.string().nullable(),
+});
+export type SyncEntry = z.infer<typeof SyncEntry>;
+
+export const SyncPlan = z.object({
+  /** The host folder. */
+  path: z.string(),
+  entries: z.array(SyncEntry),
+  /** Files identical on both sides. */
+  unchanged: z.number().int().nonnegative(),
+  /** Files changed (or added / removed) only in the host folder: kept as they are. */
+  localOnly: z.number().int().nonnegative(),
+  /** A record of the copied state existed, so changes could be attributed to a side. */
+  threeWay: z.boolean(),
+  computedAt: z.string(),
+});
+export type SyncPlan = z.infer<typeof SyncPlan>;
+
+export const SyncRequest = z.object({
+  /** Apply conflicting entries too (host changes lost). */
+  overwriteLocal: z.boolean().default(false),
+});
+export type SyncRequest = z.infer<typeof SyncRequest>;
+
+export const SyncResult = z.object({
+  path: z.string(),
+  added: z.number().int().nonnegative(),
+  updated: z.number().int().nonnegative(),
+  deleted: z.number().int().nonnegative(),
+  /** Conflicting entries left alone. */
+  skipped: z.number().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
+});
+export type SyncResult = z.infer<typeof SyncResult>;
+
 /** How the chat embeds a Workspace file the Agent mentions; `null` = shown as a plain link. */
 export type MediaKind = "video" | "audio" | "image" | "pdf" | "markdown" | "mermaid";
 
@@ -796,6 +876,7 @@ export const DAEMON_METHODS = {
   fsRead: "_sessionboxer/fs/read",
   fsWrite: "_sessionboxer/fs/write",
   fsChanged: "_sessionboxer/fs/changed",
+  fsManifest: "_sessionboxer/fs/manifest",
   ptyList: "_sessionboxer/pty/list",
   ptyOpen: "_sessionboxer/pty/open",
   ptyAttach: "_sessionboxer/pty/attach",

@@ -399,6 +399,7 @@ button.link:hover { text-decoration: underline; }
 .connector-way > span:first-child { font-weight: 600; }
 .connector-way .muted { font-size: 12px; font-weight: 400; line-height: 1.35; }
 .connector-way.primary .muted { color: inherit; opacity: 0.85; }
+.session-header button { white-space: nowrap; }
 .session-header button.pending { border-color: var(--warn); }
 .session-header .count { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
 
@@ -440,3 +441,27 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .code-frame { flex: 1; width: 100%; height: 100%; border: 0; background: #1f1f1f; }
 .terminal-status { flex: none; display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--panel); font-size: 13px; }
 .dialog-banner { border: 1px solid var(--error); border-radius: 6px; font-size: 13px; }
+
+/* Where the Workspace came from (folder copy / git clone / fork), next to the Provider mark. */
+.source-icon { display: block; color: var(--text); opacity: 0.8; font-size: 13px; line-height: 1; }
+li.active .source-icon, li:hover .source-icon { opacity: 1; }
+.session-header .source { display: inline-flex; align-items: center; gap: 5px; }
+.session-header .source .source-icon { flex: none; opacity: 0.7; }
+
+/* Pull changes to my folder */
+.sync-dialog { max-height: 85vh; }
+.sync-dialog .banner-ok { background: #12301c; color: #a6e6b8; border-color: #2f7a48; cursor: default; }
+.sync-dialog .actions .spacer { flex: 1; }
+.sync-list { list-style: none; margin: 0; padding: 4px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); min-height: 60px; max-height: 45vh; display: flex; flex-direction: column; gap: 1px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.sync-list[aria-busy="true"] { opacity: 0.6; }
+.sync-list li { display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
+.sync-list li:hover { background: #1f232d; }
+.sync-list li.skipped .sync-path { opacity: 0.55; text-decoration: line-through; }
+.sync-list li.empty { color: var(--muted); font-family: inherit; font-size: 13px; padding: 16px; }
+.sync-mark { flex: none; width: 14px; text-align: center; font-weight: 700; }
+.sync-add { color: #7ee2a8; }
+.sync-update { color: #ffd479; }
+.sync-delete { color: #ff8a8a; }
+.sync-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sync-size { flex: none; font-size: 11px; }
+.sync-list .warn { flex: none; font-family: system-ui, sans-serif; font-size: 11.5px; }

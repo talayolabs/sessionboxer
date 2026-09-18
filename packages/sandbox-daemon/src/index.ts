@@ -37,6 +37,7 @@ import { DevinMcpConfig } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
 import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
+import { serveTar, workspaceManifest } from "./workspace-sync.js";
 
 const EVENT_BUFFER_MAX = 5000;
 
@@ -206,6 +207,8 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = FsWriteParams.parse(params);
       return workspaceFs.write(p.path, p.content);
     }
+    case DAEMON_METHODS.fsManifest:
+      return workspaceManifest(workspace);
     case DAEMON_METHODS.ptyList:
       return { terminals: terminals.list() };
     case DAEMON_METHODS.ptyOpen: {
@@ -239,9 +242,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
 }
 
 // One port: JSON-RPC over WebSocket for the Control Plane, plain HTTP for raw Workspace
-// files, and both kinds of traffic under /code for the VS Code server.
+// files (single ones and tar bundles), and both kinds of traffic under /code for the VS Code server.
 const http = createServer((req, res) => {
   if (codeServer.handleHttp(req, res)) return;
+  if (serveTar(workspace, req, res, log)) return;
   serveRawFile(workspaceFs, req, res).catch((e: unknown) => {
     log(`raw file error: ${String(e)}`);
     if (!res.headersSent) res.writeHead(500);

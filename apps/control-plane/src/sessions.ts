@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { basename } from "node:path";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
   AskResult,
   DAEMON_METHODS,
@@ -21,6 +23,11 @@ import {
   PtyInfo,
   PtyListResult,
   ROOT_BRANCH_ID,
+  FS_TAR_PATH,
+  SyncManifest,
+  type SyncPlan,
+  type SyncRequest,
+  type SyncResult,
   branchScope,
   inBranchScope,
   type Branch,
@@ -50,6 +57,7 @@ import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
+import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
 
 export { HttpError };
@@ -64,6 +72,8 @@ const BRANCH_TIMEOUT_MS = 300_000;
 const REPLAY_MAX_CHARS = 60_000;
 /** openvscode-server's first start unpacks its extensions; generous on slow disks. */
 const CODE_START_TIMEOUT_MS = 120_000;
+/** Hashing a big Workspace in the box. */
+const MANIFEST_TIMEOUT_MS = 300_000;
 
 /** One UI connection attached to a terminal. */
 export interface TerminalSink {
@@ -81,6 +91,9 @@ export class SessionManager {
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
   /** Per-Session chain so Snapshots of one Sandbox never overlap. */
   private readonly snapshotChains = new Map<string, Promise<unknown>>();
+  private readonly syncBaselines = new SyncBaselines();
+  /** Sessions with a pull in flight (one at a time per host folder). */
+  private readonly syncing = new Set<string>();
 
   constructor(
     private readonly db: Db,
@@ -180,6 +193,68 @@ export class SessionManager {
 
   async fsWrite(id: string, path: string, content: string): Promise<FsWriteResult> {
     return FsWriteResult.parse(await this.daemonCall(id, DAEMON_METHODS.fsWrite, { path, content }));
+  }
+
+  // --- Pull changes to my folder ("copy" Sessions) -----------------------------
+
+  private hostFolder(s: Session): string {
+    if (s.workspaceSource.type !== "copy") {
+      throw new HttpError(400, "Only Sessions started from a copy of a host folder can be pulled back into it.");
+    }
+    return s.workspaceSource.path;
+  }
+
+  private async syncState(id: string): Promise<{ dir: string; box: SyncManifest; host: SyncManifest; baseline: SyncManifest | null; plan: SyncPlan }> {
+    const s = this.get(id);
+    let dir: string;
+    try {
+      dir = await resolveHostDir(this.hostFolder(s));
+    } catch (e) {
+      if (e instanceof HostDirError) throw new HttpError(409, `The host folder is gone or unreadable: ${e.message}`);
+      throw e;
+    }
+    const [box, host, baseline] = await Promise.all([
+      this.daemonCall(id, DAEMON_METHODS.fsManifest, {}, MANIFEST_TIMEOUT_MS).then((r) => SyncManifest.parse(r)),
+      hostManifest(dir),
+      this.syncBaselines.read(id),
+    ]);
+    return { dir, box, host, baseline, plan: planSync(dir, box, host, baseline) };
+  }
+
+  /** Dry run: what a pull would do to the host folder right now. */
+  async syncPlan(id: string): Promise<SyncPlan> {
+    return (await this.syncState(id)).plan;
+  }
+
+  /**
+   * Applies the box's changes to the host folder: fetches the added/updated files as one tar
+   * from the Daemon, unpacks them, deletes what the box deleted, then records the new common state.
+   */
+  async syncPull(id: string, req: SyncRequest): Promise<SyncResult> {
+    if (this.syncing.has(id)) throw new HttpError(409, "A pull is already running for this Session.");
+    if (this.get(id).status === "running") throw new HttpError(409, "The Agent is still working; pull when the turn has ended.");
+    this.syncing.add(id);
+    try {
+      const { dir, box, host, baseline, plan } = await this.syncState(id);
+      const { apply, skipped } = selectEntries(plan, req.overwriteLocal);
+      const writes = apply.filter((e) => e.action !== "delete").map((e) => e.path);
+      let tar: ReadableStream<Uint8Array> | null = null;
+      if (writes.length > 0) {
+        const res = await fetch(new URL(FS_TAR_PATH, await this.daemonHttpUrl(id)), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ paths: writes }),
+        });
+        if (!res.ok || !res.body) throw new HttpError(502, `the Sandbox refused to send its files: ${res.status} ${(await res.text()).slice(0, 300)}`);
+        tar = res.body;
+      }
+      this.log(`pulling ${apply.length} change(s) from ${id.slice(0, 8)} into ${dir}${skipped.length ? ` (${skipped.length} conflict(s) skipped)` : ""}`);
+      const result = await applySync(dir, apply, tar ? Readable.fromWeb(tar as NodeReadableStream) : null);
+      await this.syncBaselines.write(id, nextBaseline(box, host, baseline, apply));
+      return { ...result, skipped: skipped.length };
+    } finally {
+      this.syncing.delete(id);
+    }
   }
 
   // --- Code pane (VS Code in the Sandbox) ----------------------------------
@@ -440,6 +515,7 @@ export class SessionManager {
     this.update(session.id, { containerId });
     await this.startSandbox(containerId, settings);
     await this.seedWorkspace(containerId, session.workspaceSource);
+    await this.recordSyncBaseline(session.id, session.workspaceSource);
     this.setStatus(session.id, "idle");
     await this.connect(session.id, containerId);
     void this.refreshDiskUsage(session.id);
@@ -486,6 +562,16 @@ export class SessionManager {
       this.log(`copying ${dir} (${entries ? `${entries.length} git entries` : "everything"}) into ${containerId.slice(0, 12)}`);
       await this.docker.putArchive(containerId, packHostDir(dir, entries), "/workspace");
       await this.docker.exec(containerId, ["chown", "-R", "agent:agent", "/workspace"], "/", "root");
+    }
+  }
+
+  /** Records the copied host folder so a later pull can tell box changes from host changes. */
+  private async recordSyncBaseline(id: string, source: WorkspaceSource): Promise<void> {
+    if (source.type !== "copy") return;
+    try {
+      await this.syncBaselines.write(id, await hostManifest(source.path));
+    } catch (e) {
+      this.log(`could not record the copied state of ${source.path}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -877,6 +963,7 @@ export class SessionManager {
     }
     const snapshots = this.db.listSnapshots(id);
     this.db.deleteSession(id);
+    await this.syncBaselines.remove(id);
     this.broadcast({ type: "session_deleted", id });
     // Images a fork still runs on stay (removeImage returns false); the GC picks them up later.
     for (const snap of snapshots) await this.docker.removeImage(snap.imageId).catch(() => false);

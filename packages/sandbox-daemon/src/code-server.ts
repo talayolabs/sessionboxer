@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import type { Duplex } from "node:stream";
@@ -18,6 +18,8 @@ const START_TIMEOUT_MS = 90_000;
 const OPEN_TIMEOUT_MS = 45_000;
 const STOP_GRACE_MS = 5_000;
 const STDERR_TAIL_LINES = 20;
+/** The built-in extension that takes open requests, relative to the server's install root. */
+const OPEN_EXTENSION = join("extensions", "sessionboxer", "package.json");
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -102,6 +104,10 @@ export class CodeServer {
     const path = this.resolvePath(params.path);
     const status = await this.start();
     if (status.state !== "running") throw new Error(status.error ?? "VS Code is not running in this Sandbox.");
+    const root = serverRoot();
+    if (root !== null && !existsSync(join(root, OPEN_EXTENSION))) {
+      throw new Error("this Sandbox's VS Code lacks the Sessionboxer extension that opens files (it predates it); Stop → Resume the Session to install it.");
+    }
     const body = JSON.stringify({ path, line: params.line, column: params.column });
     const deadline = Date.now() + OPEN_TIMEOUT_MS;
     let last = "";
@@ -332,8 +338,8 @@ function stripPrefix(url: string): string | null {
   return null;
 }
 
-/** Version of the installed server from the package.json next to its launcher, if any. */
-function readVersion(): string | null {
+/** Install root of the server (the directory above its `bin/` launcher), `null` when it is not on PATH. */
+function serverRoot(): string | null {
   try {
     const bin = realpathSync(
       (process.env.PATH ?? "")
@@ -348,7 +354,18 @@ function readVersion(): string | null {
           }
         }) ?? COMMAND,
     );
-    const pkg = JSON.parse(readFileSync(join(dirname(bin), "..", "package.json"), "utf8")) as { version?: unknown };
+    return join(dirname(bin), "..");
+  } catch {
+    return null;
+  }
+}
+
+/** Version of the installed server from the package.json at its root, if any. */
+function readVersion(): string | null {
+  const root = serverRoot();
+  if (root === null) return null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: unknown };
     return typeof pkg.version === "string" ? pkg.version : null;
   } catch {
     return null;

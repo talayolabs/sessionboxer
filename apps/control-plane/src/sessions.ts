@@ -524,7 +524,7 @@ export class SessionManager {
   private async startSandbox(containerId: string, settings: Settings): Promise<void> {
     const short = containerId.slice(0, 12);
     try {
-      await this.docker.syncDaemon(containerId);
+      for (const skipped of await this.docker.syncDaemon(containerId)) this.log(`${short}: not refreshed: ${skipped}`);
     } catch (e) {
       this.log(`could not refresh the Sandbox Daemon in ${short} (${e instanceof Error ? e.message : String(e)}); using the image's copy`);
     }

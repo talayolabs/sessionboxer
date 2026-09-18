@@ -16,17 +16,43 @@ export const SYSBOX_RUNTIME = "sysbox-runc";
 const LOOPBACK = "127.0.0.1";
 
 /**
- * The Sandbox Daemon and the protocol package as built in this checkout,
- * copied into every Sandbox before it starts so the Daemon always matches the
- * Control Plane, also for Sandboxes created from an older image or resumed
- * or forked from a snapshot that carries an older Daemon. Their npm
- * dependencies still come from the image (`npm run build:image` when the
- * Dockerfile or those dependencies change).
+ * The Sandbox Daemon, the protocol package and the VS Code extension as they are in this
+ * checkout, copied into every Sandbox before it starts so they always match the Control
+ * Plane, also for Sandboxes created from an older image or resumed or forked from a snapshot
+ * that carries older copies. Their npm dependencies still come from the image (`npm run
+ * build:image` when the Dockerfile or those dependencies change).
  */
-const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../packages");
-const DAEMON_SYNC: { host: string; dest: string }[] = [
-  { host: join(PACKAGES_DIR, "protocol/dist"), dest: "/opt/sessionboxer/protocol" },
-  { host: join(PACKAGES_DIR, "sandbox-daemon/dist"), dest: "/opt/sessionboxer/sandbox-daemon" },
+const REPO_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+interface SyncEntry {
+  /** Directory in this checkout whose contents go into the Sandbox. */
+  host: string;
+  /** File that must exist in `host` for the checkout to count as built. */
+  marker: string;
+  /** Directory in the Sandbox that receives `host` as a subdirectory named `name`. */
+  dest: string;
+  name: string;
+  /** Files (relative to `host`) that keep the executable bit. */
+  executable?: string[];
+  /** Skipped, with a log line, when `dest` is missing in the Sandbox (an image without that component). */
+  optional?: boolean;
+}
+const SANDBOX_SYNC: SyncEntry[] = [
+  { host: join(REPO_DIR, "packages/protocol/dist"), marker: "index.js", dest: "/opt/sessionboxer/protocol", name: "dist" },
+  {
+    host: join(REPO_DIR, "packages/sandbox-daemon/dist"),
+    marker: "index.js",
+    dest: "/opt/sessionboxer/sandbox-daemon",
+    name: "dist",
+    // the image's `sessionboxer-daemon` symlink executes dist/index.js directly
+    executable: ["index.js"],
+  },
+  {
+    host: join(REPO_DIR, "images/sandbox/vscode-sessionboxer"),
+    marker: "package.json",
+    dest: "/opt/openvscode-server/extensions",
+    name: "sessionboxer",
+    optional: true,
+  },
 ];
 
 /**
@@ -134,24 +160,38 @@ export class SandboxDocker {
     return container.id;
   }
 
-  /** Copies this checkout's Daemon build into the (stopped) Sandbox; see DAEMON_SYNC. */
-  async syncDaemon(containerId: string): Promise<void> {
-    for (const { host, dest } of DAEMON_SYNC) {
-      if (!existsSync(join(host, "index.js"))) throw new Error(`${host} is not built; run \`npm run build\``);
-      await this.putArchive(
-        containerId,
-        pack(host, {
-          map: (header) => {
-            header.name = join("dist", header.name);
-            header.uid = 0;
-            header.gid = 0;
-            // the image's `sessionboxer-daemon` symlink executes dist/index.js directly
-            header.mode = header.type === "directory" || header.name === "dist/index.js" ? 0o755 : 0o644;
-            return header;
-          },
-        }),
-        dest,
-      );
+  /** Copies this checkout's Daemon build (and the other SANDBOX_SYNC parts) into the (stopped) Sandbox; returns what was skipped. */
+  async syncDaemon(containerId: string): Promise<string[]> {
+    const skipped: string[] = [];
+    for (const entry of SANDBOX_SYNC) {
+      if (!existsSync(join(entry.host, entry.marker))) throw new Error(`${entry.host} is not built; run \`npm run build\``);
+      const executable = new Set((entry.executable ?? []).map((f) => join(entry.name, f)));
+      const archive = pack(entry.host, {
+        map: (header) => {
+          header.name = join(entry.name, header.name);
+          header.uid = 0;
+          header.gid = 0;
+          header.mode = header.type === "directory" || executable.has(header.name) ? 0o755 : 0o644;
+          return header;
+        },
+      });
+      if (entry.optional && !(await this.pathExists(containerId, entry.dest))) {
+        archive.destroy();
+        skipped.push(`${entry.dest}/${entry.name} (no ${entry.dest} in this Sandbox's image)`);
+        continue;
+      }
+      await this.putArchive(containerId, archive, entry.dest);
+    }
+    return skipped;
+  }
+
+  /** Whether `path` exists in the (possibly stopped) container. */
+  private async pathExists(containerId: string, path: string): Promise<boolean> {
+    try {
+      await this.docker.getContainer(containerId).infoArchive({ path });
+      return true;
+    } catch {
+      return false;
     }
   }
 

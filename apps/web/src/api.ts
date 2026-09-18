@@ -10,9 +10,13 @@ import type {
   DeleteSnapshotsResult,
   ForkSessionRequest,
   HostDirListing,
+  PrActionRequest,
+  PrActionResult,
+  PrItem,
   ProviderModels,
   ProviderOptions,
   PtyInfo,
+  PullRequest,
   PtyListResult,
   PromptAttachment,
   PromptRequest,
@@ -27,6 +31,7 @@ import type {
   SyncPlan,
   SyncRequest,
   SyncResult,
+  UpdatePrRequest,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
   UpdateSettingsRequest,
@@ -137,6 +142,16 @@ export const api = {
   codeStop: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "DELETE" }),
   codeOpen: (id: string, target: CodeOpenParams) =>
     request<{ ok: true }>(`/sessions/${id}/code-server/open`, { method: "POST", body: JSON.stringify(target) }),
+  prs: (id: string) => request<PullRequest[]>(`/sessions/${id}/prs`),
+  attachPr: (id: string, ref: string) => request<PullRequest>(`/sessions/${id}/prs`, { method: "POST", body: JSON.stringify({ ref }) }),
+  prItems: (id: string, prId: string) => request<PrItem[]>(`/sessions/${id}/prs/${prId}/items`),
+  updatePr: (id: string, prId: string, req: UpdatePrRequest) =>
+    request<PullRequest>(`/sessions/${id}/prs/${prId}`, { method: "PATCH", body: JSON.stringify(req) }),
+  detachPr: (id: string, prId: string) => request<void>(`/sessions/${id}/prs/${prId}`, { method: "DELETE" }),
+  refreshPr: (id: string, prId: string) => request<PullRequest>(`/sessions/${id}/prs/${prId}/refresh`, { method: "POST" }),
+  prSeen: (id: string, prId: string) => request<void>(`/sessions/${id}/prs/${prId}/seen`, { method: "POST" }),
+  prAction: (id: string, req: PrActionRequest) =>
+    request<PrActionResult>(`/sessions/${id}/prs/actions`, { method: "POST", body: JSON.stringify(req) }),
 };
 
 /** Same-origin URL of a Session's VS Code (the Code pane's iframe), proxied by the Control Plane. */

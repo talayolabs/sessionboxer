@@ -655,7 +655,16 @@ export type SessionBroadcast =
   /** A Provider's Agent reported its model list (differs from what was remembered). */
   | { type: "models"; provider: Provider; models: ModelOption[] }
   /** A Provider's Agent advertised options not remembered before (or changed ones). */
-  | { type: "options"; provider: Provider; options: AgentOption[] };
+  | { type: "options"; provider: Provider; options: AgentOption[] }
+  /** The Session's attached Pull Requests changed (attached, detached, polled). */
+  | { type: "prs"; sessionId: string; prs: PullRequest[] }
+  /** The comment/review rows of one Pull Request changed. */
+  | { type: "pr_items"; sessionId: string; prId: string; items: PrItem[] }
+  /**
+   * New feedback arrived on attached Pull Requests and the Session is idle (or stopped): the UI
+   * notifies. While the Agent is busy the Control Plane holds this until `turn_ended`.
+   */
+  | { type: "pr_activity"; sessionId: string; sessionTitle: string; prs: PrActivity[] };
 
 // ---------------------------------------------------------------------------
 // Workspace files. Paths are relative to the Workspace root; the Daemon rejects escapes.
@@ -893,6 +902,170 @@ export const CodeOpenParams = z.object({
 export type CodeOpenParams = z.infer<typeof CodeOpenParams>;
 
 // ---------------------------------------------------------------------------
+// Pull Requests attached to a Session. The Control Plane stores them and polls GitHub for
+// comments/reviews; the HTTP requests run inside the Sandbox (`gh api`, Daemon `gh/api`) so the
+// box's own GitHub login decides what can be seen. github.com only.
+// ---------------------------------------------------------------------------
+
+export const PrState = z.enum(["open", "draft", "closed", "merged"]);
+export type PrState = z.infer<typeof PrState>;
+
+export const PrReviewDecision = z.enum(["approved", "changes_requested", "review_required"]);
+export type PrReviewDecision = z.infer<typeof PrReviewDecision>;
+
+/** How a Pull Request got attached to the Session. */
+export const PrAttachedBy = z.enum(["prompt", "agent", "manual"]);
+export type PrAttachedBy = z.infer<typeof PrAttachedBy>;
+
+/** Why the last poll of a Pull Request did not succeed. */
+export const PrSyncError = z.enum(["unauthorized", "not_found", "rate_limited", "box_stopped", "error"]);
+export type PrSyncError = z.infer<typeof PrSyncError>;
+
+export const PullRequest = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  owner: z.string(),
+  repo: z.string(),
+  number: z.number().int().positive(),
+  url: z.string(),
+  title: z.string(),
+  state: PrState,
+  headRef: z.string(),
+  /** `owner/repo` of the head branch (differs from `owner/repo` for forks). */
+  headRepo: z.string(),
+  baseRef: z.string(),
+  author: z.string(),
+  reviewDecision: PrReviewDecision.nullable(),
+  attachedBy: PrAttachedBy,
+  attachedAt: z.string(),
+  /** Newest comment/review seen on GitHub. */
+  lastActivityAt: z.string().nullable(),
+  /** Items the user has not looked at yet (cleared when the PR's pane is shown). */
+  unread: z.number().int().nonnegative(),
+  /** Review threads still unresolved. */
+  openThreads: z.number().int().nonnegative(),
+  /** The Sandbox's GitHub login the PR is read with (`null` until one worked). Never a token. */
+  viaAccount: z.string().nullable(),
+  /** Still being polled (closed/merged PRs stop after a while; the user can pause too). */
+  watch: z.boolean(),
+  syncedAt: z.string().nullable(),
+  syncError: PrSyncError.nullable(),
+  syncErrorDetail: z.string().nullable(),
+  /** The PR's repo is the Workspace's origin, so it can be addressed locally. */
+  local: z.boolean(),
+});
+export type PullRequest = z.infer<typeof PullRequest>;
+
+export const PrItemKind = z.enum(["issue_comment", "review_comment", "review"]);
+export type PrItemKind = z.infer<typeof PrItemKind>;
+
+/** What has been done about an item from this Session. */
+export const PrAddressState = z.enum(["none", "in_prompt", "addressing", "addressed"]);
+export type PrAddressState = z.infer<typeof PrAddressState>;
+
+/**
+ * One comment or review of a Pull Request. Inline review comments of one thread share `threadId`
+ * (the root comment's id); the root has `inReplyTo: null`.
+ */
+export const PrItem = z.object({
+  id: z.string(),
+  prId: z.string(),
+  kind: PrItemKind,
+  githubId: z.number().int(),
+  nodeId: z.string(),
+  threadId: z.string().nullable(),
+  /** GraphQL id of the review thread (`PRRT_…`), what `resolveReviewThread` takes. */
+  threadNodeId: z.string().nullable(),
+  inReplyTo: z.number().int().nullable(),
+  author: z.string(),
+  /** Written by the login the PR is watched with (i.e. by this Sandbox / the user). */
+  self: z.boolean(),
+  body: z.string(),
+  /** Inline review comments: file and line (`line` is `null` for outdated positions). */
+  path: z.string().nullable(),
+  line: z.number().int().nullable(),
+  diffHunk: z.string().nullable(),
+  htmlUrl: z.string(),
+  /** Reviews: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`. */
+  reviewState: z.string().nullable(),
+  /** Review-comment threads: resolved on GitHub / left behind by a later push. */
+  resolved: z.boolean(),
+  outdated: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  seen: z.boolean(),
+  address: PrAddressState,
+});
+export type PrItem = z.infer<typeof PrItem>;
+
+/** One line of a `pr_activity` notification. */
+export const PrActivity = z.object({
+  prId: z.string(),
+  url: z.string(),
+  title: z.string(),
+  number: z.number().int(),
+  /** Items new since the last notification. */
+  count: z.number().int().positive(),
+  /** Authors of those items. */
+  authors: z.array(z.string()),
+  /** Set when one of them is a `CHANGES_REQUESTED` review. */
+  changesRequested: z.boolean(),
+});
+export type PrActivity = z.infer<typeof PrActivity>;
+
+/** `POST /api/sessions/:id/prs`: a github.com PR URL, `owner/repo#12`, or `#12` / `12` for the Workspace's repo. */
+export const AttachPrRequest = z.object({ ref: z.string().min(1) });
+export type AttachPrRequest = z.infer<typeof AttachPrRequest>;
+
+export const UpdatePrRequest = z.object({ watch: z.boolean().optional() });
+export type UpdatePrRequest = z.infer<typeof UpdatePrRequest>;
+
+/**
+ * What to do with comments/reviews, one or many (possibly from several PRs of the Session):
+ * - `prompt`: build the prompt text and hand it back for the composer (nothing is sent).
+ * - `address`: send it to the Agent (queued when a turn is running): change the code, no GitHub replies.
+ * - `address_reply`: same, plus reply on GitHub per thread and resolve the threads it addressed.
+ */
+export const PrAction = z.enum(["prompt", "address", "address_reply"]);
+export type PrAction = z.infer<typeof PrAction>;
+
+export const PrActionRequest = z.object({
+  action: PrAction,
+  itemIds: z.array(z.string()).min(1),
+});
+export type PrActionRequest = z.infer<typeof PrActionRequest>;
+
+export const PrActionResult = z.object({
+  /** The prompt built from the items. */
+  text: z.string(),
+  /** `address*`: `sent` now, or `queued` behind the running turn. `prompt`: `none`. */
+  delivery: z.enum(["none", "sent", "queued"]),
+});
+export type PrActionResult = z.infer<typeof PrActionResult>;
+
+/** Parses a github.com Pull Request URL. */
+export function parsePrUrl(url: string): { owner: string; repo: string; number: number } | null {
+  const m = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#]|$)/.exec(url.trim());
+  if (!m) return null;
+  return { owner: m[1]!, repo: m[2]!.replace(/\.git$/, ""), number: Number(m[3]) };
+}
+
+/** All github.com Pull Request URLs in a text (prompts, Agent output), deduplicated in order. */
+export function findPrUrls(text: string): { owner: string; repo: string; number: number; url: string }[] {
+  const out: { owner: string; repo: string; number: number; url: string }[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(/https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/g)) {
+    const parsed = parsePrUrl(m[0]);
+    if (!parsed) continue;
+    const key = `${parsed.owner.toLowerCase()}/${parsed.repo.toLowerCase()}#${parsed.number}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...parsed, url: `https://github.com/${parsed.owner}/${parsed.repo}/pull/${parsed.number}` });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Sandbox Daemon RPC (Control Plane <-> Daemon, JSON-RPC 2.0 over WebSocket).
 // Method names use ACP's `_<vendor>/` extension convention.
 // ---------------------------------------------------------------------------
@@ -929,6 +1102,8 @@ export const DAEMON_METHODS = {
   codeStatus: "_sessionboxer/code/status",
   codeStop: "_sessionboxer/code/stop",
   codeOpen: "_sessionboxer/code/open",
+  ghApi: "_sessionboxer/gh/api",
+  ghLogins: "_sessionboxer/gh/logins",
 } as const;
 
 export const DaemonHelloParams = z.object({
@@ -1063,6 +1238,43 @@ export const DaemonAskParams = AskRequest;
 export type DaemonAskParams = AskRequest;
 export const DaemonAskResult = AskResult;
 export type DaemonAskResult = AskResult;
+
+/**
+ * One GitHub API request made from inside the Sandbox with `gh api`, so it is authenticated with
+ * whatever the box is logged in as (Connector entry, a `gh auth login` done in the Terminal,
+ * `GH_TOKEN`). `path` is relative to `https://api.github.com/` (`repos/o/r/pulls/1`, `graphql`);
+ * nothing else can be reached through this. The response is passed back untouched.
+ */
+export const DaemonGhApiParams = z.object({
+  method: z.enum(["GET", "POST", "PATCH", "PUT", "DELETE"]).default("GET"),
+  path: z
+    .string()
+    .min(1)
+    .regex(/^[A-Za-z0-9_.~%/=&?+-]+$/, "relative API path")
+    .refine((p) => !p.startsWith("/") && !p.includes("..") && !/^[a-z]+:/i.test(p), "relative API path"),
+  headers: z.record(z.string()).default({}),
+  /** Request body (JSON text) for `POST`/`PATCH`/`PUT`. */
+  body: z.string().nullable().default(null),
+  /** Use this `gh` login instead of the active one (`gh auth token --user`). */
+  account: z.string().nullable().default(null),
+});
+export type DaemonGhApiParams = z.infer<typeof DaemonGhApiParams>;
+
+export const DaemonGhApiResult = z.object({
+  status: z.number().int(),
+  /** Lower-cased header names. */
+  headers: z.record(z.string()),
+  body: z.string(),
+});
+export type DaemonGhApiResult = z.infer<typeof DaemonGhApiResult>;
+
+/** The github.com logins the Sandbox has (`gh auth status`), never their tokens. */
+export const DaemonGhLoginsResult = z.object({
+  /** `gh`'s active account, or the login `GH_TOKEN` in the environment belongs to. */
+  active: z.string().nullable(),
+  logins: z.array(z.string()),
+});
+export type DaemonGhLoginsResult = z.infer<typeof DaemonGhLoginsResult>;
 
 /** Daemon -> Control Plane notification. `body` never carries `status`. */
 export interface DaemonEvent {

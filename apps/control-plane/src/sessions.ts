@@ -59,6 +59,7 @@ import { SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
+import { PullRequests } from "./pull-requests.js";
 
 export { HttpError };
 
@@ -94,13 +95,31 @@ export class SessionManager {
   private readonly syncBaselines = new SyncBaselines();
   /** Sessions with a pull in flight (one at a time per host folder). */
   private readonly syncing = new Set<string>();
+  /** Pull Requests attached to Sessions: watching, notifications, actions. */
+  readonly prs: PullRequests;
 
   constructor(
     private readonly db: Db,
     private readonly docker: SandboxDocker,
     private readonly settings: () => Settings,
     private readonly log: (msg: string) => void,
-  ) {}
+  ) {
+    this.prs = new PullRequests({
+      db,
+      getSession: (id) => db.getSession(id),
+      daemonGhApi: (id, params, timeoutMs) => this.daemonCall(id, DAEMON_METHODS.ghApi, params, timeoutMs),
+      daemonGhLogins: (id, timeoutMs) => this.daemonCall(id, DAEMON_METHODS.ghLogins, {}, timeoutMs),
+      connectorCredentials: (s) => resolveBoxCredentials(settings(), s.mcpEnabled),
+      prompt: (id, text) => this.prompt(id, { text }),
+      enqueue: (id, text) => {
+        this.saveMessage(id, text);
+        const s = this.db.getSession(id);
+        if (s && !s.queueRunning) this.update(id, { queueRunning: true });
+      },
+      broadcast: (msg) => this.broadcast(msg),
+      log,
+    });
+  }
 
   subscribe(fn: (msg: SessionBroadcast) => void): () => void {
     this.listeners.add(fn);
@@ -349,6 +368,7 @@ export class SessionManager {
         await this.connect(s.id, s.containerId);
       }
     }
+    this.prs.start();
   }
 
   async create(req: CreateSessionRequest): Promise<Session> {
@@ -592,6 +612,7 @@ export class SessionManager {
     if (!client?.connected) {
       if (s.status === "creating") {
         this.pendingPrompts.set(id, req);
+        this.prs.onPrompt(id, req.text);
         return;
       }
       throw new HttpError(503, "Sandbox Daemon is not connected yet; retry in a moment.");
@@ -599,6 +620,7 @@ export class SessionManager {
     const params: DaemonPromptParams = req.attachments?.length ? { text: req.text, attachments: req.attachments } : { text: req.text };
     await client.request(DAEMON_METHODS.prompt, params);
     this.setStatus(id, "running");
+    this.prs.onPrompt(id, req.text);
   }
 
   /** Context-free question to the Session's Provider; nothing is recorded in the transcript. */
@@ -1198,7 +1220,15 @@ export class SessionManager {
         }
         if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
       }
+      if (ev.body.type === "turn_ended") this.prs.onTurnEnded(id, this.turnEvents(id, stored.seq));
     }
+  }
+
+  /** The events of the turn that ended at `endSeq`: from its `user_prompt` on. */
+  private turnEvents(id: string, endSeq: number): SessionEvent[] {
+    const recent = this.db.listEvents(id, Math.max(0, endSeq - 2000)).filter((e) => e.seq <= endSeq);
+    const start = recent.map((e) => e.body.type).lastIndexOf("user_prompt");
+    return start === -1 ? recent : recent.slice(start);
   }
 
   /** A completed turn: Snapshot first (so the next queued prompt does not land in it), then pump the queue. */
@@ -1236,6 +1266,7 @@ export class SessionManager {
   }
 
   async shutdown(): Promise<void> {
+    this.prs.stop();
     for (const id of this.clients.keys()) this.disconnect(id);
   }
 }

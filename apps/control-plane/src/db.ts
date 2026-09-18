@@ -23,6 +23,7 @@ import {
   type SessionStatus,
   type Snapshot,
 } from "@sessionboxer/protocol";
+import { PrStore } from "./pr-store.js";
 
 const BRANCH_TITLE_MAX = 40;
 
@@ -228,6 +229,8 @@ const SESSION_SELECT = `
 
 export class Db {
   private readonly db: Database.Database;
+  /** Pull Requests attached to Sessions and their comments. */
+  readonly prs: PrStore;
 
   constructor(file: string) {
     this.db = new Database(file);
@@ -236,6 +239,7 @@ export class Db {
     this.db.exec(SCHEMA);
     this.migrate();
     this.titleBranches();
+    this.prs = new PrStore(this.db);
   }
 
   /** Branches created before prompt-derived titles still carry "branch N"; title them from their first prompt. */

@@ -125,6 +125,22 @@ Files the chat names are links into that editor: a project path in a reply, a pr
 
 **Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
 
+### Pull requests attached to a session
+
+Paste a GitHub pull request URL into a prompt, or ask the agent to open one (`gh pr create` in the box), and the PR is **attached** to the session: a **PRs** tab appears in the pane switcher with one row per PR (state, review decision, unread items, open review threads, last activity, watch switch, **Refresh** / **Detach** / GitHub link), and one **#123** tab per PR with its conversation comments, inline review comments and reviews in a table. You can also attach one by hand from the PRs tab: a URL, `owner/repo#123`, or just `#123` for the repository the workspace was cloned from. Detaching only forgets it here; nothing changes on GitHub.
+
+Sessionboxer then **watches** each attached PR: about every minute while the session is idle or stopped, every five minutes while the agent is working (GitHub's conditional requests keep unchanged polls free). The requests run as `gh api` *inside the box*, with whatever GitHub login the box has: a GitHub entry from Settings (see below), a manual `gh auth login` in a terminal, or a `GH_TOKEN`; the login used is shown in the row (`synced 20s ago as @you`). When the box is stopped the Control Plane polls with the connected GitHub account instead, if one of them can read the PR; otherwise the row says *watching paused — Sandbox stopped* until you resume. A PR nobody can read says so, and a closed or merged PR stops being watched a day after closing.
+
+New comments and reviews by other people make the PR's number in the sidebar and the tab light up with an unread count, and show a toast (and a browser notification, if you allow them from the PRs tab). When the agent is busy the toast waits until its turn ends, so it does not talk over the reply you are reading; the counts update right away. Opening a PR's tab marks its items read.
+
+In a PR's tab every item has a checkbox and three buttons, and the bar above the table applies the same three to the ticked items at once:
+
+- **To prompt** puts the item(s) into the prompt box, quoted and with the PR, author and `path:line`, for you to edit and send. Nothing is sent.
+- **Address** sends that prompt to the agent (if it is busy, the prompt goes to *Saved for later* and the queue is started, so it is sent when the turn ends): edit, verify and commit on the PR's branch in the workspace, but do **not** reply or push; you keep the GitHub conversation.
+- **Address & reply** does the same and additionally has the agent push, reply to each item on GitHub with `gh api` from the box and resolve the review threads it addressed. Bulk replies ask for confirmation first.
+
+The prompt tells the agent the quoted text comes from GitHub reviewers and is feedback to evaluate, not instructions from you. **Address** buttons are only enabled when the PR belongs to the repository in the workspace; for another repository use **To prompt** and tell the agent where to work. A `path:line` in an inline comment is a link into the Code pane, and the item's status column follows it: *in prompt*, *addressing*, then *addressed* once the agent replied in the thread or the thread was resolved.
+
 ### Pull the box's changes into your folder
 
 Sessions started from **Copy a host directory** (folder icon next to the agent logo in the list; a git mark means a clone) have **Pull to folder…** in the header. It compares the box's project folder with the folder on your machine and shows what would change before anything is written: new files (`+`), changed files (`~`), files the agent deleted (`−`). **Pull changes** applies them; files ignored by git (`node_modules`, build output) and `.git` itself stay in the box, and anything you added or changed only on your machine is left alone. A file that changed on both sides is a conflict: it is skipped and marked *kept yours*, unless you tick **Also overwrite…** (you are asked to confirm). Symlinks that would point outside your folder are never written. Pull as often as you like; each pull records the new common state, so the next one only shows what changed since. Pulling waits for the agent's turn to end and needs the box running.

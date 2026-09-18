@@ -8,6 +8,7 @@ import {
   DAEMON_PORT,
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
+  DaemonGhApiParams,
   DaemonHelloParams,
   DaemonMcpSetParams,
   DaemonModelSetParams,
@@ -32,6 +33,7 @@ import {
 import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
 import { CodeServer } from "./code-server.js";
+import { GhApi } from "./gh-api.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { DevinMcpConfig } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
@@ -131,6 +133,7 @@ const terminals = new Terminals(
 
 const codeServer = new CodeServer(workspace, log);
 const uploads = new Uploads(workspace, log);
+const ghApi = new GhApi(log);
 
 function status(): DaemonStatus {
   return {
@@ -238,6 +241,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.codeOpen:
       await codeServer.open(CodeOpenParams.parse(params));
       return {};
+    case DAEMON_METHODS.ghApi:
+      return ghApi.request(DaemonGhApiParams.parse(params));
+    case DAEMON_METHODS.ghLogins:
+      return ghApi.logins();
     default:
       throw Object.assign(new Error(`method not found: ${method}`), { code: -32601 });
   }

@@ -13,11 +13,14 @@ import {
   type Branch,
   type ModelOption,
   type OptionValues,
+  type PrActivity,
+  type PrItem,
   type Provider,
   type ProviderModels,
   type ProviderOptions,
   type PublicMcpServerDef,
   type PublicSettings,
+  type PullRequest,
   type SavedMessage,
   type Session,
   type SessionEvent,
@@ -39,6 +42,7 @@ import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
+import { PrPane, PrsPane } from "./PullRequests";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { SourceIcon, sourceTitle } from "./SourceIcon";
@@ -121,6 +125,13 @@ export function App() {
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [models, setModels] = useState<ProviderModels | null>(null);
   const [options, setOptions] = useState<ProviderOptions | null>(null);
+  // Pull Requests attached per Session (all Sessions, for the sidebar badges) and the rows of the ones opened.
+  const [prs, setPrs] = useState<Record<string, PullRequest[]>>({});
+  const [prItems, setPrItems] = useState<Record<string, PrItem[]>>({});
+  const [toasts, setToasts] = useState<Array<{ id: number; sessionId: string; sessionTitle: string; prs: PrActivity[] }>>([]);
+  // Pane the selected Session should switch to (from a PR notification).
+  const [paneRequest, setPaneRequest] = useState<{ sessionId: string; pane: string } | null>(null);
+  const clearPaneRequest = useCallback(() => setPaneRequest(null), []);
   // Snapshots popup opened from the sidebar; it can be for a Session other than the selected one.
   const [snapshotsFor, setSnapshotsFor] = useState<string | null>(null);
   const [dialogSnapshots, setDialogSnapshots] = useState<Snapshot[] | null>(null);
@@ -140,7 +151,30 @@ export function App() {
   const selected = sessions.find((s) => s.id === selectedId) ?? null;
   const snapshotsSession = sessions.find((s) => s.id === snapshotsFor) ?? null;
 
-  const reloadSessions = useCallback(() => run(async () => setSessions(await api.sessions())), [run]);
+  const reloadSessions = useCallback(
+    () =>
+      run(async () => {
+        const list = await api.sessions();
+        setSessions(list);
+        const all = await Promise.all(list.map(async (s) => [s.id, await api.prs(s.id).catch((): PullRequest[] => [])] as const));
+        setPrs(Object.fromEntries(all));
+      }),
+    [run],
+  );
+  const loadPrItems = useCallback(
+    (sessionId: string, prId: string) => run(async () => {
+      const items = await api.prItems(sessionId, prId);
+      setPrItems((prev) => ({ ...prev, [prId]: items }));
+    }),
+    [run],
+  );
+  const openPr = useCallback(
+    (sessionId: string, prId: string | null) => {
+      setRoute({ view: "session", id: sessionId });
+      setPaneRequest({ sessionId, pane: prId ? `pr:${prId}` : "prs" });
+    },
+    [setRoute],
+  );
 
   useEffect(() => {
     void reloadSessions();
@@ -235,6 +269,18 @@ export function App() {
           case "options":
             setOptions((prev) => ({ ...(prev ?? EMPTY_OPTIONS), [msg.provider]: msg.options }));
             break;
+          case "prs":
+            setPrs((prev) => ({ ...prev, [msg.sessionId]: msg.prs }));
+            break;
+          case "pr_items":
+            setPrItems((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.items } : prev));
+            break;
+          case "pr_activity": {
+            const id = Date.now() + Math.random();
+            setToasts((prev) => [...prev.slice(-4), { id, sessionId: msg.sessionId, sessionTitle: msg.sessionTitle, prs: msg.prs }]);
+            notifyBrowser(msg.sessionTitle, msg.prs, () => openPr(msg.sessionId, msg.prs.length === 1 ? msg.prs[0]!.prId : null));
+            break;
+          }
         }
       },
       () => {
@@ -252,7 +298,7 @@ export function App() {
         if (dialogId) void run(async () => setDialogSnapshots(await api.snapshots(dialogId)));
       },
     );
-  }, [selectedId, reloadSessions, run, setRoute]);
+  }, [selectedId, reloadSessions, run, setRoute, openPr]);
 
   const branches = selected?.branches ?? EMPTY_BRANCHES;
   const visibleSnapshots = useMemo(() => {
@@ -307,6 +353,18 @@ export function App() {
                 <span className={`dot dot-${s.status}`} title={s.status} />
                 <span className="session-title">{s.title}</span>
                 <span className="session-provider">
+                  {(prs[s.id] ?? []).some((p) => p.unread > 0) && (
+                    <span
+                      className="count"
+                      title={`${(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)} unread PR comment(s)`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openPr(s.id, null);
+                      }}
+                    >
+                      {(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)}
+                    </span>
+                  )}
                   {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6"}</span>}
                   {s.dockerMode !== "none" && (
                     <span
@@ -442,13 +500,61 @@ export function App() {
             onForkRequestHandled={clearForkRequest}
             focus={focus?.sessionId === selected.id ? focus : null}
             onFocused={clearFocus}
+            prs={prs[selected.id] ?? EMPTY_PRS}
+            prItems={prItems}
+            onLoadPrItems={loadPrItems}
+            paneRequest={paneRequest?.sessionId === selected.id ? paneRequest.pane : null}
+            onPaneRequestHandled={clearPaneRequest}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
           />
         )}
       </main>
+      {toasts.length > 0 && (
+        <div className="toasts">
+          {toasts.map((t) => (
+            <div key={t.id} className="toast" role="status">
+              <button className="toast-close" title="Dismiss" onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}>
+                ×
+              </button>
+              <div className="toast-title">{t.sessionTitle}</div>
+              {t.prs.map((p) => (
+                <button
+                  key={p.prId}
+                  className="link toast-line"
+                  onClick={() => {
+                    setToasts((prev) => prev.filter((x) => x.id !== t.id));
+                    openPr(t.sessionId, p.prId);
+                  }}
+                >
+                  #{p.number} {p.title}: {activityLine(p)}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+const EMPTY_PRS: PullRequest[] = [];
+
+function activityLine(p: PrActivity): string {
+  const who = p.authors.length <= 2 ? p.authors.map((a) => `@${a}`).join(", ") : `@${p.authors[0]} and ${p.authors.length - 1} others`;
+  return `${p.count} new ${p.count === 1 ? "item" : "items"} from ${who}${p.changesRequested ? " (changes requested)" : ""}`;
+}
+
+/** A browser notification when the tab is in the background and permission was given (the PRs pane asks for it). */
+function notifyBrowser(sessionTitle: string, prs: PrActivity[], onClick: () => void): void {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted" || document.visibilityState === "visible") return;
+  const body = prs.map((p) => `#${p.number}: ${activityLine(p)}`).join("\n");
+  const n = new Notification(`${sessionTitle}: pull request feedback`, { body, tag: `sessionboxer-pr-${prs.map((p) => p.prId).join(",")}` });
+  n.onclick = () => {
+    window.focus();
+    onClick();
+    n.close();
+  };
 }
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
@@ -490,8 +596,9 @@ function SessionSizes({
   );
 }
 
-type Pane = "desktop" | "code" | "terminal" | "hidden";
-const PANES: Array<{ id: Exclude<Pane, "hidden">; label: string }> = [
+/** Side pane: the fixed ones, the PR overview, or one attached PR (`pr:<id>`). */
+type Pane = "desktop" | "code" | "terminal" | "prs" | `pr:${string}` | "hidden";
+const PANES: Array<{ id: "desktop" | "code" | "terminal"; label: string }> = [
   { id: "desktop", label: "Desktop" },
   { id: "code", label: "Code" },
   { id: "terminal", label: "Terminal" },
@@ -499,7 +606,7 @@ const PANES: Array<{ id: Exclude<Pane, "hidden">; label: string }> = [
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "desktop" || v === "code" || v === "terminal" || v === "hidden" ? v : "desktop";
+  return v === "desktop" || v === "code" || v === "terminal" || v === "prs" || v === "hidden" ? v : "desktop";
 }
 
 function loadComposerMode(): ComposerMode {
@@ -524,6 +631,11 @@ function SessionView({
   onForkRequestHandled,
   focus,
   onFocused,
+  prs,
+  prItems,
+  onLoadPrItems,
+  paneRequest,
+  onPaneRequestHandled,
   run,
   onForked,
 }: {
@@ -542,6 +654,12 @@ function SessionView({
   /** Turn divider to scroll the chat to (from the sidebar branch tree). */
   focus: DividerRef | null;
   onFocused: () => void;
+  prs: PullRequest[];
+  prItems: Record<string, PrItem[]>;
+  onLoadPrItems: (sessionId: string, prId: string) => Promise<void>;
+  /** Pane to switch to (from a PR notification). */
+  paneRequest: string | null;
+  onPaneRequestHandled: () => void;
   run: Runner;
   onForked: (s: Session) => void;
 }) {
@@ -572,7 +690,25 @@ function SessionView({
     setForkFrom(forkRequest);
     onForkRequestHandled();
   }, [forkRequest, onForkRequestHandled]);
-  useEffect(() => localStorage.setItem("sessionboxer.pane", pane), [pane]);
+  useEffect(() => {
+    if (!pane.startsWith("pr:")) localStorage.setItem("sessionboxer.pane", pane);
+  }, [pane]);
+  useEffect(() => {
+    if (!paneRequest) return;
+    setPane(paneRequest as Pane);
+    onPaneRequestHandled();
+  }, [paneRequest, onPaneRequestHandled]);
+  const openPrId = pane.startsWith("pr:") ? pane.slice(3) : null;
+  const openPr = openPrId ? (prs.find((p) => p.id === openPrId) ?? null) : null;
+  // A PR tab whose PR was detached falls back to the overview.
+  useEffect(() => {
+    if (openPrId && !openPr) setPane("prs");
+  }, [openPrId, openPr]);
+  useEffect(() => {
+    if (openPrId && openPr && !prItems[openPrId]) void onLoadPrItems(session.id, openPrId);
+  }, [openPrId, openPr, prItems, onLoadPrItems, session.id]);
+  const prUnread = prs.reduce((n, p) => n + p.unread, 0);
+  const appendToComposer = useCallback((t: string) => setText((cur) => (cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${t}` : t)), []);
   useEffect(() => localStorage.setItem("sessionboxer.composerMode", composerMode), [composerMode]);
   useEffect(() => {
     if (composerHeight === null) localStorage.removeItem("sessionboxer.composerHeight");
@@ -721,6 +857,28 @@ function SessionView({
               {p.label}
             </button>
           ))}
+          <button
+            role="tab"
+            aria-selected={pane === "prs"}
+            className={pane === "prs" ? "active" : ""}
+            title={pane === "prs" ? "Hide pull requests" : `Pull requests attached to this Session${prUnread > 0 ? ` (${prUnread} unread)` : ""}`}
+            onClick={() => setPane((cur) => (cur === "prs" ? "hidden" : "prs"))}
+          >
+            PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
+          </button>
+          {prs.map((p) => (
+            <button
+              key={p.id}
+              role="tab"
+              aria-selected={pane === `pr:${p.id}`}
+              className={`${pane === `pr:${p.id}` ? "active" : ""} pr-tab pr-tab-${p.state}`}
+              title={`${p.owner}/${p.repo}#${p.number} ${p.title}${p.unread > 0 ? ` (${p.unread} unread)` : ""}`}
+              onClick={() => setPane((cur) => (cur === `pr:${p.id}` ? "hidden" : `pr:${p.id}`))}
+            >
+              #{p.number}
+              {p.unread > 0 && <span className="count">{p.unread}</span>}
+            </button>
+          ))}
         </div>
         <button
           disabled={!isLive || snapshotting}
@@ -864,6 +1022,17 @@ function SessionView({
         {pane === "desktop" && <Desktop session={session} />}
         {pane === "code" && <CodePane session={session} target={codeTarget} />}
         {pane === "terminal" && <TerminalPane session={session} />}
+        {pane === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
+        {openPr && (
+          <PrPane
+            session={session}
+            pr={openPr}
+            items={prItems[openPr.id] ?? null}
+            run={run}
+            onPromptText={appendToComposer}
+            onDetached={() => setPane("prs")}
+          />
+        )}
       </div>
     </div>
     </OpenFile.Provider>

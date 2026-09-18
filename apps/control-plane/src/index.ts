@@ -9,7 +9,10 @@ import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
   AskRequest,
+  AttachPrRequest,
   CodeOpenParams,
+  PrActionRequest,
+  UpdatePrRequest,
   ConnectorKind,
   ConnectorStartRequest,
   CreateSessionRequest,
@@ -196,6 +199,31 @@ api.post("/sessions/:id/saved/:messageId/send", async (c) => {
 api.post("/sessions/:id/queue", async (c) => {
   const req = QueueRequest.parse(await c.req.json());
   return c.json(await sessions.setQueueRunning(c.req.param("id"), req.running));
+});
+
+// Pull Requests attached to the Session (ADR-0027).
+api.get("/sessions/:id/prs", (c) => c.json(sessions.prs.list(c.req.param("id"))));
+api.post("/sessions/:id/prs", async (c) => {
+  const req = AttachPrRequest.parse(await c.req.json());
+  return c.json(await sessions.prs.attach(c.req.param("id"), req.ref, "manual"), 201);
+});
+api.get("/sessions/:id/prs/:prId/items", (c) => c.json(sessions.prs.items(c.req.param("id"), c.req.param("prId"))));
+api.patch("/sessions/:id/prs/:prId", async (c) => {
+  const req = UpdatePrRequest.parse(await c.req.json());
+  return c.json(sessions.prs.update(c.req.param("id"), c.req.param("prId"), req));
+});
+api.delete("/sessions/:id/prs/:prId", (c) => {
+  sessions.prs.detach(c.req.param("id"), c.req.param("prId"));
+  return c.body(null, 204);
+});
+api.post("/sessions/:id/prs/:prId/refresh", async (c) => c.json(await sessions.prs.refresh(c.req.param("id"), c.req.param("prId"))));
+api.post("/sessions/:id/prs/:prId/seen", (c) => {
+  sessions.prs.markSeen(c.req.param("id"), c.req.param("prId"));
+  return c.body(null, 204);
+});
+api.post("/sessions/:id/prs/actions", async (c) => {
+  const req = PrActionRequest.parse(await c.req.json());
+  return c.json(await sessions.prs.action(c.req.param("id"), req));
 });
 
 // Snapshots (`docker commit` of the Sandbox) and forks started from them.

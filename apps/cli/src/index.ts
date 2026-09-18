@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -32,6 +33,9 @@ Options for new:
       --model <id>       Model to run, as the Provider names it (e.g. sonnet, fable);
                          see the New Session page for the list. Default: the Provider's default
       --option <id=val>  Other Agent option (repeatable), e.g. --option effort=high --option fast=on
+      --instructions <text|@file>
+                         Standing instructions for the Agent (system prompt for Claude, first-prompt
+                         prefix for Devin); "" for none. Default: the Settings text
       --docker           Private Docker daemon inside the Sandbox (Sysbox, or --privileged
                          with a warning when Sysbox is not installed); --no-docker to disable.
                          Default: the "Docker inside Sandboxes" setting
@@ -101,6 +105,7 @@ async function newSession(args: string[]): Promise<void> {
       provider: { type: "string", default: "claude-code" },
       model: { type: "string" },
       option: { type: "string", multiple: true },
+      instructions: { type: "string" },
       docker: { type: "boolean" },
       open: { type: "boolean", default: true },
     },
@@ -126,12 +131,20 @@ async function newSession(args: string[]): Promise<void> {
     options[raw.slice(0, eq)] = raw.slice(eq + 1);
   }
 
+  const instructions =
+    values.instructions === undefined
+      ? undefined
+      : values.instructions.startsWith("@")
+        ? readFileSync(values.instructions.slice(1), "utf8")
+        : values.instructions;
+
   const body: CreateSessionRequest = {
     provider: provider.data,
     workspaceSource,
     ...(values.docker !== undefined ? { docker: values.docker } : {}),
     ...(values.model ? { model: values.model } : {}),
     ...(Object.keys(options).length > 0 ? { options } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),
   };

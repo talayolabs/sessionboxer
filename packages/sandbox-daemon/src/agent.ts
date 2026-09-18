@@ -16,6 +16,7 @@ import type {
   AgentOption,
   DaemonSessionForkParams,
   DaemonSessionForkResult,
+  InstructionsDelivery,
   McpServerSpec,
   ModelOption,
   OptionChoice,
@@ -32,6 +33,9 @@ export interface AgentConfig {
   cwd: string;
   mcpCommand: string;
   stateFile: string;
+  /** Standing instructions for the Agent (the Session's); empty sends none. */
+  instructions: string;
+  instructionsDelivery: InstructionsDelivery;
   /** Runs before every spawn with the user MCP servers (Devin reads them from a file, not over ACP). */
   writeMcpConfig?: (servers: McpServerSpec[]) => void;
   /** Runs before every spawn with the model allowlist (Claude reads `availableModels` from its settings file). */
@@ -54,6 +58,17 @@ export interface AgentEvents {
 
 interface PersistedState {
   acpSessionId: string;
+  /** ACP sessions created here that have not had a prompt yet (`first-prompt` instructions go with it). */
+  freshSessionIds?: string[];
+}
+
+/** Wraps the instructions for the `first-prompt` delivery, ahead of the user's text. */
+function withInstructions(instructions: string, text: string): string {
+  return (
+    "Standing instructions from the user for this whole session; follow them in every turn, " +
+    "together with any project instructions:\n\n" +
+    `${instructions.trim()}\n\n---\n\n${text}`
+  );
 }
 
 const CLIENT_INFO = { name: "sessionboxer-daemon", version: "0.0.0" };
@@ -535,6 +550,7 @@ export class AgentManager {
             sessionId: this.acpSessionId,
             cwd: this.cfg.cwd,
             mcpServers,
+            ...this.systemPromptMeta(),
           });
           loaded = true;
           this.cfg.log(`loaded ACP session ${this.acpSessionId}`);
@@ -547,10 +563,10 @@ export class AgentManager {
         }
       }
       if (!loaded) {
-        const newParams: NewSessionRequest = { cwd: this.cfg.cwd, mcpServers };
+        const newParams: NewSessionRequest = { cwd: this.cfg.cwd, mcpServers, ...this.systemPromptMeta() };
         const created = await this.newSessionWithRetry(conn, newParams);
         this.acpSessionId = created.sessionId;
-        this.writeState({ acpSessionId: created.sessionId });
+        this.writeState({ acpSessionId: created.sessionId, freshSessionIds: [...this.freshSessionIds(), created.sessionId] });
         this.cfg.log(`created ACP session ${created.sessionId}`);
         this.captureConfigOptions(created.configOptions);
         await this.ensureBypassMode(conn, created.sessionId, created.modes);
@@ -613,6 +629,8 @@ export class AgentManager {
     try {
       await this.ensureStarted();
       if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+      text = this.firstPromptText(text);
+      this.markPrompted(this.acpSessionId);
       const result = await this.conn.agent.request("session/prompt", {
         sessionId: this.acpSessionId,
         prompt: [{ type: "text", text }],
@@ -699,7 +717,12 @@ export class AgentManager {
               ...(params.messageId ? { _meta: { jetbrains: { air: { fork: { version: 1, messageId: params.messageId } } } } } : {}),
             });
             // claude-agent-acp registers the fork only on `session/load`; prompting before that is "Session not found".
-            const loaded = await conn.agent.request("session/load", { sessionId: forked.sessionId, cwd: this.cfg.cwd, mcpServers });
+            const loaded = await conn.agent.request("session/load", {
+              sessionId: forked.sessionId,
+              cwd: this.cfg.cwd,
+              mcpServers,
+              ...this.systemPromptMeta(),
+            });
             await this.adoptSession(conn, forked.sessionId, loaded?.modes ?? forked.modes, loaded?.configOptions ?? forked.configOptions);
             this.cfg.log(`forked ACP session ${from} -> ${forked.sessionId}${params.messageId ? ` at ${params.messageId}` : ""}`);
             return { acpSessionId: forked.sessionId, method: "fork" };
@@ -709,11 +732,14 @@ export class AgentManager {
           }
         }
         if (!params.replay) throw new Error("this Agent cannot fork its session");
-        const created = await this.newSessionWithRetry(conn, { cwd: this.cfg.cwd, mcpServers });
+        const created = await this.newSessionWithRetry(conn, { cwd: this.cfg.cwd, mcpServers, ...this.systemPromptMeta() });
         await this.adoptSession(conn, created.sessionId, created.modes, created.configOptions);
+        const replay = this.cfg.instructionsDelivery === "first-prompt" && this.cfg.instructions.trim() !== ""
+          ? withInstructions(this.cfg.instructions, params.replay)
+          : params.replay;
         const result = await conn.agent.request("session/prompt", {
           sessionId: created.sessionId,
-          prompt: [{ type: "text", text: params.replay }],
+          prompt: [{ type: "text", text: replay }],
         });
         this.cfg.log(`replayed transcript into ACP session ${created.sessionId} (${result.stopReason})`);
         return { acpSessionId: created.sessionId, method: "replay" };
@@ -740,7 +766,7 @@ export class AgentManager {
       if (this.starting) await this.starting.catch(() => undefined);
       if (this.turnActive) throw new Error("a turn is already active");
       this.acpSessionId = acpSessionId;
-      this.writeState({ acpSessionId });
+      this.writeState({ acpSessionId, freshSessionIds: this.freshSessionIds() });
       this.kill();
       await this.ensureStarted();
       if (!this.acpSessionId) throw new Error("agent not ready");
@@ -757,7 +783,7 @@ export class AgentManager {
     configOptions: SessionConfigOption[] | null | undefined,
   ): Promise<void> {
     this.acpSessionId = sessionId;
-    this.writeState({ acpSessionId: sessionId });
+    this.writeState({ acpSessionId: sessionId, freshSessionIds: this.freshSessionIds() });
     this.currentModel = null;
     this.captureConfigOptions(configOptions);
     await this.ensureBypassMode(conn, sessionId, modes);
@@ -788,6 +814,30 @@ export class AgentManager {
     child?.kill();
   }
 
+  /** `_meta` carrying the instructions for adapters that take them as a system prompt addition. */
+  private systemPromptMeta(): Pick<NewSessionRequest, "_meta"> {
+    if (this.cfg.instructionsDelivery !== "system-prompt" || this.cfg.instructions.trim() === "") return {};
+    return { _meta: { systemPrompt: { append: this.cfg.instructions.trim() } } };
+  }
+
+  private freshSessionIds(): string[] {
+    return this.readState()?.freshSessionIds ?? [];
+  }
+
+  /** Prefixes the instructions when this is the first prompt of a session created here (`first-prompt` delivery). */
+  private firstPromptText(text: string): string {
+    if (this.cfg.instructionsDelivery !== "first-prompt" || this.cfg.instructions.trim() === "") return text;
+    if (!this.acpSessionId || !this.freshSessionIds().includes(this.acpSessionId)) return text;
+    this.cfg.log(`first prompt of ${this.acpSessionId}: instructions prepended`);
+    return withInstructions(this.cfg.instructions, text);
+  }
+
+  private markPrompted(sessionId: string): void {
+    const state = this.readState();
+    if (!state?.freshSessionIds?.includes(sessionId)) return;
+    this.writeState({ ...state, freshSessionIds: state.freshSessionIds.filter((id) => id !== sessionId) });
+  }
+
   private readState(): PersistedState | null {
     try {
       const parsed: unknown = JSON.parse(readFileSync(this.cfg.stateFile, "utf8"));
@@ -796,7 +846,9 @@ export class AgentManager {
         parsed !== null &&
         typeof (parsed as { acpSessionId?: unknown }).acpSessionId === "string"
       ) {
-        return parsed as PersistedState;
+        const state = parsed as PersistedState;
+        if (!Array.isArray(state.freshSessionIds)) delete state.freshSessionIds;
+        return state;
       }
     } catch {
       // first start

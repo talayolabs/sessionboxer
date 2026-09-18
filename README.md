@@ -71,6 +71,8 @@ Click **+ New**, pick the agent, choose where the code comes from:
 
 Claude Code only lets Sessionboxer pick from the aliases in **Settings → Claude model aliases** (`opus, sonnet, haiku, fable` by default; that list is written to Claude's `availableModels`). Add an alias there if your account has a model the picker does not show; it takes effect for new sessions and for idle sessions right away.
 
+**Instructions for the agent** is prefilled with the text from **Settings → Instructions for the agent** and is fixed for the session once created (empty means none). These are standing rules given to the agent itself rather than left in a file it may or may not read: Claude Code gets them appended to its system prompt (on every start of the session, including Resume and rewinds), and Devin, whose CLI has no such hook, gets them prepended to the first message of each conversation the box starts for the session (once; later messages go verbatim). They come on top of the Sandbox briefing and the project's own `CLAUDE.md` / `AGENTS.md`. The shipped default asks the agent to keep its name out of git (no `Co-Authored-By` trailer or "generated with" line: Claude Code's own byline is also switched off in the box) and to run the application, test the change end to end on the desktop and record a video of it after changing code. The **Instructions** button in a session's header shows what that session got.
+
 Optionally type the first prompt right there; it is sent as soon as the box is ready. The session title defaults to the first prompt and can be edited later.
 
 ### Talk to the agent
@@ -169,6 +171,7 @@ sessionboxer new . -p "run the tests and fix what breaks"
 sessionboxer new . --provider devin --docker
 sessionboxer new . --model haiku                     # a model id as the provider names it
 sessionboxer new . --model opus --option effort=high --option fast=on
+sessionboxer new . --instructions @rules.md          # standing instructions from a file ("" for none)
 sessionboxer new --git https://github.com/org/repo.git --ref main
 sessionboxer new --empty -t scratch --no-open
 sessionboxer ls

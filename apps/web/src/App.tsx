@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CONNECTORS,
   DEFAULT_CLAUDE_MODELS,
+  DEFAULT_INSTRUCTIONS,
   DOCKER_MODE_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
@@ -31,6 +32,7 @@ import { Desktop } from "./Desktop";
 import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
+import { InstructionsDialog, deliveryNote } from "./InstructionsDialog";
 import { McpDialog, McpPicker } from "./McpDialog";
 import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
@@ -547,6 +549,7 @@ function SessionView({
   const [forking, setForking] = useState(false);
   const [branching, setBranching] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
@@ -738,6 +741,12 @@ function SessionView({
           MCP {mcpActive.length > 0 && <span className="count">{mcpActive.length}</span>}
           {session.mcpPending && <span className="warn-sign">pending</span>}
         </button>
+        <button
+          title={session.instructions.trim() === "" ? "Instructions: none for this Session" : `Instructions given to the Agent:\n${session.instructions}`}
+          onClick={() => setInstructionsOpen(true)}
+        >
+          Instructions{session.instructions.trim() === "" && <span className="count">0</span>}
+        </button>
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
         )}
@@ -755,6 +764,7 @@ function SessionView({
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
       {mcpOpen && <McpDialog session={session} servers={mcpServers} busy={mcpBusy} onToggle={toggleMcp} onClose={() => setMcpOpen(false)} />}
+      {instructionsOpen && <InstructionsDialog session={session} onClose={() => setInstructionsOpen(false)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
       {forkFrom && (
         <ForkDialog
@@ -883,6 +893,7 @@ function NewSession({
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [mcpEnabled, setMcpEnabled] = useState<string[]>(() => settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id));
+  const [instructions, setInstructions] = useState(settings.instructions);
   const [busy, setBusy] = useState(false);
 
   const submit = (e: React.FormEvent) => {
@@ -904,6 +915,7 @@ function NewSession({
         ...(Object.keys(optionValues).length > 0 ? { options: optionValues } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+        instructions,
       });
       onCreated(s);
     }).finally(() => setBusy(false));
@@ -991,6 +1003,18 @@ function NewSession({
       {docker && <DockerModeNote settings={settings} enabled />}
       <McpPicker servers={settings.mcpServers} enabled={mcpEnabled} onChange={setMcpEnabled} />
       <label>
+        <span className="label-row">
+          Instructions for the Agent (fixed for this Session; empty for none)
+          {instructions !== settings.instructions && (
+            <button type="button" className="link" onClick={() => setInstructions(settings.instructions)}>
+              Reset to the Settings default
+            </button>
+          )}
+        </span>
+        <textarea rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
+      </label>
+      <p className="muted">{deliveryNote(provider)}</p>
+      <label>
         Title (optional, defaults to the first prompt)
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
       </label>
@@ -1048,6 +1072,7 @@ function SettingsView({
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
   const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
+  const [instructions, setInstructions] = useState(settings.instructions);
   const [trustHostCaCerts, setTrustHostCaCerts] = useState(settings.trustHostCaCerts);
   const [extraCaCerts, setExtraCaCerts] = useState(settings.extraCaCerts);
   const [githubClientId, setGithubClientId] = useState(settings.connectors.github.clientId);
@@ -1070,6 +1095,7 @@ function SettingsView({
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         mcpServers,
         claudeModels: parseAliasList(claudeModels),
+        instructions,
         trustHostCaCerts,
         extraCaCerts,
         connectors: {
@@ -1127,6 +1153,22 @@ function SettingsView({
         Written to Claude&apos;s <code>availableModels</code> setting inside each Sandbox, so models your account has but the picker does not list by
         default (e.g. <code>fable</code>) become selectable; leave empty for Claude&apos;s built-in list. Aliases only, no keys. Applies to new
         Sessions and to idle running ones (their Agent restarts in place, keeping the conversation); Stop → Resume a Session if it does not pick it up.
+      </p>
+      <label>
+        <span className="label-row">
+          Instructions for the Agent (default for new Sessions; each Session can change them at creation)
+          {instructions !== DEFAULT_INSTRUCTIONS && (
+            <button type="button" className="link" onClick={() => setInstructions(DEFAULT_INSTRUCTIONS)}>
+              Reset to the shipped default
+            </button>
+          )}
+        </span>
+        <textarea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
+      </label>
+      <p className="muted">
+        Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")} Comes on top of
+        the Sandbox briefing (desktop, recordings, handing files to you) and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Applies to
+        Sessions created afterwards.
       </p>
       <label>
         Git user.name

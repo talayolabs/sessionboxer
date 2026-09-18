@@ -381,6 +381,7 @@ export class SessionManager {
       options: req.options ?? {},
       optionsPending: false,
       availableOptions: [],
+      instructions: (req.instructions ?? settings.instructions).trim(),
       snapshotBytes: 0,
       snapshotCount: 0,
       branches: [],
@@ -446,6 +447,7 @@ export class SessionManager {
       options: origin.options,
       optionsPending: false,
       availableOptions: [],
+      instructions: origin.instructions,
       snapshotBytes: 0,
       snapshotCount: 0,
       branches: [],
@@ -478,6 +480,7 @@ export class SessionManager {
     const env: Record<string, string> = {
       SESSIONBOXER_SESSION_ID: session.id,
       SESSIONBOXER_PROVIDER: session.provider,
+      SESSIONBOXER_INSTRUCTIONS: session.instructions,
       ...providerEnv(session.provider, settings),
     };
     if (session.dockerMode !== "none") env.SESSIONBOXER_DOCKER = session.dockerMode;

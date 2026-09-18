@@ -193,6 +193,27 @@ export type ProviderOptions = Record<Provider, AgentOption[]>;
 /** Claude aliases Sessionboxer allows by default (Claude's own list plus Fable, which the SDK hides otherwise). */
 export const DEFAULT_CLAUDE_MODELS = ["opus", "sonnet", "haiku", "fable"];
 
+/** Shipped default for `Settings.instructions`. */
+export const DEFAULT_INSTRUCTIONS = [
+  "- Never author git commits as an agent: commits carry the user's git identity only, with no `Co-Authored-By` trailer, no \"generated with\" line and no mention of Claude, Devin or any other agent in commit messages or PR text.",
+  "- After changing code, when the change can be exercised, run the application and use the desktop (mouse, keyboard, screenshots) to test it end to end, watching the change work. Record a video of the core part of the change with the desktop's start_recording/stop_recording tools and hand the user the file path so it plays in the chat.",
+].join("\n");
+
+export const INSTRUCTIONS_MAX_CHARS = 20_000;
+
+/**
+ * How a Session's `instructions` reach the Agent. `system-prompt`: appended to the Agent's system
+ * prompt (claude-agent-acp accepts `_meta.systemPrompt.append` on session/new and session/load).
+ * `first-prompt`: the Agent has no such hook (Devin CLI), so they are prepended to the first prompt
+ * of every fresh ACP session the Daemon creates.
+ */
+export const InstructionsDelivery = z.enum(["system-prompt", "first-prompt"]);
+export type InstructionsDelivery = z.infer<typeof InstructionsDelivery>;
+
+export function instructionsDelivery(provider: Provider): InstructionsDelivery {
+  return provider === "claude-code" ? "system-prompt" : "first-prompt";
+}
+
 // ---------------------------------------------------------------------------
 // Branches: "revert to here" at a turn boundary keeps the conversation that
 // followed as a branch and continues from that point on a new one. Branches
@@ -273,6 +294,8 @@ export const Session = z.object({
   optionsPending: z.boolean().default(false),
   /** Options the Session's Agent currently advertises (depends on the model). */
   availableOptions: z.array(AgentOption).default([]),
+  /** Standing instructions the Agent got with this Session (see `instructionsDelivery`); fixed at creation. */
+  instructions: z.string().default(""),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
@@ -305,6 +328,8 @@ export const CreateSessionRequest = z.object({
   model: z.string().min(1).optional(),
   /** Other option values (effort, fast mode, …) to set once the Agent is up. */
   options: OptionValues.optional(),
+  /** Standing instructions for the Agent; omitted takes `Settings.instructions`, `""` sends none. */
+  instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).optional(),
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -441,6 +466,11 @@ export const Settings = z.object({
    * `~/.claude/settings.json`); `default` is always kept. Empty leaves Claude's built-in list.
    */
   claudeModels: z.array(z.string().min(1)).default(DEFAULT_CLAUDE_MODELS),
+  /**
+   * Standing instructions every new Session's Agent gets (editable per Session at creation), on top
+   * of the Sandbox briefing: delivered as system prompt or first-prompt prefix, see `instructionsDelivery`.
+   */
+  instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).default(DEFAULT_INSTRUCTIONS),
   /**
    * Copy the CA certificates this machine trusts beyond the public ones (corporate proxies,
    * Cloudflare WARP, mitmproxy…) into every Sandbox's trust store, so TLS works there too.

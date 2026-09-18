@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   DAEMON_METHODS,
+  instructionsDelivery,
   DAEMON_PORT,
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
@@ -84,6 +85,9 @@ const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, l
 /** Claude's model allowlist lives in its settings file; the Control Plane sends the list before the Agent starts. */
 const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/.claude/settings.json`, log) : null;
 
+/** The Session's standing instructions, set by the Control Plane on the container. */
+const instructions = env.SESSIONBOXER_INSTRUCTIONS ?? "";
+
 const agent = new AgentManager(
   {
     command: acpCommand,
@@ -91,6 +95,8 @@ const agent = new AgentManager(
     cwd: workspace,
     mcpCommand,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
+    instructions,
+    instructionsDelivery: instructionsDelivery(provider),
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     log,

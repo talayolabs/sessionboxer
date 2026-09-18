@@ -7,6 +7,8 @@ import {
   DAEMON_METHODS,
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
+  DaemonRecordingPrefsSetResult,
+  type DaemonRecordingPrefsSetParams,
   DaemonMcpSetResult,
   DaemonModelSetResult,
   DaemonOptionSetResult,
@@ -1189,6 +1191,30 @@ export class SessionManager {
     }
   }
 
+  /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
+  async pushRecordingPrefs(id: string): Promise<void> {
+    const client = this.clients.get(id);
+    if (!client?.connected) return;
+    try {
+      const params: DaemonRecordingPrefsSetParams = { narration: this.settings().recordingNarration };
+      DaemonRecordingPrefsSetResult.parse(await client.request(DAEMON_METHODS.recordingPrefsSet, params));
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) {
+        this.log(`daemon ${id} predates recording preferences; Stop and Resume the session to refresh it`);
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /** `Settings.recordingNarration` changed: every live Session gets it. */
+  async pushRecordingPrefsToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.status !== "idle" && s.status !== "running") continue;
+      await this.pushRecordingPrefs(s.id).catch((e: unknown) => this.log(`recording prefs push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
   /** Last model list each Provider's Agent reported (what New Session can offer). */
   providerModels(): ProviderModels {
     return this.db.providerModels();
@@ -1269,6 +1295,7 @@ export class SessionManager {
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))
       .then(() => this.pushOptions(id))
+      .then(() => this.pushRecordingPrefs(id))
       .catch((e: unknown) => this.log(`mcp/model/options push ${id} failed: ${String(e)}`));
     const pending = this.pendingPrompts.get(id);
     if (pending && !status.turnActive) {

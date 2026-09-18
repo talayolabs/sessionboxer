@@ -70,7 +70,7 @@ RUN --mount=type=secret,id=extra-ca \
     && apt-get update && apt-get install -y --no-install-recommends \
       # dev tooling
       git build-essential python3 python3-pip python3-venv gh nodejs \
-      sudo tini procps less vim-tiny jq unzip zip openssh-client \
+      sudo tini procps less vim-tiny jq unzip zip bzip2 openssh-client \
       # nested Docker (ADR-0008): dockerd is started by the entrypoint only for
       # Docker-enabled Sessions; the CLI is always present.
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
@@ -116,7 +116,20 @@ RUN html=/opt/openvscode-server/out/vs/code/browser/workbench/workbench.html \
 # is how paths clicked in the chat land in the Code pane.
 COPY images/sandbox/vscode-sessionboxer /opt/openvscode-server/extensions/sessionboxer
 
-# Computer-use MCP server (compiled in stage 1).
+# Kokoro TTS model (Apache-2.0) that the computer-use MCP speaks recording captions with, in
+# sherpa-onnx's packaging (ADR-0029). The release tag is rolling, so the checksum pins the
+# contents; Chinese-only files are dropped (narration offers en/es/fr/it/pt/hi).
+ARG KOKORO_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2
+ARG KOKORO_SHA256=c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298
+RUN curl -fsSL "${KOKORO_URL}" -o /tmp/kokoro.tar.bz2 \
+    && echo "${KOKORO_SHA256}  /tmp/kokoro.tar.bz2" | sha256sum -c - \
+    && mkdir -p /opt/sessionboxer/tts \
+    && tar -xjf /tmp/kokoro.tar.bz2 -C /opt/sessionboxer/tts \
+    && mv /opt/sessionboxer/tts/kokoro-multi-lang-v1_0 /opt/sessionboxer/tts/kokoro \
+    && rm -rf /tmp/kokoro.tar.bz2 /opt/sessionboxer/tts/kokoro/dict /opt/sessionboxer/tts/kokoro/lexicon-zh.txt /opt/sessionboxer/tts/kokoro/*-zh.fst \
+    && test -s /opt/sessionboxer/tts/kokoro/model.onnx
+
+# Computer-use MCP server (compiled in stage 1); sherpa-onnx-node brings the TTS runtime.
 COPY --from=build /src/packages/computer-use-mcp/package.json /opt/sessionboxer/computer-use-mcp/
 COPY --from=build /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist
 RUN cd /opt/sessionboxer/computer-use-mcp \

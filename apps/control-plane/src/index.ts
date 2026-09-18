@@ -94,6 +94,7 @@ api.put("/settings", async (c) => {
   saveSettings(settings);
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
+  if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
 });
 

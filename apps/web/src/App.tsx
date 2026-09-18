@@ -12,6 +12,7 @@ import {
   type AgentOption,
   type Branch,
   type ModelOption,
+  type NarrationMode,
   type OptionValues,
   type PrActivity,
   type PrItem,
@@ -1315,6 +1316,8 @@ function SettingsView({
   const [docker, setDocker] = useState(settings.dockerInSandbox);
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
+  const [narrationMode, setNarrationMode] = useState<NarrationMode>(settings.recordingNarration.mode);
+  const [narrationAskAbove, setNarrationAskAbove] = useState(String(settings.recordingNarration.askAboveSeconds));
   const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
   const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
   const [instructions, setInstructions] = useState(settings.instructions);
@@ -1338,6 +1341,7 @@ function SettingsView({
         dockerInSandbox: docker,
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
+        recordingNarration: { mode: narrationMode, askAboveSeconds: Math.max(0, Number(narrationAskAbove) || 0) },
         mcpServers,
         claudeModels: parseAliasList(claudeModels),
         instructions,
@@ -1455,6 +1459,29 @@ function SettingsView({
         A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
         turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
       </p>
+      <fieldset className="choice">
+        <legend>Narrated recordings</legend>
+        <p className="muted">
+          The captions the Agent writes while recording the desktop can be spoken into the video (local text-to-speech in the Sandbox, no account).
+          It costs processing when the recording stops: roughly a third of the spoken time plus a re-encode.
+        </p>
+        <div className="row">
+          <label>
+            Narrate recordings
+            <select value={narrationMode} onChange={(e) => setNarrationMode(e.target.value as NarrationMode)}>
+              <option value="ask">Ask when it takes longer than…</option>
+              <option value="always">Always</option>
+              <option value="never">Never</option>
+            </select>
+          </label>
+          {narrationMode === "ask" && (
+            <label>
+              …seconds of extra processing (below that it is added without asking)
+              <input type="number" min={0} step={1} value={narrationAskAbove} onChange={(e) => setNarrationAskAbove(e.target.value)} />
+            </label>
+          )}
+        </div>
+      </fieldset>
       <fieldset className="choice">
         <legend>TLS certificates in Sandboxes</legend>
         <p className="muted">

@@ -481,6 +481,20 @@ export type HostDirListing = z.infer<typeof HostDirListing>;
 // Settings (stored in ~/.sessionboxer/config.json, 0600)
 // ---------------------------------------------------------------------------
 
+/**
+ * When a finished desktop recording gets its captions spoken into an audio track (local TTS in
+ * the Sandbox): `always`, `never`, or `ask` — by itself when the estimated extra processing is at
+ * most `askAboveSeconds`, otherwise the Agent asks the user first.
+ */
+export const NarrationMode = z.enum(["ask", "always", "never"]);
+export type NarrationMode = z.infer<typeof NarrationMode>;
+
+export const RecordingNarration = z.object({
+  mode: NarrationMode.default("ask"),
+  askAboveSeconds: z.number().nonnegative().default(5),
+});
+export type RecordingNarration = z.infer<typeof RecordingNarration>;
+
 export const Settings = z.object({
   gitUserName: z.string().default(""),
   gitUserEmail: z.string().default(""),
@@ -502,6 +516,7 @@ export const Settings = z.object({
    * of the Sandbox briefing: delivered as system prompt or first-prompt prefix, see `instructionsDelivery`.
    */
   instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).default(DEFAULT_INSTRUCTIONS),
+  recordingNarration: RecordingNarration.default({}),
   /**
    * Copy the CA certificates this machine trusts beyond the public ones (corporate proxies,
    * Cloudflare WARP, mitmproxy…) into every Sandbox's trust store, so TLS works there too.
@@ -1087,6 +1102,7 @@ export const DAEMON_METHODS = {
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
+  recordingPrefsSet: "_sessionboxer/recording-prefs/set",
   sessionFork: "_sessionboxer/session/fork",
   sessionSwitch: "_sessionboxer/session/switch",
   cancel: "_sessionboxer/cancel",
@@ -1206,6 +1222,16 @@ export type DaemonClaudeModelsSetParams = z.infer<typeof DaemonClaudeModelsSetPa
 
 export const DaemonClaudeModelsSetResult = z.object({ applied: z.boolean() });
 export type DaemonClaudeModelsSetResult = z.infer<typeof DaemonClaudeModelsSetResult>;
+
+/**
+ * Hands the Sandbox the recording preferences from `Settings`; the Daemon writes them to tmpfs
+ * where the computer-use MCP reads them at `stop_recording`. Sent on every connect and change.
+ */
+export const DaemonRecordingPrefsSetParams = z.object({ narration: RecordingNarration });
+export type DaemonRecordingPrefsSetParams = z.infer<typeof DaemonRecordingPrefsSetParams>;
+
+export const DaemonRecordingPrefsSetResult = z.object({ ok: z.literal(true) });
+export type DaemonRecordingPrefsSetResult = z.infer<typeof DaemonRecordingPrefsSetResult>;
 
 /**
  * Rewinds the Agent to an earlier point and continues on a new ACP session: `session/fork` at

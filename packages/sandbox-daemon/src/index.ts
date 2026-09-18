@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
@@ -14,6 +15,8 @@ import {
   DaemonModelSetParams,
   DaemonOptionSetParams,
   DaemonPromptParams,
+  DaemonRecordingPrefsSetParams,
+  type DaemonRecordingPrefsSetResult,
   DaemonSessionForkParams,
   type DaemonSessionForkResult,
   DaemonSessionSwitchParams,
@@ -195,6 +198,14 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.claudeModelsSet: {
       const p = DaemonClaudeModelsSetParams.parse(params);
       return { applied: agent.setModelAllowlist(p.models) };
+    }
+    case DAEMON_METHODS.recordingPrefsSet: {
+      const p = DaemonRecordingPrefsSetParams.parse(params);
+      // Read by the computer-use MCP at stop_recording; tmpfs, so Snapshots carry no preferences.
+      mkdirSync(tmpfsDir, { recursive: true });
+      writeFileSync(`${tmpfsDir}/recording-prefs.json`, JSON.stringify(p.narration));
+      const result: DaemonRecordingPrefsSetResult = { ok: true };
+      return result;
     }
     case DAEMON_METHODS.sessionFork: {
       const p = DaemonSessionForkParams.parse(params);

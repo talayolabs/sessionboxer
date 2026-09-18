@@ -2,7 +2,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { annotateRecording, currentRecording, startRecording, stopRecording } from "./recording.js";
+import { NARRATION_LANGUAGES, NARRATION_VOICES } from "./narration.js";
+import { annotateRecording, currentRecording, narrateRecording, startRecording, stopRecording } from "./recording.js";
 import {
   click,
   cursorPosition,
@@ -179,6 +180,18 @@ server.registerTool(
   },
 );
 
+const narrationSchema = {
+  narration_language: z
+    .enum(NARRATION_LANGUAGES as [string, ...string[]])
+    .optional()
+    .describe("Language the captions are written in (default en); picks the voice unless narration_voice is given"),
+  narration_voice: z
+    .enum(NARRATION_VOICES as [string, ...string[]])
+    .optional()
+    .describe("Kokoro voice; the first letter is the language (a en-US, b en-GB, e es, f fr, h hi, i it, p pt-BR), the second f/m"),
+  narration_speed: z.number().min(0.7).max(1.5).default(1).describe("Speaking rate multiplier"),
+};
+
 server.registerTool(
   "start_recording",
   {
@@ -206,7 +219,7 @@ server.registerTool(
   "stop_recording",
   {
     description:
-      "Stop the running desktop recording and finalize the .mp4; returns its path, duration, size and the captions with their final times. By default the video is condensed: stretches where nothing changes on screen are cut to a short hold each, so waiting (page loads, builds) does not pad the video while every state stays readable. Captions from annotate_recording are burned into a band under the desktop and saved as a .vtt subtitle file next to the video.",
+      "Stop the running desktop recording and finalize the .mp4; returns its path, duration, size and the captions with their final times. By default the video is condensed: stretches where nothing changes on screen are cut to a short hold each, so waiting (page loads, builds) does not pad the video while every state stays readable. Captions from annotate_recording are burned into a band under the desktop and saved as a .vtt subtitle file next to the video. Narration: the captions can also be spoken (local TTS) into an audio track; the user's Settings decide when that happens by itself (`narration.added`), is skipped, or must be asked about first (`narration.pending` with the estimated extra processing time: ask the user, and call narrate_recording if they want it). Pass narration_language matching the language you wrote the captions in.",
     inputSchema: {
       condense: z.boolean().default(true).describe("Collapse static stretches; false keeps the real timing (for animations or performance demos)"),
       hold_seconds: z.number().min(0.5).max(10).default(1.5).describe("How long a static stretch stays on screen after condensing"),
@@ -214,9 +227,36 @@ server.registerTool(
         .enum(["both", "burn", "track", "none"])
         .default("both")
         .describe("What to do with annotations: burn them into the frames, write a .vtt subtitle track, both, or drop them"),
+      narrate: z.boolean().optional().describe("Force narration on or off for this video, e.g. because the user just asked for it; omit to follow the user's Settings"),
+      ...narrationSchema,
     },
   },
-  async ({ condense, hold_seconds, captions }) => okText(JSON.stringify(await stopRecording({ condense, holdSeconds: hold_seconds, captions }))),
+  async ({ condense, hold_seconds, captions, narrate, narration_language, narration_voice, narration_speed }) =>
+    okText(
+      JSON.stringify(
+        await stopRecording({
+          condense,
+          holdSeconds: hold_seconds,
+          captions,
+          narrate,
+          narration: { language: narration_language, voice: narration_voice, speed: narration_speed },
+        }),
+      ),
+    ),
+);
+
+server.registerTool(
+  "narrate_recording",
+  {
+    description:
+      "Add spoken narration (local TTS of its captions) to a finished recording, when stop_recording reported `narration.pending` and the user agreed, or when the user asks for narration afterwards. Rewrites the .mp4 in place with an audio track; steps shorter than their sentence hold their last frame, so the video may get slightly longer, and the returned captions/.vtt carry the new times. Mention the path again so the user gets the narrated player.",
+    inputSchema: {
+      path: z.string().describe("The recording's path, as returned by stop_recording"),
+      ...narrationSchema,
+    },
+  },
+  async ({ path, narration_language, narration_voice, narration_speed }) =>
+    okText(JSON.stringify(await narrateRecording(path, { language: narration_language, voice: narration_voice, speed: narration_speed }))),
 );
 
 server.registerTool(

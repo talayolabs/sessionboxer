@@ -1,7 +1,9 @@
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
+import { estimateNarrationSeconds, narrateVideo, narrationAvailable, narrationPrefs, resolveNarrationVoice, type NarrationOptions } from "./narration.js";
 import type { Display } from "./x11.js";
 
 const WORKSPACE = process.env.SESSIONBOXER_WORKSPACE ?? "/workspace";
@@ -12,6 +14,8 @@ const TMPFS = process.env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
  */
 const STATE_FILE = `${TMPFS}/recording.json`;
 const LOG_FILE = `${TMPFS}/recording.log`;
+/** One record per finished video (captions in video time), so it can be narrated after the fact. */
+const FINISHED_DIR = `${TMPFS}/recordings`;
 const STOP_TIMEOUT_MS = 20_000;
 /** The finishing pass re-encodes only the frames that changed; even long recordings take seconds. */
 const FINISH_TIMEOUT_MS = 180_000;
@@ -50,21 +54,31 @@ export interface RecordingInfo {
   captions: number;
 }
 
-export interface RecordingResult {
+export type Narration =
+  | { added: true; language: string; voice: string; speechSeconds: number; processingSeconds: number }
+  /** Settings say to ask above a cost, and this recording is above it: the agent asks, then calls `narrate_recording`. */
+  | { pending: true; estimatedSeconds: number; language: string; voice: string; nextStep: string }
+  | { skipped: string };
+
+export interface NarrateResult {
   path: string;
-  startedAt: string;
-  /** Length of the finished video. */
+  /** Length of the video. */
   seconds: number;
-  /** Wall-clock length of the recording. */
-  recordedSeconds: number;
   bytes: number;
-  condensed: boolean;
-  /** Captions with their times in the finished video. */
+  /** Captions with their times in the video. */
   captions: Caption[];
   /** WebVTT sidecar next to the video, when a track was written. */
   track?: string;
-  /** Why the video was left as recorded, when finishing was asked for but did not happen. */
+  narration?: Narration;
+  /** What did not happen as asked (finishing, narration); the video is still usable. */
   warning?: string;
+}
+
+export interface RecordingResult extends NarrateResult {
+  startedAt: string;
+  /** Wall-clock length of the recording. */
+  recordedSeconds: number;
+  condensed: boolean;
 }
 
 export type CaptionMode = "both" | "burn" | "track" | "none";
@@ -74,6 +88,19 @@ export interface StopOptions {
   condense: boolean;
   holdSeconds: number;
   captions: CaptionMode;
+  /** Speak the captions into an audio track; `undefined` follows the Settings preference. */
+  narrate: boolean | undefined;
+  narration: NarrationOptions;
+}
+
+/** A finished video whose captions are known in its own timeline. */
+interface Finished {
+  path: string;
+  seconds: number;
+  fps: number;
+  captions: Caption[];
+  track: boolean;
+  narrated: boolean;
 }
 
 function readState(): RecordingState | null {
@@ -208,36 +235,138 @@ export async function stopRecording(opts: StopOptions): Promise<RecordingResult>
   const captions = opts.captions === "none" ? [] : s.captions;
   const burn = captions.length > 0 && (opts.captions === "both" || opts.captions === "burn");
   const track = captions.length > 0 && (opts.captions === "both" || opts.captions === "track");
-  const asIs = (extra: Partial<RecordingResult>): RecordingResult => ({
-    path: s.path,
-    startedAt: s.startedAt,
-    seconds: recordedSeconds,
-    recordedSeconds,
-    bytes: statSync(s.path).size,
-    condensed: false,
-    captions,
-    ...extra,
-  });
-  if (!opts.condense && !burn) {
-    return track ? asIs({ track: writeTrack(s.path, captions, recordedSeconds) }) : asIs({});
+  let finished: Finished = { path: s.path, seconds: recordedSeconds, fps: s.fps, captions, track, narrated: false };
+  let condensed = false;
+  let warning: string | undefined;
+  if (opts.condense || burn) {
+    try {
+      const out = await finish(s, captions, burn, opts.condense ? opts.holdSeconds : null);
+      finished = { ...finished, seconds: out.seconds, captions: captions.map((c) => ({ at: Math.min(out.map(c.at), out.seconds), text: c.text })) };
+      condensed = opts.condense;
+    } catch (e) {
+      warning = `left as recorded: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  if (track) writeTrack(finished);
+  saveFinished(finished);
+  const result: RecordingResult = { ...present(finished), startedAt: s.startedAt, recordedSeconds, condensed };
+  if (warning !== undefined) result.warning = warning;
+  await addNarration(finished, result, opts.narrate, opts.narration);
+  return result;
+}
+
+/**
+ * Narrates a finished video after the fact, typically once the user agreed to the cost
+ * `stop_recording` reported. Captions come from the record `stop_recording` left, or from the
+ * video's own `.vtt` when that record is gone (a Sandbox restart clears the tmpfs).
+ */
+export async function narrateRecording(requested: string, opts: NarrationOptions): Promise<NarrateResult> {
+  const path = recordingPath(requested);
+  if (!existsSync(path)) throw new Error(`no video at ${path}`);
+  if (currentRecording()?.path === path) throw new Error("that recording is still running; stop it first");
+  const finished = readFinished(path) ?? (await finishedFromTrack(path));
+  if (finished.narrated) throw new Error(`${path} is already narrated`);
+  const result = present(finished);
+  await addNarration(finished, result, true, opts);
+  if (result.warning !== undefined) throw new Error(result.warning);
+  return result;
+}
+
+function present(f: Finished): NarrateResult {
+  const result: NarrateResult = {
+    path: f.path,
+    seconds: round1(f.seconds),
+    bytes: statSync(f.path).size,
+    captions: f.captions.map((c) => ({ at: round1(c.at), text: c.text })),
+  };
+  if (f.track) result.track = trackPath(f.path);
+  return result;
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/**
+ * Decides from the tool's argument and the Settings preference whether to narrate, and does it.
+ * `ask` narrates by itself when the estimated cost is under the configured threshold, otherwise
+ * it reports the estimate and leaves the call to the agent, who asks the user first.
+ */
+async function addNarration(finished: Finished, result: NarrateResult, narrate: boolean | undefined, opts: NarrationOptions): Promise<void> {
+  if (finished.captions.length === 0) {
+    if (narrate === true) result.narration = { skipped: "the recording has no captions to speak" };
+    return;
+  }
+  if (narrate === false) {
+    result.narration = { skipped: "narrate: false" };
+    return;
+  }
+  if (!narrationAvailable()) {
+    result.narration = { skipped: "no narration model in this Sandbox image (rebuild it with npm run build:image)" };
+    return;
   }
   try {
-    const out = await finish(s, captions, burn, opts.condense ? opts.holdSeconds : null);
-    const result: RecordingResult = {
-      path: s.path,
-      startedAt: s.startedAt,
-      seconds: out.seconds,
-      recordedSeconds,
-      bytes: statSync(s.path).size,
-      condensed: opts.condense,
-      captions: captions.map((c) => ({ at: out.map(c.at), text: c.text })),
-    };
-    if (track) result.track = writeTrack(s.path, result.captions, out.seconds);
-    return result;
+    const { language, voice } = resolveNarrationVoice(opts);
+    if (narrate === undefined) {
+      const prefs = narrationPrefs();
+      if (prefs.mode === "never") {
+        result.narration = { skipped: "Settings: narrate recordings = never" };
+        return;
+      }
+      const estimatedSeconds = estimateNarrationSeconds(finished.captions, finished.seconds, opts.speed);
+      if (prefs.mode === "ask" && estimatedSeconds > prefs.askAboveSeconds) {
+        result.narration = {
+          pending: true,
+          estimatedSeconds,
+          language,
+          voice,
+          nextStep: `Narrating would take about ${estimatedSeconds} s more. Ask the user whether they want the video narrated; if yes, call narrate_recording with this path.`,
+        };
+        return;
+      }
+    }
+    const n = await narrateVideo(finished.path, finished.captions, finished.seconds, finished.fps, opts);
+    finished.seconds = n.seconds;
+    finished.captions = finished.captions.map((c) => ({ at: Math.min(n.map(c.at), n.seconds), text: c.text }));
+    finished.narrated = true;
+    if (finished.track) writeTrack(finished);
+    saveFinished(finished);
+    Object.assign(result, present(finished));
+    result.narration = { added: true, language: n.language, voice: n.voice, speechSeconds: round1(n.speechSeconds), processingSeconds: round1(n.processingSeconds) };
   } catch (e) {
-    const warning = `left as recorded: ${e instanceof Error ? e.message : String(e)}`;
-    return asIs(track ? { warning, track: writeTrack(s.path, captions, recordedSeconds) } : { warning });
+    const why = `narration failed, video left silent: ${e instanceof Error ? e.message : String(e)}`;
+    result.warning = result.warning === undefined ? why : `${result.warning}; ${why}`;
   }
+}
+
+function finishedFile(path: string): string {
+  return `${FINISHED_DIR}/${createHash("sha1").update(path).digest("hex")}.json`;
+}
+
+function saveFinished(f: Finished): void {
+  mkdirSync(FINISHED_DIR, { recursive: true });
+  writeFileSync(finishedFile(f.path), JSON.stringify(f));
+}
+
+function readFinished(path: string): Finished | null {
+  const file = finishedFile(path);
+  if (!existsSync(file)) return null;
+  const f = JSON.parse(readFileSync(file, "utf8")) as Finished;
+  return statSync(path).mtimeMs <= statSync(file).mtimeMs + 1000 ? f : null;
+}
+
+async function finishedFromTrack(path: string): Promise<Finished> {
+  const track = trackPath(path);
+  if (!existsSync(track)) throw new Error(`no captions known for ${path}: it was not finished by stop_recording in this Sandbox and has no .vtt next to it`);
+  const captions: Caption[] = [];
+  for (const m of readFileSync(track, "utf8").matchAll(/^(\d+):(\d\d):(\d\d)\.(\d\d\d) --> [^\n]*\n([^\n]+)/gm)) {
+    captions.push({ at: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000, text: m[5] ?? "" });
+  }
+  if (captions.length === 0) throw new Error(`${track} has no cues`);
+  const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "csv=p=0", path], { timeout: 30_000 });
+  const seconds = Number.parseFloat(stdout.split("\n").find((l) => /^[0-9.]+$/.test(l.trim())) ?? "");
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error(`could not read the length of ${path}`);
+  return { path, seconds, fps: 15, captions, track: true, narrated: stdout.includes("audio") };
 }
 
 /**
@@ -301,7 +430,7 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
     if (!Number.isFinite(seconds) || seconds <= 0 || statSync(tmp).size === 0) throw new Error("finished video is empty");
     renameSync(tmp, s.path);
     const map = holdSeconds !== null ? retiming(keptTimes(stderr), holdSeconds, 1 / s.fps) : (t: number) => t;
-    return { seconds: Math.round(seconds * 10) / 10, map: (t) => Math.min(Math.round(map(t) * 10) / 10, seconds) };
+    return { seconds, map };
   } catch (e) {
     rmSync(tmp, { force: true });
     const stderr = typeof e === "object" && e !== null && "stderr" in e && typeof e.stderr === "string" ? e.stderr : "";
@@ -392,19 +521,21 @@ function assTime(seconds: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(cs % 100).padStart(2, "0")}`;
 }
 
-/** Writes `<name>.vtt` next to the video (times already in video time) and returns its path. */
-function writeTrack(videoPath: string, captions: Caption[], endSeconds: number): string {
-  const path = `${videoPath.slice(0, -4)}.vtt`;
+function trackPath(videoPath: string): string {
+  return `${videoPath.slice(0, -4)}.vtt`;
+}
+
+/** Writes `<name>.vtt` next to the video (times in video time). */
+function writeTrack(f: Finished): void {
   const cues: string[] = [];
   let cursor = 0;
-  captions.forEach((c, i) => {
+  f.captions.forEach((c, i) => {
     const start = Math.max(c.at, cursor);
-    const end = Math.max(captions[i + 1]?.at ?? endSeconds, start + MIN_CUE_SECONDS);
+    const end = Math.max(f.captions[i + 1]?.at ?? f.seconds, start + MIN_CUE_SECONDS);
     cursor = end;
     cues.push(`${vttTime(start)} --> ${vttTime(end)}\n${c.text.replace(/-->/g, "→").replace(/</g, "‹")}`);
   });
-  writeFileSync(path, `WEBVTT\n\n${cues.join("\n\n")}\n`);
-  return path;
+  writeFileSync(trackPath(f.path), `WEBVTT\n\n${cues.join("\n\n")}\n`);
 }
 
 function vttTime(seconds: number): string {

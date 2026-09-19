@@ -128,8 +128,18 @@ Constraints:
   not snapshotted.
 * **Streaming.** Claude Code uses SSE; the proxy must pipe the stream through untouched and
   only summarise the final `message_delta.usage`. Latency added was ~1 ms.
-* **Devin.** The Devin CLI talks to Cognition's API; whether its endpoint can be redirected is
-  not verified — assume 1a/1b only for Devin.
+* **Devin.** Verified (CLI 3000.10.27, through `devin acp` with `WINDSURF_API_KEY`): the CLI
+  honours `WINDSURF_API_SERVER_URL` (default `https://server.codeium.com`; `DEVIN_API_URL`
+  exists too but covers other calls) and works through a loopback HTTP/1.1 proxy — the turn
+  completed. But the model call is **not an LLM request**: it is a Connect-RPC
+  `POST /exa.api_server_pb.ApiServerService/GetChatMessage` (`application/connect+proto`,
+  protobuf), 1 384 bytes for a turn the ACP `usage` reported as 10 833 input tokens, with a
+  streamed protobuf response (12 frames, 2 kB, model id `swe-1-7-lightning-medium`). The prompt
+  is assembled and the model called on Cognition's servers; the box only sends the new message
+  and the conversation reference. The body also embeds the session token (in the protobuf, not
+  only the header), and the schema is not public. So for Devin the exact bytes to the LLM are
+  not observable from the box, and even the client→Cognition bytes could only be shown redacted.
+  Devin bubbles get no request inspector; 1a/1b only.
 * **Token counts from bytes.** Requests give characters; the response gives total tokens. For
   per-block tokens either estimate (~3.6 chars/token for English prose, ~3 for JSON schemas)
   or call `POST /v1/messages/count_tokens` through the same proxy with the box's credentials
@@ -158,6 +168,19 @@ Constraints:
   cache marker), tools (name, schema size, sorted), messages (role, per-block type and size,
   system-reminders highlighted), with *diff to previous request*.
 * Exact per-block token counts via `count_tokens` on demand.
+* **In the conversation** (Claude only): every agent message and tool call is the output of
+  exactly one `POST /v1/messages`, so each such bubble gets a small `LLM #n` tab over its
+  top-left edge. Click → *Call* dialog with tabs **Request** / **Response** / **Tree** /
+  **Diff**: Request and Response show the exact body bytes as sent/received (the decoded
+  HTTP body: the JSON request; the SSE response event stream), with a byte count, a copy and
+  a download; Tree is the parsed block view above; Diff highlights what changed against call
+  n-1 (new messages, changed system blocks, tool additions). Headers are never captured; the
+  tab says so. Association proxy ↔ ACP: the proxy timestamps request start / response end
+  and tags the call with the response `message.id`; the Daemon pairs it with the ACP updates
+  emitted between them (one model reply → one call; side calls such as session naming or
+  compaction summaries have no bubble and appear only in the Requests tab). Bodies live in
+  tmpfs (last N calls, a size cap; older calls keep the summary and say "body evicted");
+  Stop → Resume loses them. Devin bubbles get no tab (see §2).
 
 **Not proposed:** re-implementing Claude Code's prompt assembly ourselves (it changes every
 release), or an always-on recorder.

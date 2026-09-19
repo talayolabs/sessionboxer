@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
@@ -10,6 +11,10 @@ import { ZodError } from "zod";
 import {
   AskRequest,
   AttachPrRequest,
+  AuthLoginRequest,
+  AuthPairRedeemRequest,
+  PAIR_FRAGMENT_KEY,
+  PAIRING_TTL_MS,
   CodeOpenParams,
   CompactionDetailsRequest,
   PrActionRequest,
@@ -33,14 +38,25 @@ import {
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 import {
+  CONFIG_FILE,
   DB_FILE,
   HOST,
   PORT,
+  PUBLIC_URL,
+  TLS,
+  TLS_CERT_FILE,
+  TLS_KEY_FILE,
+  TRUST_PROXY,
+  accessToken,
+  accessTokenSource,
   applySettingsUpdate,
+  ensureAccessToken,
   loadSettings,
+  newAccessToken,
   saveSettings,
   toPublicSettings,
 } from "./config.js";
+import { Auth, type AuthEnv } from "./auth.js";
 import { bridgeCodeSocket, codePrefix, codeTarget, forwardedHeaders, proxyCodeRequest } from "./code-proxy.js";
 import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
@@ -54,13 +70,16 @@ const log = (msg: string): void => {
   process.stderr.write(`[control-plane ${new Date().toISOString()}] ${msg}\n`);
 };
 
+const WS_PING_MS = 25_000;
+
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
-let settings = loadSettings();
+let settings = ensureAccessToken(loadSettings());
 const db = new Db(DB_FILE);
 const docker = new SandboxDocker();
 const sessions = new SessionManager(db, docker, () => settings, log);
+const auth = new Auth(db.connection, () => accessToken(settings), TRUST_PROXY, new URL(PUBLIC_URL).host, log);
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -69,13 +88,13 @@ const connectors = new Connectors(
       saveSettings(settings);
     },
   },
-  (kind) => `http://${HOST === "0.0.0.0" || HOST === "::" ? "127.0.0.1" : HOST}:${PORT}/api/connectors/${kind}/callback`,
+  (kind) => `${PUBLIC_URL}/api/connectors/${kind}/callback`,
   () => void sessions.pushMcpServersToAll(),
   log,
 );
 
 const app = new Hono();
-const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app });
 
 app.onError((err, c) => {
   if (err instanceof HttpError) return c.json({ error: err.message }, err.status as 400);
@@ -84,9 +103,54 @@ app.onError((err, c) => {
   return c.json({ error: err.message }, 500);
 });
 
-const api = new Hono();
+const api = new Hono<AuthEnv>();
+
+api.use("*", auth.middleware());
 
 api.get("/health", (c) => c.json({ ok: true }));
+
+// --- Access: who may talk to this Control Plane -----------------------------------------------
+
+api.get("/auth/me", (c) => c.json({ principal: c.get("principal") ?? null }));
+api.post("/auth/login", async (c) => {
+  const req = AuthLoginRequest.parse(await c.req.json());
+  const res = auth.login(req.token, req.name, auth.clientInfo(c));
+  c.header("set-cookie", res.cookie);
+  return c.json(res.device, 201);
+});
+api.post("/auth/pair", (c) => c.json(auth.createPairing(), 201));
+api.post("/auth/pair/redeem", async (c) => {
+  const req = AuthPairRedeemRequest.parse(await c.req.json());
+  const res = auth.redeemPairing(req.code, req.name, auth.clientInfo(c));
+  c.header("set-cookie", res.cookie);
+  return c.json(res.device, 201);
+});
+api.post("/auth/logout", (c) => {
+  const p = c.get("principal");
+  if (p.kind === "device") auth.revoke(p.device.id);
+  c.header("set-cookie", Auth.clearCookie(auth.clientInfo(c).secure));
+  return c.body(null, 204);
+});
+api.get("/auth/devices", (c) => {
+  const p = c.get("principal");
+  return c.json(auth.devices(p.kind === "device" ? p.device.id : null));
+});
+api.delete("/auth/devices/:id", (c) => {
+  auth.revoke(c.req.param("id"));
+  return c.body(null, 204);
+});
+api.get("/auth/token", (c) => c.json({ token: accessToken(settings) }));
+// A new token: every other browser has to log in again; the caller keeps its cookie and sees the token once.
+api.post("/auth/token/rotate", (c) => {
+  if (accessTokenSource() === "env") throw new HttpError(409, "The access token comes from SESSIONBOXER_ACCESS_TOKEN; change it there.");
+  const p = c.get("principal");
+  settings = { ...settings, accessToken: newAccessToken() };
+  saveSettings(settings);
+  const keep = p.kind === "device" ? p.device.id : null;
+  for (const d of auth.devices(keep)) if (!d.current) auth.revoke(d.id);
+  log("access token rotated");
+  return c.json({ token: settings.accessToken });
+});
 
 api.get("/settings", async (c) => c.json(toPublicSettings(settings, await sessions.dockerModeAvailable())));
 api.put("/settings", async (c) => {
@@ -412,14 +476,54 @@ if (existsSync(webDist)) {
 }
 
 await sessions.boot();
-const server = serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
-  log(`listening on http://${info.address}:${info.port}`);
-});
+if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {
+  throw new Error("SESSIONBOXER_TLS_CERT and SESSIONBOXER_TLS_KEY must be set together.");
+}
+const server = serve(
+  {
+    fetch: app.fetch,
+    hostname: HOST,
+    port: PORT,
+    ...(TLS ? { createServer: createHttpsServer, serverOptions: { cert: readFileSync(TLS_CERT_FILE), key: readFileSync(TLS_KEY_FILE) } } : {}),
+  },
+  (info) => {
+    log(`listening on ${TLS ? "https" : "http"}://${info.address}:${info.port}${PUBLIC_URL ? ` (public URL ${PUBLIC_URL})` : ""}`);
+    const pairing = auth.createPairing();
+    log(`log in at ${PUBLIC_URL}/#${PAIR_FRAGMENT_KEY}=${pairing.code} (one use, ${Math.round(PAIRING_TTL_MS / 60_000)} min)`);
+    log(
+      accessTokenSource() === "env"
+        ? "access token: from SESSIONBOXER_ACCESS_TOKEN"
+        : `access token: in ${CONFIG_FILE} (\`sessionboxer token\` prints it; paste it on the login page of any other browser)`,
+    );
+  },
+);
 injectWebSocket(server);
+
+// Idle tunnels and proxies drop quiet WebSockets (Cloudflare after 100 s); a ping every 25 s keeps
+// every browser connection (UI, terminals, Desktop, Code) alive and finds the ones that went away.
+const keepalive = setInterval(() => {
+  for (const ws of wss.clients) {
+    const alive = ws as typeof ws & { isAlive?: boolean };
+    if (alive.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    alive.isAlive = false;
+    ws.ping();
+  }
+}, WS_PING_MS);
+wss.on("connection", (ws) => {
+  const alive = ws as typeof ws & { isAlive?: boolean };
+  alive.isAlive = true;
+  ws.on("pong", () => {
+    alive.isAlive = true;
+  });
+});
 
 const shutdown = (): void => {
   log("shutting down");
   const exit = (): void => {
+    clearInterval(keepalive);
     db.close();
     server.close();
     process.exit(0);

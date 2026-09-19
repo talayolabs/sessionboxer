@@ -1,19 +1,36 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import {
   DOCKER_MODE_LABELS,
+  PAIR_FRAGMENT_KEY,
   PROVIDERS,
   Provider,
+  type AuthPairing,
   type CreateSessionRequest,
   type Session,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 
 const BASE_URL = (process.env.SESSIONBOXER_URL ?? "http://127.0.0.1:4000").replace(/\/$/, "");
+const CONFIG_FILE = path.join(process.env.SESSIONBOXER_HOME ?? path.join(homedir(), ".sessionboxer"), "config.json");
+
+/** `SESSIONBOXER_TOKEN`, else the token of the Control Plane on this machine (its config.json / `SESSIONBOXER_ACCESS_TOKEN`). */
+function accessToken(): string {
+  const env = process.env.SESSIONBOXER_TOKEN?.trim() || process.env.SESSIONBOXER_ACCESS_TOKEN?.trim();
+  if (env) return env;
+  if (!existsSync(CONFIG_FILE)) return "";
+  try {
+    const parsed = JSON.parse(readFileSync(CONFIG_FILE, "utf8")) as { accessToken?: unknown };
+    return typeof parsed.accessToken === "string" ? parsed.accessToken : "";
+  } catch {
+    return "";
+  }
+}
 
 const USAGE = `sessionboxer - one Docker Sandbox with a Desktop per agent Session
 
@@ -23,8 +40,10 @@ Usage:
   sessionboxer new --git <url> [--ref r]   Create a Session from a git clone
   sessionboxer new --empty                 Create a Session with an empty Workspace
   sessionboxer ls                          List Sessions
-  sessionboxer open <id>                   Open a Session in the browser
+  sessionboxer open <id>                   Open a Session in the browser (logs it in when needed)
   sessionboxer stop|resume|rm <id>         Manage a Session
+  sessionboxer token                       Print the access token of the Control Plane on this machine
+  sessionboxer pair                        Print a one-time login link for another browser or phone
 
 Options for new:
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
@@ -46,6 +65,8 @@ Options for new:
 
 Environment:
   SESSIONBOXER_URL       Control Plane URL (default http://127.0.0.1:4000)
+  SESSIONBOXER_TOKEN     Access token, for a Control Plane on another machine (default: the one
+                         in ~/.sessionboxer/config.json, i.e. the Control Plane run here)
 `;
 
 class CliError extends Error {}
@@ -76,6 +97,17 @@ async function main(argv: string[]): Promise<void> {
     case "delete":
       await api<void>("DELETE", `/sessions/${requireId(rest)}`);
       return;
+    case "token": {
+      const token = accessToken();
+      if (token === "") throw new CliError(`no access token found in ${CONFIG_FILE}; run \`sessionboxer serve\` once`);
+      process.stdout.write(`${token}\n`);
+      return;
+    }
+    case "pair": {
+      const pairing = await api<AuthPairing>("POST", "/auth/pair");
+      process.stdout.write(`${pairUrl(pairing, null)}\n(one use, valid until ${new Date(pairing.expiresAt).toLocaleTimeString()})\n`);
+      return;
+    }
     default:
       throw new CliError(`unknown command "${command}"\n\n${USAGE}`);
   }
@@ -181,7 +213,8 @@ async function list(): Promise<void> {
 }
 
 async function open(id: string): Promise<void> {
-  const url = sessionUrl(id);
+  // A pairing code in the URL logs the browser in if it is not yet; a logged-in one ignores it.
+  const url = pairUrl(await api<AuthPairing>("POST", "/auth/pair"), `/sessions/${id}`);
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
   await new Promise<void>((resolve) => {
     const child = spawn(opener, [url], { stdio: "ignore", detached: true, shell: process.platform === "win32" });
@@ -213,6 +246,10 @@ function sessionUrl(id: string): string {
   return `${BASE_URL}/#/sessions/${id}`;
 }
 
+function pairUrl(pairing: AuthPairing, next: string | null): string {
+  return `${BASE_URL}/#${PAIR_FRAGMENT_KEY}=${pairing.code}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
+}
+
 function requireId(args: string[]): string {
   const id = args[0];
   if (!id) throw new CliError("expected a session id");
@@ -222,13 +259,24 @@ function requireId(args: string[]): string {
 async function api<T>(method: string, route: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
+    const token = accessToken();
     res = await fetch(`${BASE_URL}/api${route}`, {
       method,
-      headers: body === undefined ? {} : { "content-type": "application/json" },
+      headers: {
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...(token === "" ? {} : { authorization: `Bearer ${token}` }),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new CliError(`cannot reach the Control Plane at ${BASE_URL}; start it with \`sessionboxer serve\``);
+  }
+  if (res.status === 401) {
+    throw new CliError(
+      accessToken() === ""
+        ? `the Control Plane at ${BASE_URL} needs an access token; set SESSIONBOXER_TOKEN (run \`sessionboxer token\` on the machine that runs it)`
+        : `the Control Plane at ${BASE_URL} refused the access token; check SESSIONBOXER_TOKEN`,
+    );
   }
   if (!res.ok) {
     const text = await res.text();

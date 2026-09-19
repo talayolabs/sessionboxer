@@ -21,6 +21,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a fu
 - **Stop and resume.** Stop a session to free CPU and memory; resume it later with the conversation, files and installed tools exactly where they were.
 - **Docker inside the box** (optional). Agents can run `docker`, `docker compose` and `docker build` inside their own container.
 - **Your subscription.** Sessionboxer uses your own Claude or Devin account; there is no Sessionboxer account and nothing leaves your machine except the agent's own traffic.
+- **From your phone, if you want.** Run it on a home server or a VPS and reach it over a private Headscale/Tailscale network or a tunnel: every browser logs in once with an access token or a QR code and stays logged in as a device you can revoke.
 
 ## Requirements
 
@@ -45,7 +46,7 @@ Start it with
 npm start               # http://127.0.0.1:4000
 ```
 
-and open http://127.0.0.1:4000 in your browser. Sessionboxer only listens on localhost.
+and open the `log in at http://127.0.0.1:4000/#pair=…` link it prints: that logs the browser in once (see [Remote access](#remote-access-phone-and-other-machines) for how the login works and how to reach it from elsewhere). By default Sessionboxer listens on localhost only.
 
 To update, `git pull` and run the three build commands again.
 
@@ -199,13 +200,27 @@ Servers running on your machine are reachable from the box: `localhost` in a URL
 
 GitHub's own remote MCP server (issues, pull requests, code search, Actions…) needs a login token, and you do not have to paste one: click **Add GitHub** in Settings → MCP servers, give the entry a name, and click **Log in with GitHub**: it runs the GitHub CLI's login (open the link, type the code, approve). The card then shows **Connected as @you**. Add it **more than once with different names** (`github-work`, `github-personal`…) to log in with different GitHub accounts and pick per session which one the agent uses. **Reconnect** logs in again, **Disconnect** forgets the token but keeps the entry. The token is stored like any other secret header and never shown or snapshotted.
 
-The login goes through the GitHub CLI (`gh`) on purpose: organizations that restrict third-party OAuth Apps still allow GitHub's own CLI, so private organization repositories work without asking an owner to approve anything. If `gh` is already logged in on your machine the dialog also offers **Use my gh login as @you** (no browser step); if `gh` is not installed, Sessionboxer downloads the official release (checksum-verified) into `~/.sessionboxer/bin` on first use. Either way it uses a private configuration under `~/.sessionboxer`, so your own `gh` accounts are never touched. **Log in with the Sessionboxer OAuth App** remains as a fallback; to use your own OAuth App instead, register one on GitHub (callback `http://127.0.0.1:4000/api/connectors/github/callback`, Device Flow enabled) and put its Client ID in **Settings → GitHub login**; with the Client secret set too, that login switches from the device code to a plain browser redirect.
+The login goes through the GitHub CLI (`gh`) on purpose: organizations that restrict third-party OAuth Apps still allow GitHub's own CLI, so private organization repositories work without asking an owner to approve anything. If `gh` is already logged in on your machine the dialog also offers **Use my gh login as @you** (no browser step); if `gh` is not installed, Sessionboxer downloads the official release (checksum-verified) into `~/.sessionboxer/bin` on first use. Either way it uses a private configuration under `~/.sessionboxer`, so your own `gh` accounts are never touched. **Log in with the Sessionboxer OAuth App** remains as a fallback; to use your own OAuth App instead, register one on GitHub (callback `<your public URL>/api/connectors/github/callback` — Settings shows the exact address —, Device Flow enabled) and put its Client ID in **Settings → GitHub login**; with the Client secret set too, that login switches from the device code to a plain browser redirect.
 
 While a GitHub entry is enabled for a session, the box itself is logged in as that account too: `gh pr create --draft`, `gh pr view --comments`, `git push` and `git clone` of private HTTPS repositories work in the agent's shell and in the Terminal pane. Switch the entry off in the session's **MCP** popover and the login is gone from the box; it lives on tmpfs, so Snapshots and stopped boxes never carry it. With several GitHub entries enabled, the first one in the registry is the active `gh` account (`gh auth switch` picks another). SSH remotes are not covered; use HTTPS URLs for the box.
 
 #### Behind Cloudflare WARP, Zscaler or another TLS-inspecting proxy
 
 If your machine goes through a proxy that re-signs HTTPS, the agent and MCP servers inside a box would see `self signed certificate in certificate chain`, because the box only trusts the public CAs. Sessionboxer therefore copies the CA certificates your machine trusts *beyond* the public ones (the proxy's root) into every box at start and points Node, Python and OpenSSL at them, so HTTPS from the box works like from your machine. **Settings → TLS certificates in Sandboxes** lists what was found, lets you turn the copy off, and takes extra PEM certificates for CAs not installed on this machine. Changes apply at Sandbox start: Stop → Resume running sessions. `npm run build:image` hands the same certificates to `docker build`, so the downloads during the image build (apt, npm, GitHub releases) pass the proxy too; it prints which ones it found.
+
+## Remote access: phone and other machines
+
+Everything the Control Plane serves — the UI, the API, terminals, the desktop, VS Code — is behind a login, whether you reach it on `127.0.0.1` or through a tunnel. There is one **access token** per Control Plane, generated at first start into `~/.sessionboxer/config.json` (`SESSIONBOXER_ACCESS_TOKEN` in the environment overrides it; `sessionboxer token` prints it). A browser logs in with it once, on the login screen, and gets its own **device**: an HttpOnly cookie that lasts a year, until you revoke it. `npm start` prints a one-time **pairing link** (`http://127.0.0.1:4000/#pair=…`, valid 5 minutes) so the first browser never sees the token.
+
+**Settings → Devices and remote access** lists the browsers that are logged in (name, last seen, from where), with **Revoke** per device and **Log out** for the current one. **Pair another device** shows a QR code and a link, good once for 5 minutes: scan it with the phone (or open the link on the other machine) and that browser is logged in as its own device — the token itself never leaves the browser you are on. **Show access token** reveals it on demand, and **Rotate token** makes a new one, logging out every other device and every CLI that used the old token (not available when the token comes from the environment). Wrong tokens and codes are rate-limited per address; cookies are `SameSite=Lax` and requests from another origin are refused.
+
+The address itself is your choice; what Sessionboxer needs is HTTPS when you are not on `localhost` (browsers only allow the clipboard, notifications and the VS Code pane from a secure context) and `SESSIONBOXER_PUBLIC_URL` set to the URL you type in the browser, so that pairing links, the printed login link and the GitHub OAuth callback carry it. `Settings → Devices` says which address the Control Plane believes it is reached at.
+
+- **Private network (recommended): Headscale or Tailscale.** Both the machine that runs Sessionboxer and your phone or laptop join a private WireGuard network; nothing is exposed to the internet and only your devices can even connect. With a **Headscale** server you host (the Sessionboxer project runs one at `https://tunnel-sessionboxer.talayolabs.com`; deploy your own from [talayolabs/sessionboxer-tunnel](https://github.com/talayolabs/sessionboxer-tunnel)): on the server `tailscale up --login-server https://tunnel-sessionboxer.talayolabs.com` and register the node with a pre-auth key or the URL it prints; on the phone install the Tailscale app, pick *Use an alternate server* (in its menu; Headscale's docs show where per platform), enter the login server URL and register the same way. The server then has a name like `home.ts.sessionboxer.talayolabs.com` (MagicDNS) on the tailnet. Headscale cannot issue certificates for those names, so serve HTTPS yourself: either put a small proxy such as Caddy on the server (a `reverse_proxy 127.0.0.1:4000` site for `home.ts.sessionboxer.talayolabs.com`, with a certificate from Let's Encrypt via a DNS-01 challenge — the name resolves only inside the tailnet, so HTTP-01 cannot work — or Caddy's `tls internal` with its root certificate installed on the phone) and set `SESSIONBOXER_PUBLIC_URL=https://home.ts.sessionboxer.talayolabs.com` and `SESSIONBOXER_TRUST_PROXY=1`; or let the Control Plane serve HTTPS itself with `SESSIONBOXER_TLS_CERT` / `SESSIONBOXER_TLS_KEY` (any certificate: Let's Encrypt via DNS-01 with `lego`/`certbot`, or a self-signed CA you install on the phone) and `SESSIONBOXER_HOST=<tailnet IP>` so it listens on the tailnet interface only. With **Tailscale**'s own coordination server it is simpler: `tailscale up`, then `tailscale serve --bg 4000` gives `https://<server>.<tailnet>.ts.net` with a real certificate, tailnet-only; set `SESSIONBOXER_PUBLIC_URL` to that URL and `SESSIONBOXER_TRUST_PROXY=1`.
+- **A URL that works from any browser: Cloudflare Tunnel.** `cloudflared tunnel` on the server keeps an outbound connection to Cloudflare, which terminates TLS on a hostname of a domain you have there and forwards to `http://127.0.0.1:4000`; put **Cloudflare Access** in front for a second login (email code, Google, GitHub). Set `SESSIONBOXER_PUBLIC_URL=https://box.yourdomain.tld` and `SESSIONBOXER_TRUST_PROXY=1`. Cloudflare drops idle WebSockets after 100 s; the Control Plane pings every 25 s, so terminals and the desktop survive.
+- **The server is a VPS with a public address.** Run Caddy (or nginx) on it with automatic certificates, proxying to `127.0.0.1:4000`, and again `SESSIONBOXER_PUBLIC_URL` + `SESSIONBOXER_TRUST_PROXY=1`. Consider still joining it to a tailnet and firewalling `:443` to the tailnet, since the access token is then the only wall.
+
+`SESSIONBOXER_TRUST_PROXY=1` makes the Control Plane believe `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` (the device list then shows the real client address and cookies are marked `Secure`); leave it unset when nothing sits in front. `SESSIONBOXER_HOST=0.0.0.0` binds every interface, for the rare case where the proxy runs on another machine. From another machine the CLI uses `SESSIONBOXER_URL` and `SESSIONBOXER_TOKEN` (or `sessionboxer pair` on the server to get a link for a browser). The layout is still the desktop one — a phone-friendly layout and push notifications are the next stages of [the research note](docs/research/remote-access-from-a-phone-or-another-machine.md).
 
 ## Command line
 
@@ -226,7 +241,7 @@ sessionboxer ls
 sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 ```
 
-`SESSIONBOXER_URL` points it at a server other than `http://127.0.0.1:4000`.
+`SESSIONBOXER_URL` points it at a server other than `http://127.0.0.1:4000`; on the machine that runs the Control Plane the CLI reads the access token from `~/.sessionboxer/config.json`, elsewhere set `SESSIONBOXER_TOKEN`. `sessionboxer token` prints the token, `sessionboxer pair` a one-time login link for a browser.
 
 ## Where things live
 
@@ -240,7 +255,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 | Snapshot images | `sessionboxer/snapshot:<session id>-<n>`; unreferenced ones are removed at startup |
 | What was last pulled into a copied folder | `~/.sessionboxer/sync/<session id>.json` |
 
-`CLAUDE_CODE_OAUTH_TOKEN` or `WINDSURF_API_KEY` set in the environment of `npm start` take precedence over the tokens in Settings.
+`CLAUDE_CODE_OAUTH_TOKEN` or `WINDSURF_API_KEY` set in the environment of `npm start` take precedence over the tokens in Settings. `SESSIONBOXER_HOST` / `SESSIONBOXER_PORT` change where the Control Plane listens (default `127.0.0.1:4000`); `SESSIONBOXER_PUBLIC_URL`, `SESSIONBOXER_TRUST_PROXY`, `SESSIONBOXER_TLS_CERT` / `SESSIONBOXER_TLS_KEY` and `SESSIONBOXER_ACCESS_TOKEN` are described under [Remote access](#remote-access-phone-and-other-machines).
 
 ## Troubleshooting
 

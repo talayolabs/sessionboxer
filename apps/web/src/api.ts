@@ -1,5 +1,10 @@
 import type {
   AskResult,
+  AuthDevice,
+  AuthLoginRequest,
+  AuthPairing,
+  AuthPairRedeemRequest,
+  AuthPrincipal,
   CodeOpenParams,
   CodeServerStatus,
   CompactionDetails,
@@ -42,6 +47,10 @@ import type {
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 
+/** Fired on `window` when the Control Plane answers 401 to anything but a login attempt: the device cookie is gone or revoked. */
+export const UNAUTHORIZED_EVENT = "sessionboxer:unauthorized";
+const LOGIN_PATHS = new Set(["/auth/login", "/auth/pair/redeem"]);
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
@@ -55,6 +64,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // non-JSON error body
     }
+    if (res.status === 401 && !LOGIN_PATHS.has(path)) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: message }));
     throw new Error(message);
   }
   if (res.status === 204) return undefined as T;
@@ -62,6 +72,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  me: () => request<{ principal: AuthPrincipal | null }>("/auth/me"),
+  login: (req: AuthLoginRequest) => request<AuthDevice>("/auth/login", { method: "POST", body: JSON.stringify(req) }),
+  pair: () => request<AuthPairing>("/auth/pair", { method: "POST" }),
+  pairRedeem: (req: AuthPairRedeemRequest) => request<AuthDevice>("/auth/pair/redeem", { method: "POST", body: JSON.stringify(req) }),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  devices: () => request<AuthDevice[]>("/auth/devices"),
+  revokeDevice: (id: string) => request<void>(`/auth/devices/${id}`, { method: "DELETE" }),
+  accessToken: () => request<{ token: string }>("/auth/token"),
+  rotateAccessToken: () => request<{ token: string }>("/auth/token/rotate", { method: "POST" }),
   settings: () => request<PublicSettings>("/settings"),
   models: () => request<ProviderModels>("/models"),
   options: () => request<ProviderOptions>("/options"),
@@ -105,6 +124,7 @@ export const api = {
         } catch {
           // non-JSON error body
         }
+        if (xhr.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: message }));
         reject(new Error(message));
       };
       signal.addEventListener("abort", () => xhr.abort());
@@ -175,23 +195,38 @@ export function terminalSocketUrl(sessionId: string, ptyId: string): string {
   return `${proto}//${location.host}/api/sessions/${sessionId}/terminals/${ptyId}/ws`;
 }
 
-/** Subscribes to Control Plane pushes; reconnects with a fixed 1s backoff. */
+/** Subscribes to Control Plane pushes; reconnects with a 1s backoff that grows to 15s while the handshake keeps failing. */
 export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnect: () => void): () => void {
   let ws: WebSocket | null = null;
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let hadConnection = false;
+  let failures = 0;
 
   const connect = () => {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    let opened = false;
     ws = new WebSocket(`${proto}//${location.host}/api/ws`);
     ws.onopen = () => {
+      opened = true;
+      failures = 0;
       if (hadConnection) onReconnect();
       hadConnection = true;
     };
     ws.onmessage = (evt) => onMessage(JSON.parse(String(evt.data)) as SessionBroadcast);
     ws.onclose = () => {
-      if (!closed) timer = setTimeout(connect, 1000);
+      if (closed) return;
+      // A handshake the Control Plane refused looks like any other failure from here; ask it whether we are still logged in.
+      if (!opened) {
+        failures++;
+        api.me().then(
+          ({ principal }) => {
+            if (!principal) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: "Login required." }));
+          },
+          () => undefined,
+        );
+      }
+      timer = setTimeout(connect, Math.min(1000 * 2 ** Math.min(failures, 4), 15_000));
     };
     ws.onerror = () => ws?.close();
   };

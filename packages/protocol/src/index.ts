@@ -694,6 +694,76 @@ export const RecordingNarration = z.object({
 });
 export type RecordingNarration = z.infer<typeof RecordingNarration>;
 
+// ---------------------------------------------------------------------------
+// Access: who may talk to the Control Plane (`/api/auth/...`)
+// ---------------------------------------------------------------------------
+
+/**
+ * A browser that logged in: it holds a long-lived HttpOnly cookie whose secret is stored hashed.
+ * `id` is what the Devices list shows and what revocation names.
+ */
+export const AuthDevice = z.object({
+  id: z.string(),
+  /** Label given at login, else derived from the user agent ("Chrome on Android"). */
+  name: z.string(),
+  userAgent: z.string(),
+  createdAt: z.string(),
+  lastSeenAt: z.string(),
+  /** Client address of the last request, as the Control Plane saw it (proxy-forwarded when `X-Forwarded-For` is trusted). */
+  lastIp: z.string(),
+  /** Whether this is the device making the request. */
+  current: z.boolean(),
+});
+export type AuthDevice = z.infer<typeof AuthDevice>;
+
+export const AUTH_DEVICE_NAME_MAX = 80;
+
+/** Exchanges the access token for a device cookie. */
+export const AuthLoginRequest = z.object({
+  token: z.string().min(1),
+  name: z.string().max(AUTH_DEVICE_NAME_MAX).default(""),
+});
+export type AuthLoginRequest = z.infer<typeof AuthLoginRequest>;
+
+/** Exchanges a one-time pairing code (from a QR / link made by a logged-in device) for a device cookie. */
+export const AuthPairRedeemRequest = z.object({
+  code: z.string().min(1),
+  name: z.string().max(AUTH_DEVICE_NAME_MAX).default(""),
+});
+export type AuthPairRedeemRequest = z.infer<typeof AuthPairRedeemRequest>;
+
+/** A pairing code: single use, valid until `expiresAt`; the UI puts it in `<origin>/#pair=<code>`. */
+export const AuthPairing = z.object({
+  code: z.string(),
+  expiresAt: z.string(),
+});
+export type AuthPairing = z.infer<typeof AuthPairing>;
+
+export const PAIRING_TTL_MS = 5 * 60_000;
+/** Hash fragment carrying a pairing code, optionally followed by `&next=<route>` to land on. */
+export const PAIR_FRAGMENT_KEY = "pair";
+
+/** Who the current request is: a logged-in browser (`device`) or a bearer of the access token (`token`, CLI/scripts). */
+export const AuthPrincipal = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("device"), device: AuthDevice }),
+  z.object({ kind: z.literal("token") }),
+]);
+export type AuthPrincipal = z.infer<typeof AuthPrincipal>;
+
+/**
+ * How the Control Plane is reached remotely. `publicUrl` is what links and OAuth callbacks use
+ * (`SESSIONBOXER_PUBLIC_URL`, else derived from the bind address); `tls` whether it serves HTTPS itself.
+ */
+export const RemoteAccess = z.object({
+  publicUrl: z.string(),
+  tls: z.boolean(),
+  /** Where the access token comes from; `env` cannot be rotated from the UI. */
+  accessTokenSource: z.enum(["settings", "env"]),
+  /** `X-Forwarded-*` from a reverse proxy are believed (`SESSIONBOXER_TRUST_PROXY=1`). */
+  trustProxy: z.boolean(),
+});
+export type RemoteAccess = z.infer<typeof RemoteAccess>;
+
 export const Settings = z.object({
   gitUserName: z.string().default(""),
   gitUserEmail: z.string().default(""),
@@ -748,11 +818,16 @@ export const Settings = z.object({
       github: z.object({ clientId: z.string().default(""), clientSecret: z.string().default("") }).default({}),
     })
     .default({}),
+  /**
+   * The access token every browser and CLI must present once (`SESSIONBOXER_ACCESS_TOKEN` overrides it);
+   * generated at first start. Never leaves the Control Plane except through `rotate`.
+   */
+  accessToken: z.string().default(""),
 });
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
   claudeApi: z.object({
     baseUrl: z.string(),
@@ -775,10 +850,12 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   hostCaCerts: z.array(z.string()),
   /** `user.name` / `user.email` of the host's own git config, the fallback when the Settings identity is blank. */
   hostGitIdentity: GitIdentity,
+  /** How this Control Plane is reached from elsewhere (see `RemoteAccess`). */
+  remote: RemoteAccess,
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true }).partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true }).partial().extend({
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
   /** Omitted secret fields keep what is stored; `""` forgets it. */

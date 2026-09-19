@@ -248,6 +248,11 @@ export class Db {
     this.prs = new PrStore(this.db);
   }
 
+  /** The connection, for stores that live in their own module (devices). */
+  get connection(): Database.Database {
+    return this.db;
+  }
+
   /** Branches created before prompt-derived titles still carry "branch N"; title them from their first prompt. */
   private titleBranches(): void {
     const rows = this.db

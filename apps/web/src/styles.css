@@ -692,3 +692,16 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .llm-row-error td { color: var(--error); }
 .link-btn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { color: #fff; }
+
+/* Login screen (before anything else renders) and Settings → Devices. */
+.login-screen { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: auto; }
+.login-screen .login { width: 100%; max-width: 420px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.login-screen .login h1 { font-size: 18px; }
+.login-screen .login .banner { border-radius: 6px; cursor: default; }
+.devices-table th:first-child, .devices-table td:first-child { width: 45%; }
+.devices-table td { vertical-align: middle; }
+.devices-pair { align-items: flex-start; }
+.devices-pair-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.actions-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.qr { flex: none; border-radius: 4px; }
+code.token { font-size: 12px; word-break: break-all; user-select: all; background: var(--bg); padding: 4px 6px; border-radius: 4px; }

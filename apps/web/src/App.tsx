@@ -36,6 +36,7 @@ import { usePendingAttachments } from "./attachments-pending";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
+import { Devices } from "./Devices";
 import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
@@ -1636,12 +1637,13 @@ function SettingsView({
         </label>
       </fieldset>
       <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
+      <Devices remote={settings.remote} run={run} />
       <fieldset className="choice">
         <legend>GitHub login (OAuth App)</legend>
         <p className="muted">
           “Add GitHub” above logs in through a GitHub OAuth App. The built-in one (client id <code>{CONNECTORS.github.defaultClientId}</code>) needs
           nothing here and uses the device-code flow. To use your own app instead, register one at github.com → Settings → Developer settings with
-          callback URL <code>{window.location.origin}/api/connectors/github/callback</code> and Device Flow enabled; with its client secret set,
+          callback URL <code>{settings.remote.publicUrl}/api/connectors/github/callback</code> and Device Flow enabled; with its client secret set,
           the browser redirect flow is used.
         </p>
         <div className="row">

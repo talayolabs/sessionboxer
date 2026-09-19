@@ -18,6 +18,12 @@ the WebSockets have no keepalive (Cloudflare cuts an idle one at 100 s), it assu
 Plan: **stage 1** access token + devices + pairing QR + keepalives + the three guides (~1 session, no image
 rebuild); **stage 2** phone layout (~1 session); **stage 3** push notifications to a sleeping phone (~½–1).
 
+> Status: stage 1 (§3) is built — see ADR-0033 and the README's *Remote access* section; the pairing link uses a
+> one-time `#pair=` code rather than the `#token=` URL sketched below, the Headscale server lives at
+> `tunnel-sessionboxer.talayolabs.com` (repository `talayolabs/sessionboxer-tunnel`), and the Control Plane can
+> serve HTTPS itself (`SESSIONBOXER_TLS_CERT` / `_KEY`) because Headscale cannot issue certificates for node
+> names. Stages 2 and 3 are open.
+
 ## 1. What is on the wire today, and what breaks off-localhost
 
 | Piece | Where | Remote consequence |

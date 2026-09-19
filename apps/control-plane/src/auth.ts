@@ -56,6 +56,10 @@ function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
+function isLoopback(ip: string): boolean {
+  return ip === "::1" || ip === "::ffff:127.0.0.1" || ip.startsWith("127.");
+}
+
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -123,6 +127,12 @@ export class Auth {
     /** Host of `SESSIONBOXER_PUBLIC_URL`: what a browser's Origin says behind a proxy that rewrites `Host`. */
     private readonly publicHost: string,
     private readonly log: (msg: string) => void,
+    /**
+     * Hostname of the quick tunnel while it runs. cloudflared connects from this machine and keeps
+     * the visitor's `Host`, so a loopback request carrying it is the tunnel's and its
+     * `X-Forwarded-*` are believed (only a process on this machine could forge them).
+     */
+    private readonly tunnelHost: () => string | null = () => null,
   ) {
     this.db.exec(AUTH_SCHEMA);
   }
@@ -157,7 +167,7 @@ export class Auth {
   private rejectCrossOrigin(c: Context): void {
     const origin = c.req.header("origin");
     if (!origin || origin === "null") return;
-    const host = (this.trustProxy && c.req.header("x-forwarded-host")?.split(",")[0]?.trim()) || c.req.header("host") || "";
+    const host = (this.forwarded(c) && c.req.header("x-forwarded-host")?.split(",")[0]?.trim()) || c.req.header("host") || "";
     let originHost: string;
     try {
       originHost = new URL(origin).host;
@@ -189,15 +199,27 @@ export class Auth {
     return { kind: "device", device: this.toDevice(row, row.id) };
   }
 
-  clientInfo(c: Context): ClientInfo {
-    let ip = "";
+  private remoteAddress(c: Context): string {
     try {
-      ip = getConnInfo(c).remote.address ?? "";
+      return getConnInfo(c).remote.address ?? "";
     } catch {
-      // not a Node request (tests)
+      return ""; // not a Node request (tests)
     }
+  }
+
+  /** Whether this request's `X-Forwarded-*` headers are trusted: a configured proxy, or the quick tunnel. */
+  private forwarded(c: Context): boolean {
+    if (this.trustProxy) return true;
+    const tunnel = this.tunnelHost();
+    if (!tunnel) return false;
+    const host = (c.req.header("host") ?? "").toLowerCase();
+    return host === tunnel.toLowerCase() && isLoopback(this.remoteAddress(c));
+  }
+
+  clientInfo(c: Context): ClientInfo {
+    let ip = this.remoteAddress(c);
     let secure = new URL(c.req.url).protocol === "https:";
-    if (this.trustProxy) {
+    if (this.forwarded(c)) {
       const fwd = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
       if (fwd) ip = fwd;
       const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();

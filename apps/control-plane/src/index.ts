@@ -41,6 +41,7 @@ import {
   CONFIG_FILE,
   DB_FILE,
   HOST,
+  LOCAL_ORIGIN,
   PORT,
   PUBLIC_URL,
   TLS,
@@ -53,6 +54,7 @@ import {
   ensureAccessToken,
   loadSettings,
   newAccessToken,
+  remoteAccess,
   saveSettings,
   toPublicSettings,
 } from "./config.js";
@@ -65,6 +67,7 @@ import { SandboxDocker } from "./docker.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
+import { QuickTunnel } from "./tunnel.js";
 
 const log = (msg: string): void => {
   process.stderr.write(`[control-plane ${new Date().toISOString()}] ${msg}\n`);
@@ -79,7 +82,16 @@ let settings = ensureAccessToken(loadSettings());
 const db = new Db(DB_FILE);
 const docker = new SandboxDocker();
 const sessions = new SessionManager(db, docker, () => settings, log);
-const auth = new Auth(db.connection, () => accessToken(settings), TRUST_PROXY, new URL(PUBLIC_URL).host, log);
+const tunnel = new QuickTunnel(
+  LOCAL_ORIGIN,
+  (status) => {
+    sessions.notify({ type: "remote", remote: remoteAccess(status) });
+    if (status.state === "up") log(`log in from another device at ${status.url}/#${PAIR_FRAGMENT_KEY}=${auth.createPairing().code} (one use, ${Math.round(PAIRING_TTL_MS / 60_000)} min)`);
+  },
+  log,
+);
+const auth = new Auth(db.connection, () => accessToken(settings), TRUST_PROXY, new URL(PUBLIC_URL).host, log, () => tunnel.host());
+const publicSettings = async () => toPublicSettings(settings, await sessions.dockerModeAvailable(), tunnel.current());
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -152,7 +164,7 @@ api.post("/auth/token/rotate", (c) => {
   return c.json({ token: settings.accessToken });
 });
 
-api.get("/settings", async (c) => c.json(toPublicSettings(settings, await sessions.dockerModeAvailable())));
+api.get("/settings", async (c) => c.json(await publicSettings()));
 api.put("/settings", async (c) => {
   const update = UpdateSettingsRequest.parse(await c.req.json());
   settings = applySettingsUpdate(settings, update);
@@ -160,7 +172,8 @@ api.put("/settings", async (c) => {
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
-  return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
+  if (update.quickTunnel !== undefined) await tunnel.set(update.quickTunnel);
+  return c.json(await publicSettings());
 });
 
 api.get("/connectors/github/gh", async (c) => c.json(await connectors.ghStatus()));
@@ -172,7 +185,7 @@ api.post("/connectors/:kind/start", async (c) => {
 api.get("/connectors/flows/:id", (c) => c.json(connectors.get(c.req.param("id"))));
 api.post("/connectors/servers/:id/disconnect", async (c) => {
   connectors.disconnect(c.req.param("id"));
-  return c.json(toPublicSettings(settings, await sessions.dockerModeAvailable()));
+  return c.json(await publicSettings());
 });
 // Browser lands here after authorizing on the provider's site (redirect flow).
 api.get("/connectors/:kind/callback", async (c) => {
@@ -495,6 +508,7 @@ const server = serve(
         ? "access token: from SESSIONBOXER_ACCESS_TOKEN"
         : `access token: in ${CONFIG_FILE} (\`sessionboxer token\` prints it; paste it on the login page of any other browser)`,
     );
+    if (settings.quickTunnel) void tunnel.set(true);
   },
 );
 injectWebSocket(server);
@@ -524,6 +538,7 @@ const shutdown = (): void => {
   log("shutting down");
   const exit = (): void => {
     clearInterval(keepalive);
+    tunnel.close();
     db.close();
     server.close();
     process.exit(0);

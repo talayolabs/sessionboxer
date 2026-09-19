@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import qrcode from "qrcode-generator";
-import { PAIR_FRAGMENT_KEY, type AuthDevice, type AuthPairing, type RemoteAccess } from "@sessionboxer/protocol";
+import { PAIR_FRAGMENT_KEY, pairingOrigin, type AuthDevice, type AuthPairing, type PublicSettings, type RemoteAccess } from "@sessionboxer/protocol";
 import { api } from "./api";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
-function pairLink(publicUrl: string, pairing: AuthPairing): string {
-  return `${publicUrl.replace(/\/$/, "")}/#${PAIR_FRAGMENT_KEY}=${pairing.code}`;
+function pairLink(origin: string, pairing: AuthPairing): string {
+  return `${origin.replace(/\/$/, "")}/#${PAIR_FRAGMENT_KEY}=${pairing.code}`;
 }
 
 function QrCode({ text, size }: { text: string; size: number }) {
@@ -45,13 +45,34 @@ function relative(iso: string): string {
   return `${Math.round(s / 86400)} d ago`;
 }
 
-/** Settings section: the browsers logged in, a QR code to log another one in, and the access token itself. */
-export function Devices({ remote, run }: { remote: RemoteAccess; run: Runner }) {
+/**
+ * Settings section: the browsers logged in, a QR code to log another one in, the quick tunnel that
+ * makes that QR work from any phone, and the access token itself.
+ */
+export function Devices({
+  remote,
+  quickTunnel,
+  onStored,
+  run,
+}: {
+  remote: RemoteAccess;
+  quickTunnel: boolean;
+  /** The tunnel switch is stored at once, outside the form's Save. */
+  onStored: (s: PublicSettings) => void;
+  run: Runner;
+}) {
   const [devices, setDevices] = useState<AuthDevice[] | null>(null);
   const [pairing, setPairing] = useState<AuthPairing | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
   const left = useCountdown(pairing?.expiresAt ?? null);
+  const tunnel = remote.tunnel;
+
+  const setTunnel = (on: boolean) => {
+    setSwitching(true);
+    void run(async () => onStored(await api.updateSettings({ quickTunnel: on }))).finally(() => setSwitching(false));
+  };
 
   const reload = useCallback(() => run(async () => setDevices(await api.devices())), [run]);
   useEffect(() => {
@@ -89,7 +110,8 @@ export function Devices({ remote, run }: { remote: RemoteAccess; run: Runner }) 
     });
   };
 
-  const link = pairing && left > 0 ? pairLink(remote.publicUrl, pairing) : null;
+  const origin = pairingOrigin(remote);
+  const link = pairing && left > 0 ? pairLink(origin, pairing) : null;
 
   return (
     <fieldset className="choice devices">
@@ -100,6 +122,33 @@ export function Devices({ remote, run }: { remote: RemoteAccess; run: Runner }) 
         {remote.trustProxy ? ", behind a trusted proxy" : ""}. Every browser logs in once with the access token or a pairing code and keeps a
         cookie until it is revoked here. Set <code>SESSIONBOXER_PUBLIC_URL</code> when this address is not the one you use from outside.
       </p>
+      <div className="tunnel">
+        <label className="check">
+          <input type="checkbox" checked={quickTunnel} disabled={switching} onChange={(e) => setTunnel(e.target.checked)} />
+          Share over the internet (Cloudflare quick tunnel)
+          {quickTunnel && tunnel.state === "starting" && <span className="muted"> — starting…</span>}
+        </label>
+        {quickTunnel && tunnel.state === "up" && tunnel.url && (
+          <div className="actions-left tunnel-url">
+            <span className="ok">Up at</span> <code>{tunnel.url}</code>
+            <button type="button" className="small" onClick={() => void copy("tunnel", tunnel.url ?? "")}>
+              {copied === "tunnel" ? "Copied" : "Copy"}
+            </button>
+          </div>
+        )}
+        {quickTunnel && tunnel.error && tunnel.state !== "up" && (
+          <p className="error small-text">
+            {tunnel.state === "error" ? "Tunnel down, retrying: " : ""}
+            {tunnel.error}
+          </p>
+        )}
+        <p className="muted small-text">
+          A public <code>https://….trycloudflare.com</code> address for this Control Plane, made by running <code>cloudflared</code> here
+          (downloaded on first use, checksum verified) — nothing to install on the phone, no account, no port forwarding; pairing codes below
+          use it while it is up. Traffic passes through Cloudflare and the address changes every time the tunnel starts; the login is still
+          required. Stays on across restarts until switched off.
+        </p>
+      </div>
       <table className="prs-table devices-table">
         <thead>
           <tr>
@@ -160,6 +209,17 @@ export function Devices({ remote, run }: { remote: RemoteAccess; run: Runner }) 
           <p className="muted small-text">
             Scan the code with the phone (or open the link) and it is logged in as its own device — the code works once and for{" "}
             {link ? `${left} more second${left === 1 ? "" : "s"}` : "5 minutes"}; the access token never leaves this browser.
+            {quickTunnel && tunnel.state === "up" ? (
+              <>
+                {" "}
+                The link points at the tunnel, so it works from anywhere.
+              </>
+            ) : (
+              <>
+                {" "}
+                The link points at <code>{origin}</code>; a phone on another network needs the tunnel above (or a VPN / public URL).
+              </>
+            )}
           </p>
         </div>
         {link && <QrCode text={link} size={168} />}

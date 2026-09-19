@@ -158,6 +158,11 @@ export class SessionManager {
     for (const fn of this.listeners) fn(msg);
   }
 
+  /** Sends a message unrelated to a Session (remote-access changes) to every UI socket. */
+  notify(msg: SessionBroadcast): void {
+    this.broadcast(msg);
+  }
+
   list(): Session[] {
     return this.db.listSessions();
   }

@@ -20,6 +20,7 @@ import {
   type PublicMcpServerDef,
   type PublicSettings,
   type RemoteAccess,
+  type TunnelStatus,
   type UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
@@ -75,9 +76,15 @@ export function ensureAccessToken(settings: Settings): Settings {
   return next;
 }
 
-export function remoteAccess(): RemoteAccess {
-  return { publicUrl: PUBLIC_URL, tls: TLS, accessTokenSource: accessTokenSource(), trustProxy: TRUST_PROXY };
+export function remoteAccess(tunnel: TunnelStatus): RemoteAccess {
+  return { publicUrl: PUBLIC_URL, tls: TLS, accessTokenSource: accessTokenSource(), trustProxy: TRUST_PROXY, tunnel };
 }
+
+/** Where cloudflared reaches the Control Plane: its own listener on this machine. */
+export const LOCAL_ORIGIN = (() => {
+  const host = HOST === "0.0.0.0" || HOST === "::" ? "127.0.0.1" : HOST.includes(":") ? `[${HOST}]` : HOST;
+  return `${TLS ? "https" : "http"}://${host}:${PORT}`;
+})();
 
 export function ensureDataDir(): void {
   mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
@@ -137,7 +144,7 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
   return Settings.parse(next);
 }
 
-export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">): PublicSettings {
+export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">, tunnel: TunnelStatus): PublicSettings {
   const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, ...rest } = settings;
   const base = claudeBaseUrl(settings);
   return {
@@ -160,7 +167,7 @@ export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclud
     dockerModeAvailable,
     hostCaCerts: hostExtraCaCerts().map((c) => c.subject),
     hostGitIdentity: hostGitIdentity(),
-    remote: remoteAccess(),
+    remote: remoteAccess(tunnel),
   };
 }
 

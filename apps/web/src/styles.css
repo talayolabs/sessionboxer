@@ -700,6 +700,8 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .login-screen .login .banner { border-radius: 6px; cursor: default; }
 .devices-table th:first-child, .devices-table td:first-child { width: 45%; }
 .devices-table td { vertical-align: middle; }
+.tunnel { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.tunnel-url code { word-break: break-all; user-select: all; }
 .devices-pair { align-items: flex-start; }
 .devices-pair-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .actions-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

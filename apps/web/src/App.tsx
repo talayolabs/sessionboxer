@@ -292,6 +292,9 @@ export function App() {
             notifyBrowser(msg.sessionTitle, msg.prs, () => openPr(msg.sessionId, msg.prs.length === 1 ? msg.prs[0]!.prId : null));
             break;
           }
+          case "remote":
+            setSettings((prev) => (prev ? { ...prev, remote: msg.remote } : prev));
+            break;
         }
       },
       () => {
@@ -1637,7 +1640,7 @@ function SettingsView({
         </label>
       </fieldset>
       <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
-      <Devices remote={settings.remote} run={run} />
+      <Devices remote={settings.remote} quickTunnel={settings.quickTunnel} onStored={onStored} run={run} />
       <fieldset className="choice">
         <legend>GitHub login (OAuth App)</legend>
         <p className="muted">

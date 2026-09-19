@@ -390,6 +390,66 @@ export const AskResult = z.object({ text: z.string() });
 export type AskResult = z.infer<typeof AskResult>;
 
 // ---------------------------------------------------------------------------
+// Context usage (ADR-0030). Occupancy and per-turn spend come from the ACP
+// `usage_update` notifications and the prompt response's `usage`, both kept in the
+// event stream; the category breakdown is the Agent's own `/context` report, parsed.
+// ---------------------------------------------------------------------------
+
+/** What one turn spent, as the Agent reports it on the prompt response (ACP `usage`). */
+export const TurnUsage = z.object({
+  totalTokens: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  thoughtTokens: z.number().nullable().optional(),
+  cachedReadTokens: z.number().nullable().optional(),
+  cachedWriteTokens: z.number().nullable().optional(),
+});
+export type TurnUsage = z.infer<typeof TurnUsage>;
+
+export const CONTEXT_CATEGORY_KINDS = ["used", "free", "buffer", "deferred"] as const;
+export const ContextCategoryKind = z.enum(CONTEXT_CATEGORY_KINDS);
+export type ContextCategoryKind = z.infer<typeof ContextCategoryKind>;
+
+/** One row of the Agent's `/context` table (system prompt, tools, messages, free space, …). */
+export const ContextCategory = z.object({
+  name: z.string(),
+  tokens: z.number(),
+  /** Of the context window, as the Agent printed it. */
+  percent: z.number().nullable(),
+  kind: ContextCategoryKind,
+});
+export type ContextCategory = z.infer<typeof ContextCategory>;
+
+/** One named contributor to a category: an MCP tool (source = server), a memory file (source = type), a skill (source = plugin). */
+export const ContextContributor = z.object({
+  name: z.string(),
+  source: z.string(),
+  tokens: z.number(),
+});
+export type ContextContributor = z.infer<typeof ContextContributor>;
+
+/**
+ * The Agent's own account of what fills its context window right now, parsed from its
+ * `/context` report. Categories are the Provider's (Claude Code and Devin name them
+ * differently); `text` is the report as printed, kept for what the parser does not know.
+ */
+export const ContextBreakdown = z.object({
+  provider: Provider,
+  model: z.string().nullable(),
+  totalTokens: z.number().nullable(),
+  maxTokens: z.number().nullable(),
+  percent: z.number().nullable(),
+  categories: z.array(ContextCategory),
+  mcpTools: z.array(ContextContributor),
+  memoryFiles: z.array(ContextContributor),
+  skills: z.array(ContextContributor),
+  /** A caveat the Agent printed ("Token counts are estimates…"). */
+  note: z.string().nullable(),
+  text: z.string(),
+});
+export type ContextBreakdown = z.infer<typeof ContextBreakdown>;
+
+// ---------------------------------------------------------------------------
 // Saved messages: prompts kept per Session ("save for later"), ordered; played
 // as a queue one turn at a time while `Session.queueRunning`.
 // ---------------------------------------------------------------------------
@@ -638,7 +698,7 @@ export type ConnectorFlow = z.infer<typeof ConnectorFlow>;
 export type SessionEventBody =
   | { type: "user_prompt"; text: string; attachments?: PromptAttachment[] }
   | { type: "update"; update: SessionUpdate }
-  | { type: "turn_ended"; stopReason: StopReason }
+  | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage }
   | { type: "agent_error"; message: string }
   | { type: "status"; status: SessionStatus; error?: string }
   /** First event of a forked Session: everything before it was copied from the origin. */
@@ -648,7 +708,9 @@ export type SessionEventBody =
   /** The Agent switched model (`name` is the human label, `model` the value). */
   | { type: "model_changed"; model: string; name: string }
   /** One of the Agent's other options changed (`name`/`valueName` are the human labels). */
-  | { type: "option_changed"; id: string; name: string; value: string; valueName: string };
+  | { type: "option_changed"; id: string; name: string; value: string; valueName: string }
+  /** The Agent was asked `/context` outside the conversation; this is what it reported. */
+  | { type: "context_breakdown"; breakdown: ContextBreakdown };
 
 export interface SessionEvent {
   /** Control Plane sequence, monotonic per Session (across branches). */
@@ -1098,6 +1160,7 @@ export const DAEMON_METHODS = {
   hello: "_sessionboxer/hello",
   prompt: "_sessionboxer/prompt",
   ask: "_sessionboxer/ask",
+  contextReport: "_sessionboxer/context/report",
   mcpSet: "_sessionboxer/mcp/set",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
@@ -1267,6 +1330,14 @@ export const DaemonAskParams = AskRequest;
 export type DaemonAskParams = AskRequest;
 export const DaemonAskResult = AskResult;
 export type DaemonAskResult = AskResult;
+
+/**
+ * Synchronous: `/context` sent on the Agent's own session (both Providers answer it locally,
+ * without a model call) with its reply captured instead of streamed as events, so the
+ * conversation shows nothing of it. Refused while a turn is active.
+ */
+export const DaemonContextReportResult = z.object({ text: z.string() });
+export type DaemonContextReportResult = z.infer<typeof DaemonContextReportResult>;
 
 /**
  * One GitHub API request made from inside the Sandbox with `gh api`, so it is authenticated with

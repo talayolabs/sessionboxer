@@ -8,6 +8,7 @@ import type {
   ToolCallContent,
   ToolCallLocation,
 } from "@sessionboxer/protocol";
+import { TurnAccumulator, compactionMeta, foldCompaction, type Compaction, type TurnStats } from "./context-model";
 
 export type TranscriptItem =
   | { kind: "user"; key: string; text: string; attachments?: PromptAttachment[] }
@@ -35,7 +36,10 @@ export type TranscriptItem =
       ts: string;
       /** Nothing conversational follows: the Session is waiting here for the next prompt. */
       tail: boolean;
+      stats: TurnStats;
     }
+  | { kind: "compaction"; key: string; compaction: Compaction }
+  | { kind: "context_report"; key: string; totalTokens: number | null; maxTokens: number | null; percent: number | null }
   | { kind: "error"; key: string; message: string }
   | { kind: "status"; key: string; status: SessionStatus; error?: string }
   | { kind: "snapshot"; key: string; snapshot: Snapshot }
@@ -89,6 +93,8 @@ function markContinued(items: TranscriptItem[]): void {
 export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = []): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const tools = new Map<string, Extract<TranscriptItem, { kind: "tool" }>>();
+  const compactions = new Map<string, Compaction>();
+  let turn = new TurnAccumulator(null, null);
   const pending = [...snapshots].sort((a, b) => a.eventSeq - b.eventSeq || a.ordinal - b.ordinal);
   const flushSnapshots = (uptoSeq: number) => {
     for (let next = pending[0]; next && next.eventSeq <= uptoSeq; next = pending[0]) {
@@ -113,9 +119,26 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
       case "user_prompt":
         markContinued(items);
         items.push(body.attachments?.length ? { kind: "user", key, text: body.text, attachments: body.attachments } : { kind: "user", key, text: body.text });
+        {
+          // Usage that landed between turns (a compaction's refresh) is the new baseline.
+          const base = turn.finish(undefined);
+          turn = new TurnAccumulator(base.used, base.cost);
+        }
         break;
-      case "turn_ended":
-        items.push({ kind: "turn_ended", key, stopReason: body.stopReason, seq: ev.seq, branchId: ev.branchId, ts: ev.ts, tail: true });
+      case "turn_ended": {
+        const done = turn.finish(body.usage);
+        turn = new TurnAccumulator(done.used, done.cost);
+        items.push({ kind: "turn_ended", key, stopReason: body.stopReason, seq: ev.seq, branchId: ev.branchId, ts: ev.ts, tail: true, stats: done.stats });
+        break;
+      }
+      case "context_breakdown":
+        items.push({
+          kind: "context_report",
+          key,
+          totalTokens: body.breakdown.totalTokens,
+          maxTokens: body.breakdown.maxTokens,
+          percent: body.breakdown.percent,
+        });
         break;
       case "agent_error":
         items.push({ kind: "error", key, message: body.message });
@@ -143,8 +166,17 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "update": {
         const u = body.update;
+        if (u.sessionUpdate === "compaction_update" || compactionMeta(u)) {
+          const before = compactions.size;
+          const c = foldCompaction(compactions, u);
+          if (c && compactions.size > before) items.push({ kind: "compaction", key, compaction: c });
+          break;
+        }
         if (CONVERSATIONAL_UPDATES.has(u.sessionUpdate)) markContinued(items);
         switch (u.sessionUpdate) {
+          case "usage_update":
+            turn.onUsage(u);
+            break;
           case "agent_message_chunk":
             appendText("agent", key, blockText(u.content));
             break;
@@ -209,7 +241,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
             });
             break;
           default:
-            // available_commands_update, current_mode_update, usage_update, ...: not rendered.
+            // available_commands_update, current_mode_update, ...: not rendered.
             break;
         }
       }

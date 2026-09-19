@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { UploadedAttachments } from "./Attachments";
+import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
 import { CopyableMessage } from "./CopyMessage";
 import { FileLink } from "./FileLink";
 import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
@@ -70,6 +71,7 @@ function TurnDivider({
       <span className="turn-divider-label" title={new Date(item.ts).toLocaleString()}>
         {item.stopReason === "end_turn" ? "turn ended" : `turn ended (${item.stopReason})`} {formatTime(item.ts)}
       </span>
+      <TurnStatsLabel stats={item.stats} />
       {!item.tail && (
         <button
           type="button"
@@ -105,6 +107,58 @@ function TurnDivider({
         </button>
       ))}
       <span className="turn-divider-line" />
+    </div>
+  );
+}
+
+/** What the turn cost, on its divider: context movement, model calls, tokens in/out, money. */
+function TurnStatsLabel({ stats }: { stats: TurnStats }) {
+  const parts: Array<{ text: string; title: string }> = [];
+  if (stats.contextUsed !== null) {
+    const delta = stats.contextDelta;
+    parts.push({
+      text: delta === null ? `context ${formatTokens(stats.contextUsed)}` : `${delta >= 0 ? "+" : "\u2212"}${formatTokens(Math.abs(delta))} context`,
+      title: `Context window after this turn: ${stats.contextUsed.toLocaleString()} tokens${delta === null ? "" : ` (${delta >= 0 ? "+" : ""}${delta.toLocaleString()} over the turn)`}`,
+    });
+  }
+  if (stats.calls > 0) parts.push({ text: `${stats.calls} model ${stats.calls === 1 ? "call" : "calls"}`, title: "Replies from the model in this turn (one per tool-call round)" });
+  const u = stats.usage;
+  if (u) {
+    const cached = (u.cachedReadTokens ?? 0) > 0 ? ` / cached ${formatTokens(u.cachedReadTokens ?? 0)}` : "";
+    const written = (u.cachedWriteTokens ?? 0) > 0 ? ` / written ${formatTokens(u.cachedWriteTokens ?? 0)}` : "";
+    parts.push({
+      text: `in ${formatTokens(u.inputTokens)}${cached}${written} / out ${formatTokens(u.outputTokens)}`,
+      title:
+        `Tokens this turn — input ${u.inputTokens.toLocaleString()}` +
+        (u.cachedReadTokens ? `, read from cache ${u.cachedReadTokens.toLocaleString()}` : "") +
+        (u.cachedWriteTokens ? `, written to cache ${u.cachedWriteTokens.toLocaleString()}` : "") +
+        `, output ${u.outputTokens.toLocaleString()}` +
+        (u.thoughtTokens ? ` (thinking ${u.thoughtTokens.toLocaleString()})` : ""),
+    });
+  }
+  if (stats.costDelta !== null && stats.costDelta > 0) parts.push({ text: formatCost(stats.costDelta), title: "What this turn cost, as the Agent reports it" });
+  if (parts.length === 0) return null;
+  return (
+    <span className="turn-stats">
+      {parts.map((p, i) => (
+        <span key={i} title={p.title}>
+          {i > 0 && <span className="turn-stats-sep">{"\u00b7"}</span>}
+          {p.text}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function CompactionMarker({ compaction: c }: { compaction: Compaction }) {
+  const what = c.status === "completed" ? "Context compacted" : c.status === "failed" ? "Context compaction failed" : "Compacting context\u2026";
+  const sizes = c.preTokens !== null && c.postTokens !== null ? ` ${formatTokens(c.preTokens)} \u2192 ${formatTokens(c.postTokens)}` : c.postTokens !== null ? ` \u2192 ${formatTokens(c.postTokens)}` : "";
+  const how = c.trigger === "automatic" ? " (automatic)" : c.trigger === "manual" ? " (manual)" : "";
+  return (
+    <div className={`marker marker-compaction${c.status === "failed" ? " marker-error" : ""}`} title={c.durationMs !== null ? `${(c.durationMs / 1000).toFixed(1)} s` : undefined}>
+      {"\u267B"} {what}
+      {sizes}
+      {how}: the Agent replaced the older conversation with a summary.
     </div>
   );
 }
@@ -305,6 +359,17 @@ function Item({
       );
     case "turn_ended":
       return <TurnDivider item={item} view={branchView} actions={branchActions} />;
+    case "compaction":
+      return <CompactionMarker compaction={item.compaction} />;
+    case "context_report":
+      return (
+        <div className="marker">
+          Context inspected
+          {item.totalTokens !== null && item.maxTokens !== null
+            ? `: ${formatTokens(item.totalTokens)} / ${formatTokens(item.maxTokens)}${item.percent !== null ? ` (${item.percent}%)` : ""}`
+            : ""}
+        </div>
+      );
     case "error":
       return <div className="marker marker-error">{item.message}</div>;
     case "status":

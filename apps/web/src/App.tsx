@@ -43,6 +43,8 @@ import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
+import { ContextGauge, ContextPane } from "./Context";
+import { deriveContext, type ContextState } from "./context-model";
 import { PrPane, PrsPane } from "./PullRequests";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
@@ -310,6 +312,7 @@ export function App() {
     return snapshots.filter((s) => inBranchScope(scope, s.branchId, s.eventSeq));
   }, [snapshots, branches, activeBranchId]);
   const items = useMemo(() => buildTranscript(events, visibleSnapshots), [events, visibleSnapshots]);
+  const context = useMemo(() => deriveContext(events), [events]);
   const anyTokenSet = settings
     ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
     : true;
@@ -506,6 +509,7 @@ export function App() {
               selected.status === "idle" || selected.status === "running" ? selected.availableOptions : (options?.[selected.provider] ?? [])
             }
             items={items}
+            context={context}
             saved={saved}
             snapshots={visibleSnapshots}
             snapshotting={snapshotting.has(selected.id)}
@@ -610,16 +614,17 @@ function SessionSizes({
 }
 
 /** Side pane: the fixed ones, the PR overview, or one attached PR (`pr:<id>`). */
-type Pane = "desktop" | "code" | "terminal" | "prs" | `pr:${string}` | "hidden";
-const PANES: Array<{ id: "desktop" | "code" | "terminal"; label: string }> = [
+type Pane = "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "hidden";
+const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: string }> = [
   { id: "desktop", label: "Desktop" },
   { id: "code", label: "Code" },
   { id: "terminal", label: "Terminal" },
+  { id: "context", label: "Context" },
 ];
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "desktop" || v === "code" || v === "terminal" || v === "prs" || v === "hidden" ? v : "desktop";
+  return v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "hidden" ? v : "desktop";
 }
 
 function loadComposerMode(): ComposerMode {
@@ -637,6 +642,7 @@ function SessionView({
   models,
   options,
   items,
+  context,
   saved,
   snapshots,
   snapshotting,
@@ -658,6 +664,7 @@ function SessionView({
   /** Non-model options (Effort, Fast mode…): what this Session's Agent advertises, else the Provider cache. */
   options: AgentOption[];
   items: ReturnType<typeof buildTranscript>;
+  context: ContextState;
   saved: SavedMessage[];
   snapshots: Snapshot[];
   snapshotting: boolean;
@@ -1010,14 +1017,13 @@ function SessionView({
               />
             }
             footerStart={
-              (showModelSelect || options.length > 0) && (
-                <>
-                  {showModelSelect && (
-                    <ModelSelect compact models={models} value={session.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
-                  )}
-                  <OptionSelects compact options={options} values={session.options} onChange={changeOption} disabled={modelBusy} pending={session.optionsPending} />
-                </>
-              )
+              <>
+                {showModelSelect && (
+                  <ModelSelect compact models={models} value={session.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
+                )}
+                <OptionSelects compact options={options} values={session.options} onChange={changeOption} disabled={modelBusy} pending={session.optionsPending} />
+                <ContextGauge context={context} active={pane === "context"} onOpen={() => setPane((cur) => (cur === "context" ? "hidden" : "context"))} />
+              </>
             }
             disabled={!canPrompt}
             placeholder={canPrompt ? "Message the agent\u2026" : `Session is ${session.status}`}
@@ -1035,6 +1041,7 @@ function SessionView({
         {pane === "desktop" && <Desktop session={session} />}
         {pane === "code" && <CodePane session={session} target={codeTarget} />}
         {pane === "terminal" && <TerminalPane session={session} />}
+        {pane === "context" && <ContextPane session={session} context={context} run={run} />}
         {pane === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
         {openPr && (
           <PrPane

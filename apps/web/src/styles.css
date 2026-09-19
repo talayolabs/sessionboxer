@@ -205,7 +205,7 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .splitter { flex: none; height: 7px; margin: -3px 0; cursor: row-resize; position: relative; z-index: 1; }
 .splitter::after { content: ""; position: absolute; left: 0; right: 0; top: 3px; height: 1px; background: var(--border); }
 .splitter:hover::after, .splitter:active::after { background: var(--accent); }
-.composer { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; min-height: 0; }
+.composer { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; min-height: 0; container-type: inline-size; }
 .composer.sized { flex: none; }
 .composer.zen { position: fixed; inset: 0; z-index: 50; background: var(--bg); padding: 24px max(24px, calc((100vw - 960px) / 2)); }
 .composer-body { display: flex; flex-direction: column; min-height: 0; }
@@ -266,9 +266,20 @@ li.expanded .saved-text { white-space: normal; }
 .selection-tip .small { padding: 2px 8px; font-size: 12px; }
 .selection-tip .error { color: var(--error); font-size: 12px; max-width: 320px; white-space: normal; }
 .composer-footer { flex: none; display: flex; align-items: center; gap: 10px; }
-.composer-footer .hint { font-size: 12px; }
+.composer-footer .hint { font-size: 12px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-footer .model-select, .composer-footer .ctx-gauge, .composer-footer button { flex: none; white-space: nowrap; }
 .composer-footer .model-select { display: inline-flex; align-items: center; gap: 4px; }
 .composer-footer .model-select select { padding: 3px 6px; font-size: 12px; max-width: 220px; }
+@container (max-width: 760px) {
+  .composer-footer { gap: 6px; }
+  .composer-footer .hint { display: none; }
+  .composer-footer .model-select select { max-width: 150px; }
+}
+@container (max-width: 680px) {
+  .composer-footer { flex-wrap: wrap; }
+  .composer-footer::after { content: ""; order: 9; flex-basis: 100%; height: 0; }
+  .composer-footer .ctx-gauge { order: 10; }
+}
 .toolbar { flex: none; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .toolbar .tb { display: inline-flex; align-items: center; justify-content: center; height: 26px; min-width: 30px; padding: 0 7px;
   background: transparent; border-color: transparent; font-size: 13px; color: var(--muted); }
@@ -557,3 +568,47 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .toast-line { text-align: left; line-height: 1.35; }
 .toast-close { position: absolute; top: 4px; right: 4px; background: none; border: 0; color: var(--muted); padding: 2px 6px; font-size: 14px; }
 .toast-close:hover { color: var(--text); }
+
+/* Context: the gauge in the composer footer (ADR-0030). --ctx-hue runs 120 (green, empty) → 0 (red, half full and beyond). */
+.ctx-gauge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 6px; white-space: nowrap; }
+.ctx-gauge:hover, .ctx-gauge.active { border-color: var(--border); color: var(--text); }
+.ctx-bar { position: relative; display: inline-block; width: 64px; height: 8px; border-radius: 4px; background: #0b0d11; border: 1px solid var(--border); overflow: hidden; }
+.ctx-fill { position: absolute; inset: 0 auto 0 0; background: hsl(var(--ctx-hue, 120) 70% 45%); border-radius: 3px; transition: width 0.4s, background-color 0.4s; }
+.ctx-half { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: rgba(255, 255, 255, 0.35); }
+.ctx-pct { color: var(--muted); }
+.ctx-rotting .ctx-text { color: var(--error); }
+.ctx-rot-label { color: var(--error); font-weight: 600; text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; }
+.ctx-compactions { color: var(--muted); }
+.ctx-warn { color: var(--warn); }
+
+/* Turn divider stats and compaction marker. */
+.turn-stats { white-space: nowrap; color: var(--muted); opacity: 0.85; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.turn-stats-sep { margin: 0 5px; }
+.marker-compaction { color: var(--warn); background: var(--panel); border: 1px dashed var(--warn); border-radius: 8px; padding: 6px 12px; max-width: 900px; }
+
+/* Context pane. */
+.ctx-pane .prs-toolbar strong { font-size: 13px; }
+.ctx-body { padding: 8px 12px 16px; display: flex; flex-direction: column; gap: 14px; }
+.ctx-section h3 { margin: 0 0 6px; font-size: 12px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.ctx-section h3 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.ctx-section p { margin: 6px 0 0; line-height: 1.5; }
+.ctx-now-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.ctx-now-big { font-size: 24px; font-weight: 600; }
+.ctx-bar-wide { display: block; width: 100%; height: 12px; }
+.ctx-list { margin: 0; padding-left: 18px; line-height: 1.6; }
+.ctx-stack { display: flex; height: 10px; width: 100%; border-radius: 4px; overflow: hidden; background: #0b0d11; border: 1px solid var(--border); margin-bottom: 8px; }
+.ctx-stack span { display: block; height: 100%; }
+.ctx-stack-used { background: var(--accent); }
+.ctx-stack > .ctx-stack-used:nth-child(2n) { filter: brightness(0.8); }
+.ctx-stack-buffer { background: var(--warn); opacity: 0.6; }
+.ctx-stack-deferred { background: var(--muted); opacity: 0.5; }
+.ctx-table td, .ctx-table th { padding: 4px 8px; }
+.ctx-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ctx-table .ctx-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-cat-free td { color: var(--muted); }
+.ctx-catbar { width: 40%; }
+.ctx-catfill { display: block; height: 8px; border-radius: 3px; min-width: 1px; }
+.ctx-history { display: block; width: 100%; height: 80px; background: #0b0d11; border: 1px solid var(--border); border-radius: 6px; }
+.ctx-history-half { stroke: rgba(255, 255, 255, 0.35); stroke-dasharray: 4 4; }
+.ctx-raw summary { cursor: pointer; }
+.ctx-raw pre { font-size: 11.5px; white-space: pre-wrap; background: #0b0d11; border: 1px solid var(--border); border-radius: 6px; padding: 8px; max-height: 320px; overflow: auto; }

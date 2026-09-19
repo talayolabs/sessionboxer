@@ -16,6 +16,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a fu
 - **A real desktop.** The container runs a Linux desktop with Firefox. The agent can take screenshots, click and type, so it can test web apps, read documentation or use any GUI tool. You see the same screen in the browser and can take the controls at any time.
 - **Agents that don't ask.** Inside the box the agent runs with all permissions granted, so it doesn't stop every few seconds to ask whether it may run a command. The container is the safety boundary.
 - **VS Code and terminals.** Full VS Code running inside the box (with its AI features switched off, the agent in the chat is the one you talk to), and as many shells as you want.
+- **Context you can see.** A gauge under the prompt box shows how full the agent's context window is (green to red, *rotting* past half), how many times the conversation was compacted, and what each turn cost; a Context pane breaks the window down by system prompt, tools, MCP servers, memory files and messages.
 - **Videos and documents in the chat.** Ask for a screen recording of a feature and the agent records the box's desktop to an .mp4 you can play right there; images, SVGs and PDFs it produces show up the same way, with a download button.
 - **Stop and resume.** Stop a session to free CPU and memory; resume it later with the conversation, files and installed tools exactly where they were.
 - **Docker inside the box** (optional). Agents can run `docker`, `docker compose` and `docker build` inside their own container.
@@ -128,6 +129,16 @@ Replies and your prompts render as Markdown. Fenced code with a language (```ts,
 Files the chat names are links into that editor: a project path in a reply, a prompt or a tool call (`src/App.tsx`, `/workspace/src/App.tsx:42`, `src/App.tsx:42:7`, `src/App.tsx#L42`) opens the file in the Code pane, at that line and column; the **Read** / **Edit** tool rows link the file they touched. Videos, images and PDFs keep their inline card instead. Bare filenames without a folder (`index.ts`) are left alone in prose unless they carry a `:line`, to avoid turning every mention into a link.
 
 **Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
+
+### How full is the context
+
+Every agent works inside a context window, and the fuller it gets the worse it works: it forgets earlier instructions, repeats itself, and at some point the agent *compacts* the conversation into a summary and loses detail. Sessionboxer shows where you are.
+
+The **gauge at the bottom of the prompt box** reads `32.6k / 1M 3%`: tokens in the window after the agent's last reply, the window's size, and the share used. Its bar goes from green when empty towards red as the window fills, and once more than half is used it turns red and says **rotting** — that is the point from which you should think about a fresh session, a fork from an earlier snapshot, or asking the agent to `/compact`. Next to it, `♻ 2` counts the compactions so far in this session, with a ⚠ as soon as there has been one, since the agent has already lost part of the conversation. Hover the gauge for the exact numbers and the session's cost so far (Claude Code reports one).
+
+Each **turn divider** in the chat carries what that turn did to the window: `+12.3k context · 3 model calls · in 2 / cached 30.1k / written 2.5k / out 610 · $0.04` — how much the window grew or shrank, how many times the model was called (one per tool round), the turn's input / cache-read / cache-written / output tokens, and its cost. A compaction shows up as its own marker, `♻ Context compacted 180k → 42k (automatic)`.
+
+Click the gauge, or **Context** in the pane switcher, for the **Context pane**: the occupancy, the compactions, a history of the window over the session (the half-way line marked, drops are compactions), and the **breakdown by category**, taken by asking the agent `/context` while it is idle: for Claude Code that is the system prompt, built-in tools, MCP tools (each of your servers' tools with its tokens), memory files (`CLAUDE.md`), skills, messages, free space and the autocompact buffer; for Devin the system prompt, tools, messages and free space, estimated. **Take breakdown** / **Refresh breakdown** asks again (a `Context inspected: …` marker appears in the chat; the exchange itself is not part of the conversation), and the raw report is a click away. What the pane cannot tell you is the exact text the agent is sending; that is a later stage.
 
 ### Pull requests attached to a session
 

@@ -10,6 +10,7 @@ import {
   type NewSessionRequest,
   type NewSessionResponse,
   type PromptCapabilities,
+  type PromptResponse,
   type SessionConfigOption,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
@@ -25,6 +26,7 @@ import type {
   PromptAttachment,
   SessionUpdate,
   StopReason,
+  TurnUsage,
 } from "@sessionboxer/protocol";
 import { caEnv } from "./ca-env.js";
 import { acpMcpServers } from "./mcp-config.js";
@@ -48,7 +50,7 @@ export interface AgentConfig {
 
 export interface AgentEvents {
   onUpdate: (update: SessionUpdate) => void;
-  onTurnEnded: (stopReason: StopReason) => void;
+  onTurnEnded: (stopReason: StopReason, usage: TurnUsage | undefined) => void;
   onError: (message: string) => void;
   /** The Agent was restarted with another user MCP server set (names). */
   onMcpChanged: (servers: string[]) => void;
@@ -63,6 +65,19 @@ interface PersistedState {
   acpSessionId: string;
   /** ACP sessions created here that have not had a prompt yet (`first-prompt` instructions go with it). */
   freshSessionIds?: string[];
+}
+
+/** The prompt response's `usage` as the event carries it, dropping ACP's `_meta`. */
+function turnUsage(usage: PromptResponse["usage"]): TurnUsage | undefined {
+  if (!usage) return undefined;
+  return {
+    totalTokens: usage.totalTokens,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    thoughtTokens: usage.thoughtTokens ?? null,
+    cachedReadTokens: usage.cachedReadTokens ?? null,
+    cachedWriteTokens: usage.cachedWriteTokens ?? null,
+  };
 }
 
 /** Wraps the instructions for the `first-prompt` delivery, ahead of the user's text. */
@@ -136,6 +151,11 @@ export class AgentManager {
   private readonly oneShotSinks = new Map<string, (update: SessionUpdate) => void>();
   /** While an `ask()` is in session/new, updates from not-yet-known sessions are its. */
   private creatingOneShots = 0;
+  /** A `contextReport()` is running on the main session: its updates are collected here, not emitted. */
+  private reportSink: ((update: SessionUpdate) => void) | null = null;
+  get reporting(): boolean {
+    return this.reportSink !== null;
+  }
 
   /** User MCP servers to start the Agent with; `null` until the Control Plane has sent them. */
   private mcpServers: McpServerSpec[] | null = null;
@@ -526,6 +546,10 @@ export class AgentManager {
         }
         if (this.creatingOneShots > 0 && sessionId !== this.acpSessionId) return;
         if (this.replaying) return;
+        if (this.reportSink) {
+          this.reportSink(update);
+          return;
+        }
         this.events.onUpdate(ctx.params.update);
       });
     const conn = app.connect(stream);
@@ -629,6 +653,7 @@ export class AgentManager {
 
   async prompt(text: string, attachments: PromptAttachment[] = []): Promise<void> {
     if (this.turnActive) throw new Error("a turn is already active");
+    if (this.reportSink) throw new Error("the Agent is reporting its context usage; retry in a moment");
     if (this.branching) throw new Error("the conversation is being branched; retry in a moment");
     this.turnActive = true;
     this.events.onStateChange();
@@ -644,7 +669,7 @@ export class AgentManager {
         sessionId: this.acpSessionId,
         prompt: [{ type: "text", text: this.firstPromptText(built.text) }, ...built.blocks],
       });
-      this.events.onTurnEnded(result.stopReason);
+      this.events.onTurnEnded(result.stopReason, turnUsage(result.usage));
     } catch (e) {
       this.cfg.log(`session/prompt on ${this.acpSessionId} failed: ${String(e)}`);
       this.events.onError(e instanceof Error ? e.message : String(e));
@@ -689,6 +714,37 @@ export class AgentManager {
       return chunks.join("");
     } finally {
       this.oneShotSinks.delete(sessionId);
+    }
+  }
+
+  /**
+   * The Agent's `/context` report for the main session, as text. Both Providers answer the
+   * command locally (no model call, nothing added to the conversation); the reply is captured
+   * here instead of emitted, so the transcript shows nothing. Not a turn for the Control
+   * Plane, but prompts are refused meanwhile.
+   */
+  async contextReport(): Promise<string> {
+    if (this.turnActive) throw new Error("a turn is already active");
+    if (this.reportSink) throw new Error("a context report is already running");
+    if (this.branching) throw new Error("the conversation is being branched; retry in a moment");
+    await this.ensureStarted();
+    if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+    const chunks: string[] = [];
+    this.reportSink = (update) => {
+      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") chunks.push(update.content.text);
+    };
+    try {
+      const result = await this.conn.agent.request("session/prompt", {
+        sessionId: this.acpSessionId,
+        prompt: [{ type: "text", text: "/context" }],
+      });
+      if (result.stopReason !== "end_turn") throw new Error(`agent stopped early (${result.stopReason})`);
+      // claude-agent-acp delivers the report twice (as command output and as the result).
+      const text = chunks.join("").trim();
+      const half = text.slice(0, Math.floor(text.length / 2)).trim();
+      return half.length > 0 && text.slice(half.length).trim() === half ? half : text;
+    } finally {
+      this.reportSink = null;
     }
   }
 

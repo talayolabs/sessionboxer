@@ -3,6 +3,7 @@ import type {
   CodeOpenParams,
   CodeServerStatus,
   ConnectorFlow,
+  ContextBreakdown,
   GhCliStatus,
   ConnectorKind,
   ConnectorStartRequest,
@@ -106,6 +107,7 @@ export const api = {
       xhr.send(file);
     }),
   ask: (id: string, text: string) => request<AskResult>(`/sessions/${id}/ask`, { method: "POST", body: JSON.stringify({ text }) }),
+  contextReport: (id: string) => request<ContextBreakdown>(`/sessions/${id}/context/report`, { method: "POST" }),
   cancel: (id: string) => request<{ ok: true }>(`/sessions/${id}/cancel`, { method: "POST" }),
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),
   resume: (id: string) => request<Session>(`/sessions/${id}/resume`, { method: "POST" }),

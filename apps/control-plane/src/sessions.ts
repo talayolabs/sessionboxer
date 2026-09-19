@@ -4,7 +4,9 @@ import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
   AskResult,
+  type ContextBreakdown,
   DAEMON_METHODS,
+  DaemonContextReportResult,
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
   DaemonRecordingPrefsSetResult,
@@ -54,6 +56,7 @@ import {
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveBoxCredentials, resolveGitIdentity, resolveMcpServers } from "./config.js";
+import { parseContextReport } from "./context-report.js";
 import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
@@ -638,6 +641,22 @@ export class SessionManager {
   /** Context-free question to the Session's Provider; nothing is recorded in the transcript. */
   async ask(id: string, text: string): Promise<AskResult> {
     return AskResult.parse(await this.daemonCall(id, DAEMON_METHODS.ask, { text }, ASK_TIMEOUT_MS));
+  }
+
+  /**
+   * Asks the Agent for its `/context` report outside the conversation and records the parsed
+   * breakdown as a `context_breakdown` event (the transcript shows a small marker; the Context
+   * pane shows the tables). Needs an idle Session.
+   */
+  async contextReport(id: string): Promise<ContextBreakdown> {
+    const s = this.get(id);
+    if (s.status === "running") throw new HttpError(409, "The Agent is still working; ask again when the turn has ended.");
+    const result = DaemonContextReportResult.parse(await this.daemonCall(id, DAEMON_METHODS.contextReport, {}, ASK_TIMEOUT_MS));
+    if (result.text.trim() === "") throw new HttpError(502, "The Agent returned an empty context report.");
+    const breakdown = parseContextReport(s.provider, result.text);
+    const ev = this.db.appendEvent(id, { type: "context_breakdown", breakdown });
+    this.broadcast({ type: "event", event: ev });
+    return breakdown;
   }
 
   async cancel(id: string): Promise<void> {

@@ -110,7 +110,7 @@ const agent = new AgentManager(
   },
   {
     onUpdate: (update) => emit({ type: "update", update }),
-    onTurnEnded: (stopReason) => emit({ type: "turn_ended", stopReason }),
+    onTurnEnded: (stopReason, usage) => emit(usage ? { type: "turn_ended", stopReason, usage } : { type: "turn_ended", stopReason }),
     onError: (message) => emit({ type: "agent_error", message }),
     onMcpChanged: (servers) => emit({ type: "mcp_changed", servers }),
     onModelChanged: (model) => emit({ type: "model_changed", model: model.value, name: model.name }),
@@ -174,6 +174,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.prompt: {
       const p = DaemonPromptParams.parse(params);
       if (agent.turnActive) throw new Error("a turn is already active");
+      if (agent.reporting) throw new Error("the Agent is reporting its context usage; retry in a moment");
       emit(p.attachments?.length ? { type: "user_prompt", text: p.text, attachments: p.attachments } : { type: "user_prompt", text: p.text });
       void agent.prompt(p.text, p.attachments ?? []);
       return { accepted: true };
@@ -182,6 +183,8 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = DaemonAskParams.parse(params);
       return { text: await agent.ask(p.text) };
     }
+    case DAEMON_METHODS.contextReport:
+      return { text: await agent.contextReport() };
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

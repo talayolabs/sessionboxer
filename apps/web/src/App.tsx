@@ -37,6 +37,7 @@ import { Desktop } from "./Desktop";
 import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
+import { CompactionDialog } from "./CompactionDialog";
 import { InstructionsDialog, deliveryNote } from "./InstructionsDialog";
 import { McpDialog, McpPicker } from "./McpDialog";
 import { McpServersEditor } from "./McpServersEditor";
@@ -44,7 +45,7 @@ import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
 import { ContextGauge, ContextPane } from "./Context";
-import { deriveContext, type ContextState } from "./context-model";
+import { deriveContext, type Compaction, type ContextState } from "./context-model";
 import { PrPane, PrsPane } from "./PullRequests";
 import { SavedMessages } from "./SavedMessages";
 import { SnapshotsDialog } from "./SnapshotsDialog";
@@ -691,6 +692,7 @@ function SessionView({
   const [branching, setBranching] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
   const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [inspecting, setInspecting] = useState<{ index: number; compaction: Compaction } | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
@@ -964,6 +966,7 @@ function SessionView({
       {session.error && <div className="banner banner-error">{session.error}</div>}
       {mcpOpen && <McpDialog session={session} servers={mcpServers} busy={mcpBusy} onToggle={toggleMcp} onClose={() => setMcpOpen(false)} />}
       {instructionsOpen && <InstructionsDialog session={session} onClose={() => setInstructionsOpen(false)} />}
+      {inspecting && <CompactionDialog session={session} compaction={inspecting.compaction} index={inspecting.index} onClose={() => setInspecting(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
       {forkFrom && (
         <ForkDialog
@@ -996,6 +999,7 @@ function SessionView({
             branchBusy={branching}
             focus={focus}
             onFocused={onFocused}
+            onInspectCompaction={(index, compaction) => setInspecting({ index, compaction })}
           />
           <Composer
             value={text}

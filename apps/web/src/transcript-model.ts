@@ -8,7 +8,7 @@ import type {
   ToolCallContent,
   ToolCallLocation,
 } from "@sessionboxer/protocol";
-import { TurnAccumulator, compactionMeta, foldCompaction, type Compaction, type TurnStats } from "./context-model";
+import { TurnAccumulator, foldCompaction, isCompactionUpdate, type Compaction, type TurnStats } from "./context-model";
 
 export type TranscriptItem =
   | { kind: "user"; key: string; text: string; attachments?: PromptAttachment[] }
@@ -38,7 +38,7 @@ export type TranscriptItem =
       tail: boolean;
       stats: TurnStats;
     }
-  | { kind: "compaction"; key: string; compaction: Compaction }
+  | { kind: "compaction"; key: string; compaction: Compaction; index: number }
   | { kind: "context_report"; key: string; totalTokens: number | null; maxTokens: number | null; percent: number | null }
   | { kind: "error"; key: string; message: string }
   | { kind: "status"; key: string; status: SessionStatus; error?: string }
@@ -94,6 +94,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
   const items: TranscriptItem[] = [];
   const tools = new Map<string, Extract<TranscriptItem, { kind: "tool" }>>();
   const compactions = new Map<string, Compaction>();
+  let used: number | null = null;
   let turn = new TurnAccumulator(null, null);
   const pending = [...snapshots].sort((a, b) => a.eventSeq - b.eventSeq || a.ordinal - b.ordinal);
   const flushSnapshots = (uptoSeq: number) => {
@@ -166,15 +167,17 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "update": {
         const u = body.update;
-        if (u.sessionUpdate === "compaction_update" || compactionMeta(u)) {
+        if (isCompactionUpdate(u)) {
           const before = compactions.size;
-          const c = foldCompaction(compactions, u);
-          if (c && compactions.size > before) items.push({ kind: "compaction", key, compaction: c });
+          const done = [...compactions.values()].filter((c) => c.status === "completed").length;
+          const c = foldCompaction(compactions, u, key, used);
+          if (c && compactions.size > before) items.push({ kind: "compaction", key, compaction: c, index: done });
           break;
         }
         if (CONVERSATIONAL_UPDATES.has(u.sessionUpdate)) markContinued(items);
         switch (u.sessionUpdate) {
           case "usage_update":
+            used = u.used;
             turn.onUsage(u);
             break;
           case "agent_message_chunk":

@@ -585,6 +585,36 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .turn-stats { white-space: nowrap; color: var(--muted); opacity: 0.85; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .turn-stats-sep { margin: 0 5px; }
 .marker-compaction { color: var(--warn); background: var(--panel); border: 1px dashed var(--warn); border-radius: 8px; padding: 6px 12px; max-width: 900px; }
+.marker-compaction-button { font: inherit; font-size: 12px; cursor: pointer; align-self: center; }
+.marker-compaction-button:hover, .marker-compaction-button:focus-visible { border-style: solid; background: #22201a; }
+.marker-compaction-link { text-decoration: underline; text-underline-offset: 2px; }
+
+/* Compaction dialog: what went away, what replaced it. */
+.compaction-dialog { max-width: 1100px; max-height: 88vh; display: flex; flex-direction: column; }
+.compaction-dialog > p { flex: none; }
+.cd-status { font-size: 13px; color: var(--muted); }
+.cd-status-error { color: var(--error); }
+.cd-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; flex: 1; }
+.cd-col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.cd-col h3 { flex: none; margin: 0; padding: 8px 10px; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--border); }
+.cd-col h3 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
+.cd-col .empty { color: var(--muted); font-size: 13px; padding: 10px; }
+.cd-messages { list-style: none; margin: 0; padding: 8px; overflow: auto; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.cd-msg { border-radius: 8px; padding: 6px 10px; background: var(--agent); border-left: 3px solid var(--border); }
+.cd-msg-user { background: var(--user); border-left-color: var(--accent); }
+.cd-msg-system, .cd-msg-tool { opacity: 0.85; }
+.cd-msg-kept { border-left-color: var(--ok); }
+.cd-msg-head { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.cd-msg-head .small { margin-left: auto; padding: 0 6px; font-size: 11px; }
+.cd-msg-role { font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.cd-msg-flag { color: var(--ok); }
+.cd-msg-text { background: none; padding: 0; max-height: none; font-size: 12px; }
+.cd-msg .md > :first-child { margin-top: 0; }
+.cd-msg .md > :last-child { margin-bottom: 0; }
+.cd-summary { overflow: auto; padding: 8px 12px; font-size: 13px; overflow-wrap: anywhere; }
+.cd-msg { overflow-wrap: anywhere; }
+.cd-source { font-size: 12px; flex: none; }
+@media (max-width: 900px) { .cd-columns { grid-template-columns: 1fr; } }
 
 /* Context pane. */
 .ctx-pane .prs-toolbar strong { font-size: 13px; }

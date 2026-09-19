@@ -4,8 +4,11 @@ import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
   AskResult,
+  type CompactionDetails,
+  type CompactionDetailsRequest,
   type ContextBreakdown,
   DAEMON_METHODS,
+  DaemonCompactionDetailsResult,
   DaemonContextReportResult,
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
@@ -95,6 +98,8 @@ export class SessionManager {
   private readonly terminalSinks = new Map<string, Set<TerminalSink>>();
   private readonly stopping = new Set<string>();
   private readonly pendingPrompts = new Map<string, PromptRequest>();
+  /** Turns ended per Session, to notice a turn that was over before the prompt RPC even returned. */
+  private readonly turnEnds = new Map<string, number>();
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
   /** Per-Session chain so Snapshots of one Sandbox never overlap. */
   private readonly snapshotChains = new Map<string, Promise<unknown>>();
@@ -633,8 +638,11 @@ export class SessionManager {
       throw new HttpError(503, "Sandbox Daemon is not connected yet; retry in a moment.");
     }
     const params: DaemonPromptParams = req.attachments?.length ? { text: req.text, attachments: req.attachments } : { text: req.text };
+    const endedBefore = this.turnEnds.get(id) ?? 0;
     await client.request(DAEMON_METHODS.prompt, params);
-    this.setStatus(id, "running");
+    // A slash command answered locally ends its turn within the same batch of Daemon messages
+    // as the RPC reply; the Daemon's own status notifications are authoritative then.
+    if ((this.turnEnds.get(id) ?? 0) === endedBefore) this.setStatus(id, "running");
     this.prs.onPrompt(id, req.text);
   }
 
@@ -657,6 +665,15 @@ export class SessionManager {
     const ev = this.db.appendEvent(id, { type: "context_breakdown", breakdown });
     this.broadcast({ type: "event", event: ev });
     return breakdown;
+  }
+
+  /** The Provider's own record of one compaction, read in the Sandbox (nothing is asked of the Agent). */
+  async compactionDetails(id: string, req: CompactionDetailsRequest): Promise<CompactionDetails> {
+    const s = this.get(id);
+    if (s.status !== "idle" && s.status !== "running") {
+      throw new HttpError(409, `The Sandbox is ${s.status}; the Provider's records are only readable while it runs.`);
+    }
+    return DaemonCompactionDetailsResult.parse(await this.daemonCall(id, DAEMON_METHODS.compactionDetails, req, DAEMON_WAIT_MS));
   }
 
   async cancel(id: string): Promise<void> {
@@ -1361,6 +1378,7 @@ export class SessionManager {
       if (s) this.broadcast({ type: "session", session: s });
     }
     if (ev.body.type === "turn_ended" || ev.body.type === "agent_error") {
+      this.turnEnds.set(id, (this.turnEnds.get(id) ?? 0) + 1);
       const s = this.db.getSession(id);
       if (s?.status === "running") this.setStatus(id, "idle");
       if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {

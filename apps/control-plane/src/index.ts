@@ -11,6 +11,7 @@ import {
   AskRequest,
   AttachPrRequest,
   CodeOpenParams,
+  CompactionDetailsRequest,
   PrActionRequest,
   UpdatePrRequest,
   ConnectorKind,
@@ -164,6 +165,10 @@ api.post("/sessions/:id/ask", async (c) => {
   return c.json(await sessions.ask(c.req.param("id"), req.text));
 });
 api.post("/sessions/:id/context/report", async (c) => c.json(await sessions.contextReport(c.req.param("id"))));
+api.post("/sessions/:id/context/compaction", async (c) => {
+  const req = CompactionDetailsRequest.parse(await c.req.json());
+  return c.json(await sessions.compactionDetails(c.req.param("id"), req));
+});
 api.post("/sessions/:id/cancel", async (c) => {
   await sessions.cancel(c.req.param("id"));
   return c.json({ ok: true });

@@ -449,6 +449,50 @@ export const ContextBreakdown = z.object({
 });
 export type ContextBreakdown = z.infer<typeof ContextBreakdown>;
 
+/** One message of the conversation as the Provider's own store keeps it (plain text rendering). */
+export const CompactionMessage = z.object({
+  role: z.enum(["user", "assistant", "system", "tool"]),
+  text: z.string(),
+  /** Cut at the Daemon's per-message limit; the store has the rest. */
+  truncated: z.boolean(),
+  /** Still in the window verbatim after the compaction (Claude keeps the last exchanges). */
+  kept: z.boolean(),
+});
+export type CompactionMessage = z.infer<typeof CompactionMessage>;
+
+/**
+ * What one context compaction did, read from the Provider's own records in the Sandbox
+ * (Claude Code: the session transcript JSONL; Devin: sessions.db and the history file it
+ * writes): the messages it worked on and the summary that replaced them.
+ */
+export const CompactionDetails = z.object({
+  provider: Provider,
+  /** Position among the Provider's recorded compactions of this Agent session (0-based). */
+  index: z.number(),
+  /** How many the Provider has recorded, so the UI can tell a stale match. */
+  total: z.number(),
+  trigger: z.enum(["automatic", "manual"]).nullable(),
+  preTokens: z.number().nullable(),
+  postTokens: z.number().nullable(),
+  /** The conversation the compaction started from, oldest first. */
+  before: z.array(CompactionMessage),
+  /** The text now standing in for it, as the model sees it; null when the store has none. */
+  summary: z.string().nullable(),
+  /** Where it was read from, for the curious. */
+  source: z.string(),
+  note: z.string().nullable(),
+});
+export type CompactionDetails = z.infer<typeof CompactionDetails>;
+
+/** Which compaction the caller means: its position among the Session's completed ones, plus what the marker knows, for a safer match. */
+export const CompactionDetailsRequest = z.object({
+  index: z.number().int().min(0),
+  preTokens: z.number().nullable().optional(),
+  postTokens: z.number().nullable().optional(),
+  trigger: z.enum(["automatic", "manual"]).nullable().optional(),
+});
+export type CompactionDetailsRequest = z.infer<typeof CompactionDetailsRequest>;
+
 // ---------------------------------------------------------------------------
 // Saved messages: prompts kept per Session ("save for later"), ordered; played
 // as a queue one turn at a time while `Session.queueRunning`.
@@ -1161,6 +1205,7 @@ export const DAEMON_METHODS = {
   prompt: "_sessionboxer/prompt",
   ask: "_sessionboxer/ask",
   contextReport: "_sessionboxer/context/report",
+  compactionDetails: "_sessionboxer/context/compaction",
   mcpSet: "_sessionboxer/mcp/set",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
@@ -1338,6 +1383,12 @@ export type DaemonAskResult = AskResult;
  */
 export const DaemonContextReportResult = z.object({ text: z.string() });
 export type DaemonContextReportResult = z.infer<typeof DaemonContextReportResult>;
+
+/** Synchronous: reads the Provider's own record of one compaction (no Agent involvement). */
+export const DaemonCompactionDetailsParams = CompactionDetailsRequest;
+export type DaemonCompactionDetailsParams = CompactionDetailsRequest;
+export const DaemonCompactionDetailsResult = CompactionDetails;
+export type DaemonCompactionDetailsResult = CompactionDetails;
 
 /**
  * One GitHub API request made from inside the Sandbox with `gh api`, so it is authenticated with

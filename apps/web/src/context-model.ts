@@ -64,6 +64,24 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * Devin's `/compact` sends no compaction update at all, only this display-only message once
+ * the summary is in place; it is the one trace a Client gets.
+ */
+export function isDevinCompactedNotice(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "agent_message_chunk" &&
+    update._meta?.["cognition.ai/displayMessage"] === true &&
+    update.content.type === "text" &&
+    update.content.text.trim() === "Context compacted"
+  );
+}
+
+/** Whether `update` is about a compaction at all (folded by `foldCompaction`, never shown as a message). */
+export function isCompactionUpdate(update: SessionUpdate): boolean {
+  return update.sessionUpdate === "compaction_update" || compactionMeta(update) !== null || isDevinCompactedNotice(update);
+}
+
 function applyCompactionMeta(c: Compaction, meta: CompactionMeta): void {
   if (meta.trigger === "automatic" || meta.trigger === "manual") c.trigger = meta.trigger;
   c.preTokens = num(meta.preTokens) ?? c.preTokens;
@@ -74,9 +92,15 @@ function applyCompactionMeta(c: Compaction, meta: CompactionMeta): void {
 /**
  * Folds compactions out of the update stream: ACP's experimental `compaction_update`, or
  * claude-agent-acp's tool call carrying `_meta.contextCompaction` (what it sends to Clients
- * that do not advertise the compaction capability, like the Daemon).
+ * that do not advertise the compaction capability, like the Daemon); Devin's notice becomes a
+ * completed compaction keyed by `key`, sized from `usedBefore` (the window before it).
  */
-export function foldCompaction(map: Map<string, Compaction>, update: SessionUpdate): Compaction | null {
+export function foldCompaction(map: Map<string, Compaction>, update: SessionUpdate, key: string, usedBefore: number | null): Compaction | null {
+  if (isDevinCompactedNotice(update)) {
+    const c: Compaction = { id: `devin:${key}`, status: "completed", trigger: null, preTokens: usedBefore, postTokens: null, durationMs: null };
+    map.set(c.id, c);
+    return c;
+  }
   if (update.sessionUpdate === "compaction_update") {
     let c = map.get(update.compactionId);
     if (!c) {
@@ -145,7 +169,7 @@ export function deriveContext(events: SessionEvent[]): ContextState {
         const point = { seq: ev.seq, ts: ev.ts, used: u.used, size: state.size ?? u.size };
         allPoints.push(point);
         if (reply) replyPoints.push(point);
-      } else foldCompaction(compactions, u);
+      } else foldCompaction(compactions, u, String(ev.seq), state.used);
     }
   }
   state.compactions = [...compactions.values()];

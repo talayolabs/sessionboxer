@@ -2,6 +2,8 @@ import type {
   AskResult,
   CodeOpenParams,
   CodeServerStatus,
+  CompactionDetails,
+  CompactionDetailsRequest,
   ConnectorFlow,
   ContextBreakdown,
   GhCliStatus,
@@ -108,6 +110,8 @@ export const api = {
     }),
   ask: (id: string, text: string) => request<AskResult>(`/sessions/${id}/ask`, { method: "POST", body: JSON.stringify({ text }) }),
   contextReport: (id: string) => request<ContextBreakdown>(`/sessions/${id}/context/report`, { method: "POST" }),
+  compactionDetails: (id: string, req: CompactionDetailsRequest) =>
+    request<CompactionDetails>(`/sessions/${id}/context/compaction`, { method: "POST", body: JSON.stringify(req) }),
   cancel: (id: string) => request<{ ok: true }>(`/sessions/${id}/cancel`, { method: "POST" }),
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),
   resume: (id: string) => request<Session>(`/sessions/${id}/resume`, { method: "POST" }),

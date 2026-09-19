@@ -9,6 +9,8 @@ import {
   DAEMON_PORT,
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
+  DaemonCompactionDetailsParams,
+  type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
   DaemonHelloParams,
   DaemonMcpSetParams,
@@ -36,6 +38,7 @@ import {
 import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
 import { CodeServer } from "./code-server.js";
+import { readCompactionDetails } from "./compactions.js";
 import { GhApi } from "./gh-api.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { DevinMcpConfig } from "./mcp-config.js";
@@ -185,6 +188,12 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.contextReport:
       return { text: await agent.contextReport() };
+    case DAEMON_METHODS.compactionDetails: {
+      const p = DaemonCompactionDetailsParams.parse(params);
+      if (!agent.acpSessionId) throw new Error("the Agent has no session yet");
+      const result: DaemonCompactionDetailsResult = readCompactionDetails({ provider, home, cwd: workspace }, agent.acpSessionId, p);
+      return result;
+    }
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

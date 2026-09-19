@@ -150,16 +150,31 @@ function TurnStatsLabel({ stats }: { stats: TurnStats }) {
   );
 }
 
-function CompactionMarker({ compaction: c }: { compaction: Compaction }) {
+function CompactionMarker({ compaction: c, index, onInspect }: { compaction: Compaction; index: number; onInspect: (index: number, compaction: Compaction) => void }) {
   const what = c.status === "completed" ? "Context compacted" : c.status === "failed" ? "Context compaction failed" : "Compacting context\u2026";
-  const sizes = c.preTokens !== null && c.postTokens !== null ? ` ${formatTokens(c.preTokens)} \u2192 ${formatTokens(c.postTokens)}` : c.postTokens !== null ? ` \u2192 ${formatTokens(c.postTokens)}` : "";
+  const sizes = c.preTokens !== null && c.postTokens !== null ? ` ${formatTokens(c.preTokens)} \u2192 ${formatTokens(c.postTokens)}` : c.preTokens !== null ? ` from ${formatTokens(c.preTokens)}` : c.postTokens !== null ? ` \u2192 ${formatTokens(c.postTokens)}` : "";
   const how = c.trigger === "automatic" ? " (automatic)" : c.trigger === "manual" ? " (manual)" : "";
+  const duration = c.durationMs !== null ? `${(c.durationMs / 1000).toFixed(1)} s` : null;
+  if (c.status !== "completed") {
+    return (
+      <div className={`marker marker-compaction${c.status === "failed" ? " marker-error" : ""}`} title={duration ?? undefined}>
+        {"\u267B"} {what}
+        {sizes}
+        {how}
+      </div>
+    );
+  }
   return (
-    <div className={`marker marker-compaction${c.status === "failed" ? " marker-error" : ""}`} title={c.durationMs !== null ? `${(c.durationMs / 1000).toFixed(1)} s` : undefined}>
+    <button
+      type="button"
+      className="marker marker-compaction marker-compaction-button"
+      title={`${duration ? `${duration} \u00b7 ` : ""}Click to see what was compacted away and the summary that replaced it`}
+      onClick={() => onInspect(index, c)}
+    >
       {"\u267B"} {what}
       {sizes}
-      {how}: the Agent replaced the older conversation with a summary.
-    </div>
+      {how}: the Agent replaced the older conversation with a summary. <span className="marker-compaction-link">What did it drop?</span>
+    </button>
   );
 }
 
@@ -318,11 +333,13 @@ function Item({
   actions,
   branchActions,
   branchView,
+  onInspectCompaction,
 }: {
   item: TranscriptItem;
   actions: SnapshotActions;
   branchActions: BranchActions;
   branchView: BranchView;
+  onInspectCompaction: (index: number, compaction: Compaction) => void;
 }) {
   switch (item.kind) {
     case "user":
@@ -360,7 +377,7 @@ function Item({
     case "turn_ended":
       return <TurnDivider item={item} view={branchView} actions={branchActions} />;
     case "compaction":
-      return <CompactionMarker compaction={item.compaction} />;
+      return <CompactionMarker compaction={item.compaction} index={item.index} onInspect={onInspectCompaction} />;
     case "context_report":
       return (
         <div className="marker">
@@ -422,6 +439,7 @@ export function Transcript({
   branchBusy,
   focus,
   onFocused,
+  onInspectCompaction,
 }: {
   items: TranscriptItem[];
   actions: SnapshotActions;
@@ -433,6 +451,8 @@ export function Transcript({
   /** Turn divider to scroll to and highlight once it is rendered. */
   focus: DividerRef | null;
   onFocused: () => void;
+  /** A completed compaction marker was clicked: `index` counts completed compactions before it. */
+  onInspectCompaction: (index: number, compaction: Compaction) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -496,7 +516,7 @@ export function Transcript({
       <div className="transcript-items" ref={list}>
         {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
         {items.map((item) => (
-          <Item key={item.key} item={item} actions={actions} branchActions={branchActions} branchView={branchView} />
+          <Item key={item.key} item={item} actions={actions} branchActions={branchActions} branchView={branchView} onInspectCompaction={onInspectCompaction} />
         ))}
       </div>
       {pinned && (

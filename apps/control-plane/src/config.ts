@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  ANTHROPIC_DEFAULT_BASE_URL,
   type BoxCredential,
   CONNECTORS,
   MCP_RESERVED_NAMES,
@@ -50,9 +51,18 @@ export function saveSettings(settings: Settings): void {
 }
 
 export function applySettingsUpdate(current: Settings, update: UpdateSettingsRequest): Settings {
-  const { providerSecrets, mcpServers, connectors, ...rest } = update;
+  const { providerSecrets, mcpServers, connectors, claudeApi, ...rest } = update;
   const next: Settings = { ...current, ...stripUndefined(rest) };
   if (mcpServers) next.mcpServers = mergeMcpServers(current.mcpServers, mcpServers);
+  if (claudeApi) {
+    next.claudeApi = { ...current.claudeApi, ...stripUndefined(claudeApi) };
+    next.claudeApi.baseUrl = next.claudeApi.baseUrl.trim();
+    next.claudeApi.authToken = next.claudeApi.authToken.trim();
+    next.claudeApi.apiKey = next.claudeApi.apiKey.trim();
+    if (next.claudeApi.baseUrl !== "" && !/^https?:\/\//.test(next.claudeApi.baseUrl)) {
+      throw new HttpError(400, "The Claude API base URL must start with http:// or https://.");
+    }
+  }
   if (update.extraCaCerts !== undefined) {
     try {
       next.extraCaCerts = parseExtraCaCerts(update.extraCaCerts).join("\n");
@@ -83,10 +93,18 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
 }
 
 export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">): PublicSettings {
-  const { providerSecrets, mcpServers, connectors, ...rest } = settings;
+  const { providerSecrets, mcpServers, connectors, claudeApi, ...rest } = settings;
+  const base = claudeBaseUrl(settings);
   return {
     ...rest,
     mcpServers: mcpServers.map(toPublicMcpServer),
+    claudeApi: {
+      baseUrl: claudeApi.baseUrl,
+      authTokenSet: claudeAuthToken(settings) !== "",
+      apiKeySet: claudeApiKey(settings) !== "",
+      effectiveBaseUrl: base.url,
+      effectiveBaseUrlSource: base.source,
+    },
     providerSecretsSet: {
       "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings) !== "" },
       devin: { WINDSURF_API_KEY: devinToken(settings) !== "" },
@@ -135,11 +153,62 @@ export function devinToken(settings: Settings): string {
   return process.env.WINDSURF_API_KEY || settings.providerSecrets.devin.WINDSURF_API_KEY;
 }
 
-/** Env injected into a Sandbox for the Session's Provider; other Providers' secrets stay on the host. */
-export function providerEnv(provider: Provider, settings: Settings): Record<string, string> {
+/** `ANTHROPIC_AUTH_TOKEN` for Claude Sandboxes (a company proxy's bearer credential); env override like the tokens. */
+export function claudeAuthToken(settings: Settings): string {
+  return process.env.ANTHROPIC_AUTH_TOKEN || settings.claudeApi.authToken;
+}
+
+export function claudeApiKey(settings: Settings): string {
+  return process.env.ANTHROPIC_API_KEY || settings.claudeApi.apiKey;
+}
+
+export type ClaudeBaseUrlSource = PublicSettings["claudeApi"]["effectiveBaseUrlSource"];
+
+/** `ANTHROPIC_BASE_URL` a Claude Sandbox gets: Settings, else this process's own environment, else Anthropic. */
+export function claudeBaseUrl(settings: Settings): { url: string; source: ClaudeBaseUrlSource } {
+  const fromSettings = settings.claudeApi.baseUrl.trim();
+  if (fromSettings !== "") return { url: fromSettings, source: "settings" };
+  const fromEnv = process.env.ANTHROPIC_BASE_URL?.trim() ?? "";
+  if (fromEnv !== "") return { url: fromEnv, source: "env" };
+  return { url: ANTHROPIC_DEFAULT_BASE_URL, source: "default" };
+}
+
+/** Everything `providerEnv` may set per Provider: what Snapshots blank out. */
+export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
+  "claude-code": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+  devin: ["WINDSURF_API_KEY"],
+};
+
+/** The Provider has a credential to run with (`providerSetupHint` says what is missing otherwise). */
+export function providerReady(provider: Provider, settings: Settings): boolean {
   switch (provider) {
     case "claude-code":
-      return { CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings) };
+      return claudeToken(settings) !== "" || claudeAuthToken(settings) !== "" || claudeApiKey(settings) !== "";
+    case "devin":
+      return devinToken(settings) !== "";
+  }
+}
+
+/**
+ * Env injected into a Sandbox for the Session's Provider; other Providers' secrets stay on the host.
+ * Only set values: Claude's OAuth token can be left out when a proxy credential stands in for it,
+ * and `ANTHROPIC_BASE_URL` is only given when it differs from Anthropic's (the Daemon forwards
+ * the Agent there, directly or through its inspector).
+ */
+export function providerEnv(provider: Provider, settings: Settings): Record<string, string> {
+  switch (provider) {
+    case "claude-code": {
+      const env: Record<string, string> = {};
+      const token = claudeToken(settings);
+      if (token !== "") env.CLAUDE_CODE_OAUTH_TOKEN = token;
+      const base = claudeBaseUrl(settings);
+      if (base.source !== "default") env.ANTHROPIC_BASE_URL = rewriteHostUrl(base.url);
+      const authToken = claudeAuthToken(settings);
+      if (authToken !== "") env.ANTHROPIC_AUTH_TOKEN = authToken;
+      const apiKey = claudeApiKey(settings);
+      if (apiKey !== "") env.ANTHROPIC_API_KEY = apiKey;
+      return env;
+    }
     case "devin":
       return { WINDSURF_API_KEY: devinToken(settings) };
   }

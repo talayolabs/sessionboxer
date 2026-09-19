@@ -1,5 +1,6 @@
 import type {
   ContentBlock,
+  LlmCall,
   PromptAttachment,
   SessionEvent,
   SessionStatus,
@@ -12,11 +13,13 @@ import { TurnAccumulator, foldCompaction, isCompactionUpdate, type Compaction, t
 
 export type TranscriptItem =
   | { kind: "user"; key: string; text: string; attachments?: PromptAttachment[] }
-  | { kind: "agent"; key: string; text: string }
-  | { kind: "thought"; key: string; text: string }
+  | { kind: "agent"; key: string; text: string; llmCall?: LlmCall }
+  | { kind: "thought"; key: string; text: string; llmCall?: LlmCall }
   | {
       kind: "tool";
       key: string;
+      /** The model API call this came out of (Claude with inspection on; see `labelLlmCalls`). */
+      llmCall?: LlmCall;
       toolCallId: string;
       title: string;
       toolKind: string;
@@ -106,7 +109,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
 
   const appendText = (kind: "agent" | "thought", key: string, text: string) => {
     const last = items[items.length - 1];
-    if (last && last.kind === kind) {
+    if (last && last.kind === kind && !last.llmCall) {
       last.text += text;
     } else {
       items.push({ kind, key, text });
@@ -164,6 +167,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "option_changed":
         items.push({ kind: "option_changed", key, option: body.name, value: body.value, valueName: body.valueName });
+        break;
+      case "llm_call":
+        if (body.call.kind === "turn") labelLlmCall(items, body.call);
         break;
       case "update": {
         const u = body.update;
@@ -253,4 +259,29 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
   }
   flushSnapshots(Number.POSITIVE_INFINITY);
   return items;
+}
+
+/**
+ * A conversation call's summary arrives once its response has been read, i.e. after the
+ * agent text and tool calls it streamed and before the next call's: label everything
+ * conversational since the previous label (or the prompt) with it.
+ */
+function labelLlmCall(items: TranscriptItem[], call: LlmCall): void {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (!item) break;
+    if (item.kind === "agent" || item.kind === "thought" || item.kind === "tool") {
+      if (item.llmCall) break;
+      item.llmCall = call;
+      continue;
+    }
+    if (item.kind === "user" || item.kind === "turn_ended") break;
+  }
+}
+
+/** Every model API call recorded for the Session, in order. */
+export function llmCallsOf(events: SessionEvent[]): LlmCall[] {
+  const calls: LlmCall[] = [];
+  for (const ev of events) if (ev.body.type === "llm_call") calls.push(ev.body.call);
+  return calls;
 }

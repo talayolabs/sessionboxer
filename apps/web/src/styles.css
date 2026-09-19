@@ -642,3 +642,53 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .ctx-history-half { stroke: rgba(255, 255, 255, 0.35); stroke-dasharray: 4 4; }
 .ctx-raw summary { cursor: pointer; }
 .ctx-raw pre { font-size: 11.5px; white-space: pre-wrap; background: #0b0d11; border: 1px solid var(--border); border-radius: 6px; padding: 8px; max-height: 320px; overflow: auto; }
+
+/* LLM call tabs and the call dialog (ADR-0032) */
+.session-header button.active { border-color: var(--accent); }
+.llm-labelled { position: relative; padding-top: 9px; max-width: 900px; display: flex; flex-direction: column; }
+.llm-labelled > .msg, .llm-labelled > .tool, .llm-labelled > .thought { max-width: none; }
+.llm-tab {
+  position: absolute; top: 0; left: -6px; z-index: 1; padding: 0 7px; line-height: 17px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--accent); background: var(--bg); border: 1px solid var(--accent); border-radius: 999px; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.llm-tab:hover, .llm-tab:focus-visible { color: #fff; background: var(--accent); }
+.llm-tab-error { color: var(--error); border-color: var(--error); }
+.llm-tab-error:hover, .llm-tab-error:focus-visible { background: var(--error); }
+.llm-dialog { max-width: 1200px; max-height: 90vh; display: flex; flex-direction: column; }
+.llm-dialog > p, .llm-dialog > h2, .llm-dialog > .segmented, .llm-dialog > .actions { flex: none; }
+.llm-dialog h2 .muted { font-size: 13px; font-weight: 400; margin-left: 8px; }
+.llm-tabs { align-self: flex-start; margin-bottom: 8px; }
+.llm-content { flex: 1; min-height: 240px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.llm-status { color: var(--muted); font-size: 13px; padding: 12px; margin: 0; }
+.llm-status-error { color: var(--error); }
+.llm-body-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.llm-body-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 6px 10px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.llm-body-bar .warn { color: var(--warn); }
+.llm-body-wrap > .small { align-self: center; margin: 8px; }
+.llm-body { flex: 1; margin: 0; padding: 10px 12px; overflow: auto; font-size: 12px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; background: none; max-height: none; }
+.llm-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: 0; flex: 1; overflow: hidden; }
+.llm-columns > section { min-height: 0; overflow: auto; padding: 8px 10px; }
+.llm-columns > section + section { border-left: 1px solid var(--border); }
+.llm-columns h3, .llm-diff h4 { margin: 0 0 6px; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.llm-tree { list-style: none; margin: 0; padding: 0 0 0 12px; font-size: 13px; }
+.llm-tree > li { margin: 2px 0; }
+.llm-tree summary { cursor: pointer; }
+.llm-tree li { overflow-wrap: anywhere; }
+.llm-tree-label { font-weight: 500; }
+.llm-tree-text { margin: 4px 0 6px 14px; padding: 6px 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; border-left: 2px solid var(--border); background: var(--panel); }
+.llm-diff { overflow: auto; padding: 8px 12px; font-size: 13px; }
+.llm-diff section + section { margin-top: 12px; }
+.llm-diff ul { list-style: none; margin: 0; padding: 0; }
+.llm-diff li { padding: 2px 6px; border-radius: 4px; }
+.llm-diff summary { cursor: pointer; }
+.llm-diff-sign { display: inline-block; width: 1em; font-weight: 700; }
+.llm-diff-same { color: var(--muted); }
+.llm-diff-added { background: rgba(63, 185, 80, 0.12); color: #7ee787; }
+.llm-diff-removed { background: rgba(248, 81, 73, 0.12); color: #ffa198; }
+.llm-diff-changed { background: rgba(210, 153, 34, 0.12); color: #e3b341; }
+.llm-note { margin: 8px 0 0; }
+.llm-table td { white-space: nowrap; }
+.llm-row-error td { color: var(--error); }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.link-btn:hover { color: #fff; }

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import type { ContextBreakdown, ContextContributor, Session } from "@sessionboxer/protocol";
+import type { ContextBreakdown, ContextContributor, LlmCall, Session } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { ROTTING_FRACTION, completedCompactions, fillFraction, formatCost, formatTokens, gaugeHue, type ContextState } from "./context-model";
 import { formatTime } from "./format";
+import { LLM_KIND_LABELS, formatBytes } from "./llm-model";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -164,7 +165,85 @@ function History({ context }: { context: ContextState }) {
   );
 }
 
-export function ContextPane({ session, context, run }: { session: Session; context: ContextState; run: Runner }) {
+/**
+ * Every model API call the Sandbox's inspector recorded, including the side calls that have no
+ * bubble in the conversation (session naming, compaction summaries, token counts).
+ */
+function Requests({ session, calls, onInspect }: { session: Session; calls: LlmCall[]; onInspect: (call: LlmCall) => void }) {
+  if (session.provider !== "claude-code") return null;
+  const side = calls.filter((c) => c.kind !== "turn").length;
+  return (
+    <section className="ctx-section">
+      <h3>
+        Model API calls{" "}
+        <span className="muted">
+          {calls.length}
+          {side > 0 ? ` · ${side} without a bubble` : ""}
+        </span>
+      </h3>
+      {calls.length === 0 ? (
+        <p className="muted small-text">
+          {session.inspectLlm
+            ? "None recorded yet: the next prompt's calls will show up here and as LLM #n tabs on the bubbles."
+            : "Turn on Inspect LLM in the header to record the exact request and response of every call to the model."}
+        </p>
+      ) : (
+        <table className="prs-table ctx-table llm-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>When</th>
+              <th>Kind</th>
+              <th>Model</th>
+              <th>Result</th>
+              <th className="num">In</th>
+              <th className="num">Cached</th>
+              <th className="num">Out</th>
+              <th className="num">Request</th>
+              <th className="num">Response</th>
+              <th className="num">Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {calls.map((c) => (
+              <tr key={c.id} className={c.error ? "llm-row-error" : ""}>
+                <td>
+                  <button type="button" className="link-btn" onClick={() => onInspect(c)} title="Show the exact request and response">
+                    LLM #{c.ordinal}
+                  </button>
+                </td>
+                <td>{formatTime(c.startedAt)}</td>
+                <td>{LLM_KIND_LABELS[c.kind]}</td>
+                <td>{c.model ?? "—"}</td>
+                <td>{c.error ? `failed: ${c.error}` : c.status !== null ? `HTTP ${c.status}${c.stopReason ? ` · ${c.stopReason}` : ""}` : "…"}</td>
+                <td className="num">{c.usage?.inputTokens !== null && c.usage?.inputTokens !== undefined ? formatTokens(c.usage.inputTokens) : "—"}</td>
+                <td className="num">{c.usage?.cacheReadTokens ? formatTokens(c.usage.cacheReadTokens) : "—"}</td>
+                <td className="num">{c.usage?.outputTokens !== null && c.usage?.outputTokens !== undefined ? formatTokens(c.usage.outputTokens) : "—"}</td>
+                <td className="num">{formatBytes(c.requestBytes)}</td>
+                <td className="num">{formatBytes(c.responseBytes)}</td>
+                <td className="num">{c.durationMs !== null ? `${(c.durationMs / 1000).toFixed(1)} s` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+export function ContextPane({
+  session,
+  context,
+  llmCalls,
+  onInspectLlmCall,
+  run,
+}: {
+  session: Session;
+  context: ContextState;
+  llmCalls: LlmCall[];
+  onInspectLlmCall: (call: LlmCall) => void;
+  run: Runner;
+}) {
   const [refreshing, setRefreshing] = useState(false);
   const { used, size, breakdown } = context;
   const fraction = used !== null && size !== null ? fillFraction(used, size) : null;
@@ -271,6 +350,7 @@ export function ContextPane({ session, context, run }: { session: Session; conte
           </section>
         )}
         <History context={context} />
+        <Requests session={session} calls={llmCalls} onInspect={onInspectLlmCall} />
       </div>
     </div>
   );

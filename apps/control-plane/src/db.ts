@@ -59,6 +59,8 @@ interface SessionRow {
   /** JSON array of `AgentOption`. */
   available_options: string;
   instructions: string;
+  inspect_llm: number;
+  inspect_llm_pending: number;
   git_user_name: string;
   git_user_email: string;
   active_branch_id: string;
@@ -137,6 +139,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   options_pending INTEGER NOT NULL DEFAULT 0,
   available_options TEXT NOT NULL DEFAULT '[]',
   instructions TEXT NOT NULL DEFAULT '',
+  inspect_llm INTEGER NOT NULL DEFAULT 0,
+  inspect_llm_pending INTEGER NOT NULL DEFAULT 0,
   git_user_name TEXT NOT NULL DEFAULT '',
   git_user_email TEXT NOT NULL DEFAULT '',
   active_branch_id TEXT NOT NULL DEFAULT 'root',
@@ -217,6 +221,8 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "instructions", ddl: "ALTER TABLE sessions ADD COLUMN instructions TEXT NOT NULL DEFAULT ''" },
   { table: "sessions", column: "git_user_name", ddl: "ALTER TABLE sessions ADD COLUMN git_user_name TEXT NOT NULL DEFAULT ''" },
   { table: "sessions", column: "git_user_email", ddl: "ALTER TABLE sessions ADD COLUMN git_user_email TEXT NOT NULL DEFAULT ''" },
+  { table: "sessions", column: "inspect_llm", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "inspect_llm_pending", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm_pending INTEGER NOT NULL DEFAULT 0" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];
@@ -280,8 +286,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, instructions, git_user_name, git_user_email, active_branch_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @instructions, @git_user_name, @git_user_email, @active_branch_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, instructions, inspect_llm, inspect_llm_pending, git_user_name, git_user_email, active_branch_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @instructions, @inspect_llm, @inspect_llm_pending, @git_user_name, @git_user_email, @active_branch_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -296,7 +302,7 @@ export class Db {
            queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes,
            mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, model=@model, model_pending=@model_pending,
            options=@options, options_pending=@options_pending, available_options=@available_options,
-           active_branch_id=@active_branch_id, updated_at=@updated_at
+           inspect_llm=@inspect_llm, inspect_llm_pending=@inspect_llm_pending, active_branch_id=@active_branch_id, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -331,6 +337,14 @@ export class Db {
 
   renameBranch(sessionId: string, branchId: string, name: string): void {
     this.db.prepare("UPDATE branches SET name = ? WHERE session_id = ? AND id = ?").run(name, sessionId, branchId);
+  }
+
+  /** Model API calls recorded for the Session so far (every branch), to number the next one. */
+  countLlmCalls(sessionId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = ? AND json_extract(body, '$.type') = 'llm_call'")
+      .get(sessionId) as { n: number };
+    return row.n;
   }
 
   /** Prompts recorded on this branch itself (not inherited from its parent). */
@@ -611,6 +625,8 @@ export type SessionPatch = Partial<
     | "options"
     | "optionsPending"
     | "availableOptions"
+    | "inspectLlm"
+    | "inspectLlmPending"
     | "activeBranchId"
   >
 >;
@@ -660,6 +676,8 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     optionsPending: row.options_pending === 1,
     availableOptions: AgentOption.array().parse(JSON.parse(row.available_options)),
     instructions: row.instructions,
+    inspectLlm: row.inspect_llm === 1,
+    inspectLlmPending: row.inspect_llm_pending === 1,
     gitIdentity: { name: row.git_user_name, email: row.git_user_email },
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
@@ -711,6 +729,8 @@ function sessionToRow(s: Session): SessionRow {
     options_pending: s.optionsPending ? 1 : 0,
     available_options: JSON.stringify(s.availableOptions),
     instructions: s.instructions,
+    inspect_llm: s.inspectLlm ? 1 : 0,
+    inspect_llm_pending: s.inspectLlmPending ? 1 : 0,
     git_user_name: s.gitIdentity.name,
     git_user_email: s.gitIdentity.email,
     active_branch_id: s.activeBranchId,

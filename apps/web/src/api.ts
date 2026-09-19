@@ -13,6 +13,8 @@ import type {
   DeleteSnapshotsResult,
   ForkSessionRequest,
   HostDirListing,
+  LlmCall,
+  LlmCallBody,
   PrActionRequest,
   PrActionResult,
   PrItem,
@@ -112,6 +114,8 @@ export const api = {
   contextReport: (id: string) => request<ContextBreakdown>(`/sessions/${id}/context/report`, { method: "POST" }),
   compactionDetails: (id: string, req: CompactionDetailsRequest) =>
     request<CompactionDetails>(`/sessions/${id}/context/compaction`, { method: "POST", body: JSON.stringify(req) }),
+  llmCalls: (id: string) => request<{ calls: LlmCall[]; withBodies: string[] }>(`/sessions/${id}/llm-calls`),
+  llmCallBody: (id: string, callId: string) => request<LlmCallBody>(`/sessions/${id}/llm-calls/${callId}`),
   cancel: (id: string) => request<{ ok: true }>(`/sessions/${id}/cancel`, { method: "POST" }),
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),
   resume: (id: string) => request<Session>(`/sessions/${id}/resume`, { method: "POST" }),

@@ -4,9 +4,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
+  ANTHROPIC_DEFAULT_BASE_URL,
   CodeOpenParams,
   DAEMON_METHODS,
   DAEMON_PORT,
+  LLM_INSPECTOR_PORT,
+  DaemonLlmCallBodyParams,
+  type DaemonLlmCallBodyResult,
+  type DaemonLlmCallsResult,
+  DaemonLlmInspectSetParams,
+  type DaemonLlmInspectSetResult,
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
   DaemonCompactionDetailsParams,
@@ -41,6 +48,7 @@ import { CodeServer } from "./code-server.js";
 import { readCompactionDetails } from "./compactions.js";
 import { GhApi } from "./gh-api.js";
 import { GhCredentials } from "./gh-credentials.js";
+import { LlmInspector } from "./llm-inspector.js";
 import { DevinMcpConfig } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
 import { Uploads } from "./uploads.js";
@@ -98,6 +106,35 @@ const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/
 /** The Session's standing instructions, set by the Control Plane on the container. */
 const instructions = env.SESSIONBOXER_INSTRUCTIONS ?? "";
 
+/**
+ * Claude Code's model API calls can go through a loopback proxy that keeps the exact bodies
+ * (ADR-0032). Its upstream is the `ANTHROPIC_BASE_URL` the Sandbox was given (a company proxy) or
+ * Anthropic; the Daemon's own environment keeps that value, only the Agent process sees the loopback.
+ */
+const llmInspector =
+  provider === "claude-code"
+    ? new LlmInspector({
+        port: LLM_INSPECTOR_PORT,
+        upstream: env.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_DEFAULT_BASE_URL,
+        dir: `${tmpfsDir}/llm`,
+        log,
+        onCall: (call) => emit({ type: "llm_call", call }),
+      })
+    : null;
+const LLM_INSPECTOR_ENV = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${LLM_INSPECTOR_PORT}` };
+let llmInspectRequested = env.SESSIONBOXER_INSPECT_LLM === "1" && llmInspector !== null;
+
+/**
+ * Points the Agent process at the inspector (or back at the upstream); the Agent restarts in place
+ * when idle, after the turn otherwise. Turning it off keeps the inspector and the recorded bodies.
+ */
+async function setLlmInspect(enabled: boolean): Promise<DaemonLlmInspectSetResult> {
+  if (!llmInspector) return { applied: true, supported: false };
+  llmInspectRequested = enabled;
+  if (enabled && !llmInspector.listening) await llmInspector.start();
+  return { applied: agent.setAgentEnv(enabled ? LLM_INSPECTOR_ENV : {}), supported: true };
+}
+
 const agent = new AgentManager(
   {
     command: acpCommand,
@@ -113,7 +150,10 @@ const agent = new AgentManager(
   },
   {
     onUpdate: (update) => emit({ type: "update", update }),
-    onTurnEnded: (stopReason, usage) => emit(usage ? { type: "turn_ended", stopReason, usage } : { type: "turn_ended", stopReason }),
+    onTurnEnded: (stopReason, usage) => {
+      llmInspector?.flush();
+      emit(usage ? { type: "turn_ended", stopReason, usage } : { type: "turn_ended", stopReason });
+    },
     onError: (message) => emit({ type: "agent_error", message }),
     onMcpChanged: (servers) => emit({ type: "mcp_changed", servers }),
     onModelChanged: (model) => emit({ type: "model_changed", model: model.value, name: model.name }),
@@ -158,6 +198,8 @@ function status(): DaemonStatus {
     options: agent.options,
     optionValues: agent.optionValues,
     optionsPending: agent.optionsPending,
+    llmInspect: agent.startedAgentEnv.ANTHROPIC_BASE_URL === LLM_INSPECTOR_ENV.ANTHROPIC_BASE_URL,
+    llmInspectPending: agent.agentEnvPendingChange,
   };
 }
 
@@ -210,6 +252,19 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.claudeModelsSet: {
       const p = DaemonClaudeModelsSetParams.parse(params);
       return { applied: agent.setModelAllowlist(p.models) };
+    }
+    case DAEMON_METHODS.llmInspectSet: {
+      const p = DaemonLlmInspectSetParams.parse(params);
+      return setLlmInspect(p.enabled);
+    }
+    case DAEMON_METHODS.llmCalls: {
+      const result: DaemonLlmCallsResult = llmInspector?.list() ?? { calls: [], withBodies: [] };
+      return result;
+    }
+    case DAEMON_METHODS.llmCallBody: {
+      const p = DaemonLlmCallBodyParams.parse(params);
+      const result: DaemonLlmCallBodyResult = llmInspector?.body(p.id) ?? { call: null, request: null, response: null };
+      return result;
     }
     case DAEMON_METHODS.recordingPrefsSet: {
       const p = DaemonRecordingPrefsSetParams.parse(params);
@@ -317,6 +372,14 @@ wss.on("connection", (ws) => {
 });
 
 log(`listening on :${port}, epoch ${epoch}`);
+if (llmInspectRequested) {
+  // The container was created with inspection on: have it in place before the Agent's first start
+  // (the Agent waits for the MCP set, which the Control Plane sends after the inspection state).
+  setLlmInspect(true).catch((e: unknown) => {
+    log(`llm inspector start failed, the Agent talks to the upstream directly: ${String(e)}`);
+    agent.setAgentEnv({});
+  });
+}
 // The Control Plane sends the MCP server set right after connecting, which warms the Agent up.
 // Should it never come (older Control Plane), start without user servers so prompts still work.
 setTimeout(() => {

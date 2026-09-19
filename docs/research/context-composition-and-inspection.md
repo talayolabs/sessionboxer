@@ -158,7 +158,12 @@ Constraints:
   list, memory files, skills; de-duplicates the doubled output. Same for Devin if its
   `/context` output is parseable.
 
-**Stage 2 — inspector (image rebuild, ~1 session).**
+**Stage 2 — inspector (~1 session).** *Built as ADR-0032; differences from the sketch below:
+no image rebuild was needed (Daemon-only code), bodies are kept for the last 40 calls at 4 MB
+each, the pairing with ACP updates is done in the browser (backwards from the call's summary
+event, which the Daemon delays by a second so the tool-call updates arrive first) rather than in
+the Daemon, per-block `count_tokens` was not added, and the upstream is the configured
+`ANTHROPIC_BASE_URL` (company proxy) so the chain is agent → recorder → proxy → Anthropic.*
 * Daemon starts the capture proxy on loopback when the session's "Inspect API requests" switch
   is on and sets `ANTHROPIC_BASE_URL` for the agent process (restart-in-place, as for MCP
   changes). Summaries streamed to the Control Plane over a new notification; full bodies kept in

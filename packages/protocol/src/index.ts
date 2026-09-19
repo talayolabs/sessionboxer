@@ -305,6 +305,13 @@ export const Session = z.object({
   availableOptions: z.array(AgentOption).default([]),
   /** Standing instructions the Agent got with this Session (see `instructionsDelivery`); fixed at creation. */
   instructions: z.string().default(""),
+  /**
+   * Route the Agent's model API calls through the Sandbox's loopback inspector, which keeps the
+   * exact request/response bodies (Claude Code only; see `LlmCall`). Off by default.
+   */
+  inspectLlm: z.boolean().default(false),
+  /** The Agent is busy; the last `inspectLlm` change is applied when the current turn ends. */
+  inspectLlmPending: z.boolean().default(false),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
@@ -341,6 +348,7 @@ export const CreateSessionRequest = z.object({
   instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).optional(),
   /** Git identity for the Sandbox; an omitted part takes `Settings.gitUserName` / `gitUserEmail`, else the host's git config; `""` sends none. */
   gitIdentity: GitIdentity.partial().optional(),
+  inspectLlm: z.boolean().optional(),
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
@@ -353,6 +361,7 @@ export const UpdateSessionRequest = z.object({
   model: z.string().min(1).optional(),
   /** Merged into the Session's option values. */
   options: OptionValues.optional(),
+  inspectLlm: z.boolean().optional(),
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequest>;
 
@@ -494,6 +503,92 @@ export const CompactionDetailsRequest = z.object({
 export type CompactionDetailsRequest = z.infer<typeof CompactionDetailsRequest>;
 
 // ---------------------------------------------------------------------------
+// Model API calls seen by the Sandbox's loopback inspector (`Session.inspectLlm`).
+// Claude Code sends every request to `ANTHROPIC_BASE_URL`; with inspection on, that is
+// the Daemon, which forwards to the real upstream (the company proxy or Anthropic)
+// and keeps the bodies. Headers are never recorded.
+// ---------------------------------------------------------------------------
+
+/** Loopback port the Daemon's inspector listens on inside the Sandbox. */
+export const LLM_INSPECTOR_PORT = 7200;
+/** Anthropic's API, the upstream when no `ANTHROPIC_BASE_URL` is configured anywhere. */
+export const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
+
+/**
+ * - `turn`: a conversation request (has tools): what the transcript's agent messages and tool
+ *   calls come from.
+ * - `side`: a `/v1/messages` request without tools: Claude's own helpers (session naming,
+ *   compaction summaries, prompt suggestions), no bubble of their own.
+ * - `count_tokens`: `/v1/messages/count_tokens`.
+ * - `other`: anything else sent to the base URL.
+ */
+export const LlmCallKind = z.enum(["turn", "side", "count_tokens", "other"]);
+export type LlmCallKind = z.infer<typeof LlmCallKind>;
+
+export const LlmCallUsage = z.object({
+  inputTokens: z.number().nullable(),
+  cacheReadTokens: z.number().nullable(),
+  cacheWriteTokens: z.number().nullable(),
+  outputTokens: z.number().nullable(),
+});
+export type LlmCallUsage = z.infer<typeof LlmCallUsage>;
+
+/** Shape of a `/v1/messages` request body, counted (not copied) for the list and the labels. */
+export const LlmRequestShape = z.object({
+  systemBlocks: z.number().int().nonnegative(),
+  systemChars: z.number().int().nonnegative(),
+  tools: z.number().int().nonnegative(),
+  toolsChars: z.number().int().nonnegative(),
+  messages: z.number().int().nonnegative(),
+  messagesChars: z.number().int().nonnegative(),
+  maxTokens: z.number().nullable(),
+  stream: z.boolean(),
+});
+export type LlmRequestShape = z.infer<typeof LlmRequestShape>;
+
+/** Summary of one call; the bodies themselves stay in the Sandbox (`DaemonLlmCallBodyResult`). */
+export const LlmCall = z.object({
+  /** Unique per Daemon process. */
+  id: z.string(),
+  /** 1-based position among the Session's recorded calls, the `n` of the `LLM #n` label; set by the Control Plane (0 from the Daemon). */
+  ordinal: z.number().int().nonnegative(),
+  kind: LlmCallKind,
+  method: z.string(),
+  /** Path and query as Claude sent them, e.g. `/v1/messages?beta=true`. */
+  path: z.string(),
+  model: z.string().nullable(),
+  /** HTTP status from upstream; `null` when the request never got a response. */
+  status: z.number().int().nullable(),
+  /** Why there is no (complete) response: upstream unreachable, client went away, … */
+  error: z.string().nullable(),
+  startedAt: z.string(),
+  /** Request start to last response byte. */
+  durationMs: z.number().nullable(),
+  /** Decoded body sizes; `Truncated` when the inspector's per-body cap cut the copy. */
+  requestBytes: z.number().int().nonnegative(),
+  requestTruncated: z.boolean(),
+  responseBytes: z.number().int().nonnegative(),
+  responseTruncated: z.boolean(),
+  /** The response was a `text/event-stream` (passed through as it arrived). */
+  streamed: z.boolean(),
+  /** `message.id` from the response, when it was a Messages API reply. */
+  messageId: z.string().nullable(),
+  stopReason: z.string().nullable(),
+  usage: LlmCallUsage.nullable(),
+  shape: LlmRequestShape.nullable(),
+});
+export type LlmCall = z.infer<typeof LlmCall>;
+
+/** The exact bodies of one call, decoded (content-encoding removed) and as UTF-8 text. */
+export const LlmCallBody = z.object({
+  call: LlmCall.nullable(),
+  /** `null` when evicted (the Sandbox keeps a bounded number of bodies, on tmpfs: gone after Stop → Resume too). */
+  request: z.string().nullable(),
+  response: z.string().nullable(),
+});
+export type LlmCallBody = z.infer<typeof LlmCallBody>;
+
+// ---------------------------------------------------------------------------
 // Saved messages: prompts kept per Session ("save for later"), ordered; played
 // as a queue one turn at a time while `Session.queueRunning`.
 // ---------------------------------------------------------------------------
@@ -628,6 +723,19 @@ export const Settings = z.object({
   trustHostCaCerts: z.boolean().default(true),
   /** Additional CA certificates for Sandboxes, PEM (`-----BEGIN CERTIFICATE-----` blocks). */
   extraCaCerts: z.string().default(""),
+  /**
+   * Where Claude Code sends its API requests (`ANTHROPIC_BASE_URL`), e.g. a company Claude proxy.
+   * Empty follows the Control Plane's own `ANTHROPIC_BASE_URL`, else Anthropic. `authToken` /
+   * `apiKey` become `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` in the Sandbox, for proxies with
+   * their own credential; empty sends neither (Claude uses the OAuth token).
+   */
+  claudeApi: z
+    .object({
+      baseUrl: z.string().default(""),
+      authToken: z.string().default(""),
+      apiKey: z.string().default(""),
+    })
+    .default({}),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
@@ -644,8 +752,16 @@ export const Settings = z.object({
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
+  claudeApi: z.object({
+    baseUrl: z.string(),
+    authTokenSet: z.boolean(),
+    apiKeySet: z.boolean(),
+    /** What a Sandbox created now gets as `ANTHROPIC_BASE_URL`, and where it comes from. */
+    effectiveBaseUrl: z.string(),
+    effectiveBaseUrlSource: z.enum(["settings", "env", "default"]),
+  }),
   providerSecretsSet: z.object({
     "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
     devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
@@ -662,9 +778,11 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true }).partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true }).partial().extend({
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
+  /** Omitted secret fields keep what is stored; `""` forgets it. */
+  claudeApi: z.object({ baseUrl: z.string(), authToken: z.string(), apiKey: z.string() }).partial().optional(),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string() }).partial(),
@@ -754,7 +872,13 @@ export type SessionEventBody =
   /** One of the Agent's other options changed (`name`/`valueName` are the human labels). */
   | { type: "option_changed"; id: string; name: string; value: string; valueName: string }
   /** The Agent was asked `/context` outside the conversation; this is what it reported. */
-  | { type: "context_breakdown"; breakdown: ContextBreakdown };
+  | { type: "context_breakdown"; breakdown: ContextBreakdown }
+  /**
+   * The inspector saw one model API call complete (summary only; bodies stay in the Sandbox).
+   * Emitted after the transcript updates the response produced, so a `turn` call claims the
+   * agent messages / tool calls since the previous one.
+   */
+  | { type: "llm_call"; call: LlmCall };
 
 export interface SessionEvent {
   /** Control Plane sequence, monotonic per Session (across branches). */
@@ -1231,6 +1355,9 @@ export const DAEMON_METHODS = {
   codeOpen: "_sessionboxer/code/open",
   ghApi: "_sessionboxer/gh/api",
   ghLogins: "_sessionboxer/gh/logins",
+  llmInspectSet: "_sessionboxer/llm/inspect/set",
+  llmCalls: "_sessionboxer/llm/calls",
+  llmCallBody: "_sessionboxer/llm/call",
 } as const;
 
 export const DaemonHelloParams = z.object({
@@ -1263,6 +1390,10 @@ export const DaemonStatus = z.object({
   /** Requested values (even if still pending), else what the Agent reports, by option id. */
   optionValues: OptionValues.default({}),
   optionsPending: z.boolean().default(false),
+  /** The running Agent sends its model API calls through the inspector. */
+  llmInspect: z.boolean().default(false),
+  /** An `llm/inspect/set` is waiting for the current turn to end. */
+  llmInspectPending: z.boolean().default(false),
 });
 export type DaemonStatus = z.infer<typeof DaemonStatus>;
 
@@ -1340,6 +1471,32 @@ export type DaemonRecordingPrefsSetParams = z.infer<typeof DaemonRecordingPrefsS
 
 export const DaemonRecordingPrefsSetResult = z.object({ ok: z.literal(true) });
 export type DaemonRecordingPrefsSetResult = z.infer<typeof DaemonRecordingPrefsSetResult>;
+
+/**
+ * Turns the loopback inspector on or off for the Agent: with it on, the Agent process gets the
+ * inspector as `ANTHROPIC_BASE_URL` and the inspector forwards to the Sandbox's configured one.
+ * Takes effect on the next Agent start (restart in place when idle, after the turn otherwise).
+ * Ignored by Daemons of Providers without a redirectable API endpoint.
+ */
+export const DaemonLlmInspectSetParams = z.object({ enabled: z.boolean() });
+export type DaemonLlmInspectSetParams = z.infer<typeof DaemonLlmInspectSetParams>;
+
+export const DaemonLlmInspectSetResult = z.object({ applied: z.boolean(), supported: z.boolean() });
+export type DaemonLlmInspectSetResult = z.infer<typeof DaemonLlmInspectSetResult>;
+
+/** Calls this Daemon process has seen (summaries, `ordinal` 0 until the Control Plane numbers them), oldest first. */
+export const DaemonLlmCallsResult = z.object({
+  calls: z.array(LlmCall),
+  /** Ids whose bodies are still on tmpfs. */
+  withBodies: z.array(z.string()),
+});
+export type DaemonLlmCallsResult = z.infer<typeof DaemonLlmCallsResult>;
+
+export const DaemonLlmCallBodyParams = z.object({ id: z.string() });
+export type DaemonLlmCallBodyParams = z.infer<typeof DaemonLlmCallBodyParams>;
+
+export const DaemonLlmCallBodyResult = LlmCallBody;
+export type DaemonLlmCallBodyResult = z.infer<typeof DaemonLlmCallBodyResult>;
 
 /**
  * Rewinds the Agent to an earlier point and continues on a new ACP session: `session/fork` at

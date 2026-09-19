@@ -170,6 +170,10 @@ export class AgentManager {
   private modelAllowlist: string[] | null = null;
   private modelAllowlistPending: string[] | null = null;
 
+  /** Extra environment for the Agent process (the inspector's `ANTHROPIC_BASE_URL`); part of the start key. */
+  private agentEnv: Record<string, string> = {};
+  private agentEnvPending: Record<string, string> | null = null;
+
   /** Model the Control Plane asked for; `null` means "whatever the Agent defaults to". */
   private model: string | null = null;
   /** Requested while a turn was active; applied when it ends. */
@@ -204,6 +208,15 @@ export class AgentManager {
 
   get mcpPending(): boolean {
     return this.mcpPendingServers !== null || this.modelAllowlistPending !== null;
+  }
+
+  /** The environment the running (or last started) Agent got; `{}` before the first start. */
+  get startedAgentEnv(): Record<string, string> {
+    return this.startedEnv;
+  }
+
+  get agentEnvPendingChange(): boolean {
+    return this.agentEnvPending !== null;
   }
 
   get models(): ModelOption[] | null {
@@ -430,8 +443,34 @@ export class AgentManager {
     return true;
   }
 
+  /**
+   * Sets extra environment variables for the Agent process. Same timing as `setModelAllowlist`:
+   * restarts the Agent in place when it runs with another environment, after the turn when one
+   * is active. Returns whether it was applied right away.
+   */
+  setAgentEnv(env: Record<string, string>): boolean {
+    if (this.turnActive) {
+      this.agentEnvPending = env;
+      this.events.onStateChange();
+      return false;
+    }
+    this.agentEnvPending = null;
+    this.agentEnv = env;
+    if (this.mcpServers === null) {
+      this.events.onStateChange();
+      return true;
+    }
+    this.mcpApplyChain = this.mcpApplyChain
+      .then(() => this.applyMcpServers())
+      .catch((e: unknown) => this.cfg.log(`agent start failed: ${String(e)}`));
+    this.events.onStateChange();
+    return true;
+  }
+
+  private startedEnv: Record<string, string> = {};
+
   private startKey(): string {
-    return JSON.stringify({ servers: this.mcpServers, allow: this.modelAllowlist });
+    return JSON.stringify({ servers: this.mcpServers, allow: this.modelAllowlist, env: this.agentEnv });
   }
 
   /**
@@ -497,12 +536,15 @@ export class AgentManager {
     this.cfg.log(
       `spawning ${[this.cfg.command, ...this.cfg.args].join(" ")} (MCP: desktop${userServers.map((s) => `, ${s.name}`).join("")})`,
     );
+    const agentEnv = { ...this.agentEnv };
+    if (Object.keys(agentEnv).length > 0) this.cfg.log(`agent environment overrides: ${Object.keys(agentEnv).join(", ")}`);
     const child = spawn(this.cfg.command, this.cfg.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...caEnv() },
+      env: { ...process.env, ...caEnv(), ...agentEnv },
       cwd: this.cfg.cwd,
     });
     this.child = child;
+    this.startedEnv = agentEnv;
     child.stderr?.on("data", (d: Buffer) => this.cfg.log(`[agent] ${d.toString().trimEnd()}`));
     child.on("exit", (code, signal) => {
       this.cfg.log(`agent exited code=${code} signal=${signal}`);
@@ -677,6 +719,7 @@ export class AgentManager {
       this.turnActive = false;
       this.events.onStateChange();
       if (this.modelAllowlistPending) this.setModelAllowlist(this.modelAllowlistPending);
+      if (this.agentEnvPending) this.setAgentEnv(this.agentEnvPending);
       if (this.mcpPendingServers) this.setMcpServers(this.mcpPendingServers);
       if (this.modelPendingValue) this.setModel(this.modelPendingValue);
       if (this.optionsPendingValues) this.setOptions(this.optionsPendingValues);

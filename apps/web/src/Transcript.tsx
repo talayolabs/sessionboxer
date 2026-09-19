@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { branchScope, type Branch, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
+import { branchScope, type Branch, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { UploadedAttachments } from "./Attachments";
 import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
 import { CopyableMessage } from "./CopyMessage";
 import { FileLink } from "./FileLink";
 import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
 import { formatMb, formatTime } from "./format";
+import { callFacts } from "./LlmCallDialog";
 import { Markdown } from "./Markdown";
 import type { DividerRef } from "./BranchTree";
 import type { TranscriptItem } from "./transcript-model";
@@ -328,19 +329,50 @@ function SnapshotMarker({ snapshot, actions }: { snapshot: Snapshot; actions: Sn
   );
 }
 
+/**
+ * The tab over the top-left edge of the first bubble that came out of a model API call
+ * (Claude with inspection on): opens the call's exact request and response.
+ */
+function LlmTab({ call, onInspect }: { call: LlmCall; onInspect: (call: LlmCall) => void }) {
+  return (
+    <button
+      type="button"
+      className={`llm-tab${call.error ? " llm-tab-error" : ""}`}
+      title={`Model API call #${call.ordinal}: ${callFacts(call).join(" \u00b7 ")}\nClick to see exactly what was sent and what came back`}
+      aria-label={`Show model API call ${call.ordinal}`}
+      onClick={() => onInspect(call)}
+    >
+      LLM #{call.ordinal}
+    </button>
+  );
+}
+
 function Item({
   item,
   actions,
   branchActions,
   branchView,
   onInspectCompaction,
+  onInspectLlmCall,
+  llmTab,
 }: {
   item: TranscriptItem;
   actions: SnapshotActions;
   branchActions: BranchActions;
   branchView: BranchView;
   onInspectCompaction: (index: number, compaction: Compaction) => void;
+  onInspectLlmCall: (call: LlmCall) => void;
+  /** This item is the first of its model call's output: show the call's tab over it. */
+  llmTab: boolean;
 }) {
+  if (llmTab && (item.kind === "agent" || item.kind === "thought" || item.kind === "tool") && item.llmCall) {
+    return (
+      <div className="llm-labelled">
+        <LlmTab call={item.llmCall} onInspect={onInspectLlmCall} />
+        <Item item={item} actions={actions} branchActions={branchActions} branchView={branchView} onInspectCompaction={onInspectCompaction} onInspectLlmCall={onInspectLlmCall} llmTab={false} />
+      </div>
+    );
+  }
   switch (item.kind) {
     case "user":
       return (
@@ -440,6 +472,7 @@ export function Transcript({
   focus,
   onFocused,
   onInspectCompaction,
+  onInspectLlmCall,
 }: {
   items: TranscriptItem[];
   actions: SnapshotActions;
@@ -453,6 +486,8 @@ export function Transcript({
   onFocused: () => void;
   /** A completed compaction marker was clicked: `index` counts completed compactions before it. */
   onInspectCompaction: (index: number, compaction: Compaction) => void;
+  /** An `LLM #n` tab was clicked. */
+  onInspectLlmCall: (call: LlmCall) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -515,9 +550,23 @@ export function Transcript({
     <div className="transcript" ref={root} onScroll={onScroll}>
       <div className="transcript-items" ref={list}>
         {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
-        {items.map((item) => (
-          <Item key={item.key} item={item} actions={actions} branchActions={branchActions} branchView={branchView} onInspectCompaction={onInspectCompaction} />
-        ))}
+        {items.map((item, i) => {
+          const call = item.kind === "agent" || item.kind === "thought" || item.kind === "tool" ? item.llmCall : undefined;
+          const prev = items[i - 1];
+          const prevCall = prev && (prev.kind === "agent" || prev.kind === "thought" || prev.kind === "tool") ? prev.llmCall : undefined;
+          return (
+            <Item
+              key={item.key}
+              item={item}
+              actions={actions}
+              branchActions={branchActions}
+              branchView={branchView}
+              onInspectCompaction={onInspectCompaction}
+              onInspectLlmCall={onInspectLlmCall}
+              llmTab={call !== undefined && call.id !== prevCall?.id}
+            />
+          );
+        })}
       </div>
       {pinned && (
         <div className="transcript-jump">

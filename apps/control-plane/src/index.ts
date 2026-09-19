@@ -169,6 +169,12 @@ api.post("/sessions/:id/context/compaction", async (c) => {
   const req = CompactionDetailsRequest.parse(await c.req.json());
   return c.json(await sessions.compactionDetails(c.req.param("id"), req));
 });
+api.get("/sessions/:id/llm-calls", async (c) => {
+  const id = c.req.param("id");
+  const { calls } = sessions.llmCalls(id);
+  return c.json({ calls, withBodies: await sessions.llmCallsWithBodies(id) });
+});
+api.get("/sessions/:id/llm-calls/:callId", async (c) => c.json(await sessions.llmCallBody(c.req.param("id"), c.req.param("callId"))));
 api.post("/sessions/:id/cancel", async (c) => {
   await sessions.cancel(c.req.param("id"));
   return c.json({ ok: true });

@@ -14,6 +14,13 @@ import {
   DaemonClaudeModelsSetResult,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
+  DaemonLlmInspectSetResult,
+  type DaemonLlmInspectSetParams,
+  DaemonLlmCallsResult,
+  DaemonLlmCallBodyResult,
+  type DaemonLlmCallBodyParams,
+  type LlmCall,
+  type LlmCallBody,
   DaemonMcpSetResult,
   DaemonModelSetResult,
   DaemonOptionSetResult,
@@ -58,7 +65,17 @@ import {
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
-import { defaultMcpEnabled, knownMcpIds, providerEnv, providerSetupHint, resolveBoxCredentials, resolveGitIdentity, resolveMcpServers } from "./config.js";
+import {
+  PROVIDER_ENV_KEYS,
+  defaultMcpEnabled,
+  knownMcpIds,
+  providerEnv,
+  providerReady,
+  providerSetupHint,
+  resolveBoxCredentials,
+  resolveGitIdentity,
+  resolveMcpServers,
+} from "./config.js";
 import { parseContextReport } from "./context-report.js";
 import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
@@ -384,7 +401,7 @@ export class SessionManager {
 
   async create(req: CreateSessionRequest): Promise<Session> {
     const settings = this.settings();
-    if (Object.values(providerEnv(req.provider, settings)).some((v) => v === "")) {
+    if (!providerReady(req.provider, settings)) {
       throw new HttpError(400, providerSetupHint(req.provider));
     }
     let workspaceSource: WorkspaceSource = req.workspaceSource;
@@ -422,6 +439,8 @@ export class SessionManager {
       optionsPending: false,
       availableOptions: [],
       instructions: (req.instructions ?? settings.instructions).trim(),
+      inspectLlm: req.provider === "claude-code" && (req.inspectLlm ?? false),
+      inspectLlmPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
       branches: [],
@@ -451,7 +470,7 @@ export class SessionManager {
     const snapshot = this.db.getSnapshot(fromId, req.snapshotId);
     if (!snapshot) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
     const settings = this.settings();
-    if (Object.values(providerEnv(origin.provider, settings)).some((v) => v === "")) {
+    if (!providerReady(origin.provider, settings)) {
       throw new HttpError(400, providerSetupHint(origin.provider));
     }
     if (!(await this.docker.imageExists(snapshot.imageId))) {
@@ -489,6 +508,8 @@ export class SessionManager {
       optionsPending: false,
       availableOptions: [],
       instructions: origin.instructions,
+      inspectLlm: origin.inspectLlm,
+      inspectLlmPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
       branches: [],
@@ -526,6 +547,7 @@ export class SessionManager {
       ...providerEnv(session.provider, settings),
     };
     if (session.dockerMode !== "none") env.SESSIONBOXER_DOCKER = session.dockerMode;
+    if (session.inspectLlm) env.SESSIONBOXER_INSPECT_LLM = "1";
     if (session.gitIdentity.name) {
       env.GIT_AUTHOR_NAME = session.gitIdentity.name;
       env.GIT_COMMITTER_NAME = session.gitIdentity.name;
@@ -888,7 +910,7 @@ export class SessionManager {
     try {
       const started = Date.now();
       const { imageId, sizeBytes } = await this.docker
-        .commit(s.containerId, { snapshotId, tag, stripEnv: Object.keys(providerEnv(s.provider, this.settings())) })
+        .commit(s.containerId, { snapshotId, tag, stripEnv: [...PROVIDER_ENV_KEYS[s.provider]] })
         .catch((e: unknown) => {
           if (e instanceof MissingImageContentError) throw new HttpError(409, `${REBUILD_HINT}: ${e.message}.`);
           throw e;
@@ -939,7 +961,7 @@ export class SessionManager {
       throw new HttpError(409, "Sandbox container is missing; delete the session.");
     }
     const settings = this.settings();
-    if (Object.values(providerEnv(s.provider, settings)).some((v) => v === "")) {
+    if (!providerReady(s.provider, settings)) {
       throw new HttpError(400, providerSetupHint(s.provider));
     }
     // The old Sandbox's death (stopped here, or reported late by Docker) is expected until the new one runs.
@@ -957,7 +979,7 @@ export class SessionManager {
       const { imageId, sizeBytes } = await this.docker.flatten(old, {
         snapshotId,
         tag,
-        stripEnv: Object.keys(providerEnv(s.provider, settings)),
+        stripEnv: [...PROVIDER_ENV_KEYS[s.provider]],
         keepEnv: Object.keys(this.sandboxEnv(s, settings)),
       });
       this.stopping.delete(id);
@@ -1084,8 +1106,8 @@ export class SessionManager {
     const outerStop = this.stopping.has(id);
     this.stopping.add(id);
     try {
-      if (s.queueRunning || s.mcpPending || s.modelPending || s.optionsPending) {
-        this.update(id, { queueRunning: false, mcpPending: false, modelPending: false, optionsPending: false });
+      if (s.queueRunning || s.mcpPending || s.modelPending || s.optionsPending || s.inspectLlmPending) {
+        this.update(id, { queueRunning: false, mcpPending: false, modelPending: false, optionsPending: false, inspectLlmPending: false });
       }
       if (s.status === "running") await this.cancelAndWait(id);
       this.disconnect(id);
@@ -1151,11 +1173,75 @@ export class SessionManager {
       ...(req.mcpEnabled !== undefined ? { mcpEnabled: knownMcpIds(this.settings(), req.mcpEnabled) } : {}),
       ...(req.model !== undefined ? { model: req.model } : {}),
       ...(req.options !== undefined ? { options: { ...this.get(id).options, ...req.options } } : {}),
+      ...(req.inspectLlm !== undefined ? { inspectLlm: req.inspectLlm && this.get(id).provider === "claude-code" } : {}),
     });
     if (req.mcpEnabled !== undefined) await this.pushMcpServers(id);
     if (req.model !== undefined) await this.pushModel(id);
     if (req.options !== undefined) await this.pushOptions(id, req.options);
-    return req.mcpEnabled !== undefined || req.model !== undefined || req.options !== undefined ? this.get(id) : s;
+    if (req.inspectLlm !== undefined) await this.pushLlmInspect(id);
+    return req.mcpEnabled !== undefined || req.model !== undefined || req.options !== undefined || req.inspectLlm !== undefined
+      ? this.get(id)
+      : s;
+  }
+
+  /**
+   * Tells the Session's Daemon whether the Agent's model API calls go through the inspector; the
+   * Daemon restarts the Agent in place when idle, after the turn otherwise. Older Daemons ignore it.
+   */
+  async pushLlmInspect(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "claude-code" || !client?.connected) return;
+    try {
+      const params: DaemonLlmInspectSetParams = { enabled: s.inspectLlm };
+      const result = DaemonLlmInspectSetResult.parse(await client.request(DAEMON_METHODS.llmInspectSet, params));
+      this.update(id, { inspectLlmPending: !result.applied });
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) {
+        if (s.inspectLlm) throw new HttpError(502, "The Sandbox runs an older Daemon without the LLM inspector; Stop and Resume the session to refresh it.");
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * The model API calls recorded for the Session: the summaries the Control Plane stored (numbered,
+   * every Daemon epoch) with, for the running Daemon's own calls, whether the bodies are still there.
+   */
+  llmCalls(id: string): { calls: LlmCall[]; withBodies: string[] } {
+    const scope = this.db.activeScope(id);
+    const calls: LlmCall[] = [];
+    for (const ev of this.db.listEvents(id, 0, 100000, scope)) if (ev.body.type === "llm_call") calls.push(ev.body.call);
+    return { calls, withBodies: [] };
+  }
+
+  /** Ids of the recorded calls whose bodies the live Daemon still holds (none when the Sandbox is not running). */
+  async llmCallsWithBodies(id: string): Promise<string[]> {
+    const client = this.clients.get(id);
+    if (!client?.connected) return [];
+    try {
+      return DaemonLlmCallsResult.parse(await client.request(DAEMON_METHODS.llmCalls, {})).withBodies;
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) return [];
+      throw e;
+    }
+  }
+
+  /** The exact bodies of one call, from the Sandbox's tmpfs; `request`/`response` are `null` once evicted or after a restart. */
+  async llmCallBody(id: string, callId: string): Promise<LlmCallBody> {
+    const s = this.get(id);
+    const known = this.llmCalls(id).calls.find((c) => c.id === callId) ?? null;
+    if (!known) throw new HttpError(404, `call ${callId} not found`);
+    if (s.status !== "idle" && s.status !== "running") return { call: known, request: null, response: null };
+    const params: DaemonLlmCallBodyParams = { id: callId };
+    try {
+      const body = DaemonLlmCallBodyResult.parse(await this.daemonCall(id, DAEMON_METHODS.llmCallBody, params, DAEMON_WAIT_MS));
+      return { ...body, call: known };
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) return { call: known, request: null, response: null };
+      throw e;
+    }
   }
 
   /**
@@ -1328,6 +1414,7 @@ export class SessionManager {
     this.onDaemonStatus(id, status);
     // The Daemon waits for the MCP set before it starts the Agent (so the allowlist goes first); older Daemons ignore the calls.
     this.pushClaudeModels(id)
+      .then(() => this.pushLlmInspect(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))
       .then(() => this.pushOptions(id))
@@ -1346,6 +1433,7 @@ export class SessionManager {
     if (status.turnActive && s.status !== "running") this.setStatus(id, "running");
     else if (!status.turnActive && s.status === "running") this.setStatus(id, "idle");
     if (status.mcpPending !== s.mcpPending) this.update(id, { mcpPending: status.mcpPending });
+    if (status.llmInspectPending !== s.inspectLlmPending) this.update(id, { inspectLlmPending: status.llmInspectPending });
     if (status.models && this.db.setProviderModels(s.provider, status.models)) {
       this.broadcast({ type: "models", provider: s.provider, models: status.models });
     }
@@ -1369,7 +1457,8 @@ export class SessionManager {
   private onDaemonEvent(id: string, ev: DaemonEvent): void {
     const cursor = this.db.getDaemonCursor(id);
     if (cursor && cursor.epoch === ev.epoch && ev.seq <= cursor.lastSeq) return;
-    const stored = this.db.appendEvent(id, ev.body, ev.ts);
+    const body = ev.body.type === "llm_call" ? { ...ev.body, call: { ...ev.body.call, ordinal: this.db.countLlmCalls(id) + 1 } } : ev.body;
+    const stored = this.db.appendEvent(id, body, ev.ts);
     this.db.setDaemonCursor(id, ev.epoch, ev.seq);
     this.broadcast({ type: "event", event: stored });
     if (ev.body.type === "user_prompt" && stored.branchId !== ROOT_BRANCH_ID && this.db.countBranchPrompts(id, stored.branchId) === 1) {

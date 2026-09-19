@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ANTHROPIC_DEFAULT_BASE_URL,
   CONNECTORS,
   DEFAULT_CLAUDE_MODELS,
   DEFAULT_INSTRUCTIONS,
@@ -11,6 +12,7 @@ import {
   inBranchScope,
   type AgentOption,
   type Branch,
+  type LlmCall,
   type ModelOption,
   type NarrationMode,
   type OptionValues,
@@ -38,6 +40,7 @@ import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { CompactionDialog } from "./CompactionDialog";
+import { LlmCallDialog } from "./LlmCallDialog";
 import { InstructionsDialog, deliveryNote } from "./InstructionsDialog";
 import { McpDialog, McpPicker } from "./McpDialog";
 import { McpServersEditor } from "./McpServersEditor";
@@ -56,7 +59,7 @@ import { CodePane, type CodeTarget } from "./Code";
 import { OpenFile } from "./FileLink";
 import type { FileRef } from "./file-links";
 import { Transcript } from "./Transcript";
-import { buildTranscript } from "./transcript-model";
+import { buildTranscript, llmCallsOf } from "./transcript-model";
 
 function translationPrompt(text: string): string {
   return `translate the following text to english, only answer with the text translated to english and nothing else: '${text}'`;
@@ -314,6 +317,7 @@ export function App() {
   }, [snapshots, branches, activeBranchId]);
   const items = useMemo(() => buildTranscript(events, visibleSnapshots), [events, visibleSnapshots]);
   const context = useMemo(() => deriveContext(events), [events]);
+  const llmCalls = useMemo(() => llmCallsOf(events), [events]);
   const anyTokenSet = settings
     ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
     : true;
@@ -511,6 +515,7 @@ export function App() {
             }
             items={items}
             context={context}
+            llmCalls={llmCalls}
             saved={saved}
             snapshots={visibleSnapshots}
             snapshotting={snapshotting.has(selected.id)}
@@ -644,6 +649,7 @@ function SessionView({
   options,
   items,
   context,
+  llmCalls,
   saved,
   snapshots,
   snapshotting,
@@ -666,6 +672,7 @@ function SessionView({
   options: AgentOption[];
   items: ReturnType<typeof buildTranscript>;
   context: ContextState;
+  llmCalls: LlmCall[];
   saved: SavedMessage[];
   snapshots: Snapshot[];
   snapshotting: boolean;
@@ -693,6 +700,8 @@ function SessionView({
   const [mcpOpen, setMcpOpen] = useState(false);
   const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [inspecting, setInspecting] = useState<{ index: number; compaction: Compaction } | null>(null);
+  const [inspectingCall, setInspectingCall] = useState<LlmCall | null>(null);
+  const [inspectBusy, setInspectBusy] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
@@ -779,6 +788,10 @@ function SessionView({
   const isLive = session.status === "idle" || session.status === "running";
   const latestSnapshot = snapshots[snapshots.length - 1];
   const mcpActive = mcpServers.filter((s) => session.mcpEnabled.includes(s.id));
+  const toggleInspectLlm = () => {
+    setInspectBusy(true);
+    void run(() => api.updateSession(session.id, { inspectLlm: !session.inspectLlm })).finally(() => setInspectBusy(false));
+  };
   const toggleMcp = (id: string, enabled: boolean) => {
     const next = enabled ? [...session.mcpEnabled, id] : session.mcpEnabled.filter((x) => x !== id);
     setMcpBusy(true);
@@ -948,6 +961,24 @@ function SessionView({
         >
           Instructions{session.instructions.trim() === "" && <span className="count">0</span>}
         </button>
+        {session.provider === "claude-code" && (
+          <button
+            className={`${session.inspectLlm ? "active" : ""}${session.inspectLlmPending ? " pending" : ""}`}
+            aria-pressed={session.inspectLlm}
+            disabled={inspectBusy}
+            title={
+              (session.inspectLlm
+                ? "Model API calls go through the Sandbox's loopback inspector: every request and response body is kept (last 40, in the Sandbox's memory) and each Claude bubble gets an LLM #n tab. Click to turn off."
+                : "Route the model API calls through a loopback inspector in the Sandbox to see exactly what is sent to the model and what comes back (opt-in; bodies stay in the Sandbox's memory, headers are never recorded). Click to turn on.") +
+              (session.inspectLlmPending ? "\nThe change applies after this turn." : "") +
+              (session.status === "stopped" ? "\nApplies when the Session resumes." : "")
+            }
+            onClick={toggleInspectLlm}
+          >
+            Inspect LLM {session.inspectLlm && <span className="count">on</span>}
+            {session.inspectLlmPending && <span className="warn-sign">pending</span>}
+          </button>
+        )}
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
         )}
@@ -967,6 +998,7 @@ function SessionView({
       {mcpOpen && <McpDialog session={session} servers={mcpServers} busy={mcpBusy} onToggle={toggleMcp} onClose={() => setMcpOpen(false)} />}
       {instructionsOpen && <InstructionsDialog session={session} onClose={() => setInstructionsOpen(false)} />}
       {inspecting && <CompactionDialog session={session} compaction={inspecting.compaction} index={inspecting.index} onClose={() => setInspecting(null)} />}
+      {inspectingCall && <LlmCallDialog session={session} call={inspectingCall} calls={llmCalls} onClose={() => setInspectingCall(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
       {forkFrom && (
         <ForkDialog
@@ -1000,6 +1032,7 @@ function SessionView({
             focus={focus}
             onFocused={onFocused}
             onInspectCompaction={(index, compaction) => setInspecting({ index, compaction })}
+            onInspectLlmCall={setInspectingCall}
           />
           <Composer
             value={text}
@@ -1045,7 +1078,7 @@ function SessionView({
         {pane === "desktop" && <Desktop session={session} />}
         {pane === "code" && <CodePane session={session} target={codeTarget} />}
         {pane === "terminal" && <TerminalPane session={session} />}
-        {pane === "context" && <ContextPane session={session} context={context} run={run} />}
+        {pane === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
         {pane === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
         {openPr && (
           <PrPane
@@ -1320,6 +1353,13 @@ function SettingsView({
 }) {
   const [token, setToken] = useState("");
   const [devinToken, setDevinToken] = useState("");
+  const [claudeBaseUrl, setClaudeBaseUrl] = useState(settings.claudeApi.baseUrl);
+  const [claudeAuthToken, setClaudeAuthToken] = useState("");
+  const [claudeApiKey, setClaudeApiKey] = useState("");
+  const [forgetClaudeAuthToken, setForgetClaudeAuthToken] = useState(false);
+  const [forgetClaudeApiKey, setForgetClaudeApiKey] = useState(false);
+  const claudeAuthTokenSet = settings.claudeApi.authTokenSet && !forgetClaudeAuthToken;
+  const claudeApiKeySet = settings.claudeApi.apiKeySet && !forgetClaudeApiKey;
   const [gitUserName, setGitUserName] = useState(settings.gitUserName);
   const [gitUserEmail, setGitUserEmail] = useState(settings.gitUserEmail);
   const [cpus, setCpus] = useState(String(settings.sandboxCpus));
@@ -1368,9 +1408,18 @@ function SettingsView({
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
         },
+        claudeApi: {
+          baseUrl: claudeBaseUrl.trim(),
+          ...(claudeAuthToken.trim() ? { authToken: claudeAuthToken.trim() } : forgetClaudeAuthToken ? { authToken: "" } : {}),
+          ...(claudeApiKey.trim() ? { apiKey: claudeApiKey.trim() } : forgetClaudeApiKey ? { apiKey: "" } : {}),
+        },
       });
       setToken("");
       setDevinToken("");
+      setClaudeAuthToken("");
+      setClaudeApiKey("");
+      setForgetClaudeAuthToken(false);
+      setForgetClaudeApiKey(false);
       setGithubClientSecret("");
       setForgetGithubSecret(false);
       onSaved(saved);
@@ -1405,6 +1454,69 @@ function SettingsView({
           }
         />
       </label>
+      <label>
+        <span className="label-row">
+          Claude API base URL (ANTHROPIC_BASE_URL)
+          <span className="muted">
+            current: <code>{settings.claudeApi.effectiveBaseUrl}</code>{" "}
+            {settings.claudeApi.effectiveBaseUrlSource === "settings"
+              ? "(set here)"
+              : settings.claudeApi.effectiveBaseUrlSource === "env"
+                ? "(from the Control Plane's environment)"
+                : "(Anthropic's default)"}
+          </span>
+        </span>
+        <input
+          value={claudeBaseUrl}
+          onChange={(e) => setClaudeBaseUrl(e.target.value)}
+          placeholder={settings.claudeApi.effectiveBaseUrlSource === "env" ? settings.claudeApi.effectiveBaseUrl : ANTHROPIC_DEFAULT_BASE_URL}
+          spellCheck={false}
+        />
+      </label>
+      <p className="muted">
+        Where Claude Code in each Sandbox sends its model API calls: a company Claude proxy, for instance. Empty takes <code>ANTHROPIC_BASE_URL</code>{" "}
+        from the Control Plane&apos;s environment, else Anthropic. Applies to Sandboxes created afterwards. A Session with <em>Inspect LLM</em> on
+        puts its own loopback proxy in front of this URL; the Sandbox trusts the extra CA certificates below for it.
+      </p>
+      <div className="row">
+        <label>
+          <span className="label-row">
+            Proxy auth token (ANTHROPIC_AUTH_TOKEN) {claudeAuthTokenSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+            {claudeAuthTokenSet && (
+              <button type="button" className="link" onClick={() => setForgetClaudeAuthToken(true)}>
+                Forget
+              </button>
+            )}
+          </span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={claudeAuthToken}
+            onChange={(e) => setClaudeAuthToken(e.target.value)}
+            placeholder={claudeAuthTokenSet ? "Leave empty to keep the current token" : "Only if the proxy wants its own bearer token"}
+          />
+        </label>
+        <label>
+          <span className="label-row">
+            Proxy API key (ANTHROPIC_API_KEY) {claudeApiKeySet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+            {claudeApiKeySet && (
+              <button type="button" className="link" onClick={() => setForgetClaudeApiKey(true)}>
+                Forget
+              </button>
+            )}
+          </span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={claudeApiKey}
+            onChange={(e) => setClaudeApiKey(e.target.value)}
+            placeholder={claudeApiKeySet ? "Leave empty to keep the current key" : "Only if the proxy wants an x-api-key"}
+          />
+        </label>
+      </div>
+      <p className="muted">
+        Optional credentials for that URL, given to Claude Code alongside (or instead of) the OAuth token; never shown again, stripped from snapshots.
+      </p>
       <label>
         Claude model aliases (offered in the Model picker, comma-separated)
         <input value={claudeModels} onChange={(e) => setClaudeModels(e.target.value)} placeholder={DEFAULT_CLAUDE_MODELS.join(", ")} />

@@ -13,10 +13,17 @@ export class Tunnels {
   private readonly sessionboxer: FrpTunnel;
   private readonly ssh: SshTunnel;
 
-  constructor(origin: string, settings: TunnelSettings, onChange: (kind: TunnelKind, status: TunnelStatus, all: TunnelStatuses) => void, log: (msg: string) => void) {
+  constructor(
+    origin: string,
+    settings: TunnelSettings,
+    /** PEM bundle of the CAs this machine trusts (`trustedCaBundle`), read at each frpc start. */
+    caBundle: () => string,
+    onChange: (kind: TunnelKind, status: TunnelStatus, all: TunnelStatuses) => void,
+    log: (msg: string) => void,
+  ) {
     const changed = (kind: TunnelKind) => (status: TunnelStatus) => onChange(kind, status, this.statuses());
     this.cloudflare = new QuickTunnel(origin, changed("cloudflare"), log);
-    this.sessionboxer = new FrpTunnel(origin, settings.sessionboxer, changed("sessionboxer"), log);
+    this.sessionboxer = new FrpTunnel(origin, settings.sessionboxer, caBundle, changed("sessionboxer"), log);
     this.ssh = new SshTunnel(origin, settings.ssh, changed("ssh"), log);
   }
 

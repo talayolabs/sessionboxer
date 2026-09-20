@@ -13,6 +13,7 @@ import {
   type RemoteAccess,
   type TunnelKind,
   type TunnelNameCheck,
+  type TunnelServerInfo,
   type TunnelSettingsUpdate,
   type TunnelStatus,
 } from "@sessionboxer/protocol";
@@ -205,11 +206,27 @@ export function Devices({
   const [ssh, setSsh] = useState({ ...tunnels.ssh });
   const [nameCheck, setNameCheck] = useState<(TunnelNameCheck & { forName: string }) | null>(null);
   const [defaultName, setDefaultName] = useState<string | null>(null);
+  const [serverInfo, setServerInfo] = useState<{ forServer: string; info: TunnelServerInfo | null; error: string | null }>({ forServer: "", info: null, error: null });
   useEffect(() => setSb({ name: tunnels.sessionboxer.name, server: tunnels.sessionboxer.server }), [tunnels.sessionboxer.name, tunnels.sessionboxer.server]);
   useEffect(() => setSsh({ ...tunnels.ssh }), [tunnels.ssh]);
   useEffect(() => {
     void api.tunnelServer().then((r) => setDefaultName(r.name), () => setDefaultName(null));
   }, []);
+  const sbServer = sb.server.trim().replace(/\/+$/, "");
+  useEffect(() => {
+    if (!/^https?:\/\/\S+$/.test(sbServer)) {
+      setServerInfo({ forServer: sbServer, info: null, error: sbServer === "" ? null : "an http:// or https:// address" });
+      return;
+    }
+    const t = setTimeout(() => {
+      void api.tunnelServer(sbServer).then(
+        (r) => setServerInfo({ forServer: sbServer, info: r.info, error: null }),
+        (e: unknown) => setServerInfo({ forServer: sbServer, info: null, error: e instanceof Error ? e.message : String(e) }),
+      );
+    }, 400);
+    return () => clearTimeout(t);
+  }, [sbServer]);
+  const sbDomain = serverInfo.forServer === sbServer && serverInfo.info ? serverInfo.info.domain : null;
   const sbDirty = sb.name !== tunnels.sessionboxer.name || sb.server !== tunnels.sessionboxer.server;
   const sshDirty = JSON.stringify(ssh) !== JSON.stringify(tunnels.ssh);
   const sbName = sb.name.trim().toLowerCase();
@@ -301,6 +318,7 @@ export function Devices({
   /** Picks the transport for the next pairing code: turns it on when it is off, then makes the code. */
   const pairVia = (transport: PairingTransport) => {
     setVia(transport);
+    setPairing(null);
     void run(async () => {
       if (transport !== "local" && !tunnels[transport].enabled) {
         if (transport === "ssh" && ssh.host.trim() === "") throw new Error("Fill in the SSH server below first.");
@@ -450,7 +468,7 @@ export function Devices({
         onToggle={(on) => void toggle("sessionboxer", on)}
         description={
           <p className="muted small-text">
-            A stable <code>https://&lt;name&gt;.{tunnels.sessionboxer.server.replace(/^https?:\/\//, "")}</code> address: <code>frpc</code> here
+            A stable <code>https://&lt;name&gt;.{sbDomain ?? tunnels.sessionboxer.server.replace(/^https?:\/\//, "")}</code> address: <code>frpc</code> here
             (downloaded on first use, checksum verified) keeps an outbound connection to the tunnel server, which takes the name for this machine
             at first login and keeps it bound to a secret generated here{tunnels.sessionboxer.secretSet ? "" : " (missing — restart the Control Plane)"}.
             TLS ends at that server, so it sees the traffic it forwards; nothing to install on the phone; the login is still required.
@@ -467,23 +485,39 @@ export function Devices({
               onChange={(e) => setSb({ ...sb, name: e.target.value })}
             />
             <span className={`small-text ${sbNameOk ? "muted" : "error"}`}>
-              {!sbNameOk
-                ? "3–40 lowercase letters, digits and dashes, not starting or ending with a dash"
-                : nameCheck && nameCheck.forName === sbName
-                  ? nameCheck.reserved
-                    ? "reserved on the server"
-                    : nameCheck.available
-                      ? "free on the server"
-                      : "registered on the server — connects only if it is this machine's from before"
-                  : sbName === ""
-                    ? "empty means the hostname"
-                    : " "}
+              {!sbNameOk ? (
+                "3–40 lowercase letters, digits and dashes, not starting or ending with a dash"
+              ) : (
+                <>
+                  {sbDomain && (sbName !== "" || defaultName) && (
+                    <>
+                      <code>{`https://${sbName || defaultName}.${sbDomain}`}</code>
+                      {" — "}
+                    </>
+                  )}
+                  {nameCheck && nameCheck.forName === sbName
+                    ? nameCheck.reserved
+                      ? "reserved on the server"
+                      : nameCheck.available
+                        ? "free on the server"
+                        : "registered on the server — connects only if it is this machine's from before"
+                    : sbName === ""
+                      ? "empty means the hostname"
+                      : "checking…"}
+                </>
+              )}
             </span>
           </label>
           <label>
             Server
             <input value={sb.server} placeholder={DEFAULT_TUNNEL_SERVER} spellCheck={false} onChange={(e) => setSb({ ...sb, server: e.target.value })} />
-            <span className="muted small-text">A Sessionboxer tunnel server (frps + registry); the default is talayolabs'.</span>
+            <span className={`small-text ${serverInfo.forServer === sbServer && serverInfo.error ? "error" : "muted"}`}>
+              {serverInfo.forServer === sbServer && serverInfo.error
+                ? `not a Sessionboxer tunnel server: ${serverInfo.error}`
+                : sbDomain
+                  ? `serves *.${sbDomain}${serverInfo.info?.frpVersion ? `, frp ${serverInfo.info.frpVersion}` : ""}`
+                  : "A Sessionboxer tunnel server (frps + registry); the default is talayolabs'."}
+            </span>
           </label>
         </div>
         {sbDirty && (

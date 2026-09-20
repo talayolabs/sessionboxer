@@ -332,6 +332,12 @@ export function Devices({
     });
   };
 
+  // A pairing waiting on a transport that gets switched off is dropped: nothing will ever carry its code.
+  const viaEnabled = via === "local" || tunnels[via].enabled;
+  useEffect(() => {
+    if (!viaEnabled) setPairing(null);
+  }, [viaEnabled]);
+
   const origin = pairingOrigin(remote, via);
   const link = pairing && left > 0 && origin ? pairLink(origin, pairing) : null;
   const viaStatus = via === "local" ? null : statuses[via];

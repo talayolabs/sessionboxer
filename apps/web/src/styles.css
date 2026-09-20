@@ -793,10 +793,17 @@ code.token { font-size: 12px; word-break: break-all; user-select: all; backgroun
   .app.mobile .composer-footer { flex-wrap: wrap; row-gap: 6px; }
   .app.mobile .composer-footer .hint { display: none; }
   .app.mobile .composer.zen { inset: auto 0 0 0; top: 0; height: var(--app-height, 100dvh); padding: 12px; }
-  .app.mobile .composer:not(.sized):not(.zen) .rich-editor { max-height: 30vh; }
+  /* No drag-sizing on a phone: the editor grows with its text up to a share of what is left above the keyboard. */
+  .app.mobile .splitter { display: none; }
+  .app.mobile .composer.sized { height: auto !important; }
+  .app.mobile .composer.sized .composer-body { flex: none; }
+  .app.mobile .composer:not(.zen) textarea { height: auto; flex: none; min-height: 3.2em; max-height: max(3.2em, 28vh); }
+  .app.mobile .composer:not(.zen) .rich-editor { min-height: 3.2em; max-height: max(3.2em, 28vh); }
   .app.mobile .transcript { padding: 10px; }
   .app.mobile .toasts { left: 12px; right: 12px; bottom: calc(60px + env(safe-area-inset-bottom)); max-width: none; }
-  .app.mobile .panel { max-width: none; padding: 14px; }
+  .app.mobile .panel { max-width: none; padding: 14px; overflow-x: hidden; }
   .app.mobile .panel .row { flex-wrap: wrap; }
+  .app.mobile .panel .row > label { flex: 1 1 100%; min-width: 0; }
+  .app.mobile .panel code, .app.mobile .panel p { overflow-wrap: anywhere; word-break: break-word; }
   .modal-backdrop { padding: 12px; }
 }

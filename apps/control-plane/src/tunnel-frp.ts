@@ -184,6 +184,8 @@ export class FrpTunnel extends SupervisedTunnel {
       `loginFailExit = false`,
       `log.disablePrintColor = true`,
       `transport.tls.enable = ${info.frps.tls}`,
+      // Plain TLS with the server's name as SNI, so the server can put frps behind its 443 next to HTTPS.
+      ...(info.frps.tls ? [`transport.tls.serverName = ${tomlString(info.frps.host)}`, `transport.tls.disableCustomTLSFirstByte = true`] : []),
       `transport.poolCount = 4`,
       ...(info.frps.token ? [`auth.token = ${tomlString(info.frps.token)}`] : []),
       ``,

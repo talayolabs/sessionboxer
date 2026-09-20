@@ -1752,7 +1752,7 @@ function SettingsView({
         </label>
       </fieldset>
       <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
-      <Devices remote={settings.remote} quickTunnel={settings.quickTunnel} onStored={onStored} run={run} />
+      <Devices remote={settings.remote} tunnels={settings.tunnels} onStored={onStored} run={run} />
       <fieldset className="choice">
         <legend>GitHub login (OAuth App)</legend>
         <p className="muted">

@@ -1,14 +1,12 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { arch, platform } from "node:os";
-import { delimiter, join } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
-import { extract } from "tar-stream";
+import { join } from "node:path";
 import type { TunnelStatus } from "@sessionboxer/protocol";
-import { DATA_DIR } from "./config.js";
+import { BIN_DIR, download, findBinary, probeVersion, SupervisedTunnel, untarFile, type Binary } from "./tunnel-base.js";
+
+export { BIN_DIR } from "./tunnel-base.js";
 
 /**
  * cloudflared release downloaded when the machine has none. Pinned with the SHA-256 of each
@@ -25,32 +23,18 @@ const PINNED_SHA256: Record<string, string> = {
 };
 const RELEASES = "https://github.com/cloudflare/cloudflared/releases/download";
 const RELEASE_API = "https://api.github.com/repos/cloudflare/cloudflared/releases/tags";
-export const BIN_DIR = join(DATA_DIR, "bin");
 
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
-/** cloudflared reconnects by itself; only a process exit needs us. Back off so a broken network does not spin. */
-const RESTART_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 /** A quick tunnel that has not printed its URL by then is stuck (no network, Cloudflare down). */
 const START_TIMEOUT_MS = 45_000;
 
-export interface Cloudflared {
-  path: string;
-  version: string;
-}
+export type Cloudflared = Binary;
+
+const cloudflaredVersion = (path: string) => probeVersion(path, ["--version"], (out) => /cloudflared version (\S+)/.exec(out)?.[1] ?? null);
 
 /** `cloudflared` from PATH, or the copy Sessionboxer downloaded earlier; `null` when neither exists. */
 export async function findCloudflared(): Promise<Cloudflared | null> {
-  const names = platform() === "win32" ? ["cloudflared.exe", "cloudflared"] : ["cloudflared"];
-  const dirs = [BIN_DIR, ...(process.env.PATH ?? "").split(delimiter).filter((d) => d !== "")];
-  for (const dir of dirs) {
-    for (const name of names) {
-      const candidate = join(dir, name);
-      if (!existsSync(candidate)) continue;
-      const version = await cloudflaredVersion(candidate);
-      if (version !== null) return { path: candidate, version };
-    }
-  }
-  return null;
+  return findBinary("cloudflared", cloudflaredVersion);
 }
 
 /** `findCloudflared()`, downloading the pinned release into `~/.sessionboxer/bin` when needed. */
@@ -60,30 +44,17 @@ export async function ensureCloudflared(log: (msg: string) => void): Promise<Clo
   const asset = releaseAsset();
   log(`cloudflared not found; downloading ${CLOUDFLARED_VERSION} (${asset.name})`);
   mkdirSync(BIN_DIR, { recursive: true, mode: 0o700 });
-  const stage = join(BIN_DIR, `.cloudflared-${CLOUDFLARED_VERSION}`);
-  rmSync(stage, { recursive: true, force: true });
-  try {
-    const [data, expected] = await Promise.all([download(`${RELEASES}/${CLOUDFLARED_VERSION}/${asset.name}`), expectedSha256(asset.name)]);
-    const actual = createHash("sha256").update(data).digest("hex");
-    if (actual !== expected) throw new Error(`checksum mismatch for ${asset.name}`);
-    const target = join(BIN_DIR, asset.binary);
-    if (asset.name.endsWith(".tgz")) {
-      mkdirSync(stage, { recursive: true });
-      const staged = join(stage, asset.binary);
-      await untarFile(data, asset.binary, staged);
-      renameSync(staged, target);
-    } else {
-      writeFileSync(`${target}.part`, data);
-      renameSync(`${target}.part`, target);
-    }
-    if (platform() !== "win32") chmodSync(target, 0o755);
-    const version = await cloudflaredVersion(target);
-    if (version === null) throw new Error("the downloaded cloudflared does not run on this machine");
-    log(`cloudflared ${version} installed at ${target}`);
-    return { path: target, version };
-  } finally {
-    rmSync(stage, { recursive: true, force: true });
-  }
+  const [data, expected] = await Promise.all([download(`${RELEASES}/${CLOUDFLARED_VERSION}/${asset.name}`), expectedSha256(asset.name)]);
+  const actual = createHash("sha256").update(data).digest("hex");
+  if (actual !== expected) throw new Error(`checksum mismatch for ${asset.name}`);
+  const target = join(BIN_DIR, asset.binary);
+  writeFileSync(`${target}.part`, asset.name.endsWith(".tgz") ? await untarFile(data, asset.binary) : data);
+  renameSync(`${target}.part`, target);
+  if (platform() !== "win32") chmodSync(target, 0o755);
+  const version = await cloudflaredVersion(target);
+  if (version === null) throw new Error("the downloaded cloudflared does not run on this machine");
+  log(`cloudflared ${version} installed at ${target}`);
+  return { path: target, version };
 }
 
 async function expectedSha256(assetName: string): Promise<string> {
@@ -98,27 +69,6 @@ async function expectedSha256(assetName: string): Promise<string> {
   return m[1]!;
 }
 
-async function untarFile(targz: Buffer, name: string, dest: string): Promise<void> {
-  let found = false;
-  const tar = extract();
-  tar.on("entry", (header, stream, next) => {
-    if (header.type === "file" && (header.name === name || header.name.endsWith(`/${name}`)) && !found) {
-      found = true;
-      const chunks: Buffer[] = [];
-      stream.on("data", (c) => chunks.push(Buffer.from(c as Uint8Array)));
-      stream.on("end", () => {
-        writeFileSync(dest, Buffer.concat(chunks));
-        next();
-      });
-    } else {
-      stream.on("end", next);
-      stream.resume();
-    }
-  });
-  await pipeline(Readable.from([targz]), createGunzip(), tar);
-  if (!found) throw new Error(`archive did not contain ${name}`);
-}
-
 function releaseAsset(): { name: string; binary: string } {
   const os = platform();
   const cpu = arch();
@@ -130,90 +80,30 @@ function releaseAsset(): { name: string; binary: string } {
   throw new Error(`cloudflared has no release for ${os}/${cpu}; install cloudflared yourself.`);
 }
 
-async function download(url: string): Promise<Buffer> {
-  const res = await fetch(url, { redirect: "follow", headers: { "user-agent": "sessionboxer" } });
-  if (!res.ok) throw new Error(`download failed (${res.status}) for ${url}`);
-  return Buffer.from(await res.arrayBuffer());
-}
-
-async function cloudflaredVersion(path: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    let out = "";
-    let child: ChildProcess;
-    try {
-      child = spawn(path, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
-    } catch {
-      resolve(null);
-      return;
-    }
-    const timer = setTimeout(() => child.kill("SIGTERM"), 10_000);
-    child.stdout?.on("data", (c: Buffer) => (out += c.toString("utf8")));
-    child.stderr?.on("data", (c: Buffer) => (out += c.toString("utf8")));
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timer);
-      resolve(code === 0 ? (/cloudflared version (\S+)/.exec(out)?.[1] ?? null) : null);
-    });
-  });
-}
-
 /**
  * Runs `cloudflared tunnel --url <origin>` while enabled and keeps it running: a Cloudflare quick
  * tunnel (no account) that gives this Control Plane a random public `https://….trycloudflare.com`.
  * Cloudflare terminates TLS, so the browser sees a real certificate; requests arrive here from
  * 127.0.0.1 with the tunnel's hostname as `Host` and the visitor in `X-Forwarded-For`.
  */
-export class QuickTunnel {
-  private status: TunnelStatus = { state: "off", url: null, error: null, version: null };
-  private child: ChildProcess | null = null;
-  private enabled = false;
-  private attempt = 0;
-  private restartTimer: NodeJS.Timeout | null = null;
-  private startTimer: NodeJS.Timeout | null = null;
-
+export class QuickTunnel extends SupervisedTunnel {
   constructor(
     /** What cloudflared connects to: the Control Plane's own listener. */
     private readonly origin: string,
-    private readonly onChange: (status: TunnelStatus) => void,
-    private readonly log: (msg: string) => void,
-  ) {}
-
-  current(): TunnelStatus {
-    return this.status;
+    onChange: (status: TunnelStatus) => void,
+    log: (msg: string) => void,
+  ) {
+    super("quick tunnel", onChange, log);
   }
 
-  /** Hostname of the tunnel while it is up (what `Host` says on requests that came through it). */
-  host(): string | null {
-    return this.status.state === "up" && this.status.url ? new URL(this.status.url).host : null;
-  }
-
-  /** Turns the tunnel on or off; idempotent. Resolves once cloudflared is running or the start failed (state tells). */
-  async set(enabled: boolean): Promise<void> {
-    if (enabled === this.enabled) return;
-    this.enabled = enabled;
-    if (!enabled) {
-      this.stop();
-      this.update({ state: "off", url: null, error: null });
-      return;
-    }
-    this.attempt = 0;
-    await this.spawnOnce();
-  }
-
-  private async spawnOnce(): Promise<void> {
+  protected async spawnOnce(): Promise<void> {
     if (!this.enabled || this.child) return;
     this.update({ state: "starting", url: null });
     let bin: Cloudflared;
     try {
       bin = await ensureCloudflared(this.log);
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      this.log(`quick tunnel: ${error}`);
-      this.update({ state: "error", error });
-      this.scheduleRestart();
+      this.failed(e instanceof Error ? e.message : String(e));
       return;
     }
     if (!this.enabled) return;
@@ -221,18 +111,12 @@ export class QuickTunnel {
     const args = ["tunnel", "--url", this.origin, "--no-autoupdate", "--metrics", "127.0.0.1:0"];
     if (this.origin.startsWith("https:")) args.push("--no-tls-verify");
     const child = spawn(bin.path, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1" } });
-    this.child = child;
     let output = "";
     const onData = (chunk: Buffer) => {
       output = (output + chunk.toString("utf8")).slice(-16_384);
       if (this.child === child && this.status.state !== "up") {
         const url = URL_RE.exec(output)?.[0];
-        if (url) {
-          this.clearStartTimer();
-          this.attempt = 0;
-          this.log(`quick tunnel up at ${url}`);
-          this.update({ state: "up", url, error: null });
-        }
+        if (url) this.up(url);
       }
     };
     child.stdout?.on("data", onData);
@@ -241,58 +125,7 @@ export class QuickTunnel {
       this.log(`quick tunnel: cloudflared could not start: ${e.message}`);
       output += `\n${e.message}`;
     });
-    child.on("exit", (code, signal) => {
-      if (this.child !== child) return;
-      this.child = null;
-      this.clearStartTimer();
-      if (!this.enabled) return;
-      const reason = lastError(output) || (signal === "SIGTERM" && this.status.error) || `cloudflared exited (${signal ?? code})`;
-      this.log(`quick tunnel: ${reason}`);
-      this.update({ state: "error", url: null, error: reason });
-      this.scheduleRestart();
-    });
-    this.startTimer = setTimeout(() => {
-      if (this.child === child && this.status.state !== "up") {
-        this.log("quick tunnel: no URL after 45 s, restarting cloudflared");
-        this.update({ error: lastError(output) || "cloudflared did not get a tunnel URL in time" });
-        child.kill("SIGTERM");
-      }
-    }, START_TIMEOUT_MS);
-  }
-
-  private scheduleRestart(): void {
-    if (!this.enabled || this.restartTimer) return;
-    const delay = RESTART_MS[Math.min(this.attempt, RESTART_MS.length - 1)]!;
-    this.attempt++;
-    this.restartTimer = setTimeout(() => {
-      this.restartTimer = null;
-      void this.spawnOnce();
-    }, delay);
-  }
-
-  private stop(): void {
-    if (this.restartTimer) clearTimeout(this.restartTimer);
-    this.restartTimer = null;
-    this.clearStartTimer();
-    const child = this.child;
-    this.child = null;
-    if (child && child.exitCode === null) child.kill("SIGTERM");
-  }
-
-  private clearStartTimer(): void {
-    if (this.startTimer) clearTimeout(this.startTimer);
-    this.startTimer = null;
-  }
-
-  /** Same as `set(false)` but silent: for shutdown. */
-  close(): void {
-    this.enabled = false;
-    this.stop();
-  }
-
-  private update(patch: Partial<TunnelStatus>): void {
-    this.status = { ...this.status, ...patch };
-    this.onChange(this.status);
+    this.watch(child, () => lastError(output), START_TIMEOUT_MS);
   }
 }
 

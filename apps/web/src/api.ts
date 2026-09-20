@@ -47,6 +47,8 @@ import type {
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
   UiClientMessage,
+  TunnelNameCheck,
+  TunnelServerInfo,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 
@@ -93,6 +95,10 @@ export const api = {
   options: () => request<ProviderOptions>("/options"),
   updateSettings: (update: UpdateSettingsRequest) =>
     request<PublicSettings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
+  tunnelServer: (server?: string) =>
+    request<{ server: string; info: TunnelServerInfo; name: string }>(`/tunnels/sessionboxer/server${server ? `?server=${encodeURIComponent(server)}` : ""}`),
+  tunnelName: (name: string, server?: string) =>
+    request<TunnelNameCheck>(`/tunnels/sessionboxer/names/${encodeURIComponent(name)}${server ? `?server=${encodeURIComponent(server)}` : ""}`),
   connectorStart: (kind: ConnectorKind, req: ConnectorStartRequest) =>
     request<ConnectorFlow>(`/connectors/${kind}/start`, { method: "POST", body: JSON.stringify(req) }),
   connectorFlow: (id: string) => request<ConnectorFlow>(`/connectors/flows/${id}`),

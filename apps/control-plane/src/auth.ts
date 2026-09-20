@@ -139,11 +139,11 @@ export class Auth {
     private readonly publicHost: string,
     private readonly log: (msg: string) => void,
     /**
-     * Hostname of the quick tunnel while it runs. cloudflared connects from this machine and keeps
-     * the visitor's `Host`, so a loopback request carrying it is the tunnel's and its
-     * `X-Forwarded-*` are believed (only a process on this machine could forge them).
+     * Hostnames of the tunnels that are up. cloudflared, frpc and ssh deliver their connections
+     * from this machine and keep the visitor's `Host`, so a loopback request carrying one of them
+     * is a tunnel's and its `X-Forwarded-*` are believed (only a process on this machine could forge them).
      */
-    private readonly tunnelHost: () => string | null = () => null,
+    private readonly tunnelHosts: () => string[] = () => [],
   ) {
     this.db.exec(AUTH_SCHEMA);
   }
@@ -218,13 +218,13 @@ export class Auth {
     }
   }
 
-  /** Whether this request's `X-Forwarded-*` headers are trusted: a configured proxy, or the quick tunnel. */
+  /** Whether this request's `X-Forwarded-*` headers are trusted: a configured proxy, or one of the tunnels. */
   private forwarded(c: Context): boolean {
     if (this.trustProxy) return true;
-    const tunnel = this.tunnelHost();
-    if (!tunnel) return false;
+    const tunnels = this.tunnelHosts();
+    if (tunnels.length === 0) return false;
     const host = (c.req.header("host") ?? "").toLowerCase();
-    return host === tunnel.toLowerCase() && isLoopback(this.remoteAddress(c));
+    return tunnels.some((t) => t.toLowerCase() === host) && isLoopback(this.remoteAddress(c));
   }
 
   clientInfo(c: Context): ClientInfo {

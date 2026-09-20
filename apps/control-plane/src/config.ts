@@ -9,6 +9,7 @@ import {
   CONNECTORS,
   MCP_RESERVED_NAMES,
   Settings,
+  TUNNEL_NAME_RE,
   type DockerMode,
   type GitIdentity,
   type McpConnector,
@@ -20,7 +21,7 @@ import {
   type PublicMcpServerDef,
   type PublicSettings,
   type RemoteAccess,
-  type TunnelStatus,
+  type TunnelStatuses,
   type UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
@@ -77,6 +78,17 @@ export function ensureAccessToken(settings: Settings): Settings {
   return next;
 }
 
+/**
+ * Generates and stores the Sessionboxer tunnel secret at first start: the tunnel server binds this
+ * laptop's name to it at first login, so a new secret would lose the name.
+ */
+export function ensureTunnelSecret(settings: Settings): Settings {
+  if (settings.tunnels.sessionboxer.secret !== "") return settings;
+  const next = { ...settings, tunnels: { ...settings.tunnels, sessionboxer: { ...settings.tunnels.sessionboxer, secret: randomBytes(32).toString("hex") } } };
+  saveSettings(next);
+  return next;
+}
+
 /** Generates and stores the VAPID key pair at first start; a new pair would orphan every push subscription. */
 export function ensureVapidKeys(settings: Settings): Settings {
   if (settings.vapid) return settings;
@@ -85,11 +97,11 @@ export function ensureVapidKeys(settings: Settings): Settings {
   return next;
 }
 
-export function remoteAccess(tunnel: TunnelStatus): RemoteAccess {
-  return { publicUrl: PUBLIC_URL, tls: TLS, accessTokenSource: accessTokenSource(), trustProxy: TRUST_PROXY, tunnel };
+export function remoteAccess(tunnels: TunnelStatuses): RemoteAccess {
+  return { publicUrl: PUBLIC_URL, tls: TLS, accessTokenSource: accessTokenSource(), trustProxy: TRUST_PROXY, tunnels };
 }
 
-/** Where cloudflared reaches the Control Plane: its own listener on this machine. */
+/** Where the tunnel programs (cloudflared, frpc, ssh) reach the Control Plane: its own listener on this machine. */
 export const LOCAL_ORIGIN = (() => {
   const host = HOST === "0.0.0.0" || HOST === "::" ? "127.0.0.1" : HOST.includes(":") ? `[${HOST}]` : HOST;
   return `${TLS ? "https" : "http"}://${host}:${PORT}`;
@@ -102,7 +114,11 @@ export function ensureDataDir(): void {
 export function loadSettings(): Settings {
   ensureDataDir();
   if (!existsSync(CONFIG_FILE)) return Settings.parse({});
-  return Settings.parse(JSON.parse(readFileSync(CONFIG_FILE, "utf8")));
+  const raw = JSON.parse(readFileSync(CONFIG_FILE, "utf8")) as Record<string, unknown>;
+  // `quickTunnel: true` from before the transports were several means the Cloudflare one.
+  if (typeof raw.quickTunnel === "boolean" && raw.tunnels === undefined) raw.tunnels = { cloudflare: { enabled: raw.quickTunnel } };
+  delete raw.quickTunnel;
+  return Settings.parse(raw);
 }
 
 export function saveSettings(settings: Settings): void {
@@ -112,9 +128,34 @@ export function saveSettings(settings: Settings): void {
 }
 
 export function applySettingsUpdate(current: Settings, update: UpdateSettingsRequest): Settings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, ...rest } = update;
+  const { providerSecrets, mcpServers, connectors, claudeApi, tunnels, ...rest } = update;
   const next: Settings = { ...current, ...stripUndefined(rest) };
   if (mcpServers) next.mcpServers = mergeMcpServers(current.mcpServers, mcpServers);
+  if (tunnels) {
+    next.tunnels = {
+      cloudflare: { ...current.tunnels.cloudflare, ...stripUndefined(tunnels.cloudflare ?? {}) },
+      sessionboxer: { ...current.tunnels.sessionboxer, ...stripUndefined(tunnels.sessionboxer ?? {}) },
+      ssh: { ...current.tunnels.ssh, ...stripUndefined(tunnels.ssh ?? {}) },
+    };
+    const sb = next.tunnels.sessionboxer;
+    sb.server = sb.server.trim().replace(/\/+$/, "");
+    sb.name = sb.name.trim().toLowerCase();
+    if (sb.server === "") throw new HttpError(400, "The tunnel server address is required.");
+    if (!/^https?:\/\//.test(sb.server)) throw new HttpError(400, "The tunnel server must be an http:// or https:// URL.");
+    if (sb.name !== "" && !TUNNEL_NAME_RE.test(sb.name)) {
+      throw new HttpError(400, "A tunnel name is 3–40 lowercase letters, digits and dashes, not starting or ending with a dash.");
+    }
+    const ssh = next.tunnels.ssh;
+    ssh.host = ssh.host.trim();
+    ssh.user = ssh.user.trim();
+    ssh.identityFile = ssh.identityFile.trim();
+    ssh.publicUrl = ssh.publicUrl.trim().replace(/\/+$/, "");
+    if (/[\s@]/.test(ssh.host) || ssh.host.startsWith("-")) throw new HttpError(400, "The SSH host is a hostname or IP address (user goes in its own field).");
+    if (/[\s@:]/.test(ssh.user) || ssh.user.startsWith("-")) throw new HttpError(400, "That is not a valid SSH user name.");
+    if (ssh.identityFile.startsWith("-")) throw new HttpError(400, "That is not a valid key file path.");
+    if (ssh.publicUrl !== "" && !/^https?:\/\//.test(ssh.publicUrl)) throw new HttpError(400, "The public URL must start with http:// or https://.");
+    if (ssh.enabled && ssh.host === "") throw new HttpError(400, "Set the SSH server host before turning the SSH tunnel on.");
+  }
   if (claudeApi) {
     next.claudeApi = { ...current.claudeApi, ...stripUndefined(claudeApi) };
     next.claudeApi.baseUrl = next.claudeApi.baseUrl.trim();
@@ -153,11 +194,13 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
   return Settings.parse(next);
 }
 
-export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">, tunnel: TunnelStatus): PublicSettings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, ...rest } = settings;
+export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">, tunnels: TunnelStatuses): PublicSettings {
+  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, ...rest } = settings;
   const base = claudeBaseUrl(settings);
+  const { secret, ...sessionboxer } = tunnelSettings.sessionboxer;
   return {
     ...rest,
+    tunnels: { ...tunnelSettings, sessionboxer: { ...sessionboxer, secretSet: secret !== "" } },
     mcpServers: mcpServers.map(toPublicMcpServer),
     claudeApi: {
       baseUrl: claudeApi.baseUrl,
@@ -176,7 +219,7 @@ export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclud
     dockerModeAvailable,
     hostCaCerts: hostExtraCaCerts().map((c) => c.subject),
     hostGitIdentity: hostGitIdentity(),
-    remote: remoteAccess(tunnel),
+    remote: remoteAccess(tunnels),
   };
 }
 

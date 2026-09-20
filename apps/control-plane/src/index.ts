@@ -54,6 +54,7 @@ import {
   accessTokenSource,
   applySettingsUpdate,
   ensureAccessToken,
+  ensureTunnelSecret,
   ensureVapidKeys,
   loadSettings,
   newAccessToken,
@@ -71,7 +72,8 @@ import { HostDirError, listHostDir } from "./host-dir.js";
 import { PushNotifier } from "./push.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
-import { QuickTunnel } from "./tunnel.js";
+import { checkTunnelName, tunnelName, tunnelServerInfo } from "./tunnel-frp.js";
+import { Tunnels } from "./tunnels.js";
 
 const log = (msg: string): void => {
   process.stderr.write(`[control-plane ${new Date().toISOString()}] ${msg}\n`);
@@ -82,7 +84,7 @@ const WS_PING_MS = 25_000;
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
-let settings = ensureVapidKeys(ensureAccessToken(loadSettings()));
+let settings = ensureTunnelSecret(ensureVapidKeys(ensureAccessToken(loadSettings())));
 const db = new Db(DB_FILE);
 const docker = new SandboxDocker();
 const push = new PushNotifier(
@@ -94,16 +96,17 @@ const push = new PushNotifier(
   log,
 );
 const sessions = new SessionManager(db, docker, () => settings, log, (msg) => push.send(msg));
-const tunnel = new QuickTunnel(
+const tunnels = new Tunnels(
   LOCAL_ORIGIN,
-  (status) => {
-    sessions.notify({ type: "remote", remote: remoteAccess(status) });
+  settings.tunnels,
+  (_kind, status, all) => {
+    sessions.notify({ type: "remote", remote: remoteAccess(all) });
     if (status.state === "up") log(`log in from another device at ${status.url}/#${PAIR_FRAGMENT_KEY}=${auth.createPairing().code} (one use, ${Math.round(PAIRING_TTL_MS / 60_000)} min)`);
   },
   log,
 );
-const auth = new Auth(db.connection, () => accessToken(settings), TRUST_PROXY, new URL(PUBLIC_URL).host, log, () => tunnel.host());
-const publicSettings = async () => toPublicSettings(settings, await sessions.dockerModeAvailable(), tunnel.current());
+const auth = new Auth(db.connection, () => accessToken(settings), TRUST_PROXY, new URL(PUBLIC_URL).host, log, () => tunnels.hosts());
+const publicSettings = async () => toPublicSettings(settings, await sessions.dockerModeAvailable(), tunnels.statuses());
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -208,8 +211,24 @@ api.put("/settings", async (c) => {
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
-  if (update.quickTunnel !== undefined) await tunnel.set(update.quickTunnel);
+  if (update.tunnels) await tunnels.apply(settings.tunnels);
   return c.json(await publicSettings());
+});
+
+/** What the configured (or given) Sessionboxer tunnel server says about itself, and the name this laptop would take there. */
+api.get("/tunnels/sessionboxer/server", async (c) => {
+  const server = c.req.query("server")?.trim() || settings.tunnels.sessionboxer.server;
+  const info = await tunnelServerInfo(server).catch((e: unknown) => {
+    throw new HttpError(502, e instanceof Error ? e.message : String(e));
+  });
+  return c.json({ server, info, name: tunnelName(settings.tunnels.sessionboxer) });
+});
+api.get("/tunnels/sessionboxer/names/:name", async (c) => {
+  const server = c.req.query("server")?.trim() || settings.tunnels.sessionboxer.server;
+  const check = await checkTunnelName(server, c.req.param("name").trim().toLowerCase()).catch((e: unknown) => {
+    throw new HttpError(502, e instanceof Error ? e.message : String(e));
+  });
+  return c.json(check);
 });
 
 api.get("/connectors/github/gh", async (c) => c.json(await connectors.ghStatus()));
@@ -564,7 +583,7 @@ const server = serve(
         ? "access token: from SESSIONBOXER_ACCESS_TOKEN"
         : `access token: in ${CONFIG_FILE} (\`sessionboxer token\` prints it; paste it on the login page of any other browser)`,
     );
-    if (settings.quickTunnel) void tunnel.set(true);
+    void tunnels.apply(settings.tunnels);
   },
 );
 injectWebSocket(server);
@@ -594,7 +613,7 @@ const shutdown = (): void => {
   log("shutting down");
   const exit = (): void => {
     clearInterval(keepalive);
-    tunnel.close();
+    tunnels.close();
     db.close();
     server.close();
     process.exit(0);

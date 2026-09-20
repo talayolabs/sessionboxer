@@ -753,23 +753,33 @@ export const AuthPrincipal = z.discriminatedUnion("kind", [
 export type AuthPrincipal = z.infer<typeof AuthPrincipal>;
 
 /**
- * The Cloudflare quick tunnel (`cloudflared tunnel --url`, no account) the Control Plane runs when
- * `Settings.quickTunnel` is on: a random `https://….trycloudflare.com` that any phone opens, new at
- * every start. `error` is the last failure while `starting`/`error`.
+ * The ways the Control Plane can make itself reachable from outside the local network, each a
+ * child process it supervises while the transport is enabled in `Settings.tunnels`:
+ * - `cloudflare`: `cloudflared tunnel --url` (no account), a random `https://….trycloudflare.com`, new at every start;
+ * - `sessionboxer`: `frpc` dialling a Sessionboxer tunnel server (frps), a stable `https://<name>.<server domain>`;
+ * - `ssh`: `ssh -R` to a server of yours, reached at the URL you give (your reverse proxy) or `http://<host>:<port>`.
  */
+export const TunnelKind = z.enum(["cloudflare", "sessionboxer", "ssh"]);
+export type TunnelKind = z.infer<typeof TunnelKind>;
+export const TUNNEL_KINDS = TunnelKind.options;
+
+/** Runtime state of one transport. `error` is the last failure while `starting`/`error`. */
 export const TunnelStatus = z.object({
   state: z.enum(["off", "starting", "up", "error"]),
   url: z.string().nullable(),
   error: z.string().nullable(),
-  /** `cloudflared` version in use, once found or downloaded. */
+  /** Version of the program in use (`cloudflared`, `frpc`, `ssh`), once found or downloaded. */
   version: z.string().nullable(),
 });
 export type TunnelStatus = z.infer<typeof TunnelStatus>;
 
+export const TunnelStatuses = z.object({ cloudflare: TunnelStatus, sessionboxer: TunnelStatus, ssh: TunnelStatus });
+export type TunnelStatuses = z.infer<typeof TunnelStatuses>;
+
 /**
  * How the Control Plane is reached remotely. `publicUrl` is what links and OAuth callbacks use
  * (`SESSIONBOXER_PUBLIC_URL`, else derived from the bind address); `tls` whether it serves HTTPS itself.
- * When `tunnel.state` is `up`, pairing links use `tunnel.url` instead.
+ * A pairing link carries the URL of the transport chosen for it (`pairingOrigin`).
  */
 export const RemoteAccess = z.object({
   publicUrl: z.string(),
@@ -778,14 +788,86 @@ export const RemoteAccess = z.object({
   accessTokenSource: z.enum(["settings", "env"]),
   /** `X-Forwarded-*` from a reverse proxy are believed (`SESSIONBOXER_TRUST_PROXY=1`). */
   trustProxy: z.boolean(),
-  tunnel: TunnelStatus,
+  tunnels: TunnelStatuses,
 });
 export type RemoteAccess = z.infer<typeof RemoteAccess>;
 
-/** The origin a pairing link should carry: the tunnel while it is up, else the configured public URL. */
-export function pairingOrigin(remote: RemoteAccess): string {
-  return remote.tunnel.state === "up" && remote.tunnel.url ? remote.tunnel.url : remote.publicUrl;
+/** What a pairing link can point at: the configured public URL, or one of the transports. */
+export const PairingTransport = z.enum(["local", ...TUNNEL_KINDS]);
+export type PairingTransport = z.infer<typeof PairingTransport>;
+
+/** The origin a pairing link over `transport` carries; `null` while that transport is not up. */
+export function pairingOrigin(remote: RemoteAccess, transport: PairingTransport): string | null {
+  if (transport === "local") return remote.publicUrl;
+  const t = remote.tunnels[transport];
+  return t.state === "up" && t.url ? t.url : null;
 }
+
+/** The Sessionboxer tunnel server a laptop dials by default (talayolabs' frps + registry). */
+export const DEFAULT_TUNNEL_SERVER = "https://tunnel-sessionboxer.talayolabs.com";
+/** What a tunnel name may look like (the server enforces the same rule and a list of reserved names). */
+export const TUNNEL_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+
+/** `GET <server>/api/v1/info`: how to reach a Sessionboxer tunnel server's frps and what URLs it hands out. */
+export const TunnelServerInfo = z.object({
+  service: z.literal("sessionboxer-tunnel"),
+  domain: z.string().min(1),
+  frps: z.object({ host: z.string().min(1), port: z.number().int().min(1).max(65535), tls: z.boolean(), token: z.string().nullable() }),
+  nameRule: z.string(),
+  frpVersion: z.string(),
+  grafana: z.string().nullable().optional(),
+});
+export type TunnelServerInfo = z.infer<typeof TunnelServerInfo>;
+
+/** `GET <server>/api/v1/names/<name>` (proxied by the Control Plane as `GET /api/tunnels/sessionboxer/names/:name`). */
+export const TunnelNameCheck = z.object({ name: z.string(), available: z.boolean(), reserved: z.boolean() });
+export type TunnelNameCheck = z.infer<typeof TunnelNameCheck>;
+
+/** Per-transport configuration (`Settings.tunnels`); `enabled` keeps the transport running across restarts. */
+export const TunnelSettings = z.object({
+  cloudflare: z.object({ enabled: z.boolean().default(false) }).default({}),
+  sessionboxer: z
+    .object({
+      enabled: z.boolean().default(false),
+      server: z.string().default(DEFAULT_TUNNEL_SERVER),
+      /** The subdomain this laptop takes on the server; empty means a name derived from the hostname. */
+      name: z.string().default(""),
+      /** Generated once; the server binds the name to it at first login. Never shown. */
+      secret: z.string().default(""),
+    })
+    .default({}),
+  ssh: z
+    .object({
+      enabled: z.boolean().default(false),
+      host: z.string().default(""),
+      port: z.number().int().min(1).max(65535).default(22),
+      user: z.string().default(""),
+      /** Private key file; empty uses the default keys and the agent. */
+      identityFile: z.string().default(""),
+      /** Port sshd listens on for the reverse forward (`-R`). */
+      remotePort: z.number().int().min(1).max(65535).default(4000),
+      /** `all` binds every interface on the server (needs `GatewayPorts yes`); `localhost` for a reverse proxy running there. */
+      remoteBind: z.enum(["all", "localhost"]).default("all"),
+      /** What the phone opens; empty means `http://<host>:<remotePort>`. */
+      publicUrl: z.string().default(""),
+    })
+    .default({}),
+});
+export type TunnelSettings = z.infer<typeof TunnelSettings>;
+
+/** `TunnelSettings` as the UI sees it: the frp secret replaced by whether it exists. */
+export const PublicTunnelSettings = TunnelSettings.extend({
+  sessionboxer: TunnelSettings.shape.sessionboxer.removeDefault().omit({ secret: true }).extend({ secretSet: z.boolean() }),
+});
+export type PublicTunnelSettings = z.infer<typeof PublicTunnelSettings>;
+
+/** Partial update of `TunnelSettings`; omitted fields keep what is stored. */
+export const TunnelSettingsUpdate = z.object({
+  cloudflare: TunnelSettings.shape.cloudflare.removeDefault().partial().optional(),
+  sessionboxer: TunnelSettings.shape.sessionboxer.removeDefault().omit({ secret: true }).partial().optional(),
+  ssh: TunnelSettings.shape.ssh.removeDefault().partial().optional(),
+});
+export type TunnelSettingsUpdate = z.infer<typeof TunnelSettingsUpdate>;
 
 // --- Web Push -------------------------------------------------------------------------------------
 // A phone that is asleep has no WebSocket; the browser's push service (RFC 8030) wakes its service
@@ -897,19 +979,17 @@ export const Settings = z.object({
    * generated at first start. Never leaves the Control Plane except through `rotate`.
    */
   accessToken: z.string().default(""),
-  /**
-   * Keep a Cloudflare quick tunnel to this Control Plane running (see `TunnelStatus`): reachable
-   * from any phone with no app or account, through Cloudflare, at a URL that changes every start.
-   */
-  quickTunnel: z.boolean().default(false),
+  /** The transports that make this Control Plane reachable from outside (see `TunnelKind`). */
+  tunnels: TunnelSettings.default({}),
   /** VAPID key pair (P-256, base64url) signing this Control Plane's Web Pushes; generated at first start. */
   vapid: z.object({ publicKey: z.string(), privateKey: z.string() }).nullable().default(null),
 });
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
+  tunnels: PublicTunnelSettings,
   claudeApi: z.object({
     baseUrl: z.string(),
     authTokenSet: z.boolean(),
@@ -936,9 +1016,10 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true }).partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true }).partial().extend({
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
+  tunnels: TunnelSettingsUpdate.optional(),
   /** Omitted secret fields keep what is stored; `""` forgets it. */
   claudeApi: z.object({ baseUrl: z.string(), authToken: z.string(), apiKey: z.string() }).partial().optional(),
   providerSecrets: z
@@ -1071,7 +1152,7 @@ export type SessionBroadcast =
    * notifies. While the Agent is busy the Control Plane holds this until `turn_ended`.
    */
   | { type: "pr_activity"; sessionId: string; sessionTitle: string; prs: PrActivity[] }
-  /** The quick tunnel came up, went down or failed (`PublicSettings.remote` changed). */
+  /** A transport came up, went down or failed (`PublicSettings.remote` changed). */
   | { type: "remote"; remote: RemoteAccess };
 
 // ---------------------------------------------------------------------------

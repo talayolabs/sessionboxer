@@ -50,6 +50,7 @@ import {
   TLS_CERT_FILE,
   TLS_KEY_FILE,
   TRUST_PROXY,
+  VERSION,
   accessToken,
   accessTokenSource,
   applySettingsUpdate,
@@ -70,15 +71,12 @@ import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
+import { log } from "./log.js";
 import { PushNotifier } from "./push.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
 import { checkTunnelName, tunnelName, tunnelServerInfo } from "./tunnel-frp.js";
 import { Tunnels } from "./tunnels.js";
-
-const log = (msg: string): void => {
-  process.stderr.write(`[control-plane ${new Date().toISOString()}] ${msg}\n`);
-};
 
 const WS_PING_MS = 25_000;
 
@@ -583,7 +581,7 @@ const server = serve(
     ...(TLS ? { createServer: createHttpsServer, serverOptions: { cert: readFileSync(TLS_CERT_FILE), key: readFileSync(TLS_KEY_FILE) } } : {}),
   },
   (info) => {
-    log(`listening on ${TLS ? "https" : "http"}://${info.address}:${info.port}${PUBLIC_URL ? ` (public URL ${PUBLIC_URL})` : ""}`);
+    log(`sessionboxer ${VERSION} listening on ${TLS ? "https" : "http"}://${info.address}:${info.port}${PUBLIC_URL ? ` (public URL ${PUBLIC_URL})` : ""}`);
     const pairing = auth.createPairing();
     log(`log in at ${PUBLIC_URL}/#${PAIR_FRAGMENT_KEY}=${pairing.code} (one use, ${Math.round(PAIRING_TTL_MS / 60_000)} min)`);
     log(

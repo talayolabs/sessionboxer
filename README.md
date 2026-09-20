@@ -32,23 +32,43 @@ Run coding agents in boxes. Each session gets its own Docker container with a fu
 
 ## Install
 
+Pick one. All of them download the Sandbox image `ghcr.io/talayolabs/sessionboxer-sandbox` (a few GB, linux/amd64 and linux/arm64) the first time the server starts; the log shows the progress. Then open the `log in at http://127.0.0.1:4000/#pair=…` link the server prints: that logs the browser in once (see [Remote access](#remote-access-phone-and-other-machines) for how the login works and how to reach it from elsewhere). By default Sessionboxer listens on localhost only.
+
+**One line** (Linux, macOS): picks npm when Node 22+ is installed, otherwise Docker Compose.
+
+```sh
+curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh
+```
+
+**npm** — the laptop case. Needs Node 22+ and Docker.
+
+```sh
+npx sessionboxer serve                 # or: npm i -g sessionboxer && sessionboxer serve
+```
+
+**Docker Compose** — the home server, VPS, Raspberry Pi or Coolify case; only Docker is needed.
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/talayolabs/sessionboxer/v0.1.0/docker-compose.yml
+docker compose up -d                   # http://127.0.0.1:4000; `docker compose logs -f` for the login link
+```
+
+The Control Plane runs from `ghcr.io/talayolabs/sessionboxer` with `/var/run/docker.sock` mounted and its data in the `sessionboxer-data` volume. Sessions become sibling containers on the same Docker host. Copy [`.env.example`](.env.example) to `.env` to change the port, listen on all interfaces, set a public URL or a fixed access token. *Copy a folder* and *Pull to folder* need the folder to be visible inside the container: uncomment the `/workspaces` bind mount in the compose file and refer to `/workspaces/<name>` in the UI. Giving a container the Docker socket is the same as giving it root on the host; it is what lets Sessionboxer create the boxes, so run it only on a machine you would give the agent's boxes anyway.
+
+**Releases**: [GitHub Releases](https://github.com/talayolabs/sessionboxer/releases) has the notes and the npm tarball for every version; the images are on GHCR ([Control Plane](https://github.com/talayolabs/sessionboxer/pkgs/container/sessionboxer), [Sandbox](https://github.com/talayolabs/sessionboxer/pkgs/container/sessionboxer-sandbox)). The Control Plane pulls the Sandbox image with its own version number, so the two always match; `SESSIONBOXER_IMAGE` overrides it.
+
+**From source** (to hack on it):
+
 ```sh
 git clone https://github.com/talayolabs/sessionboxer.git
 cd sessionboxer
 npm install
-npm run build:image     # builds the sandbox image (~3 GB, takes a few minutes the first time)
 npm run build
+npm start                              # pulls the published Sandbox image for this version…
+npm run build:image                    # …or build it here (~5 GB, a few minutes) — tagged with the same name
 ```
 
-Start it with
-
-```sh
-npm start               # http://127.0.0.1:4000
-```
-
-and open the `log in at http://127.0.0.1:4000/#pair=…` link it prints: that logs the browser in once (see [Remote access](#remote-access-phone-and-other-machines) for how the login works and how to reach it from elsewhere). By default Sessionboxer listens on localhost only.
-
-To update, `git pull` and run the three build commands again.
+To update, `git pull`, `npm run build`, `npm start`; `npm run build:image` again only when `images/sandbox` changed.
 
 ## First run: connect your agent
 
@@ -242,7 +262,7 @@ Below 800 px wide the same UI becomes a phone layout: the session list is a draw
 
 ## Command line
 
-The `sessionboxer` command talks to the running server and opens the browser on the new session. Run it as `npx sessionboxer` from the checkout, or `npm link -w @sessionboxer/cli` once to have it on your PATH.
+The `sessionboxer` command talks to the running server and opens the browser on the new session. It comes with the npm package (`npx sessionboxer …`, or on your PATH after `npm i -g sessionboxer`); from a checkout, `npm link -w @sessionboxer/cli` once.
 
 ```sh
 sessionboxer serve                                   # start the server (same as npm start)
@@ -269,7 +289,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 | Sessions and chat history | `~/.sessionboxer/db.sqlite` |
 | Session containers | `sbx-<session id>` on the `sessionboxer` Docker network, no published ports |
 | Project folder in the box | `/workspace` |
-| Sandbox image | `sessionboxer/sandbox:dev` (built locally) |
+| Sandbox image | `ghcr.io/talayolabs/sessionboxer-sandbox:<version>` (pulled, or built locally by `npm run build:image`); `SESSIONBOXER_IMAGE` overrides |
 | Snapshot images | `sessionboxer/snapshot:<session id>-<n>`; unreferenced ones are removed at startup |
 | What was last pulled into a copied folder | `~/.sessionboxer/sync/<session id>.json` |
 | Downloaded `cloudflared` / `frpc` (tunnels) | `~/.sessionboxer/bin/` |
@@ -280,7 +300,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 ## Troubleshooting
 
 - **"docker: permission denied"** when starting: add your user to the `docker` group (`sudo usermod -aG docker $USER`, then log out and in).
-- **Session goes to *error* with "sandbox image not found"**: run `npm run build:image`.
+- **Session goes to *error* with "cannot pull ghcr.io/…"**: the Sandbox image for this version is still downloading (watch the Control Plane log) or the machine cannot reach ghcr.io; `npm run build:image` builds it locally instead. **"sandbox image … not found; run `npm run build:image`"** appears only with a custom `SESSIONBOXER_IMAGE`.
 - **"method not found: _sessionboxer/…"** after updating Sessionboxer: the box still runs the previous version's internals. Stop and Resume the session; the current build is copied into the box on every start, so `npm run build:image` is only needed when the image itself changes (system packages, agent CLIs).
 - **Code pane says "openvscode-server is not installed in this Sandbox image"**: run `npm run build:image`, then Stop → Resume the session.
 - **Devin session fails right after creation**: Devin occasionally times out while loading team settings on a cold start. Sessionboxer retries a few times; if it still fails, Resume the session.
@@ -299,4 +319,6 @@ Other notes: Colima does not create `/var/run/docker.sock`, so export `DOCKER_HO
 
 ## For contributors
 
-Architecture, decisions and the milestone log are in [docs/DESIGN.md](docs/DESIGN.md), the vocabulary in [CONTEXT.md](CONTEXT.md), and the reasoning behind each decision in [docs/adr](docs/adr). Layout is npm workspaces: `apps/control-plane` (server), `apps/web` (UI), `apps/cli`, `packages/sandbox-daemon` and `packages/computer-use-mcp` (run inside the box), `packages/protocol` (shared types), `images/sandbox` (the Docker image). `npm run dev -w @sessionboxer/web` starts the UI with hot reload against a running server.
+Architecture, decisions and the milestone log are in [docs/DESIGN.md](docs/DESIGN.md), the vocabulary in [CONTEXT.md](CONTEXT.md), and the reasoning behind each decision in [docs/adr](docs/adr). Layout is npm workspaces: `apps/control-plane` (server), `apps/web` (UI), `apps/cli`, `packages/sandbox-daemon` and `packages/computer-use-mcp` (run inside the box), `packages/protocol` (shared types), `images/sandbox` (the Sandbox image), `images/control-plane` (the Control Plane image for Compose). `npm run dev -w @sessionboxer/web` starts the UI with hot reload against a running server.
+
+Releasing: bump the version in the root and every workspace `package.json` (including the `@sessionboxer/*` dependency versions) and `package-lock.json` (`npm install`), add a `## <x.y.z>` section to [CHANGELOG.md](CHANGELOG.md), commit, then `git tag v<x.y.z> && git push origin main v<x.y.z>`. The [release workflow](.github/workflows/release.yml) checks that the tag matches the version, typechecks and builds, assembles the npm package (`npm run pack` → `build/sessionboxer-<x.y.z>.tgz`), builds both images for amd64 and arm64 on native runners and pushes them to GHCR as `<x.y.z>` and `latest`, publishes to npm when the `NPM_TOKEN` repository secret is set (otherwise `npm publish build/sessionboxer-*.tgz --access public` by hand), and creates the GitHub Release from the changelog section.

@@ -5,6 +5,10 @@
 // them every download in the build fails with "self-signed certificate in certificate chain"
 // on a machine whose proxy re-signs TLS. Extra arguments are passed to `docker build`.
 //
+// The image gets the name the Control Plane of this checkout looks for,
+// ghcr.io/talayolabs/sessionboxer-sandbox:<version> (so it is used instead of the published one;
+// `SESSIONBOXER_IMAGE` overrides both), plus sessionboxer/sandbox:dev.
+//
 // Plain Node (no dependencies) so it runs before anything is compiled; the detection mirrors
 // apps/control-plane/src/ca-certs.ts.
 import { spawnSync } from "node:child_process";
@@ -86,10 +90,16 @@ if (certs.length > 0) {
   console.log("build:image: no CA certificates beyond the public ones on this machine");
 }
 
+const version = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+const tag = process.env.SESSIONBOXER_IMAGE?.trim() || `ghcr.io/talayolabs/sessionboxer-sandbox:${version}`;
+console.log(`build:image: building ${tag}`);
+
 const args = [
   "build",
   "-f",
   "images/sandbox/Dockerfile",
+  "-t",
+  tag,
   "-t",
   "sessionboxer/sandbox:dev",
   "--secret",

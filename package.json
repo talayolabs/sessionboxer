@@ -1,7 +1,7 @@
 {
   "name": "sessionboxer",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Local session manager for coding agents: one Docker sandbox with a desktop per session.",
   "workspaces": [
     "apps/*",
@@ -14,12 +14,15 @@
     "clean": "tsc -b --clean",
     "build:image": "node scripts/build-image.mjs",
     "start": "node apps/control-plane/dist/index.js",
-    "spike:acp": "node scripts/spike-acp.mjs"
+    "spike:acp": "node scripts/spike-acp.mjs",
+    "pack": "node scripts/pack.mjs --tarball",
+    "build:control-plane-image": "npm run pack && docker build -f images/control-plane/Dockerfile -t sessionboxer/control-plane:dev build"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
-  }
+  },
+  "license": "MIT"
 }

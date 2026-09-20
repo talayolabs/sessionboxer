@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
+import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { pack as packStream } from "tar-stream";
 import { DAEMON_PORT, NOVNC_PORT, type DockerMode } from "@sessionboxer/protocol";
 import { SANDBOX_CA_FILE } from "./ca-certs.js";
-import { SANDBOX_HOST_ALIAS, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
+import { ROOT_DIR, SANDBOX_HOST_ALIAS, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
+import { log } from "./log.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
 export const LABEL_SNAPSHOT = "sessionboxer.snapshot";
@@ -22,7 +23,6 @@ const LOOPBACK = "127.0.0.1";
  * that carries older copies. Their npm dependencies still come from the image (`npm run
  * build:image` when the Dockerfile or those dependencies change).
  */
-const REPO_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 interface SyncEntry {
   /** Directory in this checkout whose contents go into the Sandbox. */
   host: string;
@@ -37,9 +37,9 @@ interface SyncEntry {
   optional?: boolean;
 }
 const SANDBOX_SYNC: SyncEntry[] = [
-  { host: join(REPO_DIR, "packages/protocol/dist"), marker: "index.js", dest: "/opt/sessionboxer/protocol", name: "dist" },
+  { host: join(ROOT_DIR, "packages/protocol/dist"), marker: "index.js", dest: "/opt/sessionboxer/protocol", name: "dist" },
   {
-    host: join(REPO_DIR, "packages/sandbox-daemon/dist"),
+    host: join(ROOT_DIR, "packages/sandbox-daemon/dist"),
     marker: "index.js",
     dest: "/opt/sessionboxer/sandbox-daemon",
     name: "dist",
@@ -47,7 +47,7 @@ const SANDBOX_SYNC: SyncEntry[] = [
     executable: ["index.js"],
   },
   {
-    host: join(REPO_DIR, "images/sandbox/vscode-sessionboxer"),
+    host: join(ROOT_DIR, "images/sandbox/vscode-sessionboxer"),
     marker: "package.json",
     dest: "/opt/openvscode-server/extensions",
     name: "sessionboxer",
@@ -114,20 +114,86 @@ export class SandboxDocker {
 
   async ensureNetwork(): Promise<void> {
     const existing = await this.docker.listNetworks({ filters: { name: [SANDBOX_NETWORK] } });
-    if (existing.some((n) => n.Name === SANDBOX_NETWORK)) return;
-    await this.docker.createNetwork({
-      Name: SANDBOX_NETWORK,
-      Driver: "bridge",
-      Labels: { "sessionboxer.network": "true" },
-    });
+    if (!existing.some((n) => n.Name === SANDBOX_NETWORK)) {
+      await this.docker.createNetwork({
+        Name: SANDBOX_NETWORK,
+        Driver: "bridge",
+        Labels: { "sessionboxer.network": "true" },
+      });
+    }
+    await this.joinNetworkFromContainer();
   }
 
+  /**
+   * When the Control Plane itself runs in a container (docker compose) it dials Sandboxes by
+   * address on the Sandbox network, so it must be attached to that network too. The container
+   * is found by its hostname (Docker's default: the container id).
+   */
+  private async joinNetworkFromContainer(): Promise<void> {
+    if (!existsSync("/.dockerenv") && process.env.SESSIONBOXER_IN_CONTAINER !== "1") return;
+    let self: Docker.ContainerInspectInfo;
+    try {
+      self = await this.docker.getContainer(hostname()).inspect();
+    } catch {
+      log(`running in a container but cannot find it as ${hostname()}; Sandboxes must be reachable on ${SANDBOX_NETWORK} some other way`);
+      return;
+    }
+    if (Object.hasOwn(self.NetworkSettings.Networks ?? {}, SANDBOX_NETWORK)) return;
+    await this.docker.getNetwork(SANDBOX_NETWORK).connect({ Container: self.Id });
+    log(`joined the ${SANDBOX_NETWORK} network as ${self.Name.replace(/^\//, "")}`);
+  }
+
+  private pulling: Promise<void> | null = null;
+
+  /** The Sandbox image is present, pulling it once when it is not (a pull in flight is awaited). */
   async ensureImage(): Promise<void> {
     try {
       await this.docker.getImage(SANDBOX_IMAGE).inspect();
+      return;
     } catch {
+      /* not local */
+    }
+    if (!SANDBOX_IMAGE.includes("/") || SANDBOX_IMAGE.endsWith(":dev")) {
       throw new Error(`sandbox image ${SANDBOX_IMAGE} not found; run \`npm run build:image\``);
     }
+    this.pulling ??= this.pull().finally(() => {
+      this.pulling = null;
+    });
+    await this.pulling;
+  }
+
+  private async pull(): Promise<void> {
+    log(`pulling ${SANDBOX_IMAGE} (a few GB; once per version, or \`npm run build:image\` builds it here)`);
+    const started = Date.now();
+    let stream: NodeJS.ReadableStream;
+    try {
+      stream = (await this.docker.pull(SANDBOX_IMAGE)) as NodeJS.ReadableStream;
+    } catch (e) {
+      throw new Error(`cannot pull ${SANDBOX_IMAGE}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const layers = new Map<string, { current: number; total: number }>();
+    let lastReport = 0;
+    await new Promise<void>((resolve, reject) => {
+      this.docker.modem.followProgress(
+        stream,
+        (err) => (err ? reject(new Error(`cannot pull ${SANDBOX_IMAGE}: ${err.message}`)) : resolve()),
+        (event: { id?: string; status?: string; progressDetail?: { current?: number; total?: number } }) => {
+          if (event.id && event.progressDetail?.total) {
+            layers.set(event.id, { current: event.progressDetail.current ?? 0, total: event.progressDetail.total });
+          }
+          if (Date.now() - lastReport < 15_000) return;
+          lastReport = Date.now();
+          let current = 0;
+          let total = 0;
+          for (const l of layers.values()) {
+            current += Math.min(l.current, l.total);
+            total += l.total;
+          }
+          if (total > 0) log(`pulling ${SANDBOX_IMAGE}: ${(current / 1024 / 1024).toFixed(0)} / ${(total / 1024 / 1024).toFixed(0)} MB`);
+        },
+      );
+    });
+    log(`pulled ${SANDBOX_IMAGE} in ${Math.round((Date.now() - started) / 1000)} s`);
   }
 
   /** Whether the host Docker daemon has the Sysbox runtime registered (ADR-0008). */

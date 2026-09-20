@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
   type BoxCredential,
@@ -28,13 +29,34 @@ import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
 import { HttpError } from "./http-error.js";
 import { generateVapidKeys } from "./web-push.js";
 
+/**
+ * Root of this installation: the checkout, or the installed `sessionboxer` npm package, which mirrors
+ * its layout (apps/control-plane/dist → ../../..). The Sandbox Daemon, protocol and web UI are found
+ * relative to it.
+ */
+export const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+export const VERSION = ((): string => {
+  try {
+    const parsed = JSON.parse(readFileSync(join(ROOT_DIR, "package.json"), "utf8")) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 export const DATA_DIR = process.env.SESSIONBOXER_HOME ?? join(homedir(), ".sessionboxer");
 export const CONFIG_FILE = join(DATA_DIR, "config.json");
 export const DB_FILE = join(DATA_DIR, "db.sqlite");
 
 export const HOST = process.env.SESSIONBOXER_HOST ?? "127.0.0.1";
 export const PORT = Number(process.env.SESSIONBOXER_PORT ?? 4000);
-export const SANDBOX_IMAGE = process.env.SESSIONBOXER_IMAGE ?? "sessionboxer/sandbox:dev";
+/**
+ * The Sandbox image, pinned to this version: published by the release workflow for amd64 and
+ * arm64, pulled on first use when it is not on this machine; `npm run build:image` builds it
+ * locally under the same name. `SESSIONBOXER_IMAGE` overrides it.
+ */
+export const SANDBOX_IMAGE_REPO = "ghcr.io/talayolabs/sessionboxer-sandbox";
+export const SANDBOX_IMAGE = process.env.SESSIONBOXER_IMAGE?.trim() || `${SANDBOX_IMAGE_REPO}:${VERSION}`;
 export const SANDBOX_NETWORK = process.env.SESSIONBOXER_NETWORK ?? "sessionboxer";
 /** Name a Sandbox resolves to the host machine (`--add-host ...:host-gateway`), for MCP servers running on it. */
 export const SANDBOX_HOST_ALIAS = "host.docker.internal";

@@ -1,0 +1,42 @@
+# Sessionboxer's Control Plane as a container. Sandboxes are created on this machine's Docker
+# daemon through the mounted socket, as siblings of this container.
+#
+#   cp .env.example .env      # optional
+#   docker compose up -d
+#   docker compose logs -f control-plane   # prints the one-time login link
+#
+# The Docker socket makes this container root-equivalent on the host — the same power the
+# Control Plane has when it runs on the host directly, but keep it off machines you share.
+# Upgrade: change SESSIONBOXER_VERSION (or the tag below), `docker compose pull && docker compose up -d`;
+# the matching Sandbox image is pulled on first use.
+services:
+  control-plane:
+    image: ghcr.io/talayolabs/sessionboxer:${SESSIONBOXER_VERSION:-0.1.0}
+    container_name: sessionboxer
+    restart: unless-stopped
+    ports:
+      - "${SESSIONBOXER_BIND:-127.0.0.1}:${SESSIONBOXER_PORT:-4000}:${SESSIONBOXER_PORT:-4000}"
+    environment:
+      # Same port inside and out so the printed login link is right.
+      SESSIONBOXER_PORT: ${SESSIONBOXER_PORT:-4000}
+      # Address shown in pairing links / used for GitHub OAuth callbacks (behind a reverse proxy).
+      SESSIONBOXER_PUBLIC_URL: ${SESSIONBOXER_PUBLIC_URL:-}
+      # Believe X-Forwarded-* headers — only behind a reverse proxy you run.
+      SESSIONBOXER_TRUST_PROXY: ${SESSIONBOXER_TRUST_PROXY:-0}
+      # Fixed access token instead of the generated one (`docker compose exec control-plane sessionboxer token`).
+      SESSIONBOXER_ACCESS_TOKEN: ${SESSIONBOXER_ACCESS_TOKEN:-}
+      # Sandbox image; defaults to ghcr.io/talayolabs/sessionboxer-sandbox:<this version>.
+      SESSIONBOXER_IMAGE: ${SESSIONBOXER_IMAGE:-}
+      # Agent credentials can also be pasted in Settings; the environment wins when set.
+      # CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # WINDSURF_API_KEY: ${WINDSURF_API_KEY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # config.json (access token, secrets), the database, tunnel binaries.
+      - sessionboxer-data:/data
+      # Host folders the "Copy a folder" workspace source can read and "Pull to folder" can write:
+      # mount them here and refer to them as /workspaces/<name> in the UI.
+      # - ${HOME}/code:/workspaces
+
+volumes:
+  sessionboxer-data:

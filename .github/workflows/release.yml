@@ -1,0 +1,256 @@
+# Release on a version tag (`git tag v0.1.0 && git push origin v0.1.0`):
+#   1. typecheck + build + assemble the npm package (build/sessionboxer-<version>.tgz)
+#   2. Sandbox image        ghcr.io/talayolabs/sessionboxer-sandbox:<version>  (amd64 + arm64, native runners)
+#   3. Control Plane image  ghcr.io/talayolabs/sessionboxer:<version>          (amd64 + arm64)
+#   4. npm publish sessionboxer@<version>  — only when the NPM_TOKEN repository secret exists
+#   5. GitHub Release with the CHANGELOG section for the version and the tarball attached
+# The tag must match package.json's version. Images are pushed by digest per architecture and
+# joined into one manifest list afterwards; nothing is published if a build step fails.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  SANDBOX_IMAGE: ghcr.io/talayolabs/sessionboxer-sandbox
+  CONTROL_PLANE_IMAGE: ghcr.io/talayolabs/sessionboxer
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Tag matches package.json
+        id: version
+        run: |
+          set -eu
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $version" >&2; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run pack
+      - name: Install the package outside the repo and run its CLI
+        run: |
+          set -eu
+          tgz="$(ls "$GITHUB_WORKSPACE"/build/sessionboxer-*.tgz)"
+          mkdir -p "$RUNNER_TEMP/pkg" && cd "$RUNNER_TEMP/pkg"
+          npm init -y >/dev/null
+          npm install --omit=dev "$tgz"
+          test "$(./node_modules/.bin/sessionboxer version)" = "sessionboxer ${{ steps.version.outputs.version }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-package
+          path: build/sessionboxer-*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  sandbox-image:
+    needs: package
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Free disk space for a 5 GB image
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: images/sandbox/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.package.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          outputs: type=image,name=${{ env.SANDBOX_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Export digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sandbox-digest-${{ matrix.runner }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  control-plane-image:
+    needs: package
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: npm-package
+          path: build
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: build
+          file: images/control-plane/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.package.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          outputs: type=image,name=${{ env.CONTROL_PLANE_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Export digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: control-plane-digest-${{ matrix.runner }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifests:
+    needs: [package, sandbox-image, control-plane-image]
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: sandbox-digest-*
+          path: ${{ runner.temp }}/sandbox
+          merge-multiple: true
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: control-plane-digest-*
+          path: ${{ runner.temp }}/control-plane
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the multi-arch manifest lists (<version> and latest)
+        run: |
+          set -eu
+          version="${{ needs.package.outputs.version }}"
+          tag_manifest() {
+            image="$1"; dir="$2"; set --
+            for digest in "$dir"/*; do set -- "$@" "$image@sha256:$(basename "$digest")"; done
+            [ $# -eq 2 ] || { echo "expected 2 digests for $image, got $#" >&2; exit 1; }
+            docker buildx imagetools create -t "$image:$version" -t "$image:latest" "$@"
+            docker buildx imagetools inspect "$image:$version"
+          }
+          tag_manifest "$SANDBOX_IMAGE" "$RUNNER_TEMP/sandbox"
+          tag_manifest "$CONTROL_PLANE_IMAGE" "$RUNNER_TEMP/control-plane"
+
+  npm-publish:
+    needs: [package, manifests]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: npm-package
+          path: build
+      - name: npm publish (skipped without the NPM_TOKEN secret)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -eu
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::notice::NPM_TOKEN is not set; publish build/sessionboxer-*.tgz by hand with 'npm publish --access public'"
+            exit 0
+          fi
+          npm publish build/sessionboxer-*.tgz --access public --provenance
+
+  github-release:
+    needs: [package, manifests, npm-publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: npm-package
+          path: build
+      - name: Release notes from CHANGELOG.md
+        run: |
+          set -eu
+          version="${{ needs.package.outputs.version }}"
+          awk -v v="$version" '
+            /^## / { if (found) exit; found = index($0, "## " v) == 1; next }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "CHANGELOG.md has no '## $version' section" >&2; exit 1
+          fi
+          {
+            cat "$RUNNER_TEMP/notes.md"
+            echo
+            echo "Images: \`$SANDBOX_IMAGE:$version\`, \`$CONTROL_PLANE_IMAGE:$version\` (linux/amd64, linux/arm64)."
+            echo "npm: \`npx sessionboxer@$version serve\`. Full instructions: https://github.com/${{ github.repository }}#install"
+          } > "$RUNNER_TEMP/release.md"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" build/sessionboxer-*.tgz \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Sessionboxer ${{ needs.package.outputs.version }}" \
+            --notes-file "$RUNNER_TEMP/release.md" \
+            --verify-tag

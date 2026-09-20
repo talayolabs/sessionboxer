@@ -1,6 +1,6 @@
 {
   "name": "@sessionboxer/computer-use-mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "stdio MCP server that drives an X11 desktop with xdotool, mirroring Anthropic's computer toolset.",

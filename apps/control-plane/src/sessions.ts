@@ -381,6 +381,7 @@ export class SessionManager {
   async boot(): Promise<void> {
     this.log(`sandbox reach: ${await this.docker.detectReach()}`);
     await this.docker.ensureNetwork();
+    void this.docker.ensureImage().catch((e: unknown) => this.log(e instanceof Error ? e.message : String(e)));
     await this.docker.watchDeaths(
       (containerId, sessionId, exitCode) => {
         if (this.stopping.has(sessionId)) return;

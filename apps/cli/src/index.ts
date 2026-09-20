@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
   DOCKER_MODE_LABELS,
@@ -44,6 +44,7 @@ Usage:
   sessionboxer stop|resume|rm <id>         Manage a Session
   sessionboxer token                       Print the access token of the Control Plane on this machine
   sessionboxer pair                        Print a one-time login link for another browser or phone
+  sessionboxer version                     Print the version
 
 Options for new:
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
@@ -80,6 +81,11 @@ async function main(argv: string[]): Promise<void> {
     case "-h":
       process.stdout.write(USAGE);
       return;
+    case "version":
+    case "--version":
+    case "-v":
+      process.stdout.write(`sessionboxer ${version()}\n`);
+      return;
     case "serve":
       return serve(rest);
     case "new":
@@ -113,9 +119,16 @@ async function main(argv: string[]): Promise<void> {
   }
 }
 
+/** apps/cli/dist → the root package.json, in the checkout and in the published package alike. */
+function version(): string {
+  const parsed = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown };
+  return typeof parsed.version === "string" ? parsed.version : "unknown";
+}
+
 function serve(args: string[]): Promise<void> {
-  const require = createRequire(import.meta.url);
-  const entry = require.resolve("@sessionboxer/control-plane/dist/index.js");
+  // apps/cli/dist → apps/control-plane/dist: the same relative layout in the checkout and in the
+  // published `sessionboxer` package, so no node_modules lookup is needed.
+  const entry = fileURLToPath(new URL("../../control-plane/dist/index.js", import.meta.url));
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [entry, ...args], { stdio: "inherit" });
     child.on("error", reject);

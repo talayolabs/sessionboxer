@@ -1165,7 +1165,7 @@ function SessionView({
             onModeChange={setComposerMode}
             zen={zen}
             onZenChange={setZen}
-            heightFrac={composerHeight}
+            heightFrac={mobile ? null : composerHeight}
             onHeightFracChange={setComposerHeight}
             chatRef={chatRef}
             onTranslate={translateToEnglish}

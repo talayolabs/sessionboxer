@@ -713,6 +713,8 @@ export const AuthDevice = z.object({
   lastIp: z.string(),
   /** Whether this is the device making the request. */
   current: z.boolean(),
+  /** Whether this browser registered for Web Push notifications (see `PushStatus`). */
+  push: z.boolean(),
 });
 export type AuthDevice = z.infer<typeof AuthDevice>;
 
@@ -785,6 +787,57 @@ export function pairingOrigin(remote: RemoteAccess): string {
   return remote.tunnel.state === "up" && remote.tunnel.url ? remote.tunnel.url : remote.publicUrl;
 }
 
+// --- Web Push -------------------------------------------------------------------------------------
+// A phone that is asleep has no WebSocket; the browser's push service (RFC 8030) wakes its service
+// worker instead. The Control Plane signs each push with its VAPID key (RFC 8292) and encrypts the
+// payload to the subscription's keys (RFC 8291), so nothing readable passes the push service.
+
+/** What `PushManager.subscribe()` gave the browser; the keys are stored for encryption and never returned. */
+export const PushSubscribeRequest = z.object({
+  endpoint: z.string().url().max(2048),
+  expirationTime: z.number().nullable().optional(),
+  keys: z.object({ p256dh: z.string().min(1).max(256), auth: z.string().min(1).max(64) }),
+});
+export type PushSubscribeRequest = z.infer<typeof PushSubscribeRequest>;
+
+/** Push state for the requesting device. `publicKey` is the VAPID public key, base64url, for `applicationServerKey`. */
+export const PushStatus = z.object({
+  publicKey: z.string(),
+  subscribed: z.boolean(),
+});
+export type PushStatus = z.infer<typeof PushStatus>;
+
+/** The (encrypted) body of a push: what the service worker shows and where a tap lands (a hash route). */
+export const PushMessage = z.object({
+  title: z.string(),
+  body: z.string(),
+  /** Notifications with the same tag replace each other. */
+  tag: z.string(),
+  /** Hash route to open, e.g. `#/sessions/<id>/pr/<prId>`. */
+  url: z.string(),
+});
+export type PushMessage = z.infer<typeof PushMessage>;
+
+/**
+ * What the UI tells the Control Plane over its WebSocket. `visibility` says whether the page is on
+ * screen: a device with a visible page gets no push (it sees the change live), every other device does.
+ */
+export const UiClientMessage = z.discriminatedUnion("type", [z.object({ type: z.literal("visibility"), visible: z.boolean() })]);
+export type UiClientMessage = z.infer<typeof UiClientMessage>;
+
+/** Where a notification about a Session (or one of its PRs) should land. */
+export function sessionRoute(sessionId: string, pane?: "prs" | `pr:${string}`): string {
+  const base = `#/sessions/${sessionId}`;
+  if (!pane) return base;
+  return pane === "prs" ? `${base}/prs` : `${base}/pr/${pane.slice(3)}`;
+}
+
+/** One line about new activity on a PR ("3 new items from @a, @b (changes requested)"). */
+export function prActivityLine(p: PrActivity): string {
+  const who = p.authors.length <= 2 ? p.authors.map((a) => `@${a}`).join(", ") : `@${p.authors[0]} and ${p.authors.length - 1} others`;
+  return `${p.count} new ${p.count === 1 ? "item" : "items"} from ${who}${p.changesRequested ? " (changes requested)" : ""}`;
+}
+
 export const Settings = z.object({
   gitUserName: z.string().default(""),
   gitUserEmail: z.string().default(""),
@@ -849,11 +902,13 @@ export const Settings = z.object({
    * from any phone with no app or account, through Cloudflare, at a URL that changes every start.
    */
   quickTunnel: z.boolean().default(false),
+  /** VAPID key pair (P-256, base64url) signing this Control Plane's Web Pushes; generated at first start. */
+  vapid: z.object({ publicKey: z.string(), privateKey: z.string() }).nullable().default(null),
 });
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
   claudeApi: z.object({
     baseUrl: z.string(),
@@ -881,7 +936,7 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true }).partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true }).partial().extend({
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
   /** Omitted secret fields keep what is stored; `""` forgets it. */

@@ -25,6 +25,7 @@ import {
 } from "@sessionboxer/protocol";
 import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
 import { HttpError } from "./http-error.js";
+import { generateVapidKeys } from "./web-push.js";
 
 export const DATA_DIR = process.env.SESSIONBOXER_HOME ?? join(homedir(), ".sessionboxer");
 export const CONFIG_FILE = join(DATA_DIR, "config.json");
@@ -72,6 +73,14 @@ export function newAccessToken(): string {
 export function ensureAccessToken(settings: Settings): Settings {
   if (accessToken(settings) !== "") return settings;
   const next = { ...settings, accessToken: newAccessToken() };
+  saveSettings(next);
+  return next;
+}
+
+/** Generates and stores the VAPID key pair at first start; a new pair would orphan every push subscription. */
+export function ensureVapidKeys(settings: Settings): Settings {
+  if (settings.vapid) return settings;
+  const next = { ...settings, vapid: generateVapidKeys() };
   saveSettings(next);
   return next;
 }
@@ -145,7 +154,7 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
 }
 
 export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">, tunnel: TunnelStatus): PublicSettings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, ...rest } = settings;
+  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, ...rest } = settings;
   const base = claudeBaseUrl(settings);
   return {
     ...rest,

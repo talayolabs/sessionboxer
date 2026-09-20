@@ -129,13 +129,16 @@ function Transport({
 function Menu({ label, disabled, items }: { label: string; disabled?: boolean; items: { key: string; title: string; detail: ReactNode; onPick: () => void }[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      trigger.current?.focus();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -146,7 +149,7 @@ function Menu({ label, disabled, items }: { label: string; disabled?: boolean; i
   }, [open]);
   return (
     <div className="menu-anchor" ref={ref}>
-      <button type="button" disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" ref={trigger} disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {label} ▾
       </button>
       {open && (
@@ -159,6 +162,7 @@ function Menu({ label, disabled, items }: { label: string; disabled?: boolean; i
               className="menu-item"
               onClick={() => {
                 setOpen(false);
+                trigger.current?.focus();
                 it.onPick();
               }}
             >

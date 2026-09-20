@@ -63,7 +63,7 @@ import {
   toPublicSettings,
 } from "./config.js";
 import { Auth, type AuthEnv } from "./auth.js";
-import { trustedCaBundle } from "./ca-certs.js";
+import { applyTrustedCas, trustedCaBundle } from "./ca-certs.js";
 import { bridgeCodeSocket, codePrefix, codeTarget, forwardedHeaders, proxyCodeRequest } from "./code-proxy.js";
 import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
@@ -86,6 +86,11 @@ const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
 let settings = ensureTunnelSecret(ensureVapidKeys(ensureAccessToken(loadSettings())));
+{
+  const added = applyTrustedCas(settings);
+  if (added > 0) log(`trusting ${added} CA certificate${added === 1 ? "" : "s"} from this machine beyond the public ones`);
+  if (added < 0) log(`Node ${process.version} cannot add this machine's CAs to its TLS clients; use NODE_EXTRA_CA_CERTS or Node >= 22.20`);
+}
 const db = new Db(DB_FILE);
 const docker = new SandboxDocker();
 const push = new PushNotifier(
@@ -210,6 +215,7 @@ api.put("/settings", async (c) => {
   const update = UpdateSettingsRequest.parse(await c.req.json());
   settings = applySettingsUpdate(settings, update);
   saveSettings(settings);
+  if (update.extraCaCerts !== undefined || update.trustHostCaCerts !== undefined) applyTrustedCas(settings);
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();

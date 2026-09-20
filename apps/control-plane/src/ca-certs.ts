@@ -83,6 +83,20 @@ export function trustedCaBundle(settings: Settings): string {
   return `${tls.rootCertificates.map((pem) => pem.trim()).join("\n")}\n${sandboxCaBundle(settings)}`;
 }
 
+/**
+ * Makes the Control Plane's own TLS clients (`fetch` for downloads and the tunnel server's API,
+ * `tls.connect`) trust the same bundle: Node only uses its Mozilla list by default, so behind a
+ * re-signing proxy (Cloudflare WARP, a corporate gateway) every download fails with
+ * SELF_SIGNED_CERT_IN_CHAIN although the OS trusts the proxy's root. Returns how many CAs were
+ * added beyond the public ones; -1 when this Node cannot change its default CAs (< 22.20).
+ */
+export function applyTrustedCas(settings: Settings): number {
+  if (typeof tls.setDefaultCACertificates !== "function") return -1;
+  const extra = sandboxCaBundle(settings).match(PEM_BLOCK) ?? [];
+  tls.setDefaultCACertificates([...tls.getCACertificates("bundled"), ...tls.getCACertificates("extra"), ...extra]);
+  return extra.length;
+}
+
 export function countCerts(pem: string): number {
   return pem.match(PEM_BLOCK)?.length ?? 0;
 }

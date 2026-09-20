@@ -6,7 +6,7 @@ import { join } from "node:path";
 import tls from "node:tls";
 import { TUNNEL_NAME_RE, TunnelNameCheck, TunnelServerInfo, type TunnelSettings, type TunnelStatus } from "@sessionboxer/protocol";
 import { DATA_DIR } from "./config.js";
-import { BIN_DIR, download, findBinary, probeVersion, SupervisedTunnel, untarFile, type Binary } from "./tunnel-base.js";
+import { BIN_DIR, download, fetchOrExplain, findBinary, probeVersion, SupervisedTunnel, untarFile, type Binary } from "./tunnel-base.js";
 
 /**
  * frp release downloaded when the machine has no `frpc`. Pinned with the SHA-256 of each asset we
@@ -99,7 +99,7 @@ function serverUrl(server: string): string {
 }
 
 async function fetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, { headers: { accept: "application/json", "user-agent": "sessionboxer" }, signal: AbortSignal.timeout(INFO_TIMEOUT_MS) });
+  const res = await fetchOrExplain(url, { headers: { accept: "application/json", "user-agent": "sessionboxer" }, signal: AbortSignal.timeout(INFO_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`${url} answered ${res.status}`);
   return res.json();
 }

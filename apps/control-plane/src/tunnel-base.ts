@@ -35,8 +35,19 @@ export async function findBinary(name: string, version: (path: string) => Promis
   return null;
 }
 
+/** `fetch` whose failure names the URL and the underlying error (`fetch failed` alone says neither). */
+export async function fetchOrExplain(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    const cause = e instanceof Error && e.cause instanceof Error ? e.cause : e instanceof Error ? e : new Error(String(e));
+    const code = (cause as NodeJS.ErrnoException).code;
+    throw new Error(`cannot fetch ${url}: ${cause.message}${code && !cause.message.includes(code) ? ` (${code})` : ""}`);
+  }
+}
+
 export async function download(url: string): Promise<Buffer> {
-  const res = await fetch(url, { redirect: "follow", headers: { "user-agent": "sessionboxer" } });
+  const res = await fetchOrExplain(url, { redirect: "follow", headers: { "user-agent": "sessionboxer" } });
   if (!res.ok) throw new Error(`download failed (${res.status}) for ${url}`);
   return Buffer.from(await res.arrayBuffer());
 }

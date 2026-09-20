@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { arch, hostname, platform } from "node:os";
 import { join } from "node:path";
+import tls from "node:tls";
 import { TUNNEL_NAME_RE, TunnelNameCheck, TunnelServerInfo, type TunnelSettings, type TunnelStatus } from "@sessionboxer/protocol";
 import { DATA_DIR } from "./config.js";
 import { BIN_DIR, download, findBinary, probeVersion, SupervisedTunnel, untarFile, type Binary } from "./tunnel-base.js";
@@ -22,8 +23,11 @@ const PINNED_SHA256: Record<string, string> = {
 const RELEASES = "https://github.com/fatedier/frp/releases/download";
 /** Where the generated frpc configuration (holds the secret) is written; 0600. */
 const FRPC_CONFIG = join(DATA_DIR, "frpc.toml");
-/** How long the server has to answer `/api/v1/info`. */
+/** CA bundle frpc verifies the server's certificate against (`transport.tls.trustedCaFile`); not secret. */
+const FRPC_CA_FILE = join(DATA_DIR, "tunnel-ca.pem");
+/** How long the server has to answer `/api/v1/info`, and to complete the TLS handshake. */
 const INFO_TIMEOUT_MS = 10_000;
+const NETWORK_ERRORS = new Set(["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"]);
 
 export type Frpc = Binary;
 export type FrpSettings = TunnelSettings["sessionboxer"];
@@ -118,10 +122,33 @@ function tomlString(s: string): string {
 }
 
 /**
+ * A TLS handshake with frps, verified against `ca`, before frpc gets to send the secret. frpc
+ * verifies too (`trustedCaFile`), but reports a refused certificate only as "session shutdown".
+ */
+function verifyServerCertificate(host: string, port: number, ca: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = tls.connect({ host, port, servername: host, ca, timeout: INFO_TIMEOUT_MS }, () => {
+      socket.destroy();
+      resolve();
+    });
+    socket.on("timeout", () => socket.destroy(Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })));
+    socket.on("error", (e: NodeJS.ErrnoException) => {
+      reject(
+        NETWORK_ERRORS.has(e.code ?? "")
+          ? new Error(`cannot reach ${host}:${port}: ${e.message}`)
+          : new Error(`${host}:${port} presented a certificate this machine does not trust (${e.message}); the tunnel secret was not sent`),
+      );
+    });
+  });
+}
+
+/**
  * Runs `frpc` against a Sessionboxer tunnel server while enabled: the laptop dials out to frps
  * (port from `/api/v1/info`), presents its name and secret (the server's registry binds the name to
  * the secret at first login and refuses other secrets afterwards), and exposes the Control Plane as
- * `https://<name>.<domain>`. TLS ends at the server, which forwards `X-Forwarded-For/Proto`; requests
+ * `https://<name>.<domain>`. The hop to frps is TLS with the server's certificate verified against
+ * the CAs this machine trusts (a handshake here first, so a bad certificate is reported as such and
+ * the secret never leaves). TLS ends at the server, which forwards `X-Forwarded-For/Proto`; requests
  * arrive here from 127.0.0.1 with that hostname as `Host`. frpc reconnects by itself; only its exit,
  * or a changed configuration, restarts it.
  */
@@ -132,6 +159,7 @@ export class FrpTunnel extends SupervisedTunnel {
     /** The Control Plane's own listener (`http://127.0.0.1:4000`); frp's `http` proxy needs plain HTTP. */
     private readonly origin: string,
     settings: FrpSettings,
+    private readonly caBundle: () => string,
     onChange: (status: TunnelStatus) => void,
     log: (msg: string) => void,
   ) {
@@ -174,6 +202,18 @@ export class FrpTunnel extends SupervisedTunnel {
     }
     if (!this.enabled || this.child) return;
     this.update({ version: bin.version });
+    mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+    if (info.frps.tls) {
+      const ca = this.caBundle();
+      try {
+        await verifyServerCertificate(info.frps.host, info.frps.port, ca);
+      } catch (e) {
+        this.failed(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      if (!this.enabled || this.child) return;
+      writeFileSync(FRPC_CA_FILE, ca);
+    }
     const url = `https://${name}.${info.domain}`;
     const config = [
       `serverAddr = ${tomlString(info.frps.host)}`,
@@ -184,8 +224,11 @@ export class FrpTunnel extends SupervisedTunnel {
       `loginFailExit = false`,
       `log.disablePrintColor = true`,
       `transport.tls.enable = ${info.frps.tls}`,
-      // Plain TLS with the server's name as SNI, so the server can put frps behind its 443 next to HTTPS.
-      ...(info.frps.tls ? [`transport.tls.serverName = ${tomlString(info.frps.host)}`, `transport.tls.disableCustomTLSFirstByte = true`] : []),
+      // Plain TLS with the server's name as SNI, so the server can put frps behind its 443 next to HTTPS;
+      // the certificate is verified against what this machine trusts (without trustedCaFile frpc verifies nothing).
+      ...(info.frps.tls
+        ? [`transport.tls.serverName = ${tomlString(info.frps.host)}`, `transport.tls.trustedCaFile = ${tomlString(FRPC_CA_FILE)}`, `transport.tls.disableCustomTLSFirstByte = true`]
+        : []),
       `transport.poolCount = 4`,
       ...(info.frps.token ? [`auth.token = ${tomlString(info.frps.token)}`] : []),
       ``,
@@ -197,7 +240,6 @@ export class FrpTunnel extends SupervisedTunnel {
       `subdomain = ${tomlString(name)}`,
       ``,
     ].join("\n");
-    mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(FRPC_CONFIG, config, { mode: 0o600 });
     chmodSync(FRPC_CONFIG, 0o600);
     const child = spawn(bin.path, ["-c", FRPC_CONFIG], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1" } });

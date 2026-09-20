@@ -63,6 +63,7 @@ import {
   toPublicSettings,
 } from "./config.js";
 import { Auth, type AuthEnv } from "./auth.js";
+import { trustedCaBundle } from "./ca-certs.js";
 import { bridgeCodeSocket, codePrefix, codeTarget, forwardedHeaders, proxyCodeRequest } from "./code-proxy.js";
 import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
@@ -99,6 +100,7 @@ const sessions = new SessionManager(db, docker, () => settings, log, (msg) => pu
 const tunnels = new Tunnels(
   LOCAL_ORIGIN,
   settings.tunnels,
+  () => trustedCaBundle(settings),
   (_kind, status, all) => {
     sessions.notify({ type: "remote", remote: remoteAccess(all) });
     if (status.state === "up") log(`log in from another device at ${status.url}/#${PAIR_FRAGMENT_KEY}=${auth.createPairing().code} (one use, ${Math.round(PAIRING_TTL_MS / 60_000)} min)`);

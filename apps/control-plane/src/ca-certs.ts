@@ -75,6 +75,14 @@ export function sandboxCaBundle(settings: Settings): string {
   return unique.length === 0 ? "" : `${unique.join("\n")}\n`;
 }
 
+/**
+ * Every CA this machine trusts, as one PEM bundle: Node's Mozilla roots plus `sandboxCaBundle`
+ * (the host's private CAs and the pasted ones). For programs that verify TLS on their own (frpc).
+ */
+export function trustedCaBundle(settings: Settings): string {
+  return `${tls.rootCertificates.map((pem) => pem.trim()).join("\n")}\n${sandboxCaBundle(settings)}`;
+}
+
 export function countCerts(pem: string): number {
   return pem.match(PEM_BLOCK)?.length ?? 0;
 }

@@ -10,6 +10,7 @@ import {
   ROOT_BRANCH_ID,
   branchScope,
   inBranchScope,
+  sessionRoute,
   type AgentOption,
   type Branch,
   type LlmCall,
@@ -40,6 +41,8 @@ import { Devices } from "./Devices";
 import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
+import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
+import { onServiceWorkerNavigate, registerServiceWorker } from "./push";
 import { CompactionDialog } from "./CompactionDialog";
 import { LlmCallDialog } from "./LlmCallDialog";
 import { InstructionsDialog, deliveryNote } from "./InstructionsDialog";
@@ -78,15 +81,18 @@ function cleanTranslation(answer: string, original: string): string {
   return out;
 }
 
-type Route = { view: "session"; id: string | null } | { view: "new" } | { view: "settings" };
+/** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
+type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings" };
 
 // Routes live in the URL hash so a reload (or a shared link) lands on the same Session.
 function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, "");
   if (path === "new") return { view: "new" };
   if (path === "settings") return { view: "settings" };
-  const m = /^sessions\/([^/]+)$/.exec(path);
-  return { view: "session", id: m?.[1] ?? null };
+  const m = /^sessions\/([^/]+)(?:\/(prs)|\/pr\/([^/]+))?$/.exec(path);
+  if (!m) return { view: "session", id: null };
+  const pane = m[2] ? "prs" : m[3] ? `pr:${m[3]}` : undefined;
+  return pane ? { view: "session", id: m[1]!, pane } : { view: "session", id: m[1]! };
 }
 
 function routeToHash(route: Route): string {
@@ -154,6 +160,23 @@ export function App() {
   const [focus, setFocus] = useState<(DividerRef & { sessionId: string }) | null>(null);
   const clearFocus = useCallback(() => setFocus(null), []);
   const { error, setError, run } = useErrorBanner();
+  const mobile = useMediaQuery(MOBILE_QUERY);
+  useVisualViewportHeight();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => setDrawerOpen(false), [route]);
+  // The service worker shows push notifications while the page is closed; a tap on one navigates here.
+  useEffect(() => {
+    void registerServiceWorker();
+    return onServiceWorkerNavigate((hash) => {
+      location.hash = hash;
+    });
+  }, []);
+  // A deep link into a pane (from a notification) becomes a pane request and the plain Session route.
+  useEffect(() => {
+    if (route.view !== "session" || !route.id || !route.pane) return;
+    setPaneRequest({ sessionId: route.id, pane: route.pane });
+    setRoute({ view: "session", id: route.id });
+  }, [route, setRoute]);
 
   const selectedId = route.view === "session" ? route.id : null;
   const selected = sessions.find((s) => s.id === selectedId) ?? null;
@@ -289,7 +312,7 @@ export function App() {
           case "pr_activity": {
             const id = Date.now() + Math.random();
             setToasts((prev) => [...prev.slice(-4), { id, sessionId: msg.sessionId, sessionTitle: msg.sessionTitle, prs: msg.prs }]);
-            notifyBrowser(msg.sessionTitle, msg.prs, () => openPr(msg.sessionId, msg.prs.length === 1 ? msg.prs[0]!.prId : null));
+            notifyBrowser(msg.sessionId, msg.sessionTitle, msg.prs, () => openPr(msg.sessionId, msg.prs.length === 1 ? msg.prs[0]!.prId : null));
             break;
           }
           case "remote":
@@ -328,15 +351,23 @@ export function App() {
   const sysboxMissing = settings ? settings.dockerModeAvailable !== "sysbox" : false;
   const settingsWarning = !anyTokenSet ? "No Provider token configured" : sysboxMissing ? "Sysbox runtime not installed" : null;
 
+  const topTitle = route.view === "new" ? "New session" : route.view === "settings" ? "Settings" : (selected?.title ?? "Sessionboxer");
+
   return (
-    <div className="app">
-      <aside className="sidebar">
+    <div className={`app${mobile ? " mobile" : ""}${drawerOpen ? " drawer-open" : ""}`}>
+      {mobile && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
+      <aside className="sidebar" aria-hidden={mobile && !drawerOpen}>
         <div className="sidebar-header">
           <h1 className="brand">
             <img src="/icon-192.png" alt="" />
             Sessionboxer
           </h1>
           <button onClick={() => setRoute({ view: "new" })}>+ New</button>
+          {mobile && (
+            <button className="drawer-close" aria-label="Close the session list" onClick={() => setDrawerOpen(false)}>
+              {"\u00d7"}
+            </button>
+          )}
         </div>
         <ul className="session-list">
           {sessions.map((s) => (
@@ -475,6 +506,15 @@ export function App() {
       )}
 
       <main className="main">
+        {mobile && (
+          <div className="topbar">
+            <button className="hamburger" aria-label="Open the session list" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
+              {"\u2630"}
+            </button>
+            <span className="topbar-title">{topTitle}</span>
+            {selected && route.view === "session" && <span className={`dot dot-${selected.status}`} title={selected.status} />}
+          </div>
+        )}
         {error && (
           <div className="banner banner-error" onClick={() => setError(null)}>
             {error}
@@ -532,6 +572,7 @@ export function App() {
             onLoadPrItems={loadPrItems}
             paneRequest={paneRequest?.sessionId === selected.id ? paneRequest.pane : null}
             onPaneRequestHandled={clearPaneRequest}
+            mobile={mobile}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
           />
@@ -573,15 +614,35 @@ function activityLine(p: PrActivity): string {
 }
 
 /** A browser notification when the tab is in the background and permission was given (the PRs pane asks for it). */
-function notifyBrowser(sessionTitle: string, prs: PrActivity[], onClick: () => void): void {
+function notifyBrowser(sessionId: string, sessionTitle: string, prs: PrActivity[], onClick: () => void): void {
   if (typeof Notification === "undefined" || Notification.permission !== "granted" || document.visibilityState === "visible") return;
   const body = prs.map((p) => `#${p.number}: ${activityLine(p)}`).join("\n");
-  const n = new Notification(`${sessionTitle}: pull request feedback`, { body, tag: `sessionboxer-pr-${prs.map((p) => p.prId).join(",")}` });
-  n.onclick = () => {
-    window.focus();
-    onClick();
-    n.close();
-  };
+  const tag = `sessionboxer-pr-${prs.map((p) => p.prId).join(",")}`;
+  const title = `${sessionTitle}: pull request feedback`;
+  // Same tag as the push the Control Plane sends for a sleeping phone, so a device that gets both sees one.
+  const url = sessionRoute(sessionId, prs.length === 1 ? `pr:${prs[0]!.prId}` : "prs");
+  void showNotification(title, { body, tag, url }).then((shown) => {
+    if (shown) return;
+    const n = new Notification(title, { body, tag });
+    n.onclick = () => {
+      window.focus();
+      onClick();
+      n.close();
+    };
+  });
+}
+
+/** Through the service worker when there is one (Android refuses `new Notification` on pages with a worker); false if not possible. */
+async function showNotification(title: string, opts: { body: string; tag: string; url: string }): Promise<boolean> {
+  if (!("serviceWorker" in navigator)) return false;
+  const reg = await navigator.serviceWorker.getRegistration("/").catch(() => undefined);
+  if (!reg?.active) return false;
+  try {
+    await reg.showNotification(title, { body: opts.body, tag: opts.tag, icon: "/icon-192.png", data: { url: opts.url } });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
@@ -623,8 +684,12 @@ function SessionSizes({
   );
 }
 
-/** Side pane: the fixed ones, the PR overview, or one attached PR (`pr:<id>`). */
-type Pane = "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "hidden";
+/**
+ * Side pane: the fixed ones, the PR overview, or one attached PR (`pr:<id>`). On a phone only one pane
+ * shows at a time and the chat is one of them (`chat`); on a desktop the chat is always there, so `chat`
+ * and `hidden` mean the same.
+ */
+type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "hidden";
 const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: string }> = [
   { id: "desktop", label: "Desktop" },
   { id: "code", label: "Code" },
@@ -634,7 +699,7 @@ const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: str
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "hidden" ? v : "desktop";
+  return v === "chat" || v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "hidden" ? v : "desktop";
 }
 
 function loadComposerMode(): ComposerMode {
@@ -666,6 +731,7 @@ function SessionView({
   onLoadPrItems,
   paneRequest,
   onPaneRequestHandled,
+  mobile,
   run,
   onForked,
 }: {
@@ -692,6 +758,8 @@ function SessionView({
   /** Pane to switch to (from a PR notification). */
   paneRequest: string | null;
   onPaneRequestHandled: () => void;
+  /** Phone shell: bottom tabs pick one full-width pane, header actions live in a sheet. */
+  mobile: boolean;
   run: Runner;
   onForked: (s: Session) => void;
 }) {
@@ -710,6 +778,11 @@ function SessionView({
   const [mcpBusy, setMcpBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // What is on screen: on a phone the chat is a pane like the others; on a desktop it is always there.
+  const shown: Pane = mobile ? (pane === "hidden" ? "chat" : pane) : pane === "chat" ? "hidden" : pane;
+  const showChat = !mobile || shown === "chat";
+  const togglePane = (id: Pane) => setPane((cur) => (cur === id ? (mobile ? "chat" : "hidden") : id));
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
   const [zen, setZen] = useState(false);
@@ -851,6 +924,25 @@ function SessionView({
           </h2>
         )}
         <span className={`badge badge-${session.status}`}>{session.status}</span>
+        {mobile && (
+          <>
+            <span className="spacer" />
+            <button className="more" aria-label="Session actions" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+              {"\u22ef"}
+            </button>
+          </>
+        )}
+        {mobile && menuOpen && <div className="sheet-backdrop" onClick={() => setMenuOpen(false)} />}
+        <div className={`session-actions${menuOpen ? " open" : ""}`} role={mobile ? "dialog" : undefined} aria-label={mobile ? "Session actions" : undefined}>
+        {mobile && (
+          <div className="sheet-header">
+            <strong>{session.title}</strong>
+            <span className="spacer" />
+            <button aria-label="Close" onClick={() => setMenuOpen(false)}>
+              {"\u00d7"}
+            </button>
+          </div>
+        )}
         <span className="muted">{PROVIDER_LABELS[session.provider]}</span>
         {session.dockerMode !== "none" && (
           <span
@@ -891,7 +983,7 @@ function SessionView({
               aria-selected={pane === p.id}
               className={pane === p.id ? "active" : ""}
               title={pane === p.id ? `Hide ${p.label.toLowerCase()}` : `Show ${p.label.toLowerCase()}`}
-              onClick={() => setPane((cur) => (cur === p.id ? "hidden" : p.id))}
+              onClick={() => togglePane(p.id)}
             >
               {p.label}
             </button>
@@ -901,7 +993,7 @@ function SessionView({
             aria-selected={pane === "prs"}
             className={pane === "prs" ? "active" : ""}
             title={pane === "prs" ? "Hide pull requests" : `Pull requests attached to this Session${prUnread > 0 ? ` (${prUnread} unread)` : ""}`}
-            onClick={() => setPane((cur) => (cur === "prs" ? "hidden" : "prs"))}
+            onClick={() => togglePane("prs")}
           >
             PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
           </button>
@@ -912,7 +1004,7 @@ function SessionView({
               aria-selected={pane === `pr:${p.id}`}
               className={`${pane === `pr:${p.id}` ? "active" : ""} pr-tab pr-tab-${p.state}`}
               title={`${p.owner}/${p.repo}#${p.number} ${p.title}${p.unread > 0 ? ` (${p.unread} unread)` : ""}`}
-              onClick={() => setPane((cur) => (cur === `pr:${p.id}` ? "hidden" : `pr:${p.id}`))}
+              onClick={() => togglePane(`pr:${p.id}`)}
             >
               #{p.number}
               {p.unread > 0 && <span className="count">{p.unread}</span>}
@@ -997,6 +1089,7 @@ function SessionView({
         >
           Delete
         </button>
+        </div>
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
       {mcpOpen && <McpDialog session={session} servers={mcpServers} busy={mcpBusy} onToggle={toggleMcp} onClose={() => setMcpOpen(false)} />}
@@ -1023,7 +1116,7 @@ function SessionView({
         />
       )}
       <div className="session-body">
-        <div className="chat" ref={chatRef}>
+        <div className="chat" ref={chatRef} hidden={!showChat}>
           <Transcript
             key={session.id}
             items={items}
@@ -1063,7 +1156,7 @@ function SessionView({
                   <ModelSelect compact models={models} value={session.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
                 )}
                 <OptionSelects compact options={options} values={session.options} onChange={changeOption} disabled={modelBusy} pending={session.optionsPending} />
-                <ContextGauge context={context} active={pane === "context"} onOpen={() => setPane((cur) => (cur === "context" ? "hidden" : "context"))} />
+                <ContextGauge context={context} active={pane === "context"} onOpen={() => togglePane("context")} />
               </>
             }
             disabled={!canPrompt}
@@ -1079,11 +1172,11 @@ function SessionView({
             attachments={attachments}
           />
         </div>
-        {pane === "desktop" && <Desktop session={session} />}
-        {pane === "code" && <CodePane session={session} target={codeTarget} />}
-        {pane === "terminal" && <TerminalPane session={session} />}
-        {pane === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
-        {pane === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
+        {shown === "desktop" && <Desktop session={session} />}
+        {shown === "code" && <CodePane session={session} target={codeTarget} />}
+        {shown === "terminal" && <TerminalPane session={session} />}
+        {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
+        {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
         {openPr && (
           <PrPane
             session={session}
@@ -1095,6 +1188,25 @@ function SessionView({
           />
         )}
       </div>
+      {mobile && (
+        <nav className="bottom-tabs" role="tablist" aria-label="Pane">
+          {[{ id: "chat" as const, label: "Chat" }, ...PANES].map((p) => (
+            <button key={p.id} role="tab" aria-selected={shown === p.id} className={shown === p.id ? "active" : ""} onClick={() => setPane(p.id)}>
+              {p.label}
+            </button>
+          ))}
+          {prs.length > 0 && (
+            <button
+              role="tab"
+              aria-selected={shown === "prs" || openPr !== null}
+              className={shown === "prs" || openPr ? "active" : ""}
+              onClick={() => setPane("prs")}
+            >
+              PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
+            </button>
+          )}
+        </nav>
+      )}
     </div>
     </OpenFile.Provider>
     </AttachmentSession.Provider>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import RFB, { type ClipboardEventDetail } from "@novnc/novnc";
 import type { Session } from "@sessionboxer/protocol";
 import { DESKTOP_HEIGHT, DESKTOP_WIDTH } from "@sessionboxer/protocol";
+import { DesktopKeyboard } from "./DesktopKeyboard";
 
 type ConnState = "connecting" | "connected" | "disconnected";
 
@@ -35,6 +36,8 @@ export function Desktop({ session }: { session: Session }) {
   const [clipOpen, setClipOpen] = useState(false);
   const [clipText, setClipText] = useState("");
   const [clipNote, setClipNote] = useState<string | null>(null);
+  const [kbOpen, setKbOpen] = useState(false);
+  const getRfb = useCallback(() => rfb.current, []);
 
   const live = session.status === "idle" || session.status === "running";
   const running = session.status === "running";
@@ -130,6 +133,10 @@ export function Desktop({ session }: { session: Session }) {
   useEffect(() => {
     if (rfb.current) rfb.current.viewOnly = viewOnly;
   }, [viewOnly, state]);
+  // While the on-screen keyboard is up, a tap on the screen must not move the focus away from its input.
+  useEffect(() => {
+    if (rfb.current) rfb.current.focusOnClick = !kbOpen;
+  }, [kbOpen, state]);
 
   return (
     <section className="desktop">
@@ -149,6 +156,16 @@ export function Desktop({ session }: { session: Session }) {
         {live && state === "connected" && !running && <span className="muted">interactive</span>}
         {live && state === "connected" && viewOnly && <span className="muted">view only</span>}
         {clipNote && <span className="muted clip-note">{clipNote}</span>}
+        {live && state === "connected" && (
+          <button
+            className={kbOpen ? "active" : ""}
+            aria-pressed={kbOpen}
+            onClick={() => setKbOpen((o) => !o)}
+            title="Type into the box from a phone: brings up the keyboard and the keys it lacks (Ctrl, Alt, Esc, Tab, arrows)"
+          >
+            Keyboard
+          </button>
+        )}
         {live && state === "connected" && (
           <button className={clipOpen ? "active" : ""} onClick={() => setClipOpen((o) => !o)} title="Text clipboard shared with the box">
             Clipboard
@@ -199,6 +216,7 @@ export function Desktop({ session }: { session: Session }) {
           </div>
         )}
       </div>
+      {kbOpen && live && state === "connected" && <DesktopKeyboard rfb={getRfb} disabled={viewOnly} onClose={() => setKbOpen(false)} />}
     </section>
   );
 }

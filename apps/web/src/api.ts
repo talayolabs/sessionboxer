@@ -31,6 +31,8 @@ import type {
   PromptAttachment,
   PromptRequest,
   PublicSettings,
+  PushStatus,
+  PushSubscribeRequest,
   RevertRequest,
   SavedMessage,
   Session,
@@ -44,6 +46,7 @@ import type {
   UpdatePrRequest,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
+  UiClientMessage,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 
@@ -79,6 +82,10 @@ export const api = {
   logout: () => request<void>("/auth/logout", { method: "POST" }),
   devices: () => request<AuthDevice[]>("/auth/devices"),
   revokeDevice: (id: string) => request<void>(`/auth/devices/${id}`, { method: "DELETE" }),
+  pushStatus: () => request<PushStatus>("/push"),
+  pushSubscribe: (sub: PushSubscribeRequest) => request<PushStatus>("/push", { method: "PUT", body: JSON.stringify(sub) }),
+  pushUnsubscribe: () => request<PushStatus>("/push", { method: "DELETE" }),
+  pushTest: () => request<void>("/push/test", { method: "POST" }),
   accessToken: () => request<{ token: string }>("/auth/token"),
   rotateAccessToken: () => request<{ token: string }>("/auth/token/rotate", { method: "POST" }),
   settings: () => request<PublicSettings>("/settings"),
@@ -195,13 +202,23 @@ export function terminalSocketUrl(sessionId: string, ptyId: string): string {
   return `${proto}//${location.host}/api/sessions/${sessionId}/terminals/${ptyId}/ws`;
 }
 
-/** Subscribes to Control Plane pushes; reconnects with a 1s backoff that grows to 15s while the handshake keeps failing. */
+/**
+ * Subscribes to Control Plane pushes; reconnects with a 1s backoff that grows to 15s while the
+ * handshake keeps failing. Tells the Control Plane whether the page is on screen, so Web Pushes
+ * go to the devices that are not watching.
+ */
 export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnect: () => void): () => void {
   let ws: WebSocket | null = null;
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let hadConnection = false;
   let failures = 0;
+
+  const send = (msg: UiClientMessage) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  };
+  const reportVisibility = () => send({ type: "visibility", visible: document.visibilityState === "visible" });
+  document.addEventListener("visibilitychange", reportVisibility);
 
   const connect = () => {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -210,6 +227,7 @@ export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnec
     ws.onopen = () => {
       opened = true;
       failures = 0;
+      reportVisibility();
       if (hadConnection) onReconnect();
       hadConnection = true;
     };
@@ -234,6 +252,7 @@ export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnec
 
   return () => {
     closed = true;
+    document.removeEventListener("visibilitychange", reportVisibility);
     if (timer) clearTimeout(timer);
     ws?.close();
   };

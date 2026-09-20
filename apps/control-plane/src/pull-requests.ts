@@ -12,9 +12,12 @@ import {
   type PrAttachedBy,
   type PrItem,
   type PullRequest,
+  type PushMessage,
+  prActivityLine,
   type Session,
   type SessionBroadcast,
   type SessionEvent,
+  sessionRoute,
   type UpdatePrRequest,
 } from "@sessionboxer/protocol";
 import type { Db } from "./db.js";
@@ -48,6 +51,8 @@ export interface PullRequestDeps {
   /** Puts a prompt at the end of the Session's queue. */
   enqueue: (sessionId: string, text: string) => void;
   broadcast: (msg: SessionBroadcast) => void;
+  /** Web Push to devices that are not watching (see `PushNotifier`). */
+  push: (msg: PushMessage) => void;
   log: (msg: string) => void;
 }
 
@@ -405,7 +410,14 @@ export class PullRequests {
       });
     }
     this.deps.db.prs.markNotified(pending.map((i) => i.id));
-    if (prs.length > 0) this.deps.broadcast({ type: "pr_activity", sessionId, sessionTitle: s.title, prs });
+    if (prs.length === 0) return;
+    this.deps.broadcast({ type: "pr_activity", sessionId, sessionTitle: s.title, prs });
+    this.deps.push({
+      title: `${s.title}: pull request feedback`,
+      body: prs.map((p) => `#${p.number}: ${prActivityLine(p)}`).join("\n"),
+      tag: `sessionboxer-pr-${prs.map((p) => p.prId).join(",")}`,
+      url: sessionRoute(sessionId, prs.length === 1 ? `pr:${prs[0]!.prId}` : "prs"),
+    });
   }
 
   // --- Helpers --------------------------------------------------------------------------------

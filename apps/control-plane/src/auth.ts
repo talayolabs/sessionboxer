@@ -23,7 +23,16 @@ CREATE TABLE IF NOT EXISTS devices (
   last_seen_at TEXT NOT NULL,
   last_ip TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
+
+const DEVICE_SELECT = "SELECT d.*, EXISTS (SELECT 1 FROM push_subscriptions p WHERE p.device_id = d.id) AS push FROM devices d";
 
 interface DeviceRow {
   id: string;
@@ -33,6 +42,8 @@ interface DeviceRow {
   created_at: string;
   last_seen_at: string;
   last_ip: string;
+  /** 1 when a push subscription is registered (joined in `devices()`). */
+  push?: number;
 }
 
 export interface ClientInfo {
@@ -193,7 +204,7 @@ export class Auth {
     if (dot < 0) return null;
     const id = cookie.slice(0, dot);
     const secret = cookie.slice(dot + 1);
-    const row = this.db.prepare("SELECT * FROM devices WHERE id = ?").get(id) as DeviceRow | undefined;
+    const row = this.db.prepare(`${DEVICE_SELECT} WHERE d.id = ?`).get(id) as DeviceRow | undefined;
     if (!row || !safeEqual(sha256(secret), row.secret_hash)) return null;
     this.touch(row, this.clientInfo(c).ip);
     return { kind: "device", device: this.toDevice(row, row.id) };
@@ -264,7 +275,7 @@ export class Auth {
   }
 
   devices(currentId: string | null): AuthDevice[] {
-    const rows = this.db.prepare("SELECT * FROM devices ORDER BY last_seen_at DESC").all() as DeviceRow[];
+    const rows = this.db.prepare(`${DEVICE_SELECT} ORDER BY d.last_seen_at DESC`).all() as DeviceRow[];
     return rows.map((r) => this.toDevice(r, currentId));
   }
 
@@ -333,6 +344,7 @@ export class Auth {
       lastSeenAt: row.last_seen_at,
       lastIp: row.last_ip,
       current: row.id === currentId,
+      push: row.push === 1,
     };
   }
 

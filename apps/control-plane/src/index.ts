@@ -31,7 +31,9 @@ import {
   SyncRequest,
   PromptRequest,
   PtyOpenParams,
+  PushSubscribeRequest,
   QueueRequest,
+  UiClientMessage,
   SaveMessageRequest,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
@@ -52,6 +54,7 @@ import {
   accessTokenSource,
   applySettingsUpdate,
   ensureAccessToken,
+  ensureVapidKeys,
   loadSettings,
   newAccessToken,
   remoteAccess,
@@ -65,6 +68,7 @@ import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
+import { PushNotifier } from "./push.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
 import { QuickTunnel } from "./tunnel.js";
@@ -78,10 +82,18 @@ const WS_PING_MS = 25_000;
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
-let settings = ensureAccessToken(loadSettings());
+let settings = ensureVapidKeys(ensureAccessToken(loadSettings()));
 const db = new Db(DB_FILE);
 const docker = new SandboxDocker();
-const sessions = new SessionManager(db, docker, () => settings, log);
+const push = new PushNotifier(
+  db.connection,
+  () => {
+    if (!settings.vapid) throw new Error("no VAPID keys");
+    return settings.vapid;
+  },
+  log,
+);
+const sessions = new SessionManager(db, docker, () => settings, log, (msg) => push.send(msg));
 const tunnel = new QuickTunnel(
   LOCAL_ORIGIN,
   (status) => {
@@ -149,6 +161,30 @@ api.get("/auth/devices", (c) => {
 });
 api.delete("/auth/devices/:id", (c) => {
   auth.revoke(c.req.param("id"));
+  return c.body(null, 204);
+});
+// Web Push: one subscription per device (the browser's PushManager gives it), gone with the device.
+api.get("/push", (c) => {
+  const p = c.get("principal");
+  return c.json(push.status(p.kind === "device" ? p.device.id : null));
+});
+api.put("/push", async (c) => {
+  const p = c.get("principal");
+  if (p.kind !== "device") throw new HttpError(403, "Only a logged-in browser can subscribe to notifications.");
+  push.subscribe(p.device.id, PushSubscribeRequest.parse(await c.req.json()));
+  return c.json(push.status(p.device.id));
+});
+api.delete("/push", (c) => {
+  const p = c.get("principal");
+  if (p.kind !== "device") throw new HttpError(403, "Only a logged-in browser can unsubscribe.");
+  push.unsubscribe(p.device.id);
+  return c.json(push.status(p.device.id));
+});
+api.post("/push/test", (c) => {
+  const p = c.get("principal");
+  if (p.kind !== "device") throw new HttpError(403, "Only a logged-in browser can test its notifications.");
+  if (!push.status(p.device.id).subscribed) throw new HttpError(409, "This browser is not subscribed.");
+  push.send({ title: "Sessionboxer", body: "Notifications reach this device.", tag: "sessionboxer-test", url: "#/settings" }, p.device.id);
   return c.body(null, 204);
 });
 api.get("/auth/token", (c) => c.json({ token: accessToken(settings) }));
@@ -463,14 +499,34 @@ api.get(
 
 api.get(
   "/ws",
-  upgradeWebSocket(() => {
+  upgradeWebSocket((c) => {
+    const p = c.get("principal");
+    const deviceId = p.kind === "device" ? p.device.id : null;
     let unsubscribe: (() => void) | null = null;
+    let visible = false;
+    const setVisible = (v: boolean): void => {
+      if (v === visible || deviceId === null) return;
+      visible = v;
+      if (v) push.pageShown(deviceId);
+      else push.pageHidden(deviceId);
+    };
     return {
       onOpen(_evt, ws) {
         unsubscribe = sessions.subscribe((msg) => ws.send(JSON.stringify(msg)));
       },
+      onMessage(evt) {
+        let raw: unknown;
+        try {
+          raw = JSON.parse(String(evt.data));
+        } catch {
+          return;
+        }
+        const parsed = UiClientMessage.safeParse(raw);
+        if (parsed.success && parsed.data.type === "visibility") setVisible(parsed.data.visible);
+      },
       onClose() {
         unsubscribe?.();
+        setVisible(false);
       },
       onError(err) {
         log(`ui ws error: ${String(err)}`);

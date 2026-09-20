@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import qrcode from "qrcode-generator";
 import { PAIR_FRAGMENT_KEY, pairingOrigin, type AuthDevice, type AuthPairing, type PublicSettings, type RemoteAccess } from "@sessionboxer/protocol";
 import { api } from "./api";
+import { disablePush, enablePush, pushState, pushSupport } from "./push";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -66,8 +67,12 @@ export function Devices({
   const [token, setToken] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
+  const [push, setPush] = useState<{ subscribed: boolean; permission: NotificationPermission } | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushNote, setPushNote] = useState<string | null>(null);
   const left = useCountdown(pairing?.expiresAt ?? null);
   const tunnel = remote.tunnel;
+  const support = pushSupport();
 
   const setTunnel = (on: boolean) => {
     setSwitching(true);
@@ -78,6 +83,27 @@ export function Devices({
   useEffect(() => {
     void reload();
   }, [reload]);
+  useEffect(() => {
+    void pushState().then(setPush, () => setPush({ subscribed: false, permission: "default" }));
+  }, []);
+
+  const setNotifications = (on: boolean) => {
+    setPushBusy(true);
+    setPushNote(null);
+    void run(async () => {
+      const status = on ? await enablePush() : await disablePush();
+      setPush({ subscribed: status.subscribed, permission: typeof Notification === "undefined" ? "denied" : Notification.permission });
+      await reload();
+    }).finally(() => setPushBusy(false));
+  };
+
+  const testPush = () => {
+    setPushBusy(true);
+    void run(async () => {
+      await api.pushTest();
+      setPushNote("Sent — it shows up when this page is in the background or the phone is locked.");
+    }).finally(() => setPushBusy(false));
+  };
 
   const copy = (what: string, text: string) =>
     navigator.clipboard.writeText(text).then(
@@ -149,6 +175,35 @@ export function Devices({
           required. Stays on across restarts until switched off.
         </p>
       </div>
+      <div className="tunnel">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={push?.subscribed ?? false}
+            disabled={push === null || pushBusy || support !== "ok" || (push.permission === "denied" && !push.subscribed)}
+            onChange={(e) => setNotifications(e.target.checked)}
+          />
+          Notify this device when a turn ends or a pull request gets feedback
+          {pushBusy && <span className="muted"> — working…</span>}
+        </label>
+        {push?.subscribed && (
+          <div className="actions-left">
+            <button type="button" className="small" disabled={pushBusy} onClick={testPush}>
+              Send a test notification
+            </button>
+            {pushNote && <span className="muted small-text">{pushNote}</span>}
+          </div>
+        )}
+        <p className="muted small-text">
+          {support === "insecure"
+            ? "Needs HTTPS: open Sessionboxer through the tunnel (or a TLS address) to turn this on."
+            : support === "unsupported"
+              ? "This browser has no Web Push. On iPhone, add Sessionboxer to the Home Screen (Share → Add to Home Screen) and open it from there."
+              : push?.permission === "denied" && !push.subscribed
+                ? "Notifications are blocked for this site in the browser's settings."
+                : "Web Push through the browser's push service: the phone hears about it while the app is closed or the screen is off. A device that is watching the page gets nothing extra. Per browser; revoking a device drops its subscription."}
+        </p>
+      </div>
       <table className="prs-table devices-table">
         <thead>
           <tr>
@@ -178,6 +233,7 @@ export function Devices({
                   {d.name} {d.current && <span className="ok small-text">(this browser)</span>}
                   <div className="muted small-text" title={d.userAgent}>
                     logged in {relative(d.createdAt)}
+                    {d.push ? " · notifications on" : ""}
                   </div>
                 </td>
                 <td className="nowrap" title={d.lastSeenAt}>

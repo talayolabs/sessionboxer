@@ -51,6 +51,8 @@ import {
   type ForkSessionRequest,
   type OptionValues,
   type PromptRequest,
+  type PushMessage,
+  sessionRoute,
   type ProviderModels,
   type ProviderOptions,
   type SavedMessage,
@@ -131,6 +133,8 @@ export class SessionManager {
     private readonly docker: SandboxDocker,
     private readonly settings: () => Settings,
     private readonly log: (msg: string) => void,
+    /** Web Push to devices that are not watching (see `PushNotifier`). */
+    private readonly push: (msg: PushMessage) => void = () => undefined,
   ) {
     this.prs = new PullRequests({
       db,
@@ -145,6 +149,7 @@ export class SessionManager {
         if (s && !s.queueRunning) this.update(id, { queueRunning: true });
       },
       broadcast: (msg) => this.broadcast(msg),
+      push: (msg) => this.push(msg),
       log,
     });
   }
@@ -1484,7 +1489,12 @@ export class SessionManager {
         }
         if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
       }
-      if (ev.body.type === "turn_ended") this.prs.onTurnEnded(id, this.turnEvents(id, stored.seq));
+      const turn = this.turnEvents(id, stored.seq);
+      if (ev.body.type === "turn_ended") this.prs.onTurnEnded(id, turn);
+      if (s) {
+        const body = ev.body.type === "agent_error" ? `Error: ${ev.body.message}` : ev.body.stopReason === "cancelled" ? "Turn stopped." : (lastAgentText(turn) ?? "Turn ended.");
+        this.push({ title: s.title, body: body.length > 200 ? `${body.slice(0, 197)}…` : body, tag: `sessionboxer-turn-${id}`, url: sessionRoute(id) });
+      }
     }
   }
 
@@ -1552,6 +1562,22 @@ function isConversational({ body }: SessionEvent): boolean {
     default:
       return false;
   }
+}
+
+/** The text of the Agent's last message in a turn, collapsed to one line (what a notification shows). */
+function lastAgentText(events: SessionEvent[]): string | null {
+  let text = "";
+  let lastId: string | null | undefined;
+  for (const { body } of events) {
+    if (body.type !== "update" || body.update.sessionUpdate !== "agent_message_chunk" || body.update.content.type !== "text") continue;
+    if (body.update.messageId !== lastId) {
+      text = "";
+      lastId = body.update.messageId;
+    }
+    text += body.update.content.text;
+  }
+  const line = text.replace(/\s+/g, " ").trim();
+  return line === "" ? null : line;
 }
 
 /** `messageId` of the last assistant message in the transcript prefix: where an ACP point-fork cuts. */

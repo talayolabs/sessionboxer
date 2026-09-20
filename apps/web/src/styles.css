@@ -45,6 +45,10 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .spacer { flex: 1; }
 
 .app { display: grid; grid-template-columns: 290px 1fr; height: 100%; min-height: 0; }
+/* Header actions sit directly in the header's flex row on a desktop; on a phone the same element is a sheet. */
+.session-actions { display: contents; }
+.session-header .more, .session-header .sheet-header, .sheet-backdrop, .topbar, .bottom-tabs, .drawer-backdrop, .drawer-close { display: none; }
+.chat[hidden] { display: none; }
 
 .sidebar { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--border); }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--border); }
@@ -122,6 +126,12 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .clip-panel textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
 .clip-panel-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .clip-hint { font-size: 11px; line-height: 1.4; }
+/* On-screen keyboard bar for the touch Desktop. */
+.desktop-keyboard { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--panel); }
+.desktop-keyboard-input { flex: none; height: 1px; min-height: 1px; padding: 0; margin: 0 0 -1px; border: 0; resize: none; opacity: 0.01; color: transparent; caret-color: transparent; background: transparent; font-size: 16px; }
+.desktop-keyboard-keys { display: flex; gap: 6px; align-items: center; padding: 6px 8px; overflow-x: auto; }
+.desktop-keyboard-keys button { flex: none; min-width: 40px; min-height: 36px; padding: 4px 10px; font-size: 13px; }
+.desktop-keyboard-keys button.active { border-color: var(--accent); color: var(--accent); background: var(--user); }
 
 .transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
 .transcript-items { display: flex; flex-direction: column; gap: 10px; }
@@ -707,3 +717,86 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .actions-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .qr { flex: none; border-radius: 4px; }
 code.token { font-size: 12px; word-break: break-all; user-select: all; background: var(--bg); padding: 4px 6px; border-radius: 4px; }
+
+/*
+ * Phone shell (below 800px): the sidebar is a drawer, the header actions a bottom sheet, and one pane at a
+ * time fills the screen, picked from bottom tabs. Heights follow the visual viewport so the composer stays
+ * above the on-screen keyboard (see mobile.ts); safe areas keep the tabs clear of the home indicator.
+ */
+@media (max-width: 800px) {
+  html, body, #root { height: 100dvh; }
+  /* iOS zooms into any field smaller than 16px on focus, which would break the fixed layout. */
+  .app.mobile textarea, .app.mobile input:not([type="checkbox"]):not([type="radio"]), .app.mobile select, .app.mobile .rich-editor { font-size: 16px; }
+  .app.mobile { grid-template-columns: 1fr; height: var(--app-height, 100dvh); overflow: hidden; }
+  .app.mobile .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 70; width: min(85vw, 320px);
+    transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: none; border-right: 1px solid var(--border);
+    padding-top: env(safe-area-inset-top);
+  }
+  .app.mobile.drawer-open .sidebar { transform: none; box-shadow: 0 0 40px rgba(0, 0, 0, 0.6); }
+  .app.mobile .drawer-backdrop { display: block; position: fixed; inset: 0; z-index: 65; background: rgba(0, 0, 0, 0.5); }
+  .app.mobile .drawer-close { display: inline-flex; align-items: center; justify-content: center; width: 34px; padding: 4px; font-size: 18px; line-height: 1; }
+  .app.mobile .sidebar-header { gap: 8px; }
+  .app.mobile .sidebar-header .brand { flex: 1; min-width: 0; }
+  .app.mobile .session-list li { padding: 10px; }
+
+  .app.mobile .topbar {
+    display: flex; align-items: center; gap: 10px; padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
+    border-bottom: 1px solid var(--border); background: var(--panel); flex: none;
+  }
+  .app.mobile .hamburger { flex: none; width: 38px; height: 34px; padding: 0; font-size: 18px; line-height: 1; }
+  .app.mobile .topbar-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+
+  .app.mobile .session-header { flex-wrap: nowrap; gap: 8px; padding: 8px 10px; }
+  .app.mobile .session-header h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .app.mobile .session-header input { width: 100%; }
+  .app.mobile .session-header .spacer { flex: 0; }
+  .app.mobile .session-header .more { display: inline-flex; flex: none; width: 36px; height: 32px; padding: 0; align-items: center; justify-content: center; font-size: 18px; line-height: 1; }
+  .app.mobile .session-header .segmented { display: none; }
+  .app.mobile .sheet-backdrop { display: block; position: fixed; inset: 0; z-index: 65; background: rgba(0, 0, 0, 0.5); }
+  .app.mobile .session-actions {
+    display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 70; max-height: 80%; overflow-y: auto;
+    flex-direction: column; align-items: stretch; gap: 8px; padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+    background: var(--panel); border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.6);
+  }
+  .app.mobile .session-actions.open { display: flex; }
+  .app.mobile .session-actions .sheet-header { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .app.mobile .session-actions .sheet-header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app.mobile .session-actions .sheet-header .spacer { display: none; }
+  .app.mobile .session-actions > .muted { max-width: none; white-space: normal; word-break: break-all; }
+  .app.mobile .session-actions > .spacer { display: none; }
+  .app.mobile .session-actions > button { min-height: 44px; text-align: left; }
+  .app.mobile .session-actions .branch-select { display: flex; align-items: center; gap: 8px; }
+  .app.mobile .session-actions .branch-select select { flex: 1; }
+
+  .app.mobile .session-body { min-height: 0; }
+  .app.mobile .chat { min-width: 0; width: 100%; }
+  .app.mobile .desktop, .app.mobile .code, .app.mobile .terminal, .app.mobile .prs-pane {
+    flex: 1 1 auto; width: 100%; max-width: none; border-left: 0;
+  }
+  .app.mobile .desktop-toolbar { flex-wrap: wrap; gap: 6px; padding: 6px 8px; }
+  .app.mobile .desktop-toolbar > .muted:first-child { display: none; }
+  .app.mobile .clip-panel { left: 10px; width: auto; }
+
+  .app.mobile .bottom-tabs {
+    flex: none; display: flex; border-top: 1px solid var(--border); background: var(--panel);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .app.mobile .bottom-tabs button {
+    flex: 1 1 0; min-width: 0; min-height: 46px; border: 0; border-radius: 0; background: none; color: var(--muted);
+    font-size: 12px; padding: 6px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .app.mobile .bottom-tabs button.active { color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+  .app.mobile .bottom-tabs .count { margin-left: 4px; }
+
+  .app.mobile .composer { padding: 8px 10px 10px; }
+  .app.mobile .composer-footer { flex-wrap: wrap; row-gap: 6px; }
+  .app.mobile .composer-footer .hint { display: none; }
+  .app.mobile .composer.zen { inset: auto 0 0 0; top: 0; height: var(--app-height, 100dvh); padding: 12px; }
+  .app.mobile .composer:not(.sized):not(.zen) .rich-editor { max-height: 30vh; }
+  .app.mobile .transcript { padding: 10px; }
+  .app.mobile .toasts { left: 12px; right: 12px; bottom: calc(60px + env(safe-area-inset-bottom)); max-width: none; }
+  .app.mobile .panel { max-width: none; padding: 14px; }
+  .app.mobile .panel .row { flex-wrap: wrap; }
+  .modal-backdrop { padding: 12px; }
+}

@@ -29,6 +29,16 @@ const TRANSPORT_LABEL: Record<PairingTransport, string> = {
   ssh: "Own server over SSH",
 };
 
+/** Whether an address resolves to this machine only, so a phone scanning it lands nowhere. */
+function loopback(origin: string): boolean {
+  try {
+    const h = new URL(origin).hostname;
+    return h === "localhost" || h === "::1" || h === "[::1]" || /^127\./.test(h);
+  } catch {
+    return false;
+  }
+}
+
 function pairLink(origin: string, pairing: AuthPairing): string {
   return `${origin.replace(/\/$/, "")}/#${PAIR_FRAGMENT_KEY}=${pairing.code}`;
 }
@@ -198,6 +208,7 @@ export function Devices({
   const [token, setToken] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [switching, setSwitching] = useState<TunnelKind | null>(null);
+  const [pairBusy, setPairBusy] = useState<PairingTransport | null>(null);
   const [push, setPush] = useState<{ subscribed: boolean; permission: NotificationPermission } | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
@@ -323,13 +334,14 @@ export function Devices({
   const pairVia = (transport: PairingTransport) => {
     setVia(transport);
     setPairing(null);
+    setPairBusy(transport);
     void run(async () => {
       if (transport !== "local" && !tunnels[transport].enabled) {
         if (transport === "ssh" && ssh.host.trim() === "") throw new Error("Fill in the SSH server below first.");
         await toggle(transport, true);
       }
       setPairing(await api.pair());
-    });
+    }).finally(() => setPairBusy(null));
   };
 
   // A pairing waiting on a transport that gets switched off is dropped: nothing will ever carry its code.
@@ -411,7 +423,8 @@ export function Devices({
         <div className="devices-pair-text">
           <div className="actions-left">
             <Menu
-              label={link ? "New pairing code" : "Pair another device"}
+              disabled={pairBusy !== null}
+              label={pairBusy !== null ? `Starting ${TRANSPORT_LABEL[pairBusy]}\u2026` : link ? "New pairing code" : "Pair another device"}
               items={(["local", "cloudflare", "sessionboxer", "ssh"] as const).map((t) => ({
                 key: t,
                 title: TRANSPORT_LABEL[t],
@@ -436,7 +449,16 @@ export function Devices({
                 {origin ? (
                   <>
                     : <code>{origin}</code>
-                    {via === "local" ? "; a phone on another network needs one of the tunnels." : "."}
+                    {via === "local" ? (loopback(origin) ? "" : "; a phone on another network needs one of the tunnels.") : "."}
+                    {via === "local" && loopback(origin) && (
+                      <>
+                        {" "}
+                        <span className="warn">
+                          — only this machine can open that address. Set <code>SESSIONBOXER_PUBLIC_URL</code> to the address the phone uses, or pair
+                          through a tunnel.
+                        </span>
+                      </>
+                    )}
                   </>
                 ) : viaStatus?.error ? (
                   <>
@@ -444,7 +466,7 @@ export function Devices({
                     — <span className="error">{viaStatus.error}</span>
                   </>
                 ) : (
-                  " — starting, the code appears when it is up…"
+                  ` — ${viaStatus?.state === "starting" ? "the tunnel is starting" : "waiting for the tunnel"}; the code appears when it is up…`
                 )}
               </>
             )}

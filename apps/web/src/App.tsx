@@ -163,6 +163,7 @@ export function App() {
   const mobile = useMediaQuery(MOBILE_QUERY);
   useVisualViewportHeight();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sessionboxer.sidebarCollapsed") === "1");
   useEffect(() => setDrawerOpen(false), [route]);
   // The service worker shows push notifications while the page is closed; a tap on one navigates here.
   useEffect(() => {
@@ -352,10 +353,19 @@ export function App() {
   const settingsWarning = !anyTokenSet ? "No Provider token configured" : sysboxMissing ? "Sysbox runtime not installed" : null;
 
   const topTitle = route.view === "new" ? "New session" : route.view === "settings" ? "Settings" : (selected?.title ?? "Sessionboxer");
+  const collapseSidebar = (collapsed: boolean) => {
+    setSidebarCollapsed(collapsed);
+    localStorage.setItem("sessionboxer.sidebarCollapsed", collapsed ? "1" : "0");
+  };
 
   return (
-    <div className={`app${mobile ? " mobile" : ""}${drawerOpen ? " drawer-open" : ""}`}>
+    <div className={`app${mobile ? " mobile" : ""}${drawerOpen ? " drawer-open" : ""}${!mobile && sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       {mobile && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
+      {!mobile && sidebarCollapsed && (
+        <button className="sidebar-show" title="Show the session list" aria-label="Show the session list" onClick={() => collapseSidebar(false)}>
+          {"\u00bb"}
+        </button>
+      )}
       <aside className="sidebar" aria-hidden={mobile && !drawerOpen}>
         <div className="sidebar-header">
           <h1 className="brand">
@@ -363,6 +373,11 @@ export function App() {
             Sessionboxer
           </h1>
           <button onClick={() => setRoute({ view: "new" })}>+ New</button>
+          {!mobile && (
+            <button className="sidebar-hide" title="Hide the session list" aria-label="Hide the session list" onClick={() => collapseSidebar(true)}>
+              {"\u00ab"}
+            </button>
+          )}
           {mobile && (
             <button className="drawer-close" aria-label="Close the session list" onClick={() => setDrawerOpen(false)}>
               {"\u00d7"}
@@ -1546,158 +1561,176 @@ function SettingsView({
     <form className="panel" onSubmit={submit}>
       <h2>Settings</h2>
       <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Tokens, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</p>
-      <label>
-        Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
-        <input
-          type="password"
-          autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder={tokenSet ? "Leave empty to keep the current token" : "Run `claude setup-token` and paste the result"}
-        />
-      </label>
-      <label>
-        Devin token (WINDSURF_API_KEY) {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
-        <input
-          type="password"
-          autoComplete="off"
-          value={devinToken}
-          onChange={(e) => setDevinToken(e.target.value)}
-          placeholder={
-            devinTokenSet
-              ? "Leave empty to keep the current token"
-              : "Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml"
-          }
-        />
-      </label>
-      <label>
-        <span className="label-row">
-          Claude API base URL (ANTHROPIC_BASE_URL)
-          <span className="muted">
-            current: <code>{settings.claudeApi.effectiveBaseUrl}</code>{" "}
-            {settings.claudeApi.effectiveBaseUrlSource === "settings"
-              ? "(set here)"
-              : settings.claudeApi.effectiveBaseUrlSource === "env"
-                ? "(from the Control Plane's environment)"
-                : "(Anthropic's default)"}
-          </span>
-        </span>
-        <input
-          value={claudeBaseUrl}
-          onChange={(e) => setClaudeBaseUrl(e.target.value)}
-          placeholder={settings.claudeApi.effectiveBaseUrlSource === "env" ? settings.claudeApi.effectiveBaseUrl : ANTHROPIC_DEFAULT_BASE_URL}
-          spellCheck={false}
-        />
-      </label>
-      <p className="muted">
-        Where Claude Code in each Sandbox sends its model API calls: a company Claude proxy, for instance. Empty takes <code>ANTHROPIC_BASE_URL</code>{" "}
-        from the Control Plane&apos;s environment, else Anthropic. Applies to Sandboxes created afterwards. A Session with <em>Inspect LLM</em> on
-        puts its own loopback proxy in front of this URL; the Sandbox trusts the extra CA certificates below for it.
-      </p>
-      <div className="row">
+      <fieldset className="choice">
+        <legend>Provider tokens</legend>
         <label>
-          <span className="label-row">
-            Proxy auth token (ANTHROPIC_AUTH_TOKEN) {claudeAuthTokenSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
-            {claudeAuthTokenSet && (
-              <button type="button" className="link" onClick={() => setForgetClaudeAuthToken(true)}>
-                Forget
-              </button>
-            )}
-          </span>
+          Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
           <input
             type="password"
             autoComplete="off"
-            value={claudeAuthToken}
-            onChange={(e) => setClaudeAuthToken(e.target.value)}
-            placeholder={claudeAuthTokenSet ? "Leave empty to keep the current token" : "Only if the proxy wants its own bearer token"}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder={tokenSet ? "Leave empty to keep the current token" : "Run `claude setup-token` and paste the result"}
           />
         </label>
         <label>
-          <span className="label-row">
-            Proxy API key (ANTHROPIC_API_KEY) {claudeApiKeySet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
-            {claudeApiKeySet && (
-              <button type="button" className="link" onClick={() => setForgetClaudeApiKey(true)}>
-                Forget
-              </button>
-            )}
-          </span>
+          Devin token (WINDSURF_API_KEY) {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
           <input
             type="password"
             autoComplete="off"
-            value={claudeApiKey}
-            onChange={(e) => setClaudeApiKey(e.target.value)}
-            placeholder={claudeApiKeySet ? "Leave empty to keep the current key" : "Only if the proxy wants an x-api-key"}
+            value={devinToken}
+            onChange={(e) => setDevinToken(e.target.value)}
+            placeholder={
+              devinTokenSet
+                ? "Leave empty to keep the current token"
+                : "Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml"
+            }
           />
         </label>
-      </div>
-      <p className="muted">
-        Optional credentials for that URL, given to Claude Code alongside (or instead of) the OAuth token; never shown again, stripped from snapshots.
-      </p>
-      <label>
-        Claude model aliases (offered in the Model picker, comma-separated)
-        <input value={claudeModels} onChange={(e) => setClaudeModels(e.target.value)} placeholder={DEFAULT_CLAUDE_MODELS.join(", ")} />
-      </label>
-      <p className="muted">
-        Written to Claude&apos;s <code>availableModels</code> setting inside each Sandbox, so models your account has but the picker does not list by
-        default (e.g. <code>fable</code>) become selectable; leave empty for Claude&apos;s built-in list. Aliases only, no keys. Applies to new
-        Sessions and to idle running ones (their Agent restarts in place, keeping the conversation); Stop → Resume a Session if it does not pick it up.
-      </p>
-      <label>
-        <span className="label-row">
-          Instructions for the Agent (default for new Sessions; each Session can change them at creation)
-          {instructions !== DEFAULT_INSTRUCTIONS && (
-            <button type="button" className="link" onClick={() => setInstructions(DEFAULT_INSTRUCTIONS)}>
-              Reset to the shipped default
-            </button>
-          )}
-        </span>
-        <textarea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
-      </label>
-      <p className="muted">
-        Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")} Comes on top of
-        the Sandbox briefing (desktop, recordings, handing files to you) and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Applies to
-        Sessions created afterwards.
-      </p>
-      <label>
-        Git user.name
-        <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} placeholder={settings.hostGitIdentity.name} />
-      </label>
-      <label>
-        Git user.email
-        <input value={gitUserEmail} onChange={(e) => setGitUserEmail(e.target.value)} placeholder={settings.hostGitIdentity.email} />
-      </label>
-      <p className="muted">
-        Default author/committer for commits made in Sandboxes; blank takes this machine&apos;s git config
-        {settings.hostGitIdentity.name ? ` (${settings.hostGitIdentity.name}${settings.hostGitIdentity.email ? ` <${settings.hostGitIdentity.email}>` : ""})` : ""}.
-        Overridable per Session when creating it.
-      </p>
-      <div className="row">
+      </fieldset>
+      <fieldset className="choice">
+        <legend>Claude API</legend>
         <label>
-          Sandbox CPUs
-          <input type="number" min={0.5} step={0.5} value={cpus} onChange={(e) => setCpus(e.target.value)} />
+          <span className="label-row">
+            Claude API base URL (ANTHROPIC_BASE_URL)
+            <span className="muted">
+              current: <code>{settings.claudeApi.effectiveBaseUrl}</code>{" "}
+              {settings.claudeApi.effectiveBaseUrlSource === "settings"
+                ? "(set here)"
+                : settings.claudeApi.effectiveBaseUrlSource === "env"
+                  ? "(from the Control Plane's environment)"
+                  : "(Anthropic's default)"}
+            </span>
+          </span>
+          <input
+            value={claudeBaseUrl}
+            onChange={(e) => setClaudeBaseUrl(e.target.value)}
+            placeholder={settings.claudeApi.effectiveBaseUrlSource === "env" ? settings.claudeApi.effectiveBaseUrl : ANTHROPIC_DEFAULT_BASE_URL}
+            spellCheck={false}
+          />
+        </label>
+        <p className="muted">
+          Where Claude Code in each Sandbox sends its model API calls: a company Claude proxy, for instance. Empty takes <code>ANTHROPIC_BASE_URL</code>{" "}
+          from the Control Plane&apos;s environment, else Anthropic. Applies to Sandboxes created afterwards. A Session with <em>Inspect LLM</em> on
+          puts its own loopback proxy in front of this URL; the Sandbox trusts the extra CA certificates below for it.
+        </p>
+        <div className="row">
+          <label>
+            <span className="label-row">
+              Proxy auth token (ANTHROPIC_AUTH_TOKEN) {claudeAuthTokenSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+              {claudeAuthTokenSet && (
+                <button type="button" className="link" onClick={() => setForgetClaudeAuthToken(true)}>
+                  Forget
+                </button>
+              )}
+            </span>
+            <input
+              type="password"
+              autoComplete="off"
+              value={claudeAuthToken}
+              onChange={(e) => setClaudeAuthToken(e.target.value)}
+              placeholder={claudeAuthTokenSet ? "Leave empty to keep the current token" : "Only if the proxy wants its own bearer token"}
+            />
+          </label>
+          <label>
+            <span className="label-row">
+              Proxy API key (ANTHROPIC_API_KEY) {claudeApiKeySet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+              {claudeApiKeySet && (
+                <button type="button" className="link" onClick={() => setForgetClaudeApiKey(true)}>
+                  Forget
+                </button>
+              )}
+            </span>
+            <input
+              type="password"
+              autoComplete="off"
+              value={claudeApiKey}
+              onChange={(e) => setClaudeApiKey(e.target.value)}
+              placeholder={claudeApiKeySet ? "Leave empty to keep the current key" : "Only if the proxy wants an x-api-key"}
+            />
+          </label>
+        </div>
+        <p className="muted">
+          Optional credentials for that URL, given to Claude Code alongside (or instead of) the OAuth token; never shown again, stripped from snapshots.
+        </p>
+      </fieldset>
+      <fieldset className="choice">
+        <legend>Models and instructions</legend>
+        <label>
+          Claude model aliases (offered in the Model picker, comma-separated)
+          <input value={claudeModels} onChange={(e) => setClaudeModels(e.target.value)} placeholder={DEFAULT_CLAUDE_MODELS.join(", ")} />
+        </label>
+        <p className="muted">
+          Written to Claude&apos;s <code>availableModels</code> setting inside each Sandbox, so models your account has but the picker does not list by
+          default (e.g. <code>fable</code>) become selectable; leave empty for Claude&apos;s built-in list. Aliases only, no keys. Applies to new
+          Sessions and to idle running ones (their Agent restarts in place, keeping the conversation); Stop → Resume a Session if it does not pick it up.
+        </p>
+        <label>
+          <span className="label-row">
+            Instructions for the Agent (default for new Sessions; each Session can change them at creation)
+            {instructions !== DEFAULT_INSTRUCTIONS && (
+              <button type="button" className="link" onClick={() => setInstructions(DEFAULT_INSTRUCTIONS)}>
+                Reset to the shipped default
+              </button>
+            )}
+          </span>
+          <textarea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
+        </label>
+        <p className="muted">
+          Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")} Comes on top of
+          the Sandbox briefing (desktop, recordings, handing files to you) and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Applies to
+          Sessions created afterwards.
+        </p>
+      </fieldset>
+      <fieldset className="choice">
+        <legend>Git identity in Sandboxes</legend>
+        <label>
+          Git user.name
+          <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} placeholder={settings.hostGitIdentity.name} />
         </label>
         <label>
-          Sandbox memory (GB)
-          <input type="number" min={1} step={1} value={memory} onChange={(e) => setMemory(e.target.value)} />
+          Git user.email
+          <input value={gitUserEmail} onChange={(e) => setGitUserEmail(e.target.value)} placeholder={settings.hostGitIdentity.email} />
         </label>
-      </div>
-      <label className="check">
-        <input type="checkbox" checked={docker} onChange={(e) => setDocker(e.target.checked)} />
-        Docker inside Sandboxes by default (per-Session override in New session)
-      </label>
-      <DockerModeNote settings={settings} enabled={docker} />
-      <label className="check">
-        <input type="checkbox" checked={autoSnapshot} onChange={(e) => setAutoSnapshot(e.target.checked)} />
-        Snapshot the Sandbox after every completed turn (docker commit; each snapshot is a fork point). Default for new Sessions; each Session can override it from its size line in the sidebar.
-      </label>
-      <label>
-        Automatic snapshots to keep per Session (0 = all; manual snapshots and fork origins are always kept)
-        <input type="number" min={0} step={1} value={snapshotKeep} onChange={(e) => setSnapshotKeep(e.target.value)} />
-      </label>
-      <p className="muted">
-        A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
-        turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
-      </p>
+        <p className="muted">
+          Default author/committer for commits made in Sandboxes; blank takes this machine&apos;s git config
+          {settings.hostGitIdentity.name ? ` (${settings.hostGitIdentity.name}${settings.hostGitIdentity.email ? ` <${settings.hostGitIdentity.email}>` : ""})` : ""}.
+          Overridable per Session when creating it.
+        </p>
+      </fieldset>
+      <fieldset className="choice">
+        <legend>Sandbox resources</legend>
+        <div className="row">
+          <label>
+            Sandbox CPUs
+            <input type="number" min={0.5} step={0.5} value={cpus} onChange={(e) => setCpus(e.target.value)} />
+          </label>
+          <label>
+            Sandbox memory (GB)
+            <input type="number" min={1} step={1} value={memory} onChange={(e) => setMemory(e.target.value)} />
+          </label>
+        </div>
+        <label className="check">
+          <input type="checkbox" checked={docker} onChange={(e) => setDocker(e.target.checked)} />
+          Docker inside Sandboxes by default (per-Session override in New session)
+        </label>
+        <DockerModeNote settings={settings} enabled={docker} />
+      </fieldset>
+      <fieldset className="choice">
+        <legend>Snapshots</legend>
+        <label className="check">
+          <input type="checkbox" checked={autoSnapshot} onChange={(e) => setAutoSnapshot(e.target.checked)} />
+          Snapshot the Sandbox after every completed turn (docker commit; each snapshot is a fork point). Default for new Sessions; each Session can override it from its size line in the sidebar.
+        </label>
+        <label>
+          Automatic snapshots to keep per Session (0 = all; manual snapshots and fork origins are always kept)
+          <input type="number" min={0} step={1} value={snapshotKeep} onChange={(e) => setSnapshotKeep(e.target.value)} />
+        </label>
+        <p className="muted">
+          A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
+          turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
+        </p>
+      </fieldset>
       <fieldset className="choice">
         <legend>Narrated recordings</legend>
         <p className="muted">

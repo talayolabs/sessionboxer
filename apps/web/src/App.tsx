@@ -28,6 +28,7 @@ import {
   type SavedMessage,
   type Session,
   type SessionEvent,
+  type SessionStatus,
   type Snapshot,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
@@ -64,6 +65,11 @@ import { OpenFile } from "./FileLink";
 import type { FileRef } from "./file-links";
 import { Transcript } from "./Transcript";
 import { buildTranscript, llmCallsOf } from "./transcript-model";
+
+/** What a status dot means, spelled out: `idle` in particular is the Agent's turn being over. */
+function statusTitle(status: SessionStatus): string {
+  return status === "idle" ? "waiting for you: the Agent finished its turn" : status;
+}
 
 function translationPrompt(text: string): string {
   return `translate the following text to english, only answer with the text translated to english and nothing else: '${text}'`;
@@ -397,7 +403,7 @@ export function App() {
                 ) : (
                   <span className="chevron chevron-blank" />
                 )}
-                <span className={`dot dot-${s.status}`} title={s.status} />
+                <span className={`dot dot-${s.status}`} title={statusTitle(s.status)} />
                 <span className="session-title">{s.title}</span>
                 <span className="session-provider">
                   {(prs[s.id] ?? []).some((p) => p.unread > 0) && (
@@ -512,7 +518,7 @@ export function App() {
               {"\u2630"}
             </button>
             <span className="topbar-title">{topTitle}</span>
-            {selected && route.view === "session" && <span className={`dot dot-${selected.status}`} title={selected.status} />}
+            {selected && route.view === "session" && <span className={`dot dot-${selected.status}`} title={statusTitle(selected.status)} />}
           </div>
         )}
         {error && (
@@ -923,7 +929,9 @@ function SessionView({
             {session.title}
           </h2>
         )}
-        <span className={`badge badge-${session.status}`}>{session.status}</span>
+        <span className={`badge badge-${session.status}`} title={session.status === "idle" ? "The Agent finished its turn; it does nothing until you send it something" : undefined}>
+          {session.status === "idle" ? "waiting for you" : session.status}
+        </span>
         {mobile && (
           <>
             <span className="spacer" />
@@ -1160,7 +1168,13 @@ function SessionView({
               </>
             }
             disabled={!canPrompt}
-            placeholder={canPrompt ? "Message the agent\u2026" : `Session is ${session.status}`}
+            placeholder={
+              session.status === "idle"
+                ? "The Agent is done and waiting for you\u2026"
+                : session.status === "running"
+                  ? "The Agent is working; a message sent now reaches it after this turn\u2026"
+                  : `Session is ${session.status}`
+            }
             mode={composerMode}
             onModeChange={setComposerMode}
             zen={zen}

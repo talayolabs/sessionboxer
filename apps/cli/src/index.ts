@@ -10,10 +10,11 @@ import {
   PAIR_FRAGMENT_KEY,
   PROVIDERS,
   Provider,
+  repoOriginLabel,
   type AuthPairing,
-  type CreateSessionRequest,
+  type CreateSessionRequestInput,
+  type RepoSpec,
   type Session,
-  type WorkspaceSource,
 } from "@sessionboxer/protocol";
 
 const BASE_URL = (process.env.SESSIONBOXER_URL ?? "http://127.0.0.1:4000").replace(/\/$/, "");
@@ -36,8 +37,8 @@ const USAGE = `sessionboxer - one Docker Sandbox with a Desktop per agent Sessio
 
 Usage:
   sessionboxer serve                       Run the Control Plane (http://127.0.0.1:4000)
-  sessionboxer new [dir] [options]         Create a Session from a copy of <dir> (default: .)
-  sessionboxer new --git <url> [--ref r]   Create a Session from a git clone
+  sessionboxer new [dir...] [options]      Create a Session from copies of <dir> (default: .)
+  sessionboxer new --git <url>[@ref] ...   Create a Session from git clones (repeatable, mixes with dirs)
   sessionboxer new --empty                 Create a Session with an empty Workspace
   sessionboxer ls                          List Sessions
   sessionboxer open <id>                   Open a Session in the browser (logs it in when needed)
@@ -47,6 +48,11 @@ Usage:
   sessionboxer version                     Print the version
 
 Options for new:
+                         Each repository lands in /workspace/<name> in the Sandbox, <name> being
+                         the directory / repository basename
+      --name <n>         Directory name instead (repeatable; applies to the --git ones in order,
+                         then to the directories)
+      --ref <r>          Branch or tag for a --git without an @ref (one --git only)
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
   -p, --prompt <text>    First prompt, sent once the Sandbox is ready
       --provider <id>    Provider: ${PROVIDERS.join(" | ")} (default claude-code)
@@ -145,8 +151,9 @@ async function newSession(args: string[]): Promise<void> {
     allowPositionals: true,
     allowNegative: true,
     options: {
-      git: { type: "string" },
+      git: { type: "string", multiple: true },
       ref: { type: "string" },
+      name: { type: "string", multiple: true },
       empty: { type: "boolean", default: false },
       title: { type: "string", short: "t" },
       prompt: { type: "string", short: "p" },
@@ -160,16 +167,28 @@ async function newSession(args: string[]): Promise<void> {
       open: { type: "boolean", default: true },
     },
   });
-  if (positionals.length > 1) throw new CliError("new: expected at most one directory");
-  if ((values.git ? 1 : 0) + (values.empty ? 1 : 0) + (positionals.length > 0 ? 1 : 0) > 1) {
-    throw new CliError("new: pass a directory, --git <url> or --empty (not several)");
+  const gits = values.git ?? [];
+  if (values.empty && (gits.length > 0 || positionals.length > 0)) {
+    throw new CliError("new: --empty takes no directories or --git");
   }
+  if (values.ref && gits.length !== 1) throw new CliError("new: --ref needs exactly one --git; use --git <url>@<ref> for several");
 
-  const workspaceSource: WorkspaceSource = values.git
-    ? { type: "git", url: values.git, ...(values.ref ? { ref: values.ref } : {}) }
-    : values.empty
-      ? { type: "empty" }
-      : { type: "copy", path: path.resolve(positionals[0] ?? ".") };
+  const repos: RepoSpec[] = [];
+  for (const raw of gits) {
+    // `owner/repo@ref`, but not the `@` of `git@github.com:...` nor an `@` before the last `/`
+    const at = raw.lastIndexOf("@");
+    const [url, ref] = at > raw.lastIndexOf("/") && at > 0 ? [raw.slice(0, at), raw.slice(at + 1)] : [raw, values.ref];
+    repos.push({ source: { type: "git", url, ...(ref ? { ref } : {}) } });
+  }
+  for (const dir of values.empty ? [] : positionals.length > 0 ? positionals : ["."]) {
+    repos.push({ source: { type: "copy", path: path.resolve(dir) } });
+  }
+  const names = values.name ?? [];
+  if (names.length > repos.length) throw new CliError("new: more --name than repositories");
+  names.forEach((name, i) => {
+    const spec = repos[i];
+    if (spec) spec.name = name;
+  });
 
   const provider = Provider.safeParse(values.provider);
   if (!provider.success) throw new CliError(`new: --provider must be one of ${PROVIDERS.join(", ")}`);
@@ -188,27 +207,32 @@ async function newSession(args: string[]): Promise<void> {
         ? readFileSync(values.instructions.slice(1), "utf8")
         : values.instructions;
 
-  const body: CreateSessionRequest = {
+  const body: CreateSessionRequestInput = {
     provider: provider.data,
-    workspaceSource,
-    ...(values.docker !== undefined ? { docker: values.docker } : {}),
-    ...(values.model ? { model: values.model } : {}),
-    ...(Object.keys(options).length > 0 ? { options } : {}),
-    ...(instructions !== undefined ? { instructions } : {}),
-    ...(values["git-name"] !== undefined || values["git-email"] !== undefined
-      ? {
-          gitIdentity: {
-            ...(values["git-name"] !== undefined ? { name: values["git-name"] } : {}),
-            ...(values["git-email"] !== undefined ? { email: values["git-email"] } : {}),
-          },
-        }
-      : {}),
+    repos,
+    workspaceSource: { type: "empty" },
+    settings: {
+      ...(values.model ? { model: values.model } : {}),
+      ...(Object.keys(options).length > 0 ? { options } : {}),
+      ...(instructions !== undefined ? { instructions } : {}),
+      sandbox: {
+        ...(values.docker !== undefined ? { docker: values.docker } : {}),
+        ...(values["git-name"] !== undefined || values["git-email"] !== undefined
+          ? {
+              gitIdentity: {
+                ...(values["git-name"] !== undefined ? { name: values["git-name"] } : {}),
+                ...(values["git-email"] !== undefined ? { email: values["git-email"] } : {}),
+              },
+            }
+          : {}),
+      },
+    },
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),
   };
   const session = await api<Session>("POST", "/sessions", body);
   show(session);
-  if (session.dockerMode === "privileged") {
+  if (session.settings.sandbox.dockerMode === "privileged") {
     process.stderr.write(
       "warning: Sysbox runtime not installed; this Sandbox runs with --privileged (the Agent can escape to the host).\n",
     );
@@ -243,16 +267,11 @@ async function open(id: string): Promise<void> {
 }
 
 function show(s: Session): void {
-  const source =
-    s.workspaceSource.type === "git"
-      ? `${s.workspaceSource.url}${s.workspaceSource.ref ? `@${s.workspaceSource.ref}` : ""}`
-      : s.workspaceSource.type === "copy"
-        ? s.workspaceSource.path
-        : s.workspaceSource.type === "fork"
-          ? `fork of ${s.workspaceSource.label}`
-          : "empty";
-  const docker = s.dockerMode === "none" ? "" : `  [${DOCKER_MODE_LABELS[s.dockerMode]}]`;
-  process.stdout.write(`${s.id}  ${s.status.padEnd(8)}  ${s.title}${docker}\n    ${source}\n    ${sessionUrl(s.id)}\n`);
+  const repos = s.repos.map((r) => `    /workspace${r.name === "." ? "" : `/${r.name}`}  ${repoOriginLabel(r.source)}${r.status === "ready" ? "" : `  (${r.status})`}`);
+  const source = s.workspaceSource.type === "fork" ? [`    fork of ${s.workspaceSource.label}`] : repos.length === 0 ? ["    empty"] : [];
+  const { dockerMode } = s.settings.sandbox;
+  const docker = dockerMode === "none" ? "" : `  [${DOCKER_MODE_LABELS[dockerMode]}]`;
+  process.stdout.write(`${s.id}  ${s.status.padEnd(8)}  ${s.title}${docker}\n${[...source, ...repos].join("\n")}\n    ${sessionUrl(s.id)}\n`);
 }
 
 function sessionUrl(id: string): string {

@@ -11,6 +11,7 @@ import { ZodError } from "zod";
 import {
   AskRequest,
   AttachPrRequest,
+  AddRepoRequest,
   AuthLoginRequest,
   AuthPairRedeemRequest,
   PAIR_FRAGMENT_KEY,
@@ -71,7 +72,7 @@ import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
-import { log } from "./log.js";
+import { banner, log } from "./log.js";
 import { PushNotifier } from "./push.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
@@ -392,9 +393,23 @@ api.post("/sessions/:id/fork", async (c) => {
   return c.json(await sessions.fork(c.req.param("id"), req), 201);
 });
 
-// "Pull changes to my folder" for Sessions started from a copy of a host folder: GET is the
-// dry run, POST applies it (conflicting files only with `overwriteLocal`).
-api.get("/sessions/:id/sync", async (c) => c.json(await sessions.syncPlan(c.req.param("id"))));
+// Repositories of a running Session: add clones/copies into /workspace/<name> right away; remove
+// answers 409 with the Git state when the directory holds unpushed work (repeat with `force`).
+api.post("/sessions/:id/repos", async (c) => {
+  const req = AddRepoRequest.parse(await c.req.json());
+  return c.json(await sessions.addRepo(c.req.param("id"), req), 201);
+});
+api.delete("/sessions/:id/repos/:repoId", async (c) => {
+  const force = c.req.query("force") === "1" || c.req.query("force") === "true";
+  const result = await sessions.removeRepo(c.req.param("id"), c.req.param("repoId"), force);
+  if (!result.ok) return c.json(result.blocked, 409);
+  return c.body(null, 204);
+});
+
+// "Pull changes to my folder" for repositories copied from a host folder: GET is the dry run,
+// POST applies it (conflicting files only with `overwriteLocal`). `repoId` picks the folder
+// when the Session copied more than one.
+api.get("/sessions/:id/sync", async (c) => c.json(await sessions.syncPlan(c.req.param("id"), c.req.query("repoId"))));
 api.post("/sessions/:id/sync", async (c) => {
   const req = SyncRequest.parse(await c.req.json());
   return c.json(await sessions.syncPull(c.req.param("id"), req));
@@ -583,7 +598,16 @@ const server = serve(
   (info) => {
     log(`sessionboxer ${VERSION} listening on ${TLS ? "https" : "http"}://${info.address}:${info.port}${PUBLIC_URL ? ` (public URL ${PUBLIC_URL})` : ""}`);
     const pairing = auth.createPairing();
-    log(`log in at ${PUBLIC_URL}/#${PAIR_FRAGMENT_KEY}=${pairing.code} (one use, ${Math.round(PAIRING_TTL_MS / 60_000)} min)`);
+    banner([
+      `Sessionboxer ${VERSION} is ready. Open this link to log in:`,
+      "",
+      `  ${PUBLIC_URL}/#${PAIR_FRAGMENT_KEY}=${pairing.code}`,
+      "",
+      `One use, valid for ${Math.round(PAIRING_TTL_MS / 60_000)} minutes.`,
+      accessTokenSource() === "env"
+        ? "Another browser: paste the SESSIONBOXER_ACCESS_TOKEN on its login page."
+        : "Another browser: `sessionboxer token` prints a token for its login page.",
+    ]);
     log(
       accessTokenSource() === "env"
         ? "access token: from SESSIONBOXER_ACCESS_TOKEN"

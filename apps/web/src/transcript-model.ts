@@ -1,13 +1,14 @@
-import type {
-  ContentBlock,
-  LlmCall,
-  PromptAttachment,
-  SessionEvent,
-  SessionStatus,
-  Snapshot,
-  StopReason,
-  ToolCallContent,
-  ToolCallLocation,
+import {
+  repoOriginLabel,
+  type ContentBlock,
+  type LlmCall,
+  type PromptAttachment,
+  type SessionEvent,
+  type SessionStatus,
+  type Snapshot,
+  type StopReason,
+  type ToolCallContent,
+  type ToolCallLocation,
 } from "@sessionboxer/protocol";
 import { TurnAccumulator, foldCompaction, isCompactionUpdate, type Compaction, type TurnStats } from "./context-model";
 
@@ -49,7 +50,8 @@ export type TranscriptItem =
   | { kind: "forked"; key: string; fromSessionId: string; fromTitle: string; snapshotOrdinal: number }
   | { kind: "mcp_changed"; key: string; servers: string[] }
   | { kind: "model_changed"; key: string; model: string; name: string }
-  | { kind: "option_changed"; key: string; option: string; value: string; valueName: string };
+  | { kind: "option_changed"; key: string; option: string; value: string; valueName: string }
+  | { kind: "repo_changed"; key: string; action: "added" | "removed"; name: string; origin: string };
 
 function blockText(block: ContentBlock): string {
   switch (block.type) {
@@ -167,6 +169,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "option_changed":
         items.push({ kind: "option_changed", key, option: body.name, value: body.value, valueName: body.valueName });
+        break;
+      case "repo_changed":
+        items.push({ kind: "repo_changed", key, action: body.action, name: body.name, origin: repoOriginLabel(body.source) });
         break;
       case "llm_call":
         if (body.call.kind === "turn") labelLlmCall(items, body.call);

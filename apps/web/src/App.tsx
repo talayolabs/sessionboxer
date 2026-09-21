@@ -16,7 +16,6 @@ import {
   type LlmCall,
   type ModelOption,
   type NarrationMode,
-  type OptionValues,
   type PrActivity,
   type PrItem,
   type Provider,
@@ -29,24 +28,21 @@ import {
   type Session,
   type SessionEvent,
   type Snapshot,
-  type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
 import { AttachmentSession } from "./Attachments";
 import { usePendingAttachments } from "./attachments-pending";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
+import { CopyCommand } from "./CopyCommand";
 import { Desktop } from "./Desktop";
 import { Devices } from "./Devices";
-import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
 import { onServiceWorkerNavigate, registerServiceWorker } from "./push";
 import { CompactionDialog } from "./CompactionDialog";
 import { LlmCallDialog } from "./LlmCallDialog";
-import { InstructionsDialog, deliveryNote } from "./InstructionsDialog";
-import { McpDialog, McpPicker } from "./McpDialog";
 import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
@@ -55,8 +51,19 @@ import { ContextGauge, ContextPane } from "./Context";
 import { deriveContext, type Compaction, type ContextState } from "./context-model";
 import { PrPane, PrsPane } from "./PullRequests";
 import { SavedMessages } from "./SavedMessages";
+import { SessionSettingsDialog } from "./SessionSettingsDialog";
+import {
+  DockerModeNote,
+  PRIVILEGED_WARNING,
+  SessionSettingsForm,
+  deliveryNote,
+  draftFromDefaults,
+  draftToInput,
+  type SessionSettingsDraft,
+} from "./SessionSettingsForm";
 import { SnapshotsDialog } from "./SnapshotsDialog";
-import { SourceIcon, sourceTitle } from "./SourceIcon";
+import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, type RepoDraft } from "./Repos";
+import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
 import { CodePane, type CodeTarget } from "./Code";
@@ -79,6 +86,16 @@ function cleanTranslation(answer: string, original: string): string {
   }
   if (!out) throw new Error("The Provider returned an empty translation");
   return out;
+}
+
+/** Whether the secret a Session of `provider` needs to talk to its model is configured. */
+function providerTokenSet(settings: PublicSettings, provider: Provider): boolean {
+  switch (provider) {
+    case "claude-code":
+      return settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
+    case "devin":
+      return settings.providerSecretsSet.devin.WINDSURF_API_KEY;
+  }
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
@@ -346,9 +363,7 @@ export function App() {
   const items = useMemo(() => buildTranscript(events, visibleSnapshots), [events, visibleSnapshots]);
   const context = useMemo(() => deriveContext(events), [events]);
   const llmCalls = useMemo(() => llmCallsOf(events), [events]);
-  const anyTokenSet = settings
-    ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
-    : true;
+  const anyTokenSet = settings ? PROVIDERS.some((p) => providerTokenSet(settings, p)) : true;
   const sysboxMissing = settings ? settings.dockerModeAvailable !== "sysbox" : false;
   const settingsWarning = !anyTokenSet ? "No Provider token configured" : sysboxMissing ? "Sysbox runtime not installed" : null;
 
@@ -428,15 +443,15 @@ export function App() {
                     </span>
                   )}
                   {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6"}</span>}
-                  {s.dockerMode !== "none" && (
+                  {s.settings.sandbox.dockerMode !== "none" && (
                     <span
-                      className={s.dockerMode === "privileged" ? "warn" : undefined}
-                      title={DOCKER_MODE_LABELS[s.dockerMode]}
+                      className={s.settings.sandbox.dockerMode === "privileged" ? "warn" : undefined}
+                      title={DOCKER_MODE_LABELS[s.settings.sandbox.dockerMode]}
                     >
-                      {s.dockerMode === "privileged" ? "\u26a0 " : ""}docker
+                      {s.settings.sandbox.dockerMode === "privileged" ? "\u26a0 " : ""}docker
                     </span>
                   )}
-                  <SourceIcon source={s.workspaceSource} />
+                  <SessionSourceIcon session={s} />
                   <span title={PROVIDER_LABELS[s.provider]}>
                     <ProviderIcon provider={s.provider} />
                   </span>
@@ -445,7 +460,7 @@ export function App() {
               <SessionSizes
                 session={s}
                 snapshotting={snapshotting.has(s.id)}
-                autoSnapshot={s.autoSnapshot ?? settings?.autoSnapshot ?? true}
+                autoSnapshot={s.settings.autoSnapshot ?? settings?.autoSnapshot ?? true}
                 onClick={() => setSnapshotsFor(s.id)}
               />
               {expanded.has(s.id) && s.branches.length > 1 && (
@@ -485,7 +500,7 @@ export function App() {
           snapshotting={snapshotting.has(snapshotsSession.id)}
           notice={error}
           onDismissNotice={() => setError(null)}
-          onAutoSnapshotChange={(value) => void run(() => api.updateSession(snapshotsSession.id, { autoSnapshot: value }))}
+          onAutoSnapshotChange={(value) => void run(() => api.updateSession(snapshotsSession.id, { settings: { autoSnapshot: value } }))}
           onSnapshotNow={() => void run(() => api.createSnapshot(snapshotsSession.id))}
           onRebuild={() => {
             if (
@@ -567,7 +582,7 @@ export function App() {
         {route.view === "session" && selected && (
           <SessionView
             session={selected}
-            mcpServers={settings?.mcpServers ?? []}
+            settings={settings}
             models={models?.[selected.provider] ?? []}
             options={
               selected.status === "idle" || selected.status === "running" ? selected.availableOptions : (options?.[selected.provider] ?? [])
@@ -728,7 +743,7 @@ function loadComposerHeight(): number | null {
 
 function SessionView({
   session,
-  mcpServers,
+  settings,
   models,
   options,
   items,
@@ -751,7 +766,8 @@ function SessionView({
   onForked,
 }: {
   session: Session;
-  mcpServers: PublicMcpServerDef[];
+  /** `null` until loaded; the Session settings dialog needs it (MCP registry, global defaults). */
+  settings: PublicSettings | null;
   models: ModelOption[];
   /** Non-model options (Effort, Fast mode…): what this Session's Agent advertises, else the Provider cache. */
   options: AgentOption[];
@@ -782,15 +798,15 @@ function SessionView({
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
   const [forkFrom, setForkFrom] = useState<string | null>(null);
+  const [forkWithSettings, setForkWithSettings] = useState(false);
   const [forking, setForking] = useState(false);
   const [branching, setBranching] = useState(false);
-  const [mcpOpen, setMcpOpen] = useState(false);
-  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsBusy, setSettingsBusy] = useState(false);
   const [inspecting, setInspecting] = useState<{ index: number; compaction: Compaction } | null>(null);
   const [inspectingCall, setInspectingCall] = useState<LlmCall | null>(null);
-  const [inspectBusy, setInspectBusy] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
-  const [mcpBusy, setMcpBusy] = useState(false);
+  const [reposOpen, setReposOpen] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -868,37 +884,27 @@ function SessionView({
     [session.id],
   );
 
-  const source = session.workspaceSource;
-  const sourceLabel =
-    source.type === "git"
-      ? `${source.url}${source.ref ? `@${source.ref}` : ""}`
-      : source.type === "copy"
-        ? source.path
-        : source.type === "fork"
-          ? `fork of ${source.label}`
-          : "empty workspace";
+  const copiedRepos = session.repos.filter((r) => r.source.type === "copy");
   const isLive = session.status === "idle" || session.status === "running";
   const latestSnapshot = snapshots[snapshots.length - 1];
-  const mcpActive = mcpServers.filter((s) => session.mcpEnabled.includes(s.id));
-  const toggleInspectLlm = () => {
-    setInspectBusy(true);
-    void run(() => api.updateSession(session.id, { inspectLlm: !session.inspectLlm })).finally(() => setInspectBusy(false));
-  };
-  const toggleMcp = (id: string, enabled: boolean) => {
-    const next = enabled ? [...session.mcpEnabled, id] : session.mcpEnabled.filter((x) => x !== id);
-    setMcpBusy(true);
-    void run(() => api.updateSession(session.id, { mcpEnabled: next })).finally(() => setMcpBusy(false));
-  };
+  const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
+  const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending;
+  const settingsSummary = [
+    mcpActive.length === 0 ? "MCP: desktop only" : `MCP: desktop, ${mcpActive.map((s) => s.name).join(", ")}`,
+    session.settings.instructions.trim() === "" ? "Instructions: none" : "Instructions: set",
+    ...(session.provider === "claude-code" ? [`Inspect LLM: ${session.settings.inspectLlm ? "on" : "off"}`] : []),
+    ...(settingsPending ? ["A change applies when the current turn ends"] : []),
+  ].join("\n");
   const changeModel = (model: string | null) => {
-    if (!model || model === session.model) return;
+    if (!model || model === session.settings.model) return;
     setModelBusy(true);
-    void run(() => api.updateSession(session.id, { model })).finally(() => setModelBusy(false));
+    void run(() => api.updateSession(session.id, { settings: { model } })).finally(() => setModelBusy(false));
   };
-  const showModelSelect = models.length > 0 || session.model !== null;
+  const showModelSelect = models.length > 0 || session.settings.model !== null;
   const changeOption = (id: string, value: string | null) => {
-    if (!value || value === session.options[id]) return;
+    if (!value || value === session.settings.options[id]) return;
     setModelBusy(true);
-    void run(() => api.updateSession(session.id, { options: { [id]: value } })).finally(() => setModelBusy(false));
+    void run(() => api.updateSession(session.id, { settings: { options: { [id]: value } } })).finally(() => setModelBusy(false));
   };
   const snapshotActions = {
     onFork: (s: Snapshot) => setForkFrom(s.id),
@@ -959,18 +965,27 @@ function SessionView({
           </div>
         )}
         <span className="muted">{PROVIDER_LABELS[session.provider]}</span>
-        {session.dockerMode !== "none" && (
+        {session.settings.sandbox.dockerMode !== "none" && (
           <span
-            className={session.dockerMode === "privileged" ? "warn" : "muted"}
-            title={session.dockerMode === "privileged" ? PRIVILEGED_WARNING : "Private Docker daemon under the Sysbox runtime"}
+            className={session.settings.sandbox.dockerMode === "privileged" ? "warn" : "muted"}
+            title={session.settings.sandbox.dockerMode === "privileged" ? PRIVILEGED_WARNING : "Private Docker daemon under the Sysbox runtime"}
           >
-            {DOCKER_MODE_LABELS[session.dockerMode]}
+            {DOCKER_MODE_LABELS[session.settings.sandbox.dockerMode]}
           </span>
         )}
-        <span className="muted source" title={`${sourceTitle(source)}${gitIdentityNote(session)}`}>
-          <SourceIcon source={source} size={14} />
-          {sourceLabel}
-        </span>
+        {session.repos.length > 0 ? (
+          <RepoChips session={session} onClick={() => setReposOpen(true)} />
+        ) : (
+          <>
+            <span className="muted source" title={`${sessionSourceTitle(session)}${gitIdentityNote(session)}`}>
+              <SessionSourceIcon session={session} size={14} />
+              {sessionSourceLabel(session)}
+            </span>
+            <button title="Clone a git URL or copy a host folder into /workspace/<name> of this Sandbox" onClick={() => setReposOpen(true)}>
+              Add repository…
+            </button>
+          </>
+        )}
         {session.branches.length > 1 && (
           <label className="branch-select" title="Conversation branch (from “Revert to here”); only the active one talks to the Agent">
             {"\u2387"}
@@ -1040,7 +1055,7 @@ function SessionView({
         >
           Fork…
         </button>
-        {source.type === "copy" && (
+        {copiedRepos.length > 0 && (
           <button
             disabled={!isLive || session.status === "running"}
             title={
@@ -1048,7 +1063,7 @@ function SessionView({
                 ? "Pulling needs a running Sandbox (Resume first)"
                 : session.status === "running"
                   ? "Wait for the Agent to finish its turn"
-                  : `Copy the box's changes back into ${source.path} (you see what changes first)`
+                  : `Copy the box's changes back into ${copiedRepos.map((r) => (r.source.type === "copy" ? r.source.path : "")).join(", ")} (you see what changes first)`
             }
             onClick={() => setSyncOpen(true)}
           >
@@ -1056,40 +1071,15 @@ function SessionView({
           </button>
         )}
         <button
-          className={session.mcpPending ? "pending" : ""}
-          title={
-            (mcpActive.length === 0 ? "MCP servers: desktop only" : `MCP servers: desktop, ${mcpActive.map((s) => s.name).join(", ")}`) +
-            (session.mcpPending ? " (change applies after this turn)" : "")
-          }
-          onClick={() => setMcpOpen(true)}
+          className={settingsPending ? "pending" : ""}
+          disabled={!settings}
+          title={`Session settings: model, instructions, MCP servers, Inspect LLM, snapshots, Sandbox\n${settingsSummary}`}
+          onClick={() => setSettingsOpen(true)}
         >
-          MCP {mcpActive.length > 0 && <span className="count">{mcpActive.length}</span>}
-          {session.mcpPending && <span className="warn-sign">pending</span>}
+          {"\u2699"} Settings
+          {mcpActive.length > 0 && <span className="count">{mcpActive.length}</span>}
+          {settingsPending && <span className="warn-sign">pending</span>}
         </button>
-        <button
-          title={session.instructions.trim() === "" ? "Instructions: none for this Session" : `Instructions given to the Agent:\n${session.instructions}`}
-          onClick={() => setInstructionsOpen(true)}
-        >
-          Instructions{session.instructions.trim() === "" && <span className="count">0</span>}
-        </button>
-        {session.provider === "claude-code" && (
-          <button
-            className={`${session.inspectLlm ? "active" : ""}${session.inspectLlmPending ? " pending" : ""}`}
-            aria-pressed={session.inspectLlm}
-            disabled={inspectBusy}
-            title={
-              (session.inspectLlm
-                ? "Model API calls go through the Sandbox's loopback inspector: every request and response body is kept (last 40, in the Sandbox's memory) and each Claude bubble gets an LLM #n tab. Click to turn off."
-                : "Route the model API calls through a loopback inspector in the Sandbox to see exactly what is sent to the model and what comes back (opt-in; bodies stay in the Sandbox's memory, headers are never recorded). Click to turn on.") +
-              (session.inspectLlmPending ? "\nThe change applies after this turn." : "") +
-              (session.status === "stopped" ? "\nApplies when the Session resumes." : "")
-            }
-            onClick={toggleInspectLlm}
-          >
-            Inspect LLM {session.inspectLlm && <span className="count">on</span>}
-            {session.inspectLlmPending && <span className="warn-sign">pending</span>}
-          </button>
-        )}
         {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
           <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
         )}
@@ -1107,24 +1097,54 @@ function SessionView({
         </div>
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
-      {mcpOpen && <McpDialog session={session} servers={mcpServers} busy={mcpBusy} onToggle={toggleMcp} onClose={() => setMcpOpen(false)} />}
-      {instructionsOpen && <InstructionsDialog session={session} onClose={() => setInstructionsOpen(false)} />}
+      {settingsOpen && settings && (
+        <SessionSettingsDialog
+          session={session}
+          settings={settings}
+          models={models}
+          options={options}
+          busy={settingsBusy}
+          onPatch={(patch) => {
+            setSettingsBusy(true);
+            void run(() => api.updateSession(session.id, { settings: patch })).finally(() => setSettingsBusy(false));
+          }}
+          onFork={
+            latestSnapshot
+              ? () => {
+                  setSettingsOpen(false);
+                  setForkWithSettings(true);
+                  setForkFrom(latestSnapshot.id);
+                }
+              : null
+          }
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       {inspecting && <CompactionDialog session={session} compaction={inspecting.compaction} index={inspecting.index} onClose={() => setInspecting(null)} />}
       {inspectingCall && <LlmCallDialog session={session} call={inspectingCall} calls={llmCalls} onClose={() => setInspectingCall(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
-      {forkFrom && (
+      {reposOpen && <ReposDialog session={session} onClose={() => setReposOpen(false)} />}
+      {forkFrom && settings && (
         <ForkDialog
           session={session}
+          settings={settings}
+          models={models}
+          options={options}
           snapshots={snapshots}
           saved={saved}
           initialSnapshotId={forkFrom}
+          initialSettingsOpen={forkWithSettings}
           busy={forking}
-          onClose={() => setForkFrom(null)}
+          onClose={() => {
+            setForkFrom(null);
+            setForkWithSettings(false);
+          }}
           onSubmit={(req) => {
             setForking(true);
             void run(async () => {
               const fork = await api.forkSession(session.id, req);
               setForkFrom(null);
+              setForkWithSettings(false);
               onForked(fork);
             }).finally(() => setForking(false));
           }}
@@ -1168,9 +1188,9 @@ function SessionView({
             footerStart={
               <>
                 {showModelSelect && (
-                  <ModelSelect compact models={models} value={session.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
+                  <ModelSelect compact models={models} value={session.settings.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
                 )}
-                <OptionSelects compact options={options} values={session.options} onChange={changeOption} disabled={modelBusy} pending={session.optionsPending} />
+                <OptionSelects compact options={options} values={session.settings.options} onChange={changeOption} disabled={modelBusy} pending={session.optionsPending} />
                 <ContextGauge context={context} active={pane === "context"} onOpen={() => togglePane("context")} />
               </>
             }
@@ -1228,27 +1248,8 @@ function SessionView({
   );
 }
 
-const PRIVILEGED_WARNING =
-  "This Sandbox runs with --privileged: the Agent can escape to the host (root-equivalent). Install Sysbox for isolated nested Docker.";
-
-/** Explains what "Docker inside Sandboxes" means on this host (ADR-0008). */
-function DockerModeNote({ settings, enabled }: { settings: PublicSettings; enabled: boolean }) {
-  if (settings.dockerModeAvailable === "sysbox") {
-    return <p className="muted">Sysbox runtime detected: Docker-enabled Sandboxes get a private, unprivileged Docker daemon.</p>;
-  }
-  return (
-    <div className="banner banner-warn" role="alert">
-      <strong>Sysbox runtime not installed on this host.</strong>{" "}
-      {enabled
-        ? "Docker-enabled Sandboxes fall back to --privileged: the Agent can escape to your host (root-equivalent), so only run code you trust."
-        : "Enabling Docker would fall back to --privileged, which lets the Agent escape to your host (root-equivalent)."}{" "}
-      Install Sysbox (Linux, <code>sysbox-ce</code> .deb from github.com/nestybox/sysbox), then reload this page.
-    </div>
-  );
-}
-
 function gitIdentityNote(session: Session): string {
-  const { name, email } = session.gitIdentity;
+  const { name, email } = session.settings.sandbox.gitIdentity;
   if (!name && !email) return "";
   return `\nGit commits as ${name}${email ? ` <${email}>` : ""}`;
 }
@@ -1269,45 +1270,27 @@ function NewSession({
   run: Runner;
 }) {
   const [provider, setProvider] = useState<Provider>("claude-code");
-  const [model, setModel] = useState<string | null>(null);
-  const [optionValues, setOptionValues] = useState<OptionValues>({});
-  const [docker, setDocker] = useState(settings.dockerInSandbox);
-  const [sourceType, setSourceType] = useState<WorkspaceSource["type"]>("empty");
-  const [gitUrl, setGitUrl] = useState("");
-  const [gitRef, setGitRef] = useState("");
-  const [copyPath, setCopyPath] = useState("");
-  const [browsing, setBrowsing] = useState(false);
+  const [draft, setDraft] = useState<SessionSettingsDraft>(() => draftFromDefaults(settings));
+  const [repos, setRepos] = useState<RepoDraft[]>([]);
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [mcpEnabled, setMcpEnabled] = useState<string[]>(() => settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id));
-  const [instructions, setInstructions] = useState(settings.instructions);
-  const defaultGitName = settings.gitUserName || settings.hostGitIdentity.name;
-  const defaultGitEmail = settings.gitUserEmail || settings.hostGitIdentity.email;
-  const [gitName, setGitName] = useState(defaultGitName);
-  const [gitEmail, setGitEmail] = useState(defaultGitEmail);
   const [busy, setBusy] = useState(false);
+
+  const repoSpecs = draftsToSpecs(repos);
+  const repoError = draftsError(repos);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const workspaceSource: WorkspaceSource =
-      sourceType === "git"
-        ? { type: "git", url: gitUrl.trim(), ...(gitRef.trim() ? { ref: gitRef.trim() } : {}) }
-        : sourceType === "copy"
-          ? { type: "copy", path: copyPath.trim() }
-          : { type: "empty" };
+    if (repoError) return;
     setBusy(true);
     void run(async () => {
       const s = await api.createSession({
         provider,
-        workspaceSource,
-        docker,
-        mcpEnabled,
-        ...(model ? { model } : {}),
-        ...(Object.keys(optionValues).length > 0 ? { options: optionValues } : {}),
+        repos: repoSpecs,
+        workspaceSource: { type: "empty" },
+        settings: draftToInput(draft),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
-        instructions,
-        gitIdentity: { name: gitName.trim(), email: gitEmail.trim() },
       });
       onCreated(s);
     }).finally(() => setBusy(false));
@@ -1323,8 +1306,7 @@ function NewSession({
           value={provider}
           onChange={(e) => {
             setProvider(e.target.value as Provider);
-            setModel(null);
-            setOptionValues({});
+            setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: false }));
           }}
         >
           {PROVIDERS.map((p) => (
@@ -1334,107 +1316,32 @@ function NewSession({
           ))}
         </select>
       </label>
-      {models[provider].length > 0 ? (
-        <>
-          <ModelSelect models={models[provider]} value={model} onChange={setModel} allowDefault />
-          <OptionSelects
-            options={options[provider]}
-            values={optionValues}
-            allowDefault
-            onChange={(id, value) =>
-              setOptionValues((prev) => {
-                const next = { ...prev };
-                if (value === null) delete next[id];
-                else next[id] = value;
-                return next;
-              })
-            }
-          />
-        </>
-      ) : (
-        <p className="muted">
-          Model: {PROVIDER_LABELS[provider]}&apos;s default. The list of models appears here once a {PROVIDER_LABELS[provider]} session has started; you can
-          switch the model from the chat afterwards.
+      {!providerTokenSet(settings, provider) && (
+        <p className="field-hint warn">
+          No {PROVIDER_LABELS[provider]} token configured: this Session would start without one. Add it in Settings, or pick a provider you have a token
+          for.
         </p>
       )}
-      <label>
-        Workspace
-        <select value={sourceType} onChange={(e) => setSourceType(e.target.value as WorkspaceSource["type"])}>
-          <option value="empty">Empty directory</option>
-          <option value="git">Clone a git URL</option>
-          <option value="copy">Copy a host directory</option>
-        </select>
-      </label>
-      {sourceType === "git" && (
-        <>
-          <label>
-            Repository URL
-            <input required value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/org/repo.git" />
-          </label>
-          <label>
-            Branch / tag (optional)
-            <input value={gitRef} onChange={(e) => setGitRef(e.target.value)} placeholder="main" />
-          </label>
-          <span className="label-row">
-            Git author for commits made in the Sandbox
-            {(gitName !== defaultGitName || gitEmail !== defaultGitEmail) && (
-              <button
-                type="button"
-                className="link"
-                onClick={() => {
-                  setGitName(defaultGitName);
-                  setGitEmail(defaultGitEmail);
-                }}
-              >
-                Reset to the global identity
-              </button>
-            )}
-          </span>
-          <div className="row">
-            <label>
-              Name
-              <input value={gitName} onChange={(e) => setGitName(e.target.value)} placeholder="Jane Doe" autoComplete="name" />
-            </label>
-            <label>
-              Email
-              <input value={gitEmail} onChange={(e) => setGitEmail(e.target.value)} placeholder="jane@example.com" autoComplete="email" />
-            </label>
-          </div>
+      <fieldset className="choice">
+        <legend>Repositories (each goes to <code>/workspace/&lt;name&gt;</code> in the Sandbox; more can be added or removed later)</legend>
+        <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} />
+        {repos.some((d) => d.type === "copy") && (
           <p className="muted">
-            Used as git&apos;s <code>user.name</code> / <code>user.email</code> inside the Sandbox (author and committer). Prefilled from Settings
-            {!settings.gitUserName && settings.hostGitIdentity.name ? " (blank there, so from this machine's git config)" : ""}; fixed for this Session.
+            A host folder is copied (tracked + untracked-but-not-ignored files and <code>.git</code>); changes can be pulled back into it from the Session
+            header.
           </p>
-        </>
-      )}
-      {sourceType === "copy" && (
-        <label>
-          Host path (absolute; git repos copy tracked + untracked-but-not-ignored files and .git)
-          <div className="input-row">
-            <input required value={copyPath} onChange={(e) => setCopyPath(e.target.value)} placeholder="/home/you/project" />
-            <button type="button" onClick={() => setBrowsing(true)}>
-              Browse…
-            </button>
-          </div>
-        </label>
-      )}
-      <label className="check">
-        <input type="checkbox" checked={docker} onChange={(e) => setDocker(e.target.checked)} />
-        Docker inside the Sandbox ({DOCKER_MODE_LABELS[settings.dockerModeAvailable]})
-      </label>
-      {docker && <DockerModeNote settings={settings} enabled />}
-      <McpPicker servers={settings.mcpServers} enabled={mcpEnabled} onChange={setMcpEnabled} />
-      <label>
-        <span className="label-row">
-          Instructions for the Agent (fixed for this Session; empty for none)
-          {instructions !== settings.instructions && (
-            <button type="button" className="link" onClick={() => setInstructions(settings.instructions)}>
-              Reset to the Settings default
-            </button>
-          )}
-        </span>
-        <textarea rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
-      </label>
-      <p className="muted">{deliveryNote(provider)}</p>
+        )}
+      </fieldset>
+      <SessionSettingsForm
+        mode="create"
+        provider={provider}
+        settings={settings}
+        models={models[provider]}
+        options={options[provider]}
+        value={draft}
+        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+        disabled={busy}
+      />
       <label>
         Title (optional, defaults to the first prompt)
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -1447,21 +1354,11 @@ function NewSession({
         <button type="button" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || repoError !== null}>
           {busy ? "Creating…" : "Create"}
         </button>
       </div>
     </form>
-    {browsing && (
-      <FolderDialog
-        initialPath={copyPath}
-        onSelect={(p) => {
-          setCopyPath(p);
-          setBrowsing(false);
-        }}
-        onClose={() => setBrowsing(false)}
-      />
-    )}
     </>
   );
 }
@@ -1570,9 +1467,13 @@ function SettingsView({
             autoComplete="off"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder={tokenSet ? "Leave empty to keep the current token" : "Run `claude setup-token` and paste the result"}
+            placeholder={tokenSet ? "Leave empty to keep the current token" : "Paste the token"}
           />
         </label>
+        <p className="field-hint">
+          <span>Get one on the machine you run Claude Code on:</span>
+          <CopyCommand command="claude setup-token" />
+        </p>
         <label>
           Devin token (WINDSURF_API_KEY) {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
           <input
@@ -1580,13 +1481,14 @@ function SettingsView({
             autoComplete="off"
             value={devinToken}
             onChange={(e) => setDevinToken(e.target.value)}
-            placeholder={
-              devinTokenSet
-                ? "Leave empty to keep the current token"
-                : "Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml"
-            }
+            placeholder={devinTokenSet ? "Leave empty to keep the current token" : "Paste the token"}
           />
         </label>
+        <p className="field-hint">
+          <span>Log in, then copy the token out of the credentials file it writes:</span>
+          <CopyCommand command="devin auth login" />
+          <CopyCommand command="cat ~/.local/share/devin/credentials.toml" />
+        </p>
       </fieldset>
       <fieldset className="choice">
         <legend>Claude API</legend>

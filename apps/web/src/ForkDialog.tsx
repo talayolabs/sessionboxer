@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { ForkSessionRequest, SavedMessage, Session, Snapshot } from "@sessionboxer/protocol";
+import type { AgentOption, ForkSessionRequest, ModelOption, PublicSettings, SavedMessage, Session, Snapshot } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
+import { SessionSettingsForm, draftFromSettings, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
 
 const PREVIEW_CHARS = 120;
 
@@ -12,23 +13,34 @@ function preview(text: string): string {
 /**
  * "Fork from a snapshot": pick the Snapshot (fork point), what the fork's first
  * message is (one of the queued messages at that point, the current queue, a new
- * prompt, or nothing) and whether the rest of the queue is copied over. The
- * origin Session and its queue are never modified.
+ * prompt, or nothing) and whether the rest of the queue is copied over. The fork
+ * starts with the origin's settings; "Settings" opens them for changes, including the
+ * creation-only ones (Docker, instructions, git identity). The origin Session and its
+ * queue are never modified.
  */
 export function ForkDialog({
   session,
+  settings,
+  models,
+  options,
   snapshots,
   saved,
   initialSnapshotId,
+  initialSettingsOpen = false,
   onSubmit,
   onClose,
   busy,
 }: {
   session: Session;
+  settings: PublicSettings;
+  models: ModelOption[];
+  options: AgentOption[];
   snapshots: Snapshot[];
   /** The origin's current saved messages, offered next to the ones stored with the Snapshot. */
   saved: SavedMessage[];
   initialSnapshotId: string;
+  /** Start with the settings section expanded ("Fork with different settings"). */
+  initialSettingsOpen?: boolean;
   onSubmit: (req: ForkSessionRequest) => void;
   onClose: () => void;
   busy: boolean;
@@ -38,6 +50,9 @@ export function ForkDialog({
   const [first, setFirst] = useState<"none" | "custom" | `q${number}`>("none");
   const [custom, setCustom] = useState("");
   const [copyRest, setCopyRest] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
+  const [draft, setDraft] = useState<SessionSettingsDraft>(() => draftFromSettings(session.settings));
+  const [draftChanged, setDraftChanged] = useState(false);
 
   const snapshot = snapshots.find((s) => s.id === snapshotId) ?? snapshots[snapshots.length - 1];
   // Messages queued when the Snapshot was taken, then whatever is queued now that wasn't already there.
@@ -70,6 +85,7 @@ export function ForkDialog({
     onSubmit({
       snapshotId: snapshot.id,
       ...(title.trim() ? { title: title.trim() } : {}),
+      settings: draftChanged ? draftToInput(draft) : {},
       ...(prompt ? { prompt } : {}),
       savedMessages: rest,
     });
@@ -127,6 +143,27 @@ export function ForkDialog({
             {others.length} queued message{others.length === 1 ? "" : "s"} to the fork's "Saved for later"
           </label>
         )}
+        <details className="fork-settings" open={settingsOpen} onToggle={(e) => setSettingsOpen(e.currentTarget.open)}>
+          <summary>
+            Settings of the fork{draftChanged ? " (changed)" : " (same as the origin)"}
+          </summary>
+          {settingsOpen && (
+            <SessionSettingsForm
+              mode="fork"
+              provider={session.provider}
+              session={session}
+              settings={settings}
+              models={models}
+              options={options}
+              value={draft}
+              onChange={(patch) => {
+                setDraft((d) => ({ ...d, ...patch }));
+                setDraftChanged(true);
+              }}
+              disabled={busy}
+            />
+          )}
+        </details>
         <div className="actions">
           <button type="button" onClick={onClose} disabled={busy}>
             Cancel

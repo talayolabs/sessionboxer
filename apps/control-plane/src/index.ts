@@ -71,7 +71,7 @@ import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
-import { log } from "./log.js";
+import { banner, log } from "./log.js";
 import { PushNotifier } from "./push.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
@@ -583,7 +583,16 @@ const server = serve(
   (info) => {
     log(`sessionboxer ${VERSION} listening on ${TLS ? "https" : "http"}://${info.address}:${info.port}${PUBLIC_URL ? ` (public URL ${PUBLIC_URL})` : ""}`);
     const pairing = auth.createPairing();
-    log(`log in at ${PUBLIC_URL}/#${PAIR_FRAGMENT_KEY}=${pairing.code} (one use, ${Math.round(PAIRING_TTL_MS / 60_000)} min)`);
+    banner([
+      `Sessionboxer ${VERSION} is ready. Open this link to log in:`,
+      "",
+      `  ${PUBLIC_URL}/#${PAIR_FRAGMENT_KEY}=${pairing.code}`,
+      "",
+      `One use, valid for ${Math.round(PAIRING_TTL_MS / 60_000)} minutes.`,
+      accessTokenSource() === "env"
+        ? "Another browser: paste the SESSIONBOXER_ACCESS_TOKEN on its login page."
+        : "Another browser: `sessionboxer token` prints a token for its login page.",
+    ]);
     log(
       accessTokenSource() === "env"
         ? "access token: from SESSIONBOXER_ACCESS_TOKEN"

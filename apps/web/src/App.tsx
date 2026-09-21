@@ -705,11 +705,11 @@ function SessionSizes({
  * and `hidden` mean the same.
  */
 type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "hidden";
-const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: string }> = [
-  { id: "desktop", label: "Desktop" },
-  { id: "code", label: "Code" },
-  { id: "terminal", label: "Terminal" },
-  { id: "context", label: "Context" },
+const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: string; hint: string }> = [
+  { id: "desktop", label: "Desktop", hint: "The Sandbox's Linux desktop: browser, editor, whatever the Agent opens" },
+  { id: "code", label: "Code", hint: "The files in the Sandbox's workspace, with the Agent's edits" },
+  { id: "terminal", label: "Terminal", hint: "A shell inside the Sandbox, alongside the one the Agent uses" },
+  { id: "context", label: "Context", hint: "What the Agent is carrying in its context window, and the model calls behind it" },
 ];
 
 function loadPane(): Pane {
@@ -997,7 +997,7 @@ function SessionView({
               role="tab"
               aria-selected={pane === p.id}
               className={pane === p.id ? "active" : ""}
-              title={pane === p.id ? `Hide ${p.label.toLowerCase()}` : `Show ${p.label.toLowerCase()}`}
+              title={`${p.hint}. Click to ${pane === p.id ? "hide" : "show"} it.`}
               onClick={() => togglePane(p.id)}
             >
               {p.label}
@@ -1210,8 +1210,8 @@ function SessionView({
       </div>
       {mobile && (
         <nav className="bottom-tabs" role="tablist" aria-label="Pane">
-          {[{ id: "chat" as const, label: "Chat" }, ...PANES].map((p) => (
-            <button key={p.id} role="tab" aria-selected={shown === p.id} className={shown === p.id ? "active" : ""} onClick={() => setPane(p.id)}>
+          {[{ id: "chat" as const, label: "Chat", hint: "The conversation with the Agent" }, ...PANES].map((p) => (
+            <button key={p.id} role="tab" aria-selected={shown === p.id} className={shown === p.id ? "active" : ""} title={p.hint} onClick={() => setPane(p.id)}>
               {p.label}
             </button>
           ))}

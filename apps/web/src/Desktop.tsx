@@ -153,8 +153,18 @@ export function Desktop({ session }: { session: Session }) {
             {control ? "Release control" : "Take control"}
           </button>
         )}
-        {live && state === "connected" && !running && <span className="muted">interactive</span>}
-        {live && state === "connected" && viewOnly && <span className="muted">view only</span>}
+        {live && state === "connected" && (
+          <span
+            className={`badge ${viewOnly ? "badge-creating" : "badge-idle"}`}
+            title={
+              viewOnly
+                ? "Clicks and keys here are dropped while the Agent works. Take control to share its mouse and keyboard."
+                : "Clicks and keys here go to the box."
+            }
+          >
+            {viewOnly ? "view only" : "interactive"}
+          </span>
+        )}
         {clipNote && <span className="muted clip-note">{clipNote}</span>}
         {live && state === "connected" && (
           <button
@@ -173,7 +183,12 @@ export function Desktop({ session }: { session: Session }) {
         )}
       </div>
       <div className="desktop-body">
-        <div className="desktop-screen" ref={screen} onKeyDownCapture={onKeyDownCapture} />
+        <div
+          className="desktop-screen"
+          ref={screen}
+          onKeyDownCapture={onKeyDownCapture}
+          onPointerDownCapture={() => viewOnly && note("View only: press Take control to use the box's mouse and keyboard")}
+        />
         {!live && <div className="desktop-overlay">Sandbox is {session.status}; the Desktop is available while it runs.</div>}
         {clipOpen && live && (
           <div className="clip-panel">

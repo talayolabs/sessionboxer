@@ -183,9 +183,9 @@ function Requests({ session, calls, onInspect }: { session: Session; calls: LlmC
       </h3>
       {calls.length === 0 ? (
         <p className="muted small-text">
-          {session.inspectLlm
+          {session.settings.inspectLlm
             ? "None recorded yet: the next prompt's calls will show up here and as LLM #n tabs on the bubbles."
-            : "Turn on Inspect LLM in the header to record the exact request and response of every call to the model."}
+            : "Turn on Inspect LLM in the Session settings (header) to record the exact request and response of every call to the model."}
         </p>
       ) : (
         <table className="prs-table ctx-table llm-table">
@@ -306,7 +306,7 @@ export function ContextPane({
                 <span className="ctx-half" />
               </div>
               <p className="muted small-text">
-                After the last model reply{breakdown?.model ? ` \u00b7 model ${breakdown.model}` : session.model ? ` \u00b7 model ${session.model}` : ""}.
+                After the last model reply{breakdown?.model ? ` \u00b7 model ${breakdown.model}` : session.settings.model ? ` \u00b7 model ${session.settings.model}` : ""}.
                 {" "}The mark is half the window.
               </p>
             </>

@@ -59,11 +59,15 @@ import {
   type Session,
   type SessionBroadcast,
   type SessionEvent,
+  type SessionSettings,
   type SessionStatus,
   type Settings,
   type Snapshot,
+  createRequestSettings,
+  resolveSessionSettings,
   type SnapshotReason,
   type UpdateSessionRequest,
+  updateRequestSettings,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
@@ -141,7 +145,7 @@ export class SessionManager {
       getSession: (id) => db.getSession(id),
       daemonGhApi: (id, params, timeoutMs) => this.daemonCall(id, DAEMON_METHODS.ghApi, params, timeoutMs),
       daemonGhLogins: (id, timeoutMs) => this.daemonCall(id, DAEMON_METHODS.ghLogins, {}, timeoutMs),
-      connectorCredentials: (s) => resolveBoxCredentials(settings(), s.mcpEnabled),
+      connectorCredentials: (s) => resolveBoxCredentials(settings(), s.settings.mcpEnabled),
       prompt: (id, text) => this.prompt(id, { text }),
       enqueue: (id, text) => {
         this.saveMessage(id, text);
@@ -425,7 +429,8 @@ export class SessionManager {
       }
     }
     await this.docker.ensureImage();
-    const dockerMode: DockerMode = (req.docker ?? settings.dockerInSandbox) ? await this.dockerModeAvailable() : "none";
+    const input = createRequestSettings(req);
+    const dockerMode: DockerMode = (input.sandbox?.docker ?? settings.dockerInSandbox) ? await this.dockerModeAvailable() : "none";
 
     const id = randomBytes(6).toString("hex");
     const now = new Date().toISOString();
@@ -435,22 +440,29 @@ export class SessionManager {
       provider: req.provider,
       status: "creating",
       workspaceSource,
-      gitIdentity: resolveGitIdentity(settings, req.gitIdentity),
-      dockerMode,
+      settings: {
+        model: input.model ?? null,
+        options: input.options ?? {},
+        inspectLlm: req.provider === "claude-code" && (input.inspectLlm ?? false),
+        mcpEnabled: input.mcpEnabled ? knownMcpIds(settings, input.mcpEnabled) : defaultMcpEnabled(settings),
+        instructions: (input.instructions ?? settings.instructions).trim(),
+        autoSnapshot: input.autoSnapshot ?? null,
+        snapshotKeep: input.snapshotKeep ?? null,
+        sandbox: {
+          dockerMode,
+          cpus: input.sandbox?.cpus ?? null,
+          memoryGb: input.sandbox?.memoryGb ?? null,
+          gitIdentity: resolveGitIdentity(settings, input.sandbox?.gitIdentity),
+        },
+      },
       containerId: null,
       error: null,
       queueRunning: false,
-      autoSnapshot: null,
       diskBytes: null,
-      mcpEnabled: req.mcpEnabled ? knownMcpIds(settings, req.mcpEnabled) : defaultMcpEnabled(settings),
       mcpPending: false,
-      model: req.model ?? null,
       modelPending: false,
-      options: req.options ?? {},
       optionsPending: false,
       availableOptions: [],
-      instructions: (req.instructions ?? settings.instructions).trim(),
-      inspectLlm: req.provider === "claude-code" && (req.inspectLlm ?? false),
       inspectLlmPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
@@ -487,8 +499,12 @@ export class SessionManager {
     if (!(await this.docker.imageExists(snapshot.imageId))) {
       throw new HttpError(409, `The image of snapshot ${snapshot.ordinal} is gone from Docker; delete the snapshot.`);
     }
-    if (origin.dockerMode !== "none" && (await this.dockerModeAvailable()) !== origin.dockerMode) {
-      throw new HttpError(409, `The origin ran with ${origin.dockerMode} Docker, which this host no longer offers.`);
+    const base = origin.settings;
+    const input = req.settings;
+    const wantsDocker = input.sandbox?.docker ?? base.sandbox.dockerMode !== "none";
+    const dockerMode: DockerMode = wantsDocker ? await this.dockerModeAvailable() : "none";
+    if (base.sandbox.dockerMode !== "none" && wantsDocker && dockerMode !== base.sandbox.dockerMode) {
+      throw new HttpError(409, `The origin ran with ${base.sandbox.dockerMode} Docker, which this host no longer offers.`);
     }
 
     const id = randomBytes(6).toString("hex");
@@ -504,22 +520,29 @@ export class SessionManager {
         snapshotId: snapshot.id,
         label: `${origin.title} @ snapshot ${snapshot.ordinal}`,
       },
-      gitIdentity: origin.gitIdentity,
-      dockerMode: origin.dockerMode,
+      settings: {
+        model: input.model !== undefined ? input.model : base.model,
+        options: input.options ?? base.options,
+        inspectLlm: origin.provider === "claude-code" && (input.inspectLlm ?? base.inspectLlm),
+        mcpEnabled: knownMcpIds(settings, input.mcpEnabled ?? base.mcpEnabled),
+        instructions: (input.instructions ?? base.instructions).trim(),
+        autoSnapshot: input.autoSnapshot !== undefined ? input.autoSnapshot : base.autoSnapshot,
+        snapshotKeep: input.snapshotKeep !== undefined ? input.snapshotKeep : base.snapshotKeep,
+        sandbox: {
+          dockerMode,
+          cpus: input.sandbox?.cpus !== undefined ? input.sandbox.cpus : base.sandbox.cpus,
+          memoryGb: input.sandbox?.memoryGb !== undefined ? input.sandbox.memoryGb : base.sandbox.memoryGb,
+          gitIdentity: input.sandbox?.gitIdentity ? resolveGitIdentity(settings, input.sandbox.gitIdentity) : base.sandbox.gitIdentity,
+        },
+      },
       containerId: null,
       error: null,
       queueRunning: false,
-      autoSnapshot: origin.autoSnapshot,
       diskBytes: null,
-      mcpEnabled: knownMcpIds(settings, origin.mcpEnabled),
       mcpPending: false,
-      model: origin.model,
       modelPending: false,
-      options: origin.options,
       optionsPending: false,
       availableOptions: [],
-      instructions: origin.instructions,
-      inspectLlm: origin.inspectLlm,
       inspectLlmPending: false,
       snapshotBytes: 0,
       snapshotCount: 0,
@@ -554,29 +577,31 @@ export class SessionManager {
     const env: Record<string, string> = {
       SESSIONBOXER_SESSION_ID: session.id,
       SESSIONBOXER_PROVIDER: session.provider,
-      SESSIONBOXER_INSTRUCTIONS: session.instructions,
+      SESSIONBOXER_INSTRUCTIONS: session.settings.instructions,
       ...providerEnv(session.provider, settings),
     };
-    if (session.dockerMode !== "none") env.SESSIONBOXER_DOCKER = session.dockerMode;
-    if (session.inspectLlm) env.SESSIONBOXER_INSPECT_LLM = "1";
-    if (session.gitIdentity.name) {
-      env.GIT_AUTHOR_NAME = session.gitIdentity.name;
-      env.GIT_COMMITTER_NAME = session.gitIdentity.name;
+    const { dockerMode, gitIdentity } = session.settings.sandbox;
+    if (dockerMode !== "none") env.SESSIONBOXER_DOCKER = dockerMode;
+    if (session.settings.inspectLlm) env.SESSIONBOXER_INSPECT_LLM = "1";
+    if (gitIdentity.name) {
+      env.GIT_AUTHOR_NAME = gitIdentity.name;
+      env.GIT_COMMITTER_NAME = gitIdentity.name;
     }
-    if (session.gitIdentity.email) {
-      env.GIT_AUTHOR_EMAIL = session.gitIdentity.email;
-      env.GIT_COMMITTER_EMAIL = session.gitIdentity.email;
+    if (gitIdentity.email) {
+      env.GIT_AUTHOR_EMAIL = gitIdentity.email;
+      env.GIT_COMMITTER_EMAIL = gitIdentity.email;
     }
     return env;
   }
 
   private createSandbox(session: Session, settings: Settings, image?: string): Promise<string> {
+    const effective = resolveSessionSettings(session.settings, settings);
     return this.docker.create({
       sessionId: session.id,
       env: this.sandboxEnv(session, settings),
-      cpus: settings.sandboxCpus,
-      memoryGb: settings.sandboxMemoryGb,
-      dockerMode: session.dockerMode,
+      cpus: effective.cpus,
+      memoryGb: effective.memoryGb,
+      dockerMode: session.settings.sandbox.dockerMode,
       image,
     });
   }
@@ -624,7 +649,7 @@ export class SessionManager {
   private async seedWorkspace(containerId: string, session: Session, settings: Settings): Promise<void> {
     const source = session.workspaceSource;
     if (source.type === "git") {
-      const plan = planClone(source.url, resolveBoxCredentials(settings, session.mcpEnabled));
+      const plan = planClone(source.url, resolveBoxCredentials(settings, session.settings.mcpEnabled));
       const args = ["git", "clone", "--", plan.url, "."];
       if (source.ref) args.splice(2, 0, "--branch", source.ref);
       if (plan.account !== null) {
@@ -1071,9 +1096,9 @@ export class SessionManager {
     return { deleted, kept };
   }
 
-  /** Drops the oldest automatic Snapshots beyond `snapshotKeep`, never one a fork was started from. */
+  /** Drops the oldest automatic Snapshots beyond `snapshotKeep` (the Session's, else the global), never one a fork was started from. */
   private async pruneSnapshots(id: string): Promise<void> {
-    const keep = this.settings().snapshotKeep;
+    const keep = resolveSessionSettings(this.get(id).settings, this.settings()).snapshotKeep;
     if (keep <= 0) return;
     const auto = this.db.listSnapshots(id).filter((s) => s.reason === "turn");
     for (const old of auto.slice(0, Math.max(0, auto.length - keep))) {
@@ -1177,20 +1202,37 @@ export class SessionManager {
     for (const snap of snapshots) await this.docker.removeImage(snap.imageId).catch(() => false);
   }
 
+  /**
+   * Renames and/or changes the live settings. The stored values change right away; the ones the
+   * Agent has to hear about (MCP set, model, options, inspector) are pushed to the Daemon in that
+   * order, which applies them now or when the current turn ends (the `*Pending` flags).
+   */
   async edit(id: string, req: UpdateSessionRequest): Promise<Session> {
+    const current = this.get(id);
+    const patch = updateRequestSettings(req);
+    const next: SessionSettings = {
+      ...current.settings,
+      ...(patch.mcpEnabled !== undefined ? { mcpEnabled: knownMcpIds(this.settings(), patch.mcpEnabled) } : {}),
+      ...(patch.model !== undefined ? { model: patch.model } : {}),
+      ...(patch.options !== undefined ? { options: { ...current.settings.options, ...patch.options } } : {}),
+      ...(patch.inspectLlm !== undefined ? { inspectLlm: patch.inspectLlm && current.provider === "claude-code" } : {}),
+      ...(patch.autoSnapshot !== undefined ? { autoSnapshot: patch.autoSnapshot } : {}),
+      ...(patch.snapshotKeep !== undefined ? { snapshotKeep: patch.snapshotKeep } : {}),
+      sandbox: {
+        ...current.settings.sandbox,
+        ...(patch.sandbox?.cpus !== undefined ? { cpus: patch.sandbox.cpus } : {}),
+        ...(patch.sandbox?.memoryGb !== undefined ? { memoryGb: patch.sandbox.memoryGb } : {}),
+      },
+    };
     const s = this.update(id, {
       ...(req.title !== undefined ? { title: req.title } : {}),
-      ...(req.autoSnapshot !== undefined ? { autoSnapshot: req.autoSnapshot } : {}),
-      ...(req.mcpEnabled !== undefined ? { mcpEnabled: knownMcpIds(this.settings(), req.mcpEnabled) } : {}),
-      ...(req.model !== undefined ? { model: req.model } : {}),
-      ...(req.options !== undefined ? { options: { ...this.get(id).options, ...req.options } } : {}),
-      ...(req.inspectLlm !== undefined ? { inspectLlm: req.inspectLlm && this.get(id).provider === "claude-code" } : {}),
+      ...(Object.keys(patch).length > 0 ? { settings: next } : {}),
     });
-    if (req.mcpEnabled !== undefined) await this.pushMcpServers(id);
-    if (req.model !== undefined) await this.pushModel(id);
-    if (req.options !== undefined) await this.pushOptions(id, req.options);
-    if (req.inspectLlm !== undefined) await this.pushLlmInspect(id);
-    return req.mcpEnabled !== undefined || req.model !== undefined || req.options !== undefined || req.inspectLlm !== undefined
+    if (patch.mcpEnabled !== undefined) await this.pushMcpServers(id);
+    if (patch.model !== undefined) await this.pushModel(id);
+    if (patch.options !== undefined) await this.pushOptions(id, patch.options);
+    if (patch.inspectLlm !== undefined) await this.pushLlmInspect(id);
+    return patch.mcpEnabled !== undefined || patch.model !== undefined || patch.options !== undefined || patch.inspectLlm !== undefined
       ? this.get(id)
       : s;
   }
@@ -1204,12 +1246,12 @@ export class SessionManager {
     const client = this.clients.get(id);
     if (s.provider !== "claude-code" || !client?.connected) return;
     try {
-      const params: DaemonLlmInspectSetParams = { enabled: s.inspectLlm };
+      const params: DaemonLlmInspectSetParams = { enabled: s.settings.inspectLlm };
       const result = DaemonLlmInspectSetResult.parse(await client.request(DAEMON_METHODS.llmInspectSet, params));
       this.update(id, { inspectLlmPending: !result.applied });
     } catch (e) {
       if (e instanceof DaemonRpcError && e.code === -32601) {
-        if (s.inspectLlm) throw new HttpError(502, "The Sandbox runs an older Daemon without the LLM inspector; Stop and Resume the session to refresh it.");
+        if (s.settings.inspectLlm) throw new HttpError(502, "The Sandbox runs an older Daemon without the LLM inspector; Stop and Resume the session to refresh it.");
         return;
       }
       throw e;
@@ -1263,9 +1305,9 @@ export class SessionManager {
   async pushModel(id: string): Promise<Session> {
     const s = this.get(id);
     const client = this.clients.get(id);
-    if (!s.model || !client?.connected) return s;
+    if (!s.settings.model || !client?.connected) return s;
     try {
-      const result = DaemonModelSetResult.parse(await client.request(DAEMON_METHODS.modelSet, { model: s.model }));
+      const result = DaemonModelSetResult.parse(await client.request(DAEMON_METHODS.modelSet, { model: s.settings.model }));
       return this.update(id, { modelPending: !result.applied });
     } catch (e) {
       if (e instanceof DaemonRpcError && e.code === -32601) {
@@ -1283,7 +1325,7 @@ export class SessionManager {
   async pushOptions(id: string, values?: OptionValues): Promise<Session> {
     const s = this.get(id);
     const client = this.clients.get(id);
-    const options = values ?? s.options;
+    const options = values ?? s.settings.options;
     if (Object.keys(options).length === 0 || !client?.connected) return s;
     try {
       const params: DaemonOptionSetParams = { options, lenient: values === undefined };
@@ -1368,8 +1410,8 @@ export class SessionManager {
     const s = this.get(id);
     const client = this.clients.get(id);
     if (!client?.connected) return s;
-    const servers = resolveMcpServers(this.settings(), s.mcpEnabled);
-    const credentials = resolveBoxCredentials(this.settings(), s.mcpEnabled);
+    const servers = resolveMcpServers(this.settings(), s.settings.mcpEnabled);
+    const credentials = resolveBoxCredentials(this.settings(), s.settings.mcpEnabled);
     try {
       const result = DaemonMcpSetResult.parse(await client.request(DAEMON_METHODS.mcpSet, { servers, credentials }));
       return this.update(id, { mcpPending: !result.applied });
@@ -1448,19 +1490,19 @@ export class SessionManager {
     if (status.models && this.db.setProviderModels(s.provider, status.models)) {
       this.broadcast({ type: "models", provider: s.provider, models: status.models });
     }
-    if (status.model !== null && (status.model !== s.model || status.modelPending !== s.modelPending)) {
-      this.update(id, { model: status.model, modelPending: status.modelPending });
+    if (status.model !== null && (status.model !== s.settings.model || status.modelPending !== s.modelPending)) {
+      this.update(id, { settings: { ...this.get(id).settings, model: status.model }, modelPending: status.modelPending });
     }
     if (status.options) {
       const merged = this.db.mergeProviderOptions(s.provider, status.options);
       if (merged) this.broadcast({ type: "options", provider: s.provider, options: merged });
-      const options = { ...s.options, ...status.optionValues };
+      const options = { ...s.settings.options, ...status.optionValues };
       if (
-        JSON.stringify(options) !== JSON.stringify(s.options) ||
+        JSON.stringify(options) !== JSON.stringify(s.settings.options) ||
         status.optionsPending !== s.optionsPending ||
         JSON.stringify(status.options) !== JSON.stringify(s.availableOptions)
       ) {
-        this.update(id, { options, optionsPending: status.optionsPending, availableOptions: status.options });
+        this.update(id, { settings: { ...this.get(id).settings, options }, optionsPending: status.optionsPending, availableOptions: status.options });
       }
     }
   }
@@ -1515,7 +1557,7 @@ export class SessionManager {
   private async autoSnapshot(id: string, eventSeq: number): Promise<void> {
     const s = this.db.getSession(id);
     if (!s || s.status !== "idle") return;
-    if (!(s.autoSnapshot ?? this.settings().autoSnapshot)) return;
+    if (!resolveSessionSettings(s.settings, this.settings()).autoSnapshot) return;
     try {
       await this.snapshot(id, "turn", eventSeq);
     } catch (e) {

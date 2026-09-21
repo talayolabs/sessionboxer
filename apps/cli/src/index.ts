@@ -11,7 +11,7 @@ import {
   PROVIDERS,
   Provider,
   type AuthPairing,
-  type CreateSessionRequest,
+  type CreateSessionRequestInput,
   type Session,
   type WorkspaceSource,
 } from "@sessionboxer/protocol";
@@ -188,27 +188,31 @@ async function newSession(args: string[]): Promise<void> {
         ? readFileSync(values.instructions.slice(1), "utf8")
         : values.instructions;
 
-  const body: CreateSessionRequest = {
+  const body: CreateSessionRequestInput = {
     provider: provider.data,
     workspaceSource,
-    ...(values.docker !== undefined ? { docker: values.docker } : {}),
-    ...(values.model ? { model: values.model } : {}),
-    ...(Object.keys(options).length > 0 ? { options } : {}),
-    ...(instructions !== undefined ? { instructions } : {}),
-    ...(values["git-name"] !== undefined || values["git-email"] !== undefined
-      ? {
-          gitIdentity: {
-            ...(values["git-name"] !== undefined ? { name: values["git-name"] } : {}),
-            ...(values["git-email"] !== undefined ? { email: values["git-email"] } : {}),
-          },
-        }
-      : {}),
+    settings: {
+      ...(values.model ? { model: values.model } : {}),
+      ...(Object.keys(options).length > 0 ? { options } : {}),
+      ...(instructions !== undefined ? { instructions } : {}),
+      sandbox: {
+        ...(values.docker !== undefined ? { docker: values.docker } : {}),
+        ...(values["git-name"] !== undefined || values["git-email"] !== undefined
+          ? {
+              gitIdentity: {
+                ...(values["git-name"] !== undefined ? { name: values["git-name"] } : {}),
+                ...(values["git-email"] !== undefined ? { email: values["git-email"] } : {}),
+              },
+            }
+          : {}),
+      },
+    },
     ...(values.title ? { title: values.title } : {}),
     ...(values.prompt ? { prompt: values.prompt } : {}),
   };
   const session = await api<Session>("POST", "/sessions", body);
   show(session);
-  if (session.dockerMode === "privileged") {
+  if (session.settings.sandbox.dockerMode === "privileged") {
     process.stderr.write(
       "warning: Sysbox runtime not installed; this Sandbox runs with --privileged (the Agent can escape to the host).\n",
     );
@@ -251,7 +255,8 @@ function show(s: Session): void {
         : s.workspaceSource.type === "fork"
           ? `fork of ${s.workspaceSource.label}`
           : "empty";
-  const docker = s.dockerMode === "none" ? "" : `  [${DOCKER_MODE_LABELS[s.dockerMode]}]`;
+  const { dockerMode } = s.settings.sandbox;
+  const docker = dockerMode === "none" ? "" : `  [${DOCKER_MODE_LABELS[dockerMode]}]`;
   process.stdout.write(`${s.id}  ${s.status.padEnd(8)}  ${s.title}${docker}\n    ${source}\n    ${sessionUrl(s.id)}\n`);
 }
 

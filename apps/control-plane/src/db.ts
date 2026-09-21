@@ -10,7 +10,9 @@ import {
   Provider,
   ROOT_BRANCH_ID,
   Session,
+  SessionRepo,
   SnapshotReason,
+  WORKSPACE_ROOT_REPO,
   WorkspaceSource,
   branchScope,
   type Branch,
@@ -42,6 +44,8 @@ interface SessionRow {
   provider: string;
   status: string;
   workspace_source: string;
+  /** JSON array of `SessionRepo`. */
+  repos: string;
   docker_mode: string;
   container_id: string | null;
   error: string | null;
@@ -125,6 +129,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider TEXT NOT NULL,
   status TEXT NOT NULL,
   workspace_source TEXT NOT NULL,
+  repos TEXT NOT NULL DEFAULT '[]',
   docker_mode TEXT NOT NULL DEFAULT 'none',
   container_id TEXT,
   error TEXT,
@@ -223,6 +228,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "git_user_email", ddl: "ALTER TABLE sessions ADD COLUMN git_user_email TEXT NOT NULL DEFAULT ''" },
   { table: "sessions", column: "inspect_llm", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "inspect_llm_pending", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];
@@ -243,8 +249,9 @@ export class Db {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
-    this.migrate();
+    const added = this.migrate();
     this.titleBranches();
+    if (added.has("repos")) this.reposFromWorkspaceSource();
     this.prs = new PrStore(this.db);
   }
 
@@ -265,11 +272,61 @@ export class Db {
     for (const r of rows) this.renameBranch(r.session_id, r.id, branchTitle(r.text));
   }
 
-  private migrate(): void {
+  /**
+   * Sessions from before the repository list cloned or copied their one source into the
+   * Workspace root itself; they get a repository entry at `.` so the list describes them too.
+   */
+  private reposFromWorkspaceSource(): void {
+    const rows = this.db
+      .prepare("SELECT id, workspace_source, created_at FROM sessions WHERE json_extract(workspace_source, '$.type') IN ('git', 'copy')")
+      .all() as Array<{ id: string; workspace_source: string; created_at: string }>;
+    const update = this.db.prepare("UPDATE sessions SET repos = ? WHERE id = ?");
+    for (const r of rows) {
+      const source = WorkspaceSource.parse(JSON.parse(r.workspace_source));
+      if (source.type !== "git" && source.type !== "copy") continue;
+      const repo: SessionRepo = {
+        id: randomBytes(4).toString("hex"),
+        name: WORKSPACE_ROOT_REPO,
+        source,
+        status: "ready",
+        error: null,
+        git: null,
+        createdAt: r.created_at,
+      };
+      update.run(JSON.stringify([repo]), r.id);
+    }
+    // Forks share their origin's Workspace layout (the Snapshot carried the files).
+    const forks = this.db
+      .prepare("SELECT id, json_extract(workspace_source, '$.sessionId') AS origin_id FROM sessions WHERE json_extract(workspace_source, '$.type') = 'fork'")
+      .all() as Array<{ id: string; origin_id: string }>;
+    const reposOf = this.db.prepare("SELECT repos, workspace_source FROM sessions WHERE id = ?");
+    for (const f of forks) {
+      let originId: string | null = f.origin_id;
+      for (let depth = 0; originId !== null && depth < 10; depth++) {
+        const origin = reposOf.get(originId) as { repos: string; workspace_source: string } | undefined;
+        if (!origin) break;
+        const repos = SessionRepo.array().parse(JSON.parse(origin.repos));
+        if (repos.length > 0) {
+          update.run(JSON.stringify(repos.map((repo) => ({ ...repo, id: randomBytes(4).toString("hex"), git: null }))), f.id);
+          break;
+        }
+        const source = WorkspaceSource.parse(JSON.parse(origin.workspace_source));
+        originId = source.type === "fork" ? source.sessionId : null;
+      }
+    }
+  }
+
+  /** Returns the names of the columns this run added. */
+  private migrate(): Set<string> {
+    const added = new Set<string>();
     for (const m of MIGRATIONS) {
       const columns = this.db.prepare(`PRAGMA table_info(${m.table})`).all() as Array<{ name: string }>;
-      if (!columns.some((c) => c.name === m.column)) this.db.exec(m.ddl);
+      if (!columns.some((c) => c.name === m.column)) {
+        this.db.exec(m.ddl);
+        added.add(m.column);
+      }
     }
+    return added;
   }
 
   listSessions(): Session[] {
@@ -291,8 +348,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, instructions, inspect_llm, inspect_llm_pending, git_user_name, git_user_email, active_branch_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @instructions, @inspect_llm, @inspect_llm_pending, @git_user_name, @git_user_email, @active_branch_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, instructions, inspect_llm, inspect_llm_pending, git_user_name, git_user_email, active_branch_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @instructions, @inspect_llm, @inspect_llm_pending, @git_user_name, @git_user_email, @active_branch_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -303,7 +360,7 @@ export class Db {
     const next: Session = { ...current, ...patch, updatedAt: new Date().toISOString() };
     this.db
       .prepare(
-        `UPDATE sessions SET title=@title, status=@status, container_id=@container_id, error=@error,
+        `UPDATE sessions SET title=@title, status=@status, repos=@repos, container_id=@container_id, error=@error,
            queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes,
            mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, model=@model, model_pending=@model_pending,
            options=@options, options_pending=@options_pending, available_options=@available_options,
@@ -618,6 +675,7 @@ export type SessionPatch = Partial<
     Session,
     | "title"
     | "status"
+    | "repos"
     | "containerId"
     | "error"
     | "queueRunning"
@@ -667,6 +725,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     provider: row.provider,
     status: row.status as SessionStatus,
     workspaceSource: WorkspaceSource.parse(JSON.parse(row.workspace_source)),
+    repos: SessionRepo.array().parse(JSON.parse(row.repos)),
     dockerMode: DockerMode.parse(row.docker_mode),
     containerId: row.container_id,
     error: row.error,
@@ -720,6 +779,7 @@ function sessionToRow(s: Session): SessionRow {
     provider: s.provider,
     status: s.status,
     workspace_source: JSON.stringify(s.workspaceSource),
+    repos: JSON.stringify(s.repos),
     docker_mode: s.dockerMode,
     container_id: s.containerId,
     error: s.error,

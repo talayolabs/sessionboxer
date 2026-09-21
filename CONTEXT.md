@@ -13,11 +13,15 @@ The isolated Docker container that belongs to a Session: its filesystem, process
 _Avoid_: VM, virtual machine, box, environment
 
 **Workspace**:
-The code directory inside a Sandbox that the agent works on. Seeded at Session creation from a Workspace Source.
-_Avoid_: Project, repo (a Workspace may not be a git repo), cwd
+The directory inside a Sandbox that the agent works in (`/workspace`): the agent's working directory, holding one subdirectory per Repository plus anything that belongs to none.
+_Avoid_: Project, repo (a Workspace holds repos, it is not one), cwd
+
+**Repository**:
+One source tree in a Workspace, at `/workspace/<name>`, with its own git history: cloned from a git URL or copied from a directory on the host. A Session lists its Repositories and can add or remove them while it runs.
+_Avoid_: Workspace Source (the pre-Repository term for a single source seeded into `/workspace` itself, kept only for such legacy Sessions), Project, module
 
 **Workspace Source**:
-Where a Workspace's initial contents come from: a git clone URL, a copy of a directory on the host, or nothing (empty).
+Legacy: where a single-source Workspace's contents came from (git clone URL, host directory copy, empty) before Repositories; kept for Sessions created that way and for forks.
 _Avoid_: Template, seed, mount
 
 **Desktop**:

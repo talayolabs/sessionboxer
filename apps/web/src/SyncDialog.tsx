@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Session, SyncEntry, SyncPlan, SyncResult } from "@sessionboxer/protocol";
+import { WORKSPACE_ROOT_REPO, type Session, type SessionRepo, type SyncEntry, type SyncPlan, type SyncResult } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { formatBytes } from "./format";
 
@@ -24,6 +24,9 @@ function summary(entries: SyncEntry[]): string {
  * the host too, and applies the rest on confirmation.
  */
 export function SyncDialog({ session, onClose }: { session: Session; onClose: () => void }) {
+  const copied = session.repos.filter((r): r is SessionRepo & { source: { type: "copy"; path: string } } => r.source.type === "copy");
+  const [repoId, setRepoId] = useState<string>(() => copied[0]?.id ?? "");
+  const repo = copied.find((r) => r.id === repoId) ?? copied[0];
   const [plan, setPlan] = useState<SyncPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [overwrite, setOverwrite] = useState(false);
@@ -34,15 +37,17 @@ export function SyncDialog({ session, onClose }: { session: Session; onClose: ()
     setBusy("plan");
     setError(null);
     try {
-      setPlan(await api.syncPlan(session.id));
+      setPlan(await api.syncPlan(session.id, repo?.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
-  }, [session.id]);
+  }, [session.id, repo?.id]);
 
   useEffect(() => {
+    setPlan(null);
+    setResult(null);
     void refresh();
   }, [refresh]);
 
@@ -54,7 +59,8 @@ export function SyncDialog({ session, onClose }: { session: Session; onClose: ()
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, busy]);
 
-  const folder = session.workspaceSource.type === "copy" ? session.workspaceSource.path : "";
+  const folder = repo?.source.path ?? "";
+  const boxDir = repo && repo.name !== WORKSPACE_ROOT_REPO ? `/workspace/${repo.name}` : "/workspace";
   const conflicts = plan?.entries.filter((e) => e.conflict && e.blocked === null) ?? [];
   const applying = plan ? plan.entries.filter((e) => e.blocked === null && (overwrite || !e.conflict)) : [];
   const bytes = applying.reduce((sum, e) => sum + e.size, 0);
@@ -68,9 +74,9 @@ export function SyncDialog({ session, onClose }: { session: Session; onClose: ()
     setBusy("pull");
     setError(null);
     try {
-      setResult(await api.syncPull(session.id, { overwriteLocal: overwrite }));
+      setResult(await api.syncPull(session.id, { overwriteLocal: overwrite, ...(repo ? { repoId: repo.id } : {}) }));
       setOverwrite(false);
-      setPlan(await api.syncPlan(session.id));
+      setPlan(await api.syncPlan(session.id, repo?.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -82,8 +88,20 @@ export function SyncDialog({ session, onClose }: { session: Session; onClose: ()
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
       <div className="modal panel sync-dialog" role="dialog" aria-modal="true" aria-labelledby="sync-title">
         <h2 id="sync-title">Pull changes to my folder</h2>
+        {copied.length > 1 && (
+          <label>
+            Repository
+            <select value={repo?.id ?? ""} disabled={busy !== null} onChange={(e) => setRepoId(e.target.value)}>
+              {copied.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} ← {r.source.path}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <p className="muted">
-          Copies what changed in the box's Workspace into <code title={folder}>{folder}</code>. Files ignored by git
+          Copies what changed in <code>{boxDir}</code> in the box into <code title={folder}>{folder}</code>. Files ignored by git
           (node_modules, build output) and <code>.git</code> itself stay in the box; changes you made only on your machine
           are kept.
         </p>

@@ -83,11 +83,12 @@ Tokens are stored in `~/.sessionboxer/config.json` (readable only by you) and ar
 
 ### Start a session
 
-Click **+ New**, pick the agent, choose where the code comes from:
+Click **+ New**, pick the agent, and list the **repositories** the session works on: none (the Workspace starts empty), one, or several (a frontend, a backend, the CI repositories, the docs…) with **+ Git repository** / **+ Host folder**. Each lands in its own directory in the box, `/workspace/<name>`, `<name>` being the repository or folder basename (`-2`, `-3` on a clash; change it in the **name** field). The Workspace root `/workspace` stays the agent's working directory and the place for anything that belongs to no repository (recordings, notes); `/workspace/.sessionboxer/repos.json` lists the repositories, and the agent's briefing tells it to treat each top-level directory as its own git repository and to say which one a path, commit or PR belongs to.
 
-- **Empty directory**: start from scratch.
 - **Clone a git URL**: any URL `git clone` accepts, optionally a branch or tag. With a GitHub entry enabled for the new session (see [GitHub with one click](#github-with-one-click)), private GitHub repositories clone as that account, and `git@github.com:…` SSH URLs are cloned over HTTPS the same way (the box has no SSH keys). Other private hosts need credentials embedded in the URL for now. Below the URL, **Git author for commits made in the Sandbox** shows the name and email the agent's commits will carry (`user.name` / `user.email` in the box, author and committer): prefilled from **Settings** (or, when blank there, from your machine's own `git config`), editable for this session only, with **Reset to the global identity** to go back; it is fixed once the session exists and travels with forks. The header's source tooltip shows what a session got.
 - **Copy a host directory**: a folder on your machine (type the path or pick it with **Browse…**). Git repositories are copied the way `git` sees them (tracked and untracked files, but nothing ignored by `.gitignore`, so `node_modules` or build output stay behind), plus the `.git` folder so the agent can commit. Other folders are copied whole. Changes the agent makes stay in the box until you **Pull to folder…** (below).
+
+The header shows one chip per repository (`⋯` while it is being cloned or copied, `⚠` when that failed, `●` when it holds uncommitted or unpushed work; hover for the branch and state). Click the chips to **add** a repository to a running session (cloned or copied in place, the agent is told on its next prompt) or **remove** one: the directory is deleted in the box, never your folder or the remote. Removing refuses when the repository has uncommitted changes, commits no remote has, or (for a copied folder) changes not yet pulled to your machine, until you confirm you want to lose them. Sessions created before repositories existed keep their single project at `/workspace` itself and cannot take a second one; start a new session for that.
 
 **Model** lists the models the chosen agent offers (Claude Code: Sonnet/Opus/Haiku/Fable and its default; Devin: the catalog your account has, grouped by family); leave it on *Provider default* to let the agent decide. The list is what the agent reported the last time a session of that provider started, so it is empty until you have run one. Next to it come the agent's other settings, when it has any: for Claude Code, **Effort** (default, low … max) and **Fast mode**. Devin's Cloud tiers (Lite, Normal, Ultra) are not something its CLI offers; pick a model with the effort level you want instead (`…-high`, `…-fast`, …).
 
@@ -173,7 +174,7 @@ The bodies stay inside the box, in memory (tmpfs): the last 40 calls with their 
 
 ### Pull requests attached to a session
 
-Paste a GitHub pull request URL into a prompt, or ask the agent to open one (`gh pr create` in the box), and the PR is **attached** to the session: a **PRs** tab appears in the pane switcher with one row per PR (state, review decision, unread items, open review threads, last activity, watch switch, **Refresh** / **Detach** / GitHub link), and one **#123** tab per PR with its conversation comments, inline review comments and reviews in a table. You can also attach one by hand from the PRs tab: a URL, `owner/repo#123`, or just `#123` for the repository the workspace was cloned from. Detaching only forgets it here; nothing changes on GitHub.
+Paste a GitHub pull request URL into a prompt, or ask the agent to open one (`gh pr create` in the box), and the PR is **attached** to the session: a **PRs** tab appears in the pane switcher with one row per PR (state, review decision, unread items, open review threads, last activity, watch switch, **Refresh** / **Detach** / GitHub link), and one **#123** tab per PR with its conversation comments, inline review comments and reviews in a table. You can also attach one by hand from the PRs tab: a URL, `owner/repo#123`, or just `#123` when exactly one GitHub repository is in the workspace (`owner/repo#123` when there are several). Detaching only forgets it here; nothing changes on GitHub.
 
 Sessionboxer then **watches** each attached PR: about every minute while the session is idle or stopped, every five minutes while the agent is working (GitHub's conditional requests keep unchanged polls free). The requests run as `gh api` *inside the box*, with whatever GitHub login the box has: a GitHub entry from Settings (see below), a manual `gh auth login` in a terminal, or a `GH_TOKEN`; the login used is shown in the row (`synced 20s ago as @you`). When the box is stopped the Control Plane polls with the connected GitHub account instead, if one of them can read the PR; otherwise the row says *watching paused — Sandbox stopped* until you resume. A PR nobody can read says so, and a closed or merged PR stops being watched a day after closing.
 
@@ -185,11 +186,11 @@ In a PR's tab every item has a checkbox and three buttons, and the bar above the
 - **Address** sends that prompt to the agent (if it is busy, the prompt goes to *Saved for later* and the queue is started, so it is sent when the turn ends): edit, verify and commit on the PR's branch in the workspace, but do **not** reply or push; you keep the GitHub conversation.
 - **Address & reply** does the same and additionally has the agent push, reply to each item on GitHub with `gh api` from the box and resolve the review threads it addressed. Bulk replies ask for confirmation first.
 
-The prompt tells the agent the quoted text comes from GitHub reviewers and is feedback to evaluate, not instructions from you. **Address** buttons are only enabled when the PR belongs to the repository in the workspace; for another repository use **To prompt** and tell the agent where to work. A `path:line` in an inline comment is a link into the Code pane, and the item's status column follows it: *in prompt*, *addressing*, then *addressed* once the agent replied in the thread or the thread was resolved.
+The prompt tells the agent the quoted text comes from GitHub reviewers and is feedback to evaluate, not instructions from you. **Address** buttons are only enabled when the PR belongs to one of the repositories in the workspace; for another repository use **To prompt** and tell the agent where to work. A `path:line` in an inline comment is a link into the Code pane, and the item's status column follows it: *in prompt*, *addressing*, then *addressed* once the agent replied in the thread or the thread was resolved.
 
 ### Pull the box's changes into your folder
 
-Sessions started from **Copy a host directory** (folder icon next to the agent logo in the list; a git mark means a clone) have **Pull to folder…** in the header. It compares the box's project folder with the folder on your machine and shows what would change before anything is written: new files (`+`), changed files (`~`), files the agent deleted (`−`). **Pull changes** applies them; files ignored by git (`node_modules`, build output) and `.git` itself stay in the box, and anything you added or changed only on your machine is left alone. A file that changed on both sides is a conflict: it is skipped and marked *kept yours*, unless you tick **Also overwrite…** (you are asked to confirm). Symlinks that would point outside your folder are never written. Pull as often as you like; each pull records the new common state, so the next one only shows what changed since. Pulling waits for the agent's turn to end and needs the box running.
+Sessions with a copied host folder (folder icon next to the agent logo in the list; a git mark means a clone) have **Pull to folder…** in the header; with several copied folders, pick which one at the top of the dialog. It compares that repository's directory in the box with the folder on your machine and shows what would change before anything is written: new files (`+`), changed files (`~`), files the agent deleted (`−`). **Pull changes** applies them; files ignored by git (`node_modules`, build output) and `.git` itself stay in the box, and anything you added or changed only on your machine is left alone. A file that changed on both sides is a conflict: it is skipped and marked *kept yours*, unless you tick **Also overwrite…** (you are asked to confirm). Symlinks that would point outside your folder are never written. Pull as often as you like; each pull records the new common state, so the next one only shows what changed since. Pulling waits for the agent's turn to end and needs the box running.
 
 ### Stop, resume, delete
 
@@ -273,6 +274,8 @@ sessionboxer new . --model haiku                     # a model id as the provide
 sessionboxer new . --model opus --option effort=high --option fast=on
 sessionboxer new . --instructions @rules.md          # standing instructions from a file ("" for none)
 sessionboxer new --git https://github.com/org/repo.git --ref main
+sessionboxer new --git https://github.com/org/frontend@main --git https://github.com/org/backend ../docs   # several repositories, /workspace/<name> each
+sessionboxer new --git https://github.com/org/repo.git --name app             # pick the directory name
 sessionboxer new --git https://github.com/org/repo.git --git-name "Jane Doe" --git-email jane@work.example
 sessionboxer new --empty -t scratch --no-open
 sessionboxer ls
@@ -288,7 +291,7 @@ sessionboxer open <id> | stop <id> | resume <id> | rm <id>
 | Settings, tokens, MCP servers | `~/.sessionboxer/config.json` |
 | Sessions and chat history | `~/.sessionboxer/db.sqlite` |
 | Session containers | `sbx-<session id>` on the `sessionboxer` Docker network, no published ports |
-| Project folder in the box | `/workspace` |
+| Workspace root in the box (repositories in `/workspace/<name>`) | `/workspace` |
 | Sandbox image | `ghcr.io/talayolabs/sessionboxer-sandbox:<version>` (pulled, or built locally by `npm run build:image`); `SESSIONBOXER_IMAGE` overrides |
 | Snapshot images | `sessionboxer/snapshot:<session id>-<n>`; unreferenced ones are removed at startup |
 | What was last pulled into a copied folder | `~/.sessionboxer/sync/<session id>.json` |

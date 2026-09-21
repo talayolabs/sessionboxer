@@ -12,11 +12,27 @@ const MAX_BODY_BYTES = 64 * 1024 * 1024;
 const SKIPPED_DIRS = new Set([".git", ".sessionboxer", "node_modules", ".venv", "__pycache__"]);
 
 /**
- * Describes the Workspace for "Pull changes to my folder": every file with its hash, listed
- * the way git sees it when the Workspace is a repository (tracked + untracked-but-not-ignored,
- * so `node_modules` and the like stay in the box), otherwise by walking everything.
+ * A directory inside the Workspace as an absolute path, refusing anything that would leave it
+ * (`""` is the Workspace itself).
+ */
+export function workspaceDir(workspace: string, dir: string): string {
+  const absRoot = resolve(workspace);
+  const abs = resolve(absRoot, dir);
+  if (abs !== absRoot && !abs.startsWith(absRoot + sep)) throw new Error(`directory escapes the workspace: ${dir}`);
+  return abs;
+}
+
+/**
+ * Describes a repository directory for "Pull changes to my folder": every file with its hash,
+ * listed the way git sees it when the directory is a repository (tracked + untracked-but-not-
+ * ignored, so `node_modules` and the like stay in the box), otherwise by walking everything.
  */
 export async function workspaceManifest(root: string): Promise<SyncManifest> {
+  try {
+    if (!(await fs.stat(root)).isDirectory()) return { files: [], git: false };
+  } catch {
+    return { files: [], git: false };
+  }
   const listed = await gitListing(root);
   const files: SyncFile[] = [];
   for (const rel of listed ?? (await walk(root))) {
@@ -82,10 +98,10 @@ function sha256(abs: string): Promise<string> {
 }
 
 /**
- * `POST /fs/tar` with `{ paths: [...] }`: streams those Workspace files as a tar archive
- * (the box's own `tar`, paths fed on stdin), for the Control Plane to unpack on the host.
+ * `POST /fs/tar` with `{ dir, paths: [...] }`: streams those files of a Workspace directory as
+ * a tar archive (the box's own `tar`, paths fed on stdin), for the Control Plane to unpack on the host.
  */
-export function serveTar(root: string, req: IncomingMessage, res: ServerResponse, log: (msg: string) => void): boolean {
+export function serveTar(workspace: string, req: IncomingMessage, res: ServerResponse, log: (msg: string) => void): boolean {
   const url = new URL(req.url ?? "/", "http://daemon");
   if (url.pathname !== FS_TAR_PATH) return false;
   if (req.method !== "POST") {
@@ -101,9 +117,12 @@ export function serveTar(root: string, req: IncomingMessage, res: ServerResponse
   });
   req.on("end", () => {
     let paths: string[];
+    let root: string;
     try {
-      paths = FsTarRequest.parse(JSON.parse(Buffer.concat(chunks).toString("utf8"))).paths;
-      const absRoot = resolve(root);
+      const body = FsTarRequest.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      paths = body.paths;
+      root = workspaceDir(workspace, body.dir);
+      const absRoot = root;
       for (const p of paths) {
         const abs = resolve(absRoot, p);
         if (p === "" || !abs.startsWith(absRoot + sep)) throw new Error(`path escapes the workspace: ${p}`);

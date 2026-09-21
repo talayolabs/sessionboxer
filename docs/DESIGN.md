@@ -16,7 +16,7 @@ Internal notes for people working on Sessionboxer: architecture, the MVP decisio
 │   │      (also serves _sessionboxer/fs and /pty)  │  │
 │   │ Xvfb :1 1024x768 + xfce4 + x11vnc + noVNC     │  │
 │   │ computer-use MCP (xdotool, screenshots)       │  │
-│   │ Workspace  (/workspace, seeded from Source)   │  │
+│   │ Workspace  (/workspace/<repo> per Repository) │  │
 │   └───────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────┘
 ```
@@ -87,7 +87,7 @@ The Files pane lists the Workspace and edits files in Monaco through the Sandbox
 
 The Terminal pane runs `bash -l` shells in the Workspace, owned by the Sandbox Daemon (node-pty; `_sessionboxer/pty/list|open|attach|input|resize|close`, output and exit as notifications). The Control Plane exposes them as `GET|POST /api/sessions/:id/terminals`, `DELETE /api/sessions/:id/terminals/:ptyId` and one WebSocket per terminal at `/api/sessions/:id/terminals/:ptyId/ws` (binary frames are raw bytes both ways, text frames are JSON control messages: `attached`, `exit`, `error`, `resize`). The Daemon keeps the last 256 KiB of output per terminal, so a page reload reattaches with scrollback; exited shells stay listed for five minutes. Terminals die with the Sandbox on **Stop**; **Resume** opens a fresh one.
 
-**Workspace Sources.** *Empty*, *git clone* (`git clone [--branch ref] url` inside the Sandbox) or *copy a host directory*: the Control Plane tars the directory (the path must be absolute; it runs on your machine, so no bind mount) and streams it into `/workspace` with Docker `putArchive`. Inside a git work tree only tracked and untracked-but-not-ignored files are copied (`git ls-files -co --exclude-standard`, so `node_modules`, build output and secrets in `.gitignore` stay behind), plus `.git` when the directory is the repository root; any other directory is copied whole. Symlinks are copied as symlinks. The copy is one-way: nothing in the Sandbox writes back to the host.
+**Repositories.** A Session lists zero or more repositories, each cloned (`git clone [--branch ref] url` inside the Sandbox) or copied from a host directory into its own `/workspace/<name>` (ADR-0037; Sessions from before carry one repository named `"."` at `/workspace` itself). Repositories can be added and removed while the Session runs (`POST|DELETE /api/sessions/:id/repos`), the Daemon writes `/workspace/.sessionboxer/repos.json` and inspects each one's git state after every turn, and the agent's instructions carry the layout and the current list. For a copy, the Control Plane tars the directory (the path must be absolute; it runs on your machine, so no bind mount) and streams it into `/workspace` with Docker `putArchive`. Inside a git work tree only tracked and untracked-but-not-ignored files are copied (`git ls-files -co --exclude-standard`, so `node_modules`, build output and secrets in `.gitignore` stay behind), plus `.git` when the directory is the repository root; any other directory is copied whole. Symlinks are copied as symlinks. The copy is one-way: nothing in the Sandbox writes back to the host.
 
 **CLI.** `npx sessionboxer` (from this checkout; `npm link -w @sessionboxer/cli` to have it on your PATH) talks to a running Control Plane (`SESSIONBOXER_URL`, default `http://127.0.0.1:4000`) and opens the browser on the new Session:
 

@@ -28,7 +28,6 @@ import {
   type Session,
   type SessionEvent,
   type Snapshot,
-  type WorkspaceSource,
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
 import { AttachmentSession } from "./Attachments";
@@ -37,7 +36,6 @@ import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { Desktop } from "./Desktop";
 import { Devices } from "./Devices";
-import { FolderDialog } from "./FolderDialog";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
@@ -63,7 +61,8 @@ import {
   type SessionSettingsDraft,
 } from "./SessionSettingsForm";
 import { SnapshotsDialog } from "./SnapshotsDialog";
-import { SourceIcon, sourceTitle } from "./SourceIcon";
+import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, type RepoDraft } from "./Repos";
+import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
 import { CodePane, type CodeTarget } from "./Code";
@@ -428,7 +427,7 @@ export function App() {
                       {s.settings.sandbox.dockerMode === "privileged" ? "\u26a0 " : ""}docker
                     </span>
                   )}
-                  <SourceIcon source={s.workspaceSource} />
+                  <SessionSourceIcon session={s} />
                   <span title={PROVIDER_LABELS[s.provider]}>
                     <ProviderIcon provider={s.provider} />
                   </span>
@@ -783,6 +782,7 @@ function SessionView({
   const [inspecting, setInspecting] = useState<{ index: number; compaction: Compaction } | null>(null);
   const [inspectingCall, setInspectingCall] = useState<LlmCall | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [reposOpen, setReposOpen] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -860,15 +860,7 @@ function SessionView({
     [session.id],
   );
 
-  const source = session.workspaceSource;
-  const sourceLabel =
-    source.type === "git"
-      ? `${source.url}${source.ref ? `@${source.ref}` : ""}`
-      : source.type === "copy"
-        ? source.path
-        : source.type === "fork"
-          ? `fork of ${source.label}`
-          : "empty workspace";
+  const copiedRepos = session.repos.filter((r) => r.source.type === "copy");
   const isLive = session.status === "idle" || session.status === "running";
   const latestSnapshot = snapshots[snapshots.length - 1];
   const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
@@ -957,10 +949,19 @@ function SessionView({
             {DOCKER_MODE_LABELS[session.settings.sandbox.dockerMode]}
           </span>
         )}
-        <span className="muted source" title={`${sourceTitle(source)}${gitIdentityNote(session)}`}>
-          <SourceIcon source={source} size={14} />
-          {sourceLabel}
-        </span>
+        {session.repos.length > 0 ? (
+          <RepoChips session={session} onClick={() => setReposOpen(true)} />
+        ) : (
+          <>
+            <span className="muted source" title={`${sessionSourceTitle(session)}${gitIdentityNote(session)}`}>
+              <SessionSourceIcon session={session} size={14} />
+              {sessionSourceLabel(session)}
+            </span>
+            <button title="Clone a git URL or copy a host folder into /workspace/<name> of this Sandbox" onClick={() => setReposOpen(true)}>
+              Add repository…
+            </button>
+          </>
+        )}
         {session.branches.length > 1 && (
           <label className="branch-select" title="Conversation branch (from “Revert to here”); only the active one talks to the Agent">
             {"\u2387"}
@@ -1030,7 +1031,7 @@ function SessionView({
         >
           Fork…
         </button>
-        {source.type === "copy" && (
+        {copiedRepos.length > 0 && (
           <button
             disabled={!isLive || session.status === "running"}
             title={
@@ -1038,7 +1039,7 @@ function SessionView({
                 ? "Pulling needs a running Sandbox (Resume first)"
                 : session.status === "running"
                   ? "Wait for the Agent to finish its turn"
-                  : `Copy the box's changes back into ${source.path} (you see what changes first)`
+                  : `Copy the box's changes back into ${copiedRepos.map((r) => (r.source.type === "copy" ? r.source.path : "")).join(", ")} (you see what changes first)`
             }
             onClick={() => setSyncOpen(true)}
           >
@@ -1098,6 +1099,7 @@ function SessionView({
       {inspecting && <CompactionDialog session={session} compaction={inspecting.compaction} index={inspecting.index} onClose={() => setInspecting(null)} />}
       {inspectingCall && <LlmCallDialog session={session} call={inspectingCall} calls={llmCalls} onClose={() => setInspectingCall(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
+      {reposOpen && <ReposDialog session={session} onClose={() => setReposOpen(false)} />}
       {forkFrom && settings && (
         <ForkDialog
           session={session}
@@ -1245,28 +1247,23 @@ function NewSession({
 }) {
   const [provider, setProvider] = useState<Provider>("claude-code");
   const [draft, setDraft] = useState<SessionSettingsDraft>(() => draftFromDefaults(settings));
-  const [sourceType, setSourceType] = useState<WorkspaceSource["type"]>("empty");
-  const [gitUrl, setGitUrl] = useState("");
-  const [gitRef, setGitRef] = useState("");
-  const [copyPath, setCopyPath] = useState("");
-  const [browsing, setBrowsing] = useState(false);
+  const [repos, setRepos] = useState<RepoDraft[]>([]);
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const repoSpecs = draftsToSpecs(repos);
+  const repoError = draftsError(repos);
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const workspaceSource: WorkspaceSource =
-      sourceType === "git"
-        ? { type: "git", url: gitUrl.trim(), ...(gitRef.trim() ? { ref: gitRef.trim() } : {}) }
-        : sourceType === "copy"
-          ? { type: "copy", path: copyPath.trim() }
-          : { type: "empty" };
+    if (repoError) return;
     setBusy(true);
     void run(async () => {
       const s = await api.createSession({
         provider,
-        workspaceSource,
+        repos: repoSpecs,
+        workspaceSource: { type: "empty" },
         settings: draftToInput(draft),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
@@ -1295,37 +1292,16 @@ function NewSession({
           ))}
         </select>
       </label>
-      <label>
-        Workspace
-        <select value={sourceType} onChange={(e) => setSourceType(e.target.value as WorkspaceSource["type"])}>
-          <option value="empty">Empty directory</option>
-          <option value="git">Clone a git URL</option>
-          <option value="copy">Copy a host directory</option>
-        </select>
-      </label>
-      {sourceType === "git" && (
-        <>
-          <label>
-            Repository URL
-            <input required value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/org/repo.git" />
-          </label>
-          <label>
-            Branch / tag (optional)
-            <input value={gitRef} onChange={(e) => setGitRef(e.target.value)} placeholder="main" />
-          </label>
-        </>
-      )}
-      {sourceType === "copy" && (
-        <label>
-          Host path (absolute; git repos copy tracked + untracked-but-not-ignored files and .git)
-          <div className="input-row">
-            <input required value={copyPath} onChange={(e) => setCopyPath(e.target.value)} placeholder="/home/you/project" />
-            <button type="button" onClick={() => setBrowsing(true)}>
-              Browse…
-            </button>
-          </div>
-        </label>
-      )}
+      <fieldset className="choice">
+        <legend>Repositories (each goes to <code>/workspace/&lt;name&gt;</code> in the Sandbox; more can be added or removed later)</legend>
+        <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} />
+        {repos.some((d) => d.type === "copy") && (
+          <p className="muted">
+            A host folder is copied (tracked + untracked-but-not-ignored files and <code>.git</code>); changes can be pulled back into it from the Session
+            header.
+          </p>
+        )}
+      </fieldset>
       <SessionSettingsForm
         mode="create"
         provider={provider}
@@ -1348,21 +1324,11 @@ function NewSession({
         <button type="button" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || repoError !== null}>
           {busy ? "Creating…" : "Create"}
         </button>
       </div>
     </form>
-    {browsing && (
-      <FolderDialog
-        initialPath={copyPath}
-        onSelect={(p) => {
-          setCopyPath(p);
-          setBrowsing(false);
-        }}
-        onClose={() => setBrowsing(false)}
-      />
-    )}
     </>
   );
 }

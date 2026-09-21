@@ -440,9 +440,14 @@ export class PullRequests {
 
   private publicPr(pr: StoredPr, s: Session): PullRequest {
     const { etags: _etags, closedAt: _closedAt, retryAt: _retryAt, ...pub } = pr;
-    const ws = this.workspaceRepo(s);
-    const local = !ws || (ws.owner.toLowerCase() === pr.owner.toLowerCase() && ws.repo.toLowerCase() === pr.repo.toLowerCase()) ||
-      pr.headRepo.toLowerCase() === `${ws.owner}/${ws.repo}`.toLowerCase();
+    const repos = this.workspaceRepos(s);
+    const local =
+      repos.length === 0 ||
+      repos.some(
+        (ws) =>
+          (ws.owner.toLowerCase() === pr.owner.toLowerCase() && ws.repo.toLowerCase() === pr.repo.toLowerCase()) ||
+          pr.headRepo.toLowerCase() === `${ws.owner}/${ws.repo}`.toLowerCase(),
+      );
     return { ...pub, local };
   }
 
@@ -453,22 +458,33 @@ export class PullRequests {
     if (m) return { owner: m[1]!, repo: m[2]!, number: Number(m[3]) };
     m = /^#?(\d+)$/.exec(ref);
     if (m) {
-      const ws = this.workspaceRepo(s);
-      if (!ws) throw new HttpError(400, "This Session's Workspace is not a GitHub clone; give the full pull request URL.");
-      return { ...ws, number: Number(m[1]) };
+      const repos = this.workspaceRepos(s);
+      if (repos.length === 0) throw new HttpError(400, "This Session has no GitHub repository; give the full pull request URL.");
+      if (repos.length > 1) {
+        throw new HttpError(400, `This Session has ${repos.length} GitHub repositories; say which one (owner/repo#${m[1]} or the full URL).`);
+      }
+      return { ...repos[0]!, number: Number(m[1]) };
     }
     return null;
   }
 
-  /** The GitHub repository the Session's Workspace was cloned from, following forks to their origin. */
-  private workspaceRepo(s: Session, depth = 0): { owner: string; repo: string } | null {
+  /** The GitHub repositories in the Session's Workspace (a fork's come from its origin when it has none of its own). */
+  private workspaceRepos(s: Session, depth = 0): Array<{ owner: string; repo: string }> {
+    const own = s.repos.flatMap((r) => {
+      const gh = r.source.type === "git" ? parseGitHubRepo(r.source.url) : null;
+      return gh ? [gh] : [];
+    });
+    if (own.length > 0) return own;
     const src = s.workspaceSource;
-    if (src.type === "git") return parseGitHubRepo(src.url);
+    if (src.type === "git") {
+      const gh = parseGitHubRepo(src.url);
+      return gh ? [gh] : [];
+    }
     if (src.type === "fork" && depth < 10) {
       const origin = this.deps.getSession(src.sessionId);
-      return origin ? this.workspaceRepo(origin, depth + 1) : null;
+      return origin ? this.workspaceRepos(origin, depth + 1) : [];
     }
-    return null;
+    return [];
   }
 }
 

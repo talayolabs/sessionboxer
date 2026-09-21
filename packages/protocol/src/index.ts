@@ -51,6 +51,127 @@ export const WorkspaceSource = z.discriminatedUnion("type", [
 export type WorkspaceSource = z.infer<typeof WorkspaceSource>;
 
 // ---------------------------------------------------------------------------
+// Repositories. The Workspace (`/workspace`) is the Session's root; every repository the
+// Session works on sits in its own directory right below it (`/workspace/<name>`), also when
+// there is only one. Repositories can be added and removed while the Session runs; the Agent
+// finds the list in `.sessionboxer/repos.json`.
+// ---------------------------------------------------------------------------
+
+/** Where a repository comes from: a git clone (GitHub credentials apply) or a copy of a host folder. */
+export const RepoSource = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("git"), url: z.string().min(1), ref: z.string().min(1).optional() }),
+  z.object({ type: z.literal("copy"), path: z.string().min(1) }),
+]);
+export type RepoSource = z.infer<typeof RepoSource>;
+
+export const REPO_NAME_MAX_CHARS = 100;
+export const REPO_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+/** Directory name under `/workspace`: one path segment, no leading dot (keeps `.sessionboxer`, `.` and `..` out of reach). */
+export const RepoName = z
+  .string()
+  .min(1)
+  .max(REPO_NAME_MAX_CHARS)
+  .regex(REPO_NAME_PATTERN, "Use letters, digits, '.', '_' and '-', not starting with a dot");
+export type RepoName = z.infer<typeof RepoName>;
+
+/** A repository to put in a Session (at creation or later). */
+export const RepoSpec = z.object({
+  /** Directory name under `/workspace`; omitted derives one from the source (last URL segment / folder name). */
+  name: RepoName.optional(),
+  source: RepoSource,
+});
+export type RepoSpec = z.infer<typeof RepoSpec>;
+
+export const REPO_STATUSES = ["pending", "ready", "error"] as const;
+export const RepoStatus = z.enum(REPO_STATUSES);
+export type RepoStatus = z.infer<typeof RepoStatus>;
+
+/** Git state of a repository directory as last seen in the Sandbox. */
+export const RepoGitState = z.object({
+  /** Checked-out branch; `null` for a detached HEAD or when the directory is not a git work tree. */
+  branch: z.string().nullable(),
+  /** `git status --porcelain` is not empty (also untracked files). */
+  dirty: z.boolean(),
+  /** Commits on HEAD that are not on its upstream; `null` when there is no upstream (or not git). */
+  ahead: z.number().int().nonnegative().nullable(),
+  /** Local branches other than the current one that have commits on no remote-tracking branch. */
+  unpushedBranches: z.array(z.string()).default([]),
+  git: z.boolean(),
+  inspectedAt: z.string(),
+});
+export type RepoGitState = z.infer<typeof RepoGitState>;
+
+/** Name of the repository record Sessions created before repositories had their own directories carry: their source sits at the Workspace root. */
+export const WORKSPACE_ROOT_REPO = ".";
+
+export const SessionRepo = z.object({
+  id: z.string(),
+  /** Directory under `/workspace` (`WORKSPACE_ROOT_REPO` for the pre-repositories layout). */
+  name: z.string().min(1),
+  source: RepoSource,
+  status: RepoStatus,
+  /** Why cloning/copying failed (`status === "error"`). */
+  error: z.string().nullable().default(null),
+  /** Last git inspection (after cloning, at every turn end, on request); `null` before the first one. */
+  git: RepoGitState.nullable().default(null),
+  createdAt: z.string(),
+});
+export type SessionRepo = z.infer<typeof SessionRepo>;
+
+/** Workspace path of a repository's directory (relative, `""` for the root record). */
+export function repoDir(repo: Pick<SessionRepo, "name">): string {
+  return repo.name === WORKSPACE_ROOT_REPO ? "" : repo.name;
+}
+
+/** Human-readable origin of a repository: `owner/repo@ref` for git URLs, the folder path for copies. */
+export function repoOriginLabel(source: RepoSource): string {
+  if (source.type === "copy") return source.path;
+  const trimmed = source.url.replace(/\/+$/, "").replace(/\.git$/, "");
+  const parts = trimmed.split(/[/:]/).filter((p) => p !== "");
+  const short = parts.length >= 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : trimmed;
+  return source.ref ? `${short}@${source.ref}` : short;
+}
+
+/** Directory name a source gets when none is given: the URL's last segment (without `.git`) or the folder's name, made to fit `RepoName`. */
+export function repoNameFromSource(source: RepoSource): string {
+  const raw = source.type === "copy" ? source.path : source.url.replace(/\.git$/, "");
+  const last = raw.replace(/[\\/]+$/, "").split(/[\\/:]/).pop() ?? "";
+  const safe = last.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "").slice(0, REPO_NAME_MAX_CHARS);
+  return safe === "" ? "repo" : safe;
+}
+
+export const AddRepoRequest = RepoSpec;
+export type AddRepoRequest = z.infer<typeof AddRepoRequest>;
+
+/** `force` removes the directory even when it holds uncommitted or unpushed work. */
+export const RemoveRepoRequest = z.object({ force: z.boolean().default(false) });
+export type RemoveRepoRequest = z.infer<typeof RemoveRepoRequest>;
+
+/** Body of the 409 a removal gets while the repository holds work that would be lost. */
+export const RepoRemovalBlocked = z.object({
+  error: z.string(),
+  git: RepoGitState,
+});
+export type RepoRemovalBlocked = z.infer<typeof RepoRemovalBlocked>;
+
+/** Workspace-relative path of the machine-readable repository list the Agent reads. */
+export const REPOS_MANIFEST_PATH = ".sessionboxer/repos.json";
+
+export const ReposManifestEntry = z.object({
+  name: z.string(),
+  /** Absolute path in the Sandbox. */
+  path: z.string(),
+  source: RepoSource,
+});
+export type ReposManifestEntry = z.infer<typeof ReposManifestEntry>;
+
+export const ReposManifest = z.object({
+  workspace: z.string(),
+  repos: z.array(ReposManifestEntry),
+});
+export type ReposManifest = z.infer<typeof ReposManifest>;
+
+// ---------------------------------------------------------------------------
 // MCP servers: registered once in Settings, enabled per Session. The built-in
 // `desktop` server is implicit and always on. Enabling/disabling restarts the
 // Agent in place (ACP `session/load`), so the conversation is kept.
@@ -402,7 +523,14 @@ export const Session = z.object({
   title: z.string(),
   provider: Provider,
   status: SessionStatus,
+  /**
+   * How the Sandbox itself started: `fork` (another Session's Snapshot) or `empty`. Sessions
+   * created before repositories had their own directories still carry their `git`/`copy` source
+   * here too; `repos` is authoritative for what is in the Workspace.
+   */
   workspaceSource: WorkspaceSource,
+  /** Repositories in the Workspace, one directory each, in the order they were added. */
+  repos: z.array(SessionRepo).default([]),
   settings: SessionSettings.default({}),
   /** The Agent is busy; the last MCP change is applied when the current turn ends. */
   mcpPending: z.boolean().default(false),
@@ -435,6 +563,9 @@ export type Session = z.infer<typeof Session>;
 export const CreateSessionRequest = z.object({
   title: z.string().min(1).max(200).optional(),
   provider: Provider.default("claude-code"),
+  /** Repositories to clone/copy into `/workspace/<name>`; none gives an empty Workspace. */
+  repos: z.array(RepoSpec).max(50).optional(),
+  /** Older clients: a single `git`/`copy` source, taken as one repository when `repos` is omitted. */
   workspaceSource: WorkspaceSource.default({ type: "empty" }),
   settings: SessionSettingsInput.default({}),
   // Flat forms of `settings.*`, kept for the CLI flags and older clients; `settings` wins where both are given.
@@ -1247,6 +1378,8 @@ export type SessionEventBody =
   | { type: "option_changed"; id: string; name: string; value: string; valueName: string }
   /** The Agent was asked `/context` outside the conversation; this is what it reported. */
   | { type: "context_breakdown"; breakdown: ContextBreakdown }
+  /** A repository was added to (cloned/copied into) or removed from the Workspace while the Session ran. */
+  | { type: "repo_changed"; action: "added" | "removed"; name: string; source: RepoSource }
   /**
    * The inspector saw one model API call complete (summary only; bodies stay in the Sandbox).
    * Emitted after the transcript updates the response produced, so a `turn` call claims the
@@ -1306,11 +1439,16 @@ export const FS_UPLOAD_PATH = "/fs/upload";
 export const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
-// Pulling the Workspace back into the host folder of a "copy" Session. Both sides
-// describe their files the same way (git's view when it is a work tree: tracked +
-// untracked-but-not-ignored, `.git` itself excluded); the Control Plane compares the
-// two against the state after the copy / last pull and applies the difference.
+// Pulling a copied repository back into its host folder. Both sides describe their files
+// the same way (git's view when it is a work tree: tracked + untracked-but-not-ignored,
+// `.git` itself excluded); the Control Plane compares the two against the state after the
+// copy / last pull and applies the difference. Paths are relative to the repository's
+// directory (`/workspace/<name>`, or the Workspace root for the pre-repositories layout).
 // ---------------------------------------------------------------------------
+
+/** Daemon `fs/manifest` params: which Workspace directory to describe (`""` = the root). */
+export const FsManifestParams = z.object({ dir: z.string().default("") });
+export type FsManifestParams = z.infer<typeof FsManifestParams>;
 
 /** One file of a Workspace: regular files carry a content hash, symlinks their target. */
 export const SyncFile = z.object({
@@ -1330,9 +1468,9 @@ export const SyncManifest = z.object({
 });
 export type SyncManifest = z.infer<typeof SyncManifest>;
 
-/** Daemon `POST /fs/tar` body: Workspace-relative files to stream back as a tar archive. */
+/** Daemon `POST /fs/tar` body: files under `dir` (relative to it) to stream back as a tar archive. */
 export const FS_TAR_PATH = "/fs/tar";
-export const FsTarRequest = z.object({ paths: z.array(z.string()).max(200_000) });
+export const FsTarRequest = z.object({ dir: z.string().default(""), paths: z.array(z.string()).max(200_000) });
 export type FsTarRequest = z.infer<typeof FsTarRequest>;
 
 export const SYNC_ACTIONS = ["add", "update", "delete"] as const;
@@ -1355,6 +1493,8 @@ export const SyncEntry = z.object({
 export type SyncEntry = z.infer<typeof SyncEntry>;
 
 export const SyncPlan = z.object({
+  /** The repository the plan is for. */
+  repoId: z.string(),
   /** The host folder. */
   path: z.string(),
   entries: z.array(SyncEntry),
@@ -1369,12 +1509,15 @@ export const SyncPlan = z.object({
 export type SyncPlan = z.infer<typeof SyncPlan>;
 
 export const SyncRequest = z.object({
+  /** Which copied repository to pull; omitted takes the Session's only one. */
+  repoId: z.string().optional(),
   /** Apply conflicting entries too (host changes lost). */
   overwriteLocal: z.boolean().default(false),
 });
 export type SyncRequest = z.infer<typeof SyncRequest>;
 
 export const SyncResult = z.object({
+  repoId: z.string(),
   path: z.string(),
   added: z.number().int().nonnegative(),
   updated: z.number().int().nonnegative(),
@@ -1734,7 +1877,46 @@ export const DAEMON_METHODS = {
   llmInspectSet: "_sessionboxer/llm/inspect/set",
   llmCalls: "_sessionboxer/llm/calls",
   llmCallBody: "_sessionboxer/llm/call",
+  reposSet: "_sessionboxer/repos/set",
+  reposInspect: "_sessionboxer/repos/inspect",
+  reposRemove: "_sessionboxer/repos/remove",
 } as const;
+
+/** Control Plane → Daemon: the Workspace's repositories; the Daemon writes `REPOS_MANIFEST_PATH` from them for the Agent. */
+export const DaemonReposSetParams = z.object({
+  repos: z.array(z.object({ name: z.string().min(1), source: RepoSource })),
+});
+export type DaemonReposSetParams = z.infer<typeof DaemonReposSetParams>;
+
+/** Git state of the given repository directories (Workspace-relative); `state` is `null` for a missing directory. */
+export const DaemonReposInspectParams = z.object({ dirs: z.array(z.string()).max(100) });
+export type DaemonReposInspectParams = z.infer<typeof DaemonReposInspectParams>;
+
+export const DaemonReposInspectResult = z.object({
+  states: z.array(z.object({ dir: z.string(), state: RepoGitState.nullable() })),
+});
+export type DaemonReposInspectResult = z.infer<typeof DaemonReposInspectResult>;
+
+/** Deletes a repository directory; refused (`removed: false`, with the state) while it holds work that is not pushed, unless `force`. */
+export const DaemonReposRemoveParams = z.object({ dir: z.string().min(1), force: z.boolean().default(false) });
+export type DaemonReposRemoveParams = z.infer<typeof DaemonReposRemoveParams>;
+
+export const DaemonReposRemoveResult = z.discriminatedUnion("removed", [
+  z.object({ removed: z.literal(true) }),
+  z.object({ removed: z.literal(false), git: RepoGitState }),
+]);
+export type DaemonReposRemoveResult = z.infer<typeof DaemonReposRemoveResult>;
+
+/** Work that a removal would throw away, as a sentence for the user (or `null` when there is none). */
+export function repoWorkAtRisk(git: RepoGitState | null): string | null {
+  if (!git?.git) return null;
+  const parts: string[] = [];
+  if (git.dirty) parts.push("uncommitted changes");
+  if (git.ahead === null) parts.push(git.branch ? `branch ${git.branch} has no upstream` : "a detached HEAD");
+  else if (git.ahead > 0) parts.push(`${git.ahead} unpushed commit${git.ahead === 1 ? "" : "s"} on ${git.branch ?? "HEAD"}`);
+  if (git.unpushedBranches.length > 0) parts.push(`unpushed branch${git.unpushedBranches.length === 1 ? "" : "es"} ${git.unpushedBranches.join(", ")}`);
+  return parts.length === 0 ? null : parts.join(", ");
+}
 
 export const DaemonHelloParams = z.object({
   /** Daemon epoch the caller last saw, so the Daemon can replay from `lastSeq`. */
@@ -1896,7 +2078,12 @@ export type DaemonSessionSwitchParams = z.infer<typeof DaemonSessionSwitchParams
 export const DaemonSessionSwitchResult = z.object({ acpSessionId: z.string() });
 export type DaemonSessionSwitchResult = z.infer<typeof DaemonSessionSwitchResult>;
 
-export const DaemonPromptParams = PromptRequest;
+/**
+ * `note` is put in front of the text the Agent gets but not in the transcript's `user_prompt`:
+ * the Control Plane uses it to tell the Agent what changed in the Workspace since the last turn
+ * (repositories added or removed).
+ */
+export const DaemonPromptParams = PromptRequest.innerType().extend({ note: z.string().optional() });
 export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;
 
 /** The turn runs asynchronously; its outcome arrives as `turn_ended`/`agent_error` events. */

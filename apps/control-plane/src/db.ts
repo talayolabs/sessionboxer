@@ -8,8 +8,10 @@ import {
   Provider,
   ROOT_BRANCH_ID,
   Session,
+  SessionRepo,
   SessionSettings,
   SnapshotReason,
+  WORKSPACE_ROOT_REPO,
   WorkspaceSource,
   branchScope,
   type Branch,
@@ -41,6 +43,8 @@ interface SessionRow {
   provider: string;
   status: string;
   workspace_source: string;
+  /** JSON array of `SessionRepo`. */
+  repos: string;
   /** JSON `SessionSettings`. */
   settings: string;
   container_id: string | null;
@@ -129,6 +133,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider TEXT NOT NULL,
   status TEXT NOT NULL,
   workspace_source TEXT NOT NULL,
+  repos TEXT NOT NULL DEFAULT '[]',
   settings TEXT,
   container_id TEXT,
   error TEXT,
@@ -214,6 +219,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "available_options", ddl: "ALTER TABLE sessions ADD COLUMN available_options TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "sessions", column: "inspect_llm_pending", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
@@ -235,8 +241,9 @@ export class Db {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
-    this.migrate();
+    const added = this.migrate();
     this.titleBranches();
+    if (added.has("repos")) this.reposFromWorkspaceSource();
     this.prs = new PrStore(this.db);
   }
 
@@ -257,12 +264,62 @@ export class Db {
     for (const r of rows) this.renameBranch(r.session_id, r.id, branchTitle(r.text));
   }
 
-  private migrate(): void {
+  /**
+   * Sessions from before the repository list cloned or copied their one source into the
+   * Workspace root itself; they get a repository entry at `.` so the list describes them too.
+   */
+  private reposFromWorkspaceSource(): void {
+    const rows = this.db
+      .prepare("SELECT id, workspace_source, created_at FROM sessions WHERE json_extract(workspace_source, '$.type') IN ('git', 'copy')")
+      .all() as Array<{ id: string; workspace_source: string; created_at: string }>;
+    const update = this.db.prepare("UPDATE sessions SET repos = ? WHERE id = ?");
+    for (const r of rows) {
+      const source = WorkspaceSource.parse(JSON.parse(r.workspace_source));
+      if (source.type !== "git" && source.type !== "copy") continue;
+      const repo: SessionRepo = {
+        id: randomBytes(4).toString("hex"),
+        name: WORKSPACE_ROOT_REPO,
+        source,
+        status: "ready",
+        error: null,
+        git: null,
+        createdAt: r.created_at,
+      };
+      update.run(JSON.stringify([repo]), r.id);
+    }
+    // Forks share their origin's Workspace layout (the Snapshot carried the files).
+    const forks = this.db
+      .prepare("SELECT id, json_extract(workspace_source, '$.sessionId') AS origin_id FROM sessions WHERE json_extract(workspace_source, '$.type') = 'fork'")
+      .all() as Array<{ id: string; origin_id: string }>;
+    const reposOf = this.db.prepare("SELECT repos, workspace_source FROM sessions WHERE id = ?");
+    for (const f of forks) {
+      let originId: string | null = f.origin_id;
+      for (let depth = 0; originId !== null && depth < 10; depth++) {
+        const origin = reposOf.get(originId) as { repos: string; workspace_source: string } | undefined;
+        if (!origin) break;
+        const repos = SessionRepo.array().parse(JSON.parse(origin.repos));
+        if (repos.length > 0) {
+          update.run(JSON.stringify(repos.map((repo) => ({ ...repo, id: randomBytes(4).toString("hex"), git: null }))), f.id);
+          break;
+        }
+        const source = WorkspaceSource.parse(JSON.parse(origin.workspace_source));
+        originId = source.type === "fork" ? source.sessionId : null;
+      }
+    }
+  }
+
+  /** Returns the names of the columns this run added. */
+  private migrate(): Set<string> {
+    const added = new Set<string>();
     for (const m of MIGRATIONS) {
       const columns = this.db.prepare(`PRAGMA table_info(${m.table})`).all() as Array<{ name: string }>;
-      if (!columns.some((c) => c.name === m.column)) this.db.exec(m.ddl);
+      if (!columns.some((c) => c.name === m.column)) {
+        this.db.exec(m.ddl);
+        added.add(m.column);
+      }
     }
     this.backfillSettings();
+    return added;
   }
 
   /** Sessions from before the `settings` column: assemble the JSON from the per-setting columns. */
@@ -302,8 +359,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -314,7 +371,7 @@ export class Db {
     const next: Session = { ...current, ...patch, updatedAt: new Date().toISOString() };
     this.db
       .prepare(
-        `UPDATE sessions SET title=@title, status=@status, settings=@settings, container_id=@container_id, error=@error,
+        `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, error=@error,
            queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
            options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
            active_branch_id=@active_branch_id, updated_at=@updated_at
@@ -628,6 +685,7 @@ export type SessionPatch = Partial<
     Session,
     | "title"
     | "status"
+    | "repos"
     | "containerId"
     | "error"
     | "queueRunning"
@@ -673,6 +731,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     provider: row.provider,
     status: row.status as SessionStatus,
     workspaceSource: WorkspaceSource.parse(JSON.parse(row.workspace_source)),
+    repos: SessionRepo.array().parse(JSON.parse(row.repos)),
     settings: SessionSettings.parse(JSON.parse(row.settings)),
     containerId: row.container_id,
     error: row.error,
@@ -719,6 +778,7 @@ function sessionToRow(s: Session): SessionRow {
     provider: s.provider,
     status: s.status,
     workspace_source: JSON.stringify(s.workspaceSource),
+    repos: JSON.stringify(s.repos),
     settings: JSON.stringify(s.settings),
     container_id: s.containerId,
     error: s.error,

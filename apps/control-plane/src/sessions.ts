@@ -36,6 +36,16 @@ import {
   PtyListResult,
   ROOT_BRANCH_ID,
   FS_TAR_PATH,
+  DaemonReposInspectResult,
+  DaemonReposRemoveResult,
+  type DaemonReposSetParams,
+  type RepoGitState,
+  type RepoSpec,
+  type SessionRepo,
+  WORKSPACE_ROOT_REPO,
+  repoDir,
+  repoNameFromSource,
+  repoOriginLabel,
   SyncManifest,
   type SyncPlan,
   type SyncRequest,
@@ -59,6 +69,7 @@ import {
   type Session,
   type SessionBroadcast,
   type SessionEvent,
+  type SessionEventBody,
   type SessionSettings,
   type SessionStatus,
   type Settings,
@@ -127,8 +138,12 @@ export class SessionManager {
   /** Per-Session chain so Snapshots of one Sandbox never overlap. */
   private readonly snapshotChains = new Map<string, Promise<unknown>>();
   private readonly syncBaselines = new SyncBaselines();
-  /** Sessions with a pull in flight (one at a time per host folder). */
+  /** `<sessionId>/<repoId>` with a pull in flight (one at a time per host folder). */
   private readonly syncing = new Set<string>();
+  /** Sessions with a repository being added or removed. */
+  private readonly repoWork = new Set<string>();
+  /** What the Agent is told at the start of its next prompt (repositories added/removed meanwhile). */
+  private readonly promptNotes = new Map<string, string[]>();
   /** Pull Requests attached to Sessions: watching, notifications, actions. */
   readonly prs: PullRequests;
 
@@ -246,33 +261,44 @@ export class SessionManager {
 
   // --- Pull changes to my folder ("copy" Sessions) -----------------------------
 
-  private hostFolder(s: Session): string {
-    if (s.workspaceSource.type !== "copy") {
-      throw new HttpError(400, "Only Sessions started from a copy of a host folder can be pulled back into it.");
+  /** The copied repository a pull targets: the one given, or the only one. */
+  private copiedRepo(s: Session, repoId: string | undefined): SessionRepo {
+    const copied = s.repos.filter((r) => r.source.type === "copy");
+    if (copied.length === 0) throw new HttpError(400, "Only repositories copied from a host folder can be pulled back into it.");
+    if (repoId === undefined) {
+      if (copied.length > 1) throw new HttpError(400, "This Session has several copied folders; say which one (repoId).");
+      return copied[0]!;
     }
-    return s.workspaceSource.path;
+    const repo = copied.find((r) => r.id === repoId);
+    if (!repo) throw new HttpError(404, "no such copied repository in this Session");
+    return repo;
   }
 
-  private async syncState(id: string): Promise<{ dir: string; box: SyncManifest; host: SyncManifest; baseline: SyncManifest | null; plan: SyncPlan }> {
+  private async syncState(
+    id: string,
+    repoId: string | undefined,
+  ): Promise<{ repo: SessionRepo; dir: string; box: SyncManifest; host: SyncManifest; baseline: SyncManifest | null; plan: SyncPlan }> {
     const s = this.get(id);
+    const repo = this.copiedRepo(s, repoId);
+    if (repo.source.type !== "copy") throw new HttpError(400, "not a copied repository");
     let dir: string;
     try {
-      dir = await resolveHostDir(this.hostFolder(s));
+      dir = await resolveHostDir(repo.source.path);
     } catch (e) {
       if (e instanceof HostDirError) throw new HttpError(409, `The host folder is gone or unreadable: ${e.message}`);
       throw e;
     }
     const [box, host, baseline] = await Promise.all([
-      this.daemonCall(id, DAEMON_METHODS.fsManifest, {}, MANIFEST_TIMEOUT_MS).then((r) => SyncManifest.parse(r)),
+      this.daemonCall(id, DAEMON_METHODS.fsManifest, { dir: repoDir(repo) }, MANIFEST_TIMEOUT_MS).then((r) => SyncManifest.parse(r)),
       hostManifest(dir),
-      this.syncBaselines.read(id),
+      this.syncBaselines.read(id, baselineKey(repo)),
     ]);
-    return { dir, box, host, baseline, plan: planSync(dir, box, host, baseline) };
+    return { repo, dir, box, host, baseline, plan: planSync(repo.id, dir, box, host, baseline) };
   }
 
   /** Dry run: what a pull would do to the host folder right now. */
-  async syncPlan(id: string): Promise<SyncPlan> {
-    return (await this.syncState(id)).plan;
+  async syncPlan(id: string, repoId?: string): Promise<SyncPlan> {
+    return (await this.syncState(id, repoId)).plan;
   }
 
   /**
@@ -280,11 +306,13 @@ export class SessionManager {
    * from the Daemon, unpacks them, deletes what the box deleted, then records the new common state.
    */
   async syncPull(id: string, req: SyncRequest): Promise<SyncResult> {
-    if (this.syncing.has(id)) throw new HttpError(409, "A pull is already running for this Session.");
+    const target = this.copiedRepo(this.get(id), req.repoId);
+    const key = `${id}/${target.id}`;
+    if (this.syncing.has(key)) throw new HttpError(409, "A pull is already running for this folder.");
     if (this.get(id).status === "running") throw new HttpError(409, "The Agent is still working; pull when the turn has ended.");
-    this.syncing.add(id);
+    this.syncing.add(key);
     try {
-      const { dir, box, host, baseline, plan } = await this.syncState(id);
+      const { repo, dir, box, host, baseline, plan } = await this.syncState(id, target.id);
       const { apply, skipped } = selectEntries(plan, req.overwriteLocal);
       const writes = apply.filter((e) => e.action !== "delete").map((e) => e.path);
       let tar: ReadableStream<Uint8Array> | null = null;
@@ -292,18 +320,258 @@ export class SessionManager {
         const res = await fetch(new URL(FS_TAR_PATH, await this.daemonHttpUrl(id)), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ paths: writes }),
+          body: JSON.stringify({ dir: repoDir(repo), paths: writes }),
         });
         if (!res.ok || !res.body) throw new HttpError(502, `the Sandbox refused to send its files: ${res.status} ${(await res.text()).slice(0, 300)}`);
         tar = res.body;
       }
-      this.log(`pulling ${apply.length} change(s) from ${id.slice(0, 8)} into ${dir}${skipped.length ? ` (${skipped.length} conflict(s) skipped)` : ""}`);
-      const result = await applySync(dir, apply, tar ? Readable.fromWeb(tar as NodeReadableStream) : null);
-      await this.syncBaselines.write(id, nextBaseline(box, host, baseline, apply));
+      this.log(`pulling ${apply.length} change(s) from ${id.slice(0, 8)}/${repo.name} into ${dir}${skipped.length ? ` (${skipped.length} conflict(s) skipped)` : ""}`);
+      const result = await applySync(repo.id, dir, apply, tar ? Readable.fromWeb(tar as NodeReadableStream) : null);
+      await this.syncBaselines.write(id, baselineKey(repo), nextBaseline(box, host, baseline, apply));
       return { ...result, skipped: skipped.length };
     } finally {
-      this.syncing.delete(id);
+      this.syncing.delete(key);
     }
+  }
+
+  // --- Repositories (`/workspace/<name>`) --------------------------------------
+
+  /**
+   * Turns requested repositories into Session records: host folders resolved, names derived from
+   * the source when not given and made unique (`api`, `api-2`, ...) against `taken`.
+   */
+  private async normalizeRepos(specs: RepoSpec[], taken: SessionRepo[]): Promise<SessionRepo[]> {
+    const names = new Set(taken.map((r) => r.name.toLowerCase()));
+    const out: SessionRepo[] = [];
+    for (const spec of specs) {
+      let source = spec.source;
+      if (source.type === "copy") {
+        try {
+          source = { type: "copy", path: await resolveHostDir(source.path) };
+        } catch (e) {
+          if (e instanceof HostDirError) throw new HttpError(400, e.message);
+          throw e;
+        }
+      }
+      let name = spec.name ?? repoNameFromSource(source);
+      if (names.has(name.toLowerCase())) {
+        if (spec.name !== undefined) throw new HttpError(400, `a repository named ${spec.name} is already in this Session`);
+        let n = 2;
+        while (names.has(`${name}-${n}`.toLowerCase())) n++;
+        name = `${name}-${n}`;
+      }
+      names.add(name.toLowerCase());
+      out.push({
+        id: randomBytes(4).toString("hex"),
+        name,
+        source,
+        status: "pending",
+        error: null,
+        git: null,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    return out;
+  }
+
+  private patchRepo(id: string, repoId: string, patch: Partial<Pick<SessionRepo, "status" | "error" | "git">>): void {
+    const s = this.db.getSession(id);
+    if (!s) return;
+    this.update(id, { repos: s.repos.map((r) => (r.id === repoId ? { ...r, ...patch } : r)) });
+  }
+
+  /** Clones or copies one repository into `/workspace/<name>` of a running Sandbox. */
+  private async seedRepo(containerId: string, session: Session, settings: Settings, repo: SessionRepo): Promise<void> {
+    const dir = repoDir(repo);
+    const target = dir === "" ? "/workspace" : `/workspace/${dir}`;
+    const source = repo.source;
+    if (dir !== "") await this.docker.exec(containerId, ["mkdir", "-p", "--", target], "/workspace", "agent");
+    if (source.type === "git") {
+      const plan = planClone(source.url, resolveBoxCredentials(settings, session.settings.mcpEnabled));
+      const args = ["git", "clone", "--", plan.url, "."];
+      if (source.ref) args.splice(2, 0, "--branch", source.ref);
+      this.log(`cloning ${plan.url} into ${containerId.slice(0, 12)}:${target}${plan.account !== null ? ` as @${plan.account}` : ""}`);
+      try {
+        await this.docker.exec(containerId, args, target, "agent", plan.env);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        throw new Error(message + cloneFailureHint(source.url, plan));
+      }
+    } else {
+      const hostDir = await resolveHostDir(source.path);
+      const entries = await planHostDir(hostDir);
+      if (entries && entries.length === 0) return;
+      this.log(`copying ${hostDir} (${entries ? `${entries.length} git entries` : "everything"}) into ${containerId.slice(0, 12)}:${target}`);
+      await this.docker.putArchive(containerId, packHostDir(hostDir, entries), target);
+      await this.docker.exec(containerId, ["chown", "-R", "agent:agent", target], "/", "root");
+    }
+  }
+
+  /**
+   * Seeds every pending repository (in parallel), records each outcome on the Session and, for
+   * copied folders, what the host looked like at that moment (the pull baseline).
+   */
+  private async seedRepos(containerId: string, session: Session, settings: Settings, repos: SessionRepo[]): Promise<void> {
+    await Promise.all(
+      repos.map(async (repo) => {
+        try {
+          await this.seedRepo(containerId, session, settings, repo);
+          if (repo.source.type === "copy") await this.recordSyncBaseline(session.id, repo);
+          this.patchRepo(session.id, repo.id, { status: "ready", error: null });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          this.log(`repository ${repo.name} of ${session.id.slice(0, 8)}: ${message}`);
+          this.patchRepo(session.id, repo.id, { status: "error", error: message });
+        }
+      }),
+    );
+  }
+
+  private async recordSyncBaseline(id: string, repo: SessionRepo): Promise<void> {
+    if (repo.source.type !== "copy") return;
+    try {
+      await this.syncBaselines.write(id, baselineKey(repo), await hostManifest(repo.source.path));
+    } catch (e) {
+      this.log(`could not record the copied state of ${repo.source.path}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Tells the Daemon what is where, so it can write `.sessionboxer/repos.json` for the Agent. */
+  private async pushRepos(id: string): Promise<void> {
+    const s = this.db.getSession(id);
+    if (!s) return;
+    const params: DaemonReposSetParams = {
+      repos: s.repos.filter((r) => r.status === "ready").map((r) => ({ name: r.name, source: r.source })),
+    };
+    try {
+      await this.daemonCall(id, DAEMON_METHODS.reposSet, params);
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 502) return; // older Daemon
+      this.log(`could not hand the repository list to ${id.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Re-reads branch / dirty / unpushed state of every ready repository from the Sandbox. */
+  async refreshRepoStates(id: string): Promise<void> {
+    const s = this.db.getSession(id);
+    if (!s || !this.clients.has(id) || s.repos.every((r) => r.status !== "ready")) return;
+    const ready = s.repos.filter((r) => r.status === "ready");
+    let result: DaemonReposInspectResult;
+    try {
+      result = DaemonReposInspectResult.parse(await this.daemonCall(id, DAEMON_METHODS.reposInspect, { dirs: ready.map((r) => repoDir(r) || ".") }));
+    } catch (e) {
+      if (!(e instanceof HttpError && e.status === 502)) this.log(`repository state of ${id.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    const byDir = new Map(result.states.map((st) => [st.dir, st.state]));
+    const fresh = this.db.getSession(id);
+    if (!fresh) return;
+    const repos = fresh.repos.map((r): SessionRepo => {
+      if (!byDir.has(repoDir(r) || ".")) return r;
+      const state = byDir.get(repoDir(r) || ".") ?? null;
+      // A directory that is gone (removed by hand, or added after the Snapshot a fork came from).
+      if (state === null) return r.status === "ready" ? { ...r, status: "error", error: `/workspace/${r.name} is not in the Sandbox`, git: null } : r;
+      return { ...r, git: state };
+    });
+    if (JSON.stringify(repos) !== JSON.stringify(fresh.repos)) this.update(id, { repos });
+  }
+
+  /** Adds a repository to a live Session: cloned / copied into `/workspace/<name>` right away. */
+  async addRepo(id: string, spec: RepoSpec): Promise<SessionRepo> {
+    const s = this.get(id);
+    if (!s.containerId || !this.clients.has(id) || (s.status !== "idle" && s.status !== "running")) {
+      throw new HttpError(409, "The Sandbox is not running; Resume the Session first.");
+    }
+    if (this.repoWork.has(id)) throw new HttpError(409, "Another repository change is in progress for this Session.");
+    if (s.repos.length >= 50) throw new HttpError(400, "A Session holds at most 50 repositories.");
+    if (s.repos.some((r) => r.name === WORKSPACE_ROOT_REPO)) {
+      throw new HttpError(409, "This Session's repository is the Workspace root itself (started before repositories had names); start a new Session to work with several.");
+    }
+    this.repoWork.add(id);
+    try {
+      const [repo] = await this.normalizeRepos([spec], s.repos);
+      if (!repo) throw new HttpError(400, "nothing to add");
+      this.update(id, { repos: [...s.repos, repo] });
+      await this.seedRepos(s.containerId, s, this.settings(), [repo]);
+      const added = this.db.getSession(id)?.repos.find((r) => r.id === repo.id);
+      if (!added) throw new HttpError(404, "the Session went away");
+      if (added.status === "error") {
+        this.update(id, { repos: this.get(id).repos.filter((r) => r.id !== repo.id) });
+        await this.daemonCall(id, DAEMON_METHODS.reposRemove, { dir: repoDir(repo), force: true }).catch(() => undefined);
+        throw new HttpError(502, added.error ?? "could not add the repository");
+      }
+      await this.pushRepos(id);
+      void this.refreshRepoStates(id);
+      this.appendEvent(id, { type: "repo_changed", action: "added", name: added.name, source: added.source });
+      this.note(id, `Repository "${added.name}" was added to the Workspace at /workspace/${added.name} (${repoOriginLabel(added.source)}).`);
+      return added;
+    } finally {
+      this.repoWork.delete(id);
+    }
+  }
+
+  /**
+   * Removes a repository's directory from the Sandbox. Refused (409, with the Git state) when it
+   * holds uncommitted or unpushed work, unless `force`. For a copied host folder what counts is
+   * what has not been pulled back into that folder, not what git would push.
+   */
+  async removeRepo(id: string, repoId: string, force: boolean): Promise<{ ok: true } | { ok: false; blocked: { error: string; git: RepoGitState } }> {
+    const s = this.get(id);
+    const repo = s.repos.find((r) => r.id === repoId);
+    if (!repo) throw new HttpError(404, "no such repository in this Session");
+    if (repo.name === WORKSPACE_ROOT_REPO) throw new HttpError(400, "The Workspace root cannot be removed.");
+    if (this.repoWork.has(id)) throw new HttpError(409, "Another repository change is in progress for this Session.");
+    this.repoWork.add(id);
+    try {
+      if (repo.status === "ready" || repo.status === "pending") {
+        if (!s.containerId || !this.clients.has(id) || (s.status !== "idle" && s.status !== "running")) {
+          throw new HttpError(409, "The Sandbox is not running; Resume the Session first.");
+        }
+        let pendingPull: number | null = null;
+        if (!force && repo.source.type === "copy") {
+          try {
+            const { plan } = await this.syncState(id, repo.id);
+            pendingPull = plan.entries.filter((e) => e.blocked === null).length;
+          } catch (e) {
+            if (!(e instanceof HttpError)) throw e;
+          }
+        }
+        const result = DaemonReposRemoveResult.parse(
+          await this.daemonCall(id, DAEMON_METHODS.reposRemove, { dir: repoDir(repo), force: force || pendingPull === 0 }),
+        );
+        if (!result.removed) {
+          const risk =
+            pendingPull !== null && pendingPull > 0
+              ? `${pendingPull} change${pendingPull === 1 ? "" : "s"} not pulled into ${repo.source.type === "copy" ? repo.source.path : "the host folder"}`
+              : describeRisk(result.git);
+          return { ok: false, blocked: { error: `${repo.name} has ${risk}; remove anyway to lose it.`, git: result.git } };
+        }
+      }
+      this.update(id, { repos: this.get(id).repos.filter((r) => r.id !== repoId) });
+      await this.syncBaselines.remove(id, baselineKey(repo));
+      if (this.clients.has(id)) await this.pushRepos(id);
+      this.appendEvent(id, { type: "repo_changed", action: "removed", name: repo.name, source: repo.source });
+      this.note(id, `Repository "${repo.name}" was removed from the Workspace (/workspace/${repo.name} no longer exists).`);
+      return { ok: true };
+    } finally {
+      this.repoWork.delete(id);
+    }
+  }
+
+  private note(id: string, text: string): void {
+    const notes = this.promptNotes.get(id) ?? [];
+    notes.push(text);
+    this.promptNotes.set(id, notes);
+  }
+
+  private appendEvent(id: string, body: SessionEventBody): void {
+    this.broadcast({ type: "event", event: this.db.appendEvent(id, body) });
+  }
+
+  private pendingNote(id: string): string | undefined {
+    const notes = this.promptNotes.get(id);
+    if (!notes || notes.length === 0) return undefined;
+    return notes.map((n) => `[Sessionboxer] ${n}`).join("\n");
   }
 
   // --- Code pane (VS Code in the Sandbox) ----------------------------------
@@ -419,15 +687,11 @@ export class SessionManager {
     if (!providerReady(req.provider, settings)) {
       throw new HttpError(400, providerSetupHint(req.provider));
     }
-    let workspaceSource: WorkspaceSource = req.workspaceSource;
-    if (workspaceSource.type === "copy") {
-      try {
-        workspaceSource = { type: "copy", path: await resolveHostDir(workspaceSource.path) };
-      } catch (e) {
-        if (e instanceof HostDirError) throw new HttpError(400, e.message);
-        throw e;
-      }
-    }
+    // Older clients send one `workspaceSource`; it becomes the Session's one repository.
+    const legacy = req.workspaceSource;
+    const specs: RepoSpec[] = req.repos ?? (legacy.type === "git" || legacy.type === "copy" ? [{ source: legacy }] : []);
+    const repos = await this.normalizeRepos(specs, []);
+    const workspaceSource: WorkspaceSource = { type: "empty" };
     await this.docker.ensureImage();
     const input = createRequestSettings(req);
     const dockerMode: DockerMode = (input.sandbox?.docker ?? settings.dockerInSandbox) ? await this.dockerModeAvailable() : "none";
@@ -436,10 +700,11 @@ export class SessionManager {
     const now = new Date().toISOString();
     const session: Session = {
       id,
-      title: req.title ?? titleFromPrompt(req.prompt) ?? titleFromSource(workspaceSource) ?? `Session ${id.slice(0, 6)}`,
+      title: req.title ?? titleFromPrompt(req.prompt) ?? titleFromRepos(repos) ?? `Session ${id.slice(0, 6)}`,
       provider: req.provider,
       status: "creating",
       workspaceSource,
+      repos,
       settings: {
         model: input.model ?? null,
         options: input.options ?? {},
@@ -520,6 +785,8 @@ export class SessionManager {
         snapshotId: snapshot.id,
         label: `${origin.title} @ snapshot ${snapshot.ordinal}`,
       },
+      // The Snapshot holds the origin's directories; their records come along (fresh ids, state re-read on connect).
+      repos: origin.repos.map((r) => ({ ...r, id: randomBytes(4).toString("hex"), git: null })),
       settings: {
         model: input.model !== undefined ? input.model : base.model,
         options: input.options ?? base.options,
@@ -564,6 +831,7 @@ export class SessionManager {
     this.broadcast({ type: "session", session });
     this.broadcast({ type: "event", event: marker });
     if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
+    void this.copyBaselines(origin, session);
 
     void this.provision(session, settings, snapshot.imageId).catch((e: unknown) => {
       this.log(`provision fork ${id} failed: ${String(e)}`);
@@ -606,12 +874,24 @@ export class SessionManager {
     });
   }
 
+  /** A fork's copied folders share the origin's pull baselines (matched by position; ids are new). */
+  private async copyBaselines(origin: Session, fork: Session): Promise<void> {
+    for (const [i, from] of origin.repos.entries()) {
+      const to = fork.repos[i];
+      if (!to || from.source.type !== "copy") continue;
+      const manifest = await this.syncBaselines.read(origin.id, baselineKey(from));
+      if (manifest) await this.syncBaselines.write(fork.id, baselineKey(to), manifest).catch(() => undefined);
+    }
+  }
+
   private async provision(session: Session, settings: Settings, image?: string): Promise<void> {
     const containerId = await this.createSandbox(session, settings, image);
     this.update(session.id, { containerId });
     await this.startSandbox(containerId, settings);
-    await this.seedWorkspace(containerId, session, settings);
-    await this.recordSyncBaseline(session.id, session.workspaceSource);
+    // A fork's Workspace comes with its Snapshot image; only fresh Sessions seed theirs.
+    if (session.workspaceSource.type !== "fork") {
+      await this.seedRepos(containerId, session, settings, session.repos.filter((r) => r.status === "pending"));
+    }
     this.setStatus(session.id, "idle");
     await this.connect(session.id, containerId);
     void this.refreshDiskUsage(session.id);
@@ -646,41 +926,6 @@ export class SessionManager {
     }
   }
 
-  private async seedWorkspace(containerId: string, session: Session, settings: Settings): Promise<void> {
-    const source = session.workspaceSource;
-    if (source.type === "git") {
-      const plan = planClone(source.url, resolveBoxCredentials(settings, session.settings.mcpEnabled));
-      const args = ["git", "clone", "--", plan.url, "."];
-      if (source.ref) args.splice(2, 0, "--branch", source.ref);
-      if (plan.account !== null) {
-        this.log(`cloning ${plan.url} into ${containerId.slice(0, 12)} as @${plan.account}`);
-      }
-      try {
-        await this.docker.exec(containerId, args, "/workspace", "agent", plan.env);
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        throw new Error(message + cloneFailureHint(source.url, plan));
-      }
-    } else if (source.type === "copy") {
-      const dir = await resolveHostDir(source.path);
-      const entries = await planHostDir(dir);
-      if (entries && entries.length === 0) return;
-      this.log(`copying ${dir} (${entries ? `${entries.length} git entries` : "everything"}) into ${containerId.slice(0, 12)}`);
-      await this.docker.putArchive(containerId, packHostDir(dir, entries), "/workspace");
-      await this.docker.exec(containerId, ["chown", "-R", "agent:agent", "/workspace"], "/", "root");
-    }
-  }
-
-  /** Records the copied host folder so a later pull can tell box changes from host changes. */
-  private async recordSyncBaseline(id: string, source: WorkspaceSource): Promise<void> {
-    if (source.type !== "copy") return;
-    try {
-      await this.syncBaselines.write(id, await hostManifest(source.path));
-    } catch (e) {
-      this.log(`could not record the copied state of ${source.path}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
   async prompt(id: string, req: PromptRequest): Promise<void> {
     const s = this.get(id);
     if (s.status === "stopped") throw new HttpError(409, "Session is stopped; resume it first.");
@@ -696,8 +941,13 @@ export class SessionManager {
       throw new HttpError(503, "Sandbox Daemon is not connected yet; retry in a moment.");
     }
     const params: DaemonPromptParams = req.attachments?.length ? { text: req.text, attachments: req.attachments } : { text: req.text };
+    const notes = this.promptNotes.get(id) ?? [];
+    const sent = notes.length;
+    const note = this.pendingNote(id);
+    if (note !== undefined) params.note = note;
     const endedBefore = this.turnEnds.get(id) ?? 0;
     await client.request(DAEMON_METHODS.prompt, params);
+    notes.splice(0, sent);
     // A slash command answered locally ends its turn within the same batch of Daemon messages
     // as the RPC reply; the Daemon's own status notifications are authoritative then.
     if ((this.turnEnds.get(id) ?? 0) === endedBefore) this.setStatus(id, "running");
@@ -1196,7 +1446,8 @@ export class SessionManager {
     }
     const snapshots = this.db.listSnapshots(id);
     this.db.deleteSession(id);
-    await this.syncBaselines.remove(id);
+    this.promptNotes.delete(id);
+    await this.syncBaselines.removeAll(id);
     this.broadcast({ type: "session_deleted", id });
     // Images a fork still runs on stay (removeImage returns false); the GC picks them up later.
     for (const snap of snapshots) await this.docker.removeImage(snap.imageId).catch(() => false);
@@ -1465,13 +1716,15 @@ export class SessionManager {
     const cursor = this.db.getDaemonCursor(id);
     if (!cursor || cursor.epoch !== status.epoch) this.db.setDaemonCursor(id, status.epoch, 0);
     this.onDaemonStatus(id, status);
-    // The Daemon waits for the MCP set before it starts the Agent (so the allowlist goes first); older Daemons ignore the calls.
+    // The Daemon waits for the MCP set before it starts the Agent (so the allowlist and the repository list go first); older Daemons ignore the calls.
     this.pushClaudeModels(id)
       .then(() => this.pushLlmInspect(id))
+      .then(() => this.pushRepos(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))
       .then(() => this.pushOptions(id))
       .then(() => this.pushRecordingPrefs(id))
+      .then(() => this.refreshRepoStates(id))
       .catch((e: unknown) => this.log(`mcp/model/options push ${id} failed: ${String(e)}`));
     const pending = this.pendingPrompts.get(id);
     if (pending && !status.turnActive) {
@@ -1534,6 +1787,7 @@ export class SessionManager {
       }
       const turn = this.turnEvents(id, stored.seq);
       if (ev.body.type === "turn_ended") this.prs.onTurnEnded(id, turn);
+      void this.refreshRepoStates(id);
       if (s) {
         const body = ev.body.type === "agent_error" ? `Error: ${ev.body.message}` : ev.body.stopReason === "cancelled" ? "Turn stopped." : (lastAgentText(turn) ?? "Turn ended.");
         this.push({ title: s.title, body: body.length > 200 ? `${body.slice(0, 197)}…` : body, tag: `sessionboxer-turn-${id}`, url: sessionRoute(id) });
@@ -1673,9 +1927,22 @@ function titleFromPrompt(prompt: string | undefined): string | undefined {
   return line.length > 60 ? `${line.slice(0, 57)}…` : line;
 }
 
-function titleFromSource(source: WorkspaceSource): string | undefined {
-  if (source.type === "copy") return basename(source.path) || undefined;
-  if (source.type === "git") return basename(source.url).replace(/\.git$/, "") || undefined;
-  if (source.type === "fork") return source.label;
-  return undefined;
+function titleFromRepos(repos: SessionRepo[]): string | undefined {
+  const names = repos.map((r) => r.name);
+  if (names.length === 0) return undefined;
+  if (names.length <= 3) return names.join(" + ");
+  return `${names.slice(0, 2).join(" + ")} + ${names.length - 2} more`;
+}
+
+/** Sessions from before repositories had names keep their one baseline under `<sessionId>.json`. */
+function baselineKey(repo: SessionRepo): string | null {
+  return repo.name === WORKSPACE_ROOT_REPO ? null : repo.id;
+}
+
+function describeRisk(git: RepoGitState): string {
+  const parts: string[] = [];
+  if (git.dirty) parts.push("uncommitted changes");
+  if (git.ahead !== null && git.ahead > 0) parts.push(`${git.ahead} unpushed commit${git.ahead === 1 ? "" : "s"} on ${git.branch ?? "HEAD"}`);
+  if (git.unpushedBranches.length > 0) parts.push(`unpushed branch${git.unpushedBranches.length === 1 ? "" : "es"} ${git.unpushedBranches.join(", ")}`);
+  return parts.length > 0 ? parts.join(" and ") : "work that is not pushed anywhere";
 }

@@ -9,6 +9,7 @@ import {
   type McpServerDef,
   type Settings,
 } from "@sessionboxer/protocol";
+import { normalizeBitbucketHost, verifyBitbucketToken } from "./bitbucket.js";
 import { toPublicMcpServer } from "./config.js";
 import { deviceLogin, ensureGh, findGh, hostLogins, hostToken, type GhCli, type GhDeviceLogin } from "./gh-cli.js";
 import { HttpError } from "./http-error.js";
@@ -47,13 +48,16 @@ interface TokenResponse {
 }
 
 /**
- * Logins for Connector presets (GitHub for now). Every flow ends the same way: the token is
- * stored as the entry's secret `Authorization` header and the account name next to it, so the
- * Daemon sees an ordinary HTTP MCP server. GitHub's MCP server accepts any GitHub token, and
- * organizations commonly block third-party OAuth Apps, so the default login borrows GitHub CLI's
- * (first-party) device login, or reuses a login `gh` already has on this machine; the Sessionboxer
- * OAuth App (client id only, device-code flow) or the user's own app from Settings (with a client
- * secret, redirect flow) remain as `via: "app"`.
+ * Logins for Connector presets. Every flow ends the same way: the token is stored as the
+ * entry's secret `Authorization` header and the account name next to it, so the Daemon sees an
+ * ordinary HTTP MCP server (GitHub) or a Sandbox-only login (Bitbucket). GitHub's MCP server
+ * accepts any GitHub token, and organizations commonly block third-party OAuth Apps, so the
+ * default login borrows GitHub CLI's (first-party) device login, or reuses a login `gh` already
+ * has on this machine; the Sessionboxer OAuth App (client id only, device-code flow) or the
+ * user's own app from Settings (with a client secret, redirect flow) remain as `via: "app"`.
+ * Bitbucket Data Center has no login an app could drive without an administrator (OAuth needs an
+ * incoming application link), so its flow is an HTTP access token the user creates on the host's
+ * token page and pastes once (`via: "token"`); it is verified and attributed before being kept.
  */
 export class Connectors {
   private readonly flows = new Map<string, Flow>();
@@ -74,6 +78,9 @@ export class Connectors {
 
   /** Starts a login; creates the registry entry from the preset when `serverId` is unknown. */
   async start(kind: ConnectorKind, req: ConnectorStartRequest): Promise<ConnectorFlow> {
+    if ((kind === "bitbucket") !== (req.via === "token")) {
+      throw new HttpError(400, kind === "bitbucket" ? "Bitbucket logs in with an HTTP access token." : `GitHub has no "${req.via}" login.`);
+    }
     const server = this.ensureServer(kind, req);
     const { clientId, clientSecret } = this.credentials(kind);
     this.prune();
@@ -98,6 +105,22 @@ export class Connectors {
       gh: null,
     };
     let flow: Flow;
+    if (req.via === "token") {
+      flow = { ...base, mode: "device", url: null, userCode: null, verificationUri: null, expiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() };
+      this.flows.set(flow.id, flow);
+      try {
+        if (!req.host) throw new Error("Enter the Bitbucket host, e.g. bitbucket.example.com");
+        const host = normalizeBitbucketHost(req.host);
+        const token = req.token?.trim() ?? "";
+        if (token === "") throw new Error("Paste the HTTP access token.");
+        const user = await verifyBitbucketToken(host, token);
+        this.finish(flow, { access_token: token }, user.name, host);
+      } catch (e) {
+        fail(flow, e instanceof Error ? e.message : String(e));
+      }
+      this.log(`connector ${kind} login (token) for "${server.name}": ${flow.status}`);
+      return publicFlow(flow);
+    }
     if (req.via === "gh-existing") {
       if (!req.account) throw new HttpError(400, "Pick which gh account to reuse.");
       const gh = await findGh();
@@ -105,7 +128,7 @@ export class Connectors {
       flow = { ...base, mode: "device", url: null, userCode: null, verificationUri: null, expiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() };
       this.flows.set(flow.id, flow);
       try {
-        await this.finish(flow, { access_token: await hostToken(gh, req.account) }, req.account);
+        await this.finishGithub(flow, { access_token: await hostToken(gh, req.account) }, req.account);
       } catch (e) {
         fail(flow, e instanceof Error ? e.message : String(e));
       }
@@ -137,7 +160,7 @@ export class Connectors {
         gh: login,
       };
       void login.token
-        .then((t) => this.finish(flow, { access_token: t.token }, t.account))
+        .then((t) => this.finishGithub(flow, { access_token: t.token }, t.account))
         .catch((e: unknown) => fail(flow, e instanceof Error ? e.message : String(e)));
     } else if (clientSecret !== "") {
       const codeVerifier = randomBytes(32).toString("base64url");
@@ -224,7 +247,7 @@ export class Connectors {
         redirect_uri: this.callbackUrl(kind),
         code_verifier: flow.codeVerifier ?? "",
       });
-      await this.finish(flow, (await res.json()) as TokenResponse);
+      await this.finishGithub(flow, (await res.json()) as TokenResponse);
       return { ok: true, message: `Connected as ${flow.server.connector?.account ?? "?"}.` };
     } catch (e) {
       fail(flow, e instanceof Error ? e.message : String(e));
@@ -249,6 +272,7 @@ export class Connectors {
   }
 
   private credentials(kind: ConnectorKind): { clientId: string; clientSecret: string } {
+    if (kind !== "github") return { clientId: "", clientSecret: "" };
     const conf = this.settings.get().connectors[kind];
     return { clientId: conf.clientId || CONNECTORS[kind].defaultClientId, clientSecret: conf.clientSecret };
   }
@@ -274,7 +298,7 @@ export class Connectors {
       url: preset.url,
       headers: [{ name: preset.tokenHeader, value: "", secret: true }],
       enabledByDefault: true,
-      connector: { kind, account: null, connectedAt: null, expiresAt: null },
+      connector: { kind, account: null, connectedAt: null, expiresAt: null, host: null },
     };
     this.settings.set({ ...settings, mcpServers: [...settings.mcpServers, server] });
     this.onChanged();
@@ -305,7 +329,7 @@ export class Connectors {
         continue;
       }
       try {
-        await this.finish(flow, body);
+        await this.finishGithub(flow, body);
       } catch (e) {
         fail(flow, e instanceof Error ? e.message : String(e));
       }
@@ -313,7 +337,7 @@ export class Connectors {
     }
   }
 
-  private async finish(flow: Flow, token: TokenResponse, knownAccount?: string): Promise<void> {
+  private async finishGithub(flow: Flow, token: TokenResponse, knownAccount?: string): Promise<void> {
     if (!token.access_token) {
       throw new Error(
         token.error === "access_denied"
@@ -329,7 +353,11 @@ export class Connectors {
     // Installation/fine-grained tokens may not be allowed to call /user; gh already told us who they belong to.
     if (!userRes.ok && knownAccount === undefined) throw new Error(`GitHub rejected the token (${userRes.status}).`);
     const user = userRes.ok ? ((await userRes.json()) as { login?: string }) : {};
-    const account = user.login ?? knownAccount ?? "?";
+    this.finish(flow, { access_token: token.access_token, expires_in: token.expires_in }, user.login ?? knownAccount ?? "?", null);
+  }
+
+  /** Stores a verified token on the flow's entry and marks the flow done. */
+  private finish(flow: Flow, token: { access_token: string; expires_in?: number | undefined }, account: string, host: string | null): void {
     const settings = this.settings.get();
     const server = settings.mcpServers.find((s) => s.id === flow.serverId);
     if (!server?.connector) throw new Error("The MCP server entry was deleted meanwhile.");
@@ -344,6 +372,7 @@ export class Connectors {
       connector: {
         ...server.connector,
         account,
+        host,
         connectedAt: new Date().toISOString(),
         expiresAt: token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : null,
       },
@@ -351,7 +380,9 @@ export class Connectors {
     this.settings.set({ ...settings, mcpServers: settings.mcpServers.map((s) => (s.id === server.id ? next : s)) });
     flow.status = "done";
     flow.server = toPublicMcpServer(next);
-    this.log(`connector ${flow.kind}: "${server.name}" connected as ${account} via ${flow.via}${next.connector?.expiresAt ? " (expiring token)" : ""}`);
+    this.log(
+      `connector ${flow.kind}: "${server.name}" connected as ${account}${host ? ` on ${host}` : ""} via ${flow.via}${next.connector?.expiresAt ? " (expiring token)" : ""}`,
+    );
     this.onChanged();
   }
 

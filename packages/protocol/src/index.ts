@@ -193,10 +193,13 @@ export type McpKeyValue = z.infer<typeof McpKeyValue>;
 export const MCP_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 export const MCP_RESERVED_NAMES = ["desktop"] as const;
 
-// Connectors: presets for well-known remote MCP servers whose login the Control
-// Plane runs itself (OAuth), so the user clicks "Connect" instead of pasting a
-// token. The same preset can be added several times, once per account.
-export const CONNECTOR_KINDS = ["github"] as const;
+// Connectors: presets for well-known code hosts whose login the Control Plane runs
+// itself, so the user clicks "Connect" instead of pasting tokens into headers. A GitHub
+// entry is that host's remote MCP server plus a Sandbox login; a Bitbucket (Data Center)
+// entry is a Sandbox login only (there is no MCP server to add), so its `url` is empty and
+// it is left out of the Agent's MCP set. The same preset can be added several times, once
+// per account (or per Bitbucket host).
+export const CONNECTOR_KINDS = ["github", "bitbucket"] as const;
 export const ConnectorKind = z.enum(CONNECTOR_KINDS);
 export type ConnectorKind = z.infer<typeof ConnectorKind>;
 
@@ -213,7 +216,20 @@ export const CONNECTORS: Record<
     defaultClientId: "Ov23liy480AEYdv2nOiD",
     tokenHeader: "Authorization",
   },
+  bitbucket: {
+    label: "Bitbucket",
+    url: "",
+    readonlyUrl: "",
+    scopes: [],
+    defaultClientId: "",
+    tokenHeader: "Authorization",
+  },
 };
+
+/** Whether an entry of this kind is an MCP server too, or (Bitbucket) only a Sandbox login. */
+export function connectorHasMcp(kind: ConnectorKind): boolean {
+  return CONNECTORS[kind].url !== "";
+}
 
 /** Login state of a registry entry made from a Connector; the token itself lives in `headers`. */
 export const McpConnector = z.object({
@@ -223,6 +239,8 @@ export const McpConnector = z.object({
   connectedAt: z.string().nullable().default(null),
   /** Set when the OAuth App issues expiring tokens; Sessionboxer does not refresh them. */
   expiresAt: z.string().nullable().default(null),
+  /** Bitbucket: the Data Center host the token is for (`bitbucket.example.com`); `null` for GitHub. */
+  host: z.string().nullable().default(null),
 });
 export type McpConnector = z.infer<typeof McpConnector>;
 
@@ -1315,8 +1333,10 @@ export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequest>;
  *   restrictions don't apply); `gh` is downloaded if the machine lacks it.
  * - `gh-existing`: reuse a login `gh` already has on this machine (`account` picks which).
  * - `app`: the Sessionboxer OAuth App (or the one from Settings); organizations may block it.
+ * - `token`: Bitbucket Data Center: an HTTP access token the user created on `host` and pasted;
+ *   verified against the host's REST API, which also tells whose it is.
  */
-export const ConnectorVia = z.enum(["gh", "gh-existing", "app"]);
+export const ConnectorVia = z.enum(["gh", "gh-existing", "app", "token"]);
 export type ConnectorVia = z.infer<typeof ConnectorVia>;
 
 /** Starts a login for a registry entry; a missing/unknown `serverId` creates the entry from the preset. */
@@ -1326,6 +1346,9 @@ export const ConnectorStartRequest = z.object({
   via: ConnectorVia.default("gh"),
   /** `gh-existing`: the `gh` account whose token to reuse. */
   account: z.string().nullable().default(null),
+  /** `token`: the Bitbucket host (`bitbucket.example.com` or its URL) and the pasted HTTP access token. */
+  host: z.string().max(500).nullable().default(null),
+  token: z.string().max(4000).nullable().default(null),
 });
 export type ConnectorStartRequest = z.infer<typeof ConnectorStartRequest>;
 
@@ -1957,11 +1980,14 @@ export type DaemonStatus = z.infer<typeof DaemonStatus>;
 
 /**
  * A login the Sandbox itself gets while the matching Connector entry is enabled: `gh` and
- * `git push` to github.com work as `account`, in the Agent's shell and in the Terminal pane.
- * Kept on tmpfs in the Sandbox, so it is gone from Snapshots and after the entry is switched off.
+ * `git push` to github.com (or `bb` and `git push` to a Bitbucket host) work as `account`, in
+ * the Agent's shell and in the Terminal pane. Kept on tmpfs in the Sandbox, so it is gone from
+ * Snapshots and after the entry is switched off.
  */
 export const BoxCredential = z.object({
   kind: ConnectorKind,
+  /** `github.com`, or the Bitbucket Data Center host. */
+  host: z.string().default("github.com"),
   account: z.string(),
   token: z.string(),
 });

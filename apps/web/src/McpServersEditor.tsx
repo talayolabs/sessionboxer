@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   CONNECTOR_KINDS,
   CONNECTORS,
+  connectorHasMcp,
   MCP_TRANSPORTS,
   type ConnectorKind,
   type PublicMcpKeyValue,
@@ -90,6 +91,7 @@ export function McpServersEditor({
                 s.connector.account ? (
                   <span className="mcp-summary connector-status" title={`Connected ${new Date(s.connector.connectedAt ?? 0).toLocaleString()}`}>
                     Connected as <strong>@{s.connector.account}</strong>
+                    {s.connector.host && <span className="muted"> on {s.connector.host}</span>}
                     {s.connector.expiresAt && Date.parse(s.connector.expiresAt) < Date.now() && <span className="connector-expired"> (token expired)</span>}
                   </span>
                 ) : (
@@ -141,7 +143,11 @@ export function McpServersEditor({
             key={kind}
             type="button"
             className="connector-button"
-            title={`Add ${CONNECTORS[kind].label}'s MCP server and log in with OAuth (no tokens to paste)`}
+            title={
+              kind === "github"
+                ? "Add GitHub's MCP server and log in with OAuth (no tokens to paste)"
+                : "Log Sessions in to a self-hosted Bitbucket (Data Center) for git push and pull requests"
+            }
             onClick={() => setConnecting({ kind, server: null })}
           >
             <ConnectorIcon kind={kind} /> Add {CONNECTORS[kind].label}
@@ -196,11 +202,12 @@ function McpServerForm({
 }) {
   const [argsText, setArgsText] = useState(joinArgs(server.args));
   const stdio = server.transport === "stdio";
+  const credentialOnly = server.connector !== null && !connectorHasMcp(server.connector.kind);
   return (
     <div className="mcp-form">
       <div className="row">
         <label>
-          Name (tool prefix; letters, digits, - and _)
+          {credentialOnly ? "Name" : "Name (tool prefix; letters, digits, - and _)"}
           <input
             value={server.name}
             pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}"
@@ -208,18 +215,22 @@ function McpServerForm({
             onChange={(e) => onChange({ name: e.target.value })}
           />
         </label>
-        <label>
-          Transport
-          <select value={server.transport} onChange={(e) => onChange({ transport: e.target.value as PublicMcpServerDef["transport"] })}>
-            {MCP_TRANSPORTS.map((t) => (
-              <option key={t} value={t}>
-                {TRANSPORT_LABELS[t]}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!credentialOnly && (
+          <label>
+            Transport
+            <select value={server.transport} onChange={(e) => onChange({ transport: e.target.value as PublicMcpServerDef["transport"] })}>
+              {MCP_TRANSPORTS.map((t) => (
+                <option key={t} value={t}>
+                  {TRANSPORT_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
-      {stdio ? (
+      {credentialOnly ? (
+        <p className="muted">A Sandbox login only (git push, `bb`); it adds no MCP server. Use Connect / Disconnect on the card to change the token.</p>
+      ) : stdio ? (
         <>
           <label>
             Command (runs inside the Sandbox)

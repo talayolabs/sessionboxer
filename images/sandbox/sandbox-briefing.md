@@ -21,6 +21,11 @@ empty when the Session was started without a repository.
 - Do not create repositories or files at the top of `/workspace` unless asked;
   cross-repository notes go into the repository they concern or `/workspace/docs`
   only when the user has one.
+- Pull requests: `gh` for GitHub, `bb` for Bitbucket Data Center (`bb pr create`,
+  `bb pr view --comments`, `bb pr comment`, `bb api`; `bb pr --help`). When the
+  user connected an account, `git push` and these commands already work as it;
+  `gh auth status` / `bb auth status` say which. There are no SSH keys: use
+  HTTPS remotes.
 
 Older Sessions had a single repository checked out directly in `/workspace`; if
 `repos.json` lists a repository whose `path` is `/workspace`, that is the case.
@@ -106,7 +111,7 @@ Older Sessions had a single repository checked out directly in `/workspace`; if
 
 ## Tools available
 
-git, gh, node 22, npm, python3, pip, build-essential, curl, jq, xdotool,
+git, gh, bb, node 22, npm, python3, pip, build-essential, curl, jq, xdotool,
 imagemagick, ffmpeg, firefox-esr, xfce4-terminal, docker (CLI, compose, buildx).
 
 The user may have VS Code open on `/workspace` in their browser (served by

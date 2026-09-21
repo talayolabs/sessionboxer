@@ -10,6 +10,13 @@
   agent; **Pull to folder** and PR `#123` shortcuts follow the list. Sessions created earlier keep
   their single project at `/workspace` (ADR-0037).
 - Control Plane: logging no longer loops on a closed stderr (Ctrl-C under `tee` hung at 100 % CPU).
+- Bitbucket (Data Center / Server) connector: **Add Bitbucket** in Settings → MCP servers takes the
+  host and one paste of an HTTP access token (the dialog links to the host's token page), verifies
+  it and shows the account. While the entry is enabled for a session the box is logged in to that
+  host: private repositories clone (`/scm/…`, `/projects/…/repos/…` and `ssh://…:7999` URLs, all
+  over HTTPS), `git push` works, and the new `bb` CLI (github.com/talayolabs/bb, in the Sandbox
+  image) creates, lists, views, checks, comments on and approves pull requests. Credentials live on
+  tmpfs like `gh`'s; no MCP server is added (ADR-0038).
 
 ## 0.1.0 — 2026-09-20
 

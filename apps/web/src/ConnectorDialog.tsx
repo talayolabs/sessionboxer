@@ -20,7 +20,10 @@ const POLL_MS = 2500;
  * app policies; `gh` gets downloaded if the machine has none), with a shortcut to reuse
  * an account `gh` is already logged in as, and the Sessionboxer OAuth App as fallback.
  * Device flow: show the code and a link; redirect flow: open the provider's page in a new
- * tab. Either way we poll the flow until `done` / `error`.
+ * tab. Either way we poll the flow until `done` / `error`. Bitbucket (Data Center) has no
+ * login an app can drive without its administrator, so its way is a guided token: open the
+ * host's token page, paste the HTTP access token once; the Control Plane verifies it and
+ * answers with the account, all in the start call.
  */
 export function ConnectorDialog({
   kind,
@@ -44,12 +47,21 @@ export function ConnectorDialog({
   const [busy, setBusy] = useState<ConnectorVia | null>(null);
   const [copied, setCopied] = useState(false);
   const [gh, setGh] = useState<GhCliStatus | null>(null);
+  const [host, setHost] = useState(() => server?.connector?.host ?? "");
+  const [token, setToken] = useState("");
   const onServerRef = useRef(onServer);
   onServerRef.current = onServer;
 
   const nameOk = MCP_NAME_PATTERN.test(name) && (server !== null || !takenNames.includes(name));
+  const hostName = host
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "");
+  const hostOk = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:\d+)?$/.test(hostName);
 
   useEffect(() => {
+    if (kind !== "github") return;
     let cancelled = false;
     api
       .connectorGh()
@@ -58,7 +70,7 @@ export function ConnectorDialog({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [kind]);
 
   useEffect(() => {
     if (!flow || flow.status !== "pending") return;
@@ -84,7 +96,15 @@ export function ConnectorDialog({
     setBusy(via);
     setError(null);
     try {
-      const f = await api.connectorStart(kind, { serverId: server?.id ?? null, name, via, account });
+      const f = await api.connectorStart(kind, {
+        serverId: server?.id ?? null,
+        name,
+        via,
+        account,
+        host: via === "token" ? hostName : null,
+        token: via === "token" ? token : null,
+      });
+      if (via === "token" && f.status === "done") setToken("");
       onServerRef.current(f.server);
       setFlow(f);
       if (f.mode === "redirect" && f.url) window.open(f.url, "_blank", "noopener");
@@ -108,7 +128,8 @@ export function ConnectorDialog({
 
   const viaGh = flow?.via === "gh";
   const canStart = (!flow || flow.status === "error") && busy === null && nameOk;
-  const title = server ? `Reconnect ${preset.label}` : `Add ${preset.label} MCP`;
+  const title = server ? `Reconnect ${preset.label}` : kind === "bitbucket" ? "Add Bitbucket" : `Add ${preset.label} MCP`;
+  const tokenPage = hostOk ? `https://${hostName}/plugins/servlet/access-tokens/` : null;
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal panel connector-dialog" role="dialog" aria-modal="true" aria-labelledby="connector-title">
@@ -117,25 +138,86 @@ export function ConnectorDialog({
         </h2>
         {(!flow || flow.status === "error") && (
           <>
-            <p className="muted">
-              Adds GitHub's remote MCP server (<code>{preset.url}</code>) and logs it in with your GitHub account. Sessions with this entry
-              enabled can also run <code>gh</code> and <code>git push</code> to github.com as that account. Add it more than once, under
-              different names, to use several accounts.
-            </p>
+            {kind === "github" ? (
+              <p className="muted">
+                Adds GitHub's remote MCP server (<code>{preset.url}</code>) and logs it in with your GitHub account. Sessions with this entry
+                enabled can also run <code>gh</code> and <code>git push</code> to github.com as that account. Add it more than once, under
+                different names, to use several accounts.
+              </p>
+            ) : (
+              <p className="muted">
+                Logs Sessions in to a self-hosted Bitbucket (Data Center / Server): with this entry enabled, <code>git clone</code>,{" "}
+                <code>git push</code> and <code>bb pr create</code> / <code>bb pr view</code> work in the box as your account, and
+                repositories of that host clone privately. No MCP server is added. Add it more than once, under different names, for several
+                hosts or accounts.
+              </p>
+            )}
             <label>
-              Name (tool prefix; letters, digits, - and _)
+              Name (letters, digits, - and _)
               <input
                 value={name}
-                autoFocus={!server}
+                autoFocus={!server && kind === "github"}
                 disabled={server !== null}
                 pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}"
-                placeholder="github-work"
+                placeholder={kind === "github" ? "github-work" : "bitbucket-work"}
                 onChange={(e) => setName(e.target.value)}
               />
             </label>
             {!nameOk && name !== "" && (
               <p className="muted">{takenNames.includes(name) && !server ? "That name is already used by another MCP server." : "Letters, digits, - and _ only."}</p>
             )}
+            {kind === "bitbucket" && (
+              <form
+                className="connector-token"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (canStart && hostOk && token.trim() !== "") void start("token");
+                }}
+              >
+                <label>
+                  Bitbucket host
+                  <input
+                    value={host}
+                    autoFocus={!server}
+                    placeholder="bitbucket.example.com"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) => setHost(e.target.value)}
+                  />
+                </label>
+                <p className="muted">
+                  1.{" "}
+                  {tokenPage ? (
+                    <a href={tokenPage} target="_blank" rel="noopener noreferrer">
+                      Open {hostName}'s HTTP access tokens page
+                    </a>
+                  ) : (
+                    "Enter the host to get a link to its HTTP access tokens page"
+                  )}{" "}
+                  (your profile → <em>Manage account</em> → <em>HTTP access tokens</em>) and click <em>Create token</em>: permissions{" "}
+                  <strong>Project → Read</strong> and <strong>Repository → Write</strong>, expiry as you like.
+                  <br />
+                  2. Paste it here; Sessionboxer checks it against the host and keeps it as a secret header, never shown again.
+                </p>
+                <label>
+                  HTTP access token
+                  <input
+                    type="password"
+                    value={token}
+                    autoComplete="off"
+                    placeholder="paste the token"
+                    onChange={(e) => setToken(e.target.value)}
+                  />
+                </label>
+                <div className="connector-ways">
+                  <button type="submit" className="primary connector-way" disabled={!canStart || !hostOk || token.trim() === ""}>
+                    <span>{busy === "token" ? `Checking with ${hostName}…` : server ? "Reconnect" : "Connect"}</span>
+                    <span className="muted">One paste; afterwards every Session with this entry is logged in without further steps.</span>
+                  </button>
+                </div>
+              </form>
+            )}
+            {kind === "github" && (
             <div className="connector-ways">
               <button type="button" className="primary connector-way" disabled={!canStart} onClick={() => void start("gh")}>
                 <span>{busy === "gh" ? (gh?.available ? "Starting GitHub CLI…" : "Downloading GitHub CLI…") : "Log in with GitHub"}</span>
@@ -161,6 +243,7 @@ export function ConnectorDialog({
                 <span className="muted">Organizations that restrict third-party OAuth Apps may hide their private repositories from it.</span>
               </button>
             </div>
+            )}
           </>
         )}
         {flow?.status === "pending" && flow.mode === "device" && (
@@ -211,7 +294,8 @@ export function ConnectorDialog({
         {flow?.status === "done" && (
           <p className="connector-done">
             Connected <code>{flow.server.name}</code> as <strong>@{flow.server.connector?.account}</strong>
-            {flow.via !== "app" && <span className="muted"> via GitHub CLI</span>}.
+            {flow.via === "token" && flow.server.connector?.host && <span className="muted"> on {flow.server.connector.host}</span>}
+            {flow.via !== "app" && flow.via !== "token" && <span className="muted"> via GitHub CLI</span>}.
             {flow.server.connector?.expiresAt && (
               <span className="muted"> The token expires {new Date(flow.server.connector.expiresAt).toLocaleString()}; reconnect then.</span>
             )}

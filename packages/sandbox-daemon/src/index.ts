@@ -51,6 +51,7 @@ import { ClaudeSettings } from "./claude-settings.js";
 import { CodeServer } from "./code-server.js";
 import { readCompactionDetails } from "./compactions.js";
 import { GhApi } from "./gh-api.js";
+import { BbCredentials } from "./bb-credentials.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
 import { DevinMcpConfig } from "./mcp-config.js";
@@ -105,6 +106,8 @@ const tmpfsDir = env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
 const devinMcpConfig = provider === "devin" ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, mcpCommand) : null;
 /** `gh`/git logins for the Sandbox; the image points `GH_CONFIG_DIR` at this tmpfs dir. */
 const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, log);
+/** `bb`/git logins for Bitbucket hosts; the image points `BB_CONFIG_DIR` at this tmpfs dir. */
+const bbCredentials = new BbCredentials(env.BB_CONFIG_DIR ?? `${tmpfsDir}/bb`, log);
 /** Claude's model allowlist lives in its settings file; the Control Plane sends the list before the Agent starts. */
 const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/.claude/settings.json`, log) : null;
 
@@ -247,6 +250,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);
+      bbCredentials.apply(p.credentials);
       return { applied: agent.setMcpServers(p.servers) };
     }
     case DAEMON_METHODS.modelSet: {

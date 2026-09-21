@@ -62,7 +62,8 @@ export function joinArgs(args: string[]): string {
 export function summarize(s: PublicMcpServerDef): string {
   if (s.connector) {
     const label = CONNECTORS[s.connector.kind].label;
-    return s.connector.account ? `${label} · @${s.connector.account}` : `${label} · not connected`;
+    const where = s.connector.host ? ` (${s.connector.host})` : "";
+    return s.connector.account ? `${label}${where} · @${s.connector.account}` : `${label}${where} · not connected`;
   }
   if (s.transport === "stdio") return [s.command, ...s.args].join(" ");
   return s.url;

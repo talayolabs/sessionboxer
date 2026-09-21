@@ -178,9 +178,22 @@ COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.j
 COPY images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
 RUN chmod +x /usr/local/bin/sessionboxer-entrypoint
 
-# GitHub logins arrive from the Control Plane while a GitHub Connector entry is enabled: the
-# Daemon writes gh's hosts.yml on tmpfs (nothing in Snapshots) and git asks gh for github.com.
-RUN git config --system credential.https://github.com.helper '!gh auth git-credential'
+# bb, the gh-like CLI for Bitbucket Data Center (github.com/talayolabs/bb), bundled from a pinned
+# commit into one file; `bb pr create`, `bb api` and the git credential helper below use it.
+ARG BB_REF=0eed2a2f8a0531f61cb2c04b55ebd5bbeea55275
+RUN mkdir /tmp/bb && cd /tmp/bb \
+    && git init -q && git fetch -q --depth 1 https://github.com/talayolabs/bb.git "${BB_REF}" && git checkout -q FETCH_HEAD \
+    && npm ci --ignore-scripts && npm run bundle \
+    && install -D -m 0644 build/bb.mjs /opt/sessionboxer/bb/bb.mjs \
+    && printf '#!/bin/sh\nexec node /opt/sessionboxer/bb/bb.mjs "$@"\n' > /usr/local/bin/bb && chmod 0755 /usr/local/bin/bb \
+    && cd / && rm -rf /tmp/bb && npm cache clean --force \
+    && bb --version
+
+# GitHub and Bitbucket logins arrive from the Control Plane while a Connector entry is enabled:
+# the Daemon writes gh's / bb's hosts.yml on tmpfs (nothing in Snapshots); git asks gh for
+# github.com and bb for every host (bb answers only for the Bitbucket hosts it is logged in to).
+RUN git config --system credential.https://github.com.helper '!gh auth git-credential' \
+    && git config --system credential.helper '!bb auth git-credential'
 
 ENV DISPLAY=:1 \
     SESSIONBOXER_DISPLAY_WIDTH=1024 \
@@ -188,6 +201,7 @@ ENV DISPLAY=:1 \
     HOME=/home/agent \
     GH_CONFIG_DIR=/dev/shm/sessionboxer/gh \
     GH_NO_UPDATE_NOTIFIER=1 \
+    BB_CONFIG_DIR=/dev/shm/sessionboxer/bb \
     IS_SANDBOX=1 \
     PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

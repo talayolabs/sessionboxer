@@ -8,6 +8,7 @@ import {
   ANTHROPIC_DEFAULT_BASE_URL,
   type BoxCredential,
   CONNECTORS,
+  connectorHasMcp,
   MCP_RESERVED_NAMES,
   Settings,
   TUNNEL_NAME_RE,
@@ -374,7 +375,8 @@ export function mergeMcpServers(current: McpServerDef[], incoming: PublicMcpServ
     names.add(name);
     ids.add(pub.id);
     if (pub.transport === "stdio" && pub.command.trim() === "") throw new HttpError(400, `MCP server "${name}" needs a command.`);
-    if (pub.transport !== "stdio" && !/^https?:\/\//.test(pub.url.trim())) {
+    const credentialOnly = pub.connector !== null && !connectorHasMcp(pub.connector.kind);
+    if (pub.transport !== "stdio" && !credentialOnly && !/^https?:\/\//.test(pub.url.trim())) {
       throw new HttpError(400, `MCP server "${name}" needs an http(s) URL.`);
     }
     const fill = (list: PublicMcpKeyValue[], prevList: McpKeyValue[]): McpKeyValue[] =>
@@ -400,16 +402,16 @@ export function mergeMcpServers(current: McpServerDef[], incoming: PublicMcpServ
 /** Login state is owned by the Control Plane: the form can keep or drop a Connector, not log it in. */
 function mergeConnector(incoming: McpConnector | null, prev: McpConnector | null, headers: McpKeyValue[]): McpConnector | null {
   if (!incoming) return null;
-  const kept = prev?.kind === incoming.kind ? prev : { kind: incoming.kind, account: null, connectedAt: null, expiresAt: null };
+  const kept = prev?.kind === incoming.kind ? prev : { kind: incoming.kind, account: null, connectedAt: null, expiresAt: null, host: null };
   const hasToken = headers.some((h) => h.name === CONNECTORS[incoming.kind].tokenHeader && h.value !== "");
-  return hasToken ? kept : { ...kept, account: null, connectedAt: null, expiresAt: null };
+  return hasToken ? kept : { ...kept, account: null, connectedAt: null, expiresAt: null, host: null };
 }
 
 /** Full definitions (secrets included) of the enabled ids, as the Daemon needs them; unknown ids are dropped. */
 export function resolveMcpServers(settings: Settings, enabledIds: string[]): McpServerSpec[] {
   const enabled = new Set(enabledIds);
   return settings.mcpServers
-    .filter((s) => enabled.has(s.id))
+    .filter((s) => enabled.has(s.id) && (!s.connector || connectorHasMcp(s.connector.kind)))
     .map(({ enabledByDefault: _default, connector: _connector, ...spec }) => ({ ...spec, url: spec.url ? rewriteHostUrl(spec.url) : spec.url }));
 }
 
@@ -421,7 +423,9 @@ export function resolveBoxCredentials(settings: Settings, enabledIds: string[]):
     if (!enabled.has(s.id) || !s.connector?.account) continue;
     const header = CONNECTORS[s.connector.kind].tokenHeader;
     const token = s.headers.find((h) => h.name === header)?.value.replace(/^Bearer\s+/i, "") ?? "";
-    if (token !== "") out.push({ kind: s.connector.kind, account: s.connector.account, token });
+    if (token === "") continue;
+    const host = s.connector.kind === "github" ? "github.com" : s.connector.host;
+    if (host) out.push({ kind: s.connector.kind, host, account: s.connector.account, token });
   }
   return out;
 }

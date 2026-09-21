@@ -6,8 +6,24 @@ packages with `sudo apt-get`, run any command, edit any file.
 
 ## Workspace
 
-The project you are working on is in `/workspace`. Treat it as the repository
-root unless told otherwise.
+`/workspace` is the root of this Session's work. Each repository the user added
+to the Session is its own directory right under it (`/workspace/frontend`,
+`/workspace/backend`, ...): independent Git repositories, not one big one. The
+list, with where each came from, is in `/workspace/.sessionboxer/repos.json`
+(read it first when there is more than one directory, or when a message from
+Sessionboxer says a repository was added or removed). `/workspace` itself may be
+empty when the Session was started without a repository.
+
+- Run `git` (status, commit, push, PRs) inside the repository it concerns, never
+  in `/workspace` itself.
+- Name files with the repository first (`backend/src/foo.ts`), and say which
+  repository a commit, branch or pull request belongs to.
+- Do not create repositories or files at the top of `/workspace` unless asked;
+  cross-repository notes go into the repository they concern or `/workspace/docs`
+  only when the user has one.
+
+Older Sessions had a single repository checked out directly in `/workspace`; if
+`repos.json` lists a repository whose `path` is `/workspace`, that is the case.
 
 ## Desktop
 

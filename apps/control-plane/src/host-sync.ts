@@ -84,31 +84,46 @@ function sha256(abs: string): Promise<string> {
 // --- Baselines --------------------------------------------------------------
 
 /**
- * What the host folder looked like when it was copied into the box / last pulled, per Session,
- * so a later pull can tell a box change from a host change (three-way). Under ~/.sessionboxer/sync.
+ * What the host folder looked like when it was copied into the box / last pulled, per copied
+ * repository, so a later pull can tell a box change from a host change (three-way). Under
+ * ~/.sessionboxer/sync as `<sessionId>-<repoId>.json` (`<sessionId>.json` for Sessions whose
+ * one copied folder is the Workspace root).
  */
 export class SyncBaselines {
-  private file(sessionId: string): string {
-    return path.join(BASELINES_DIR, `${sessionId}.json`);
+  private file(sessionId: string, repoId: string | null): string {
+    return path.join(BASELINES_DIR, repoId === null ? `${sessionId}.json` : `${sessionId}-${repoId}.json`);
   }
 
-  async read(sessionId: string): Promise<SyncManifest | null> {
+  async read(sessionId: string, repoId: string | null): Promise<SyncManifest | null> {
     try {
-      return SyncManifest.parse(JSON.parse(await readFile(this.file(sessionId), "utf8")));
+      return SyncManifest.parse(JSON.parse(await readFile(this.file(sessionId, repoId), "utf8")));
     } catch {
       return null;
     }
   }
 
-  async write(sessionId: string, manifest: SyncManifest): Promise<void> {
+  async write(sessionId: string, repoId: string | null, manifest: SyncManifest): Promise<void> {
     await mkdir(BASELINES_DIR, { recursive: true, mode: 0o700 });
-    const tmp = `${this.file(sessionId)}.tmp`;
+    const tmp = `${this.file(sessionId, repoId)}.tmp`;
     await writeFile(tmp, JSON.stringify(manifest), { mode: 0o600 });
-    await rename(tmp, this.file(sessionId));
+    await rename(tmp, this.file(sessionId, repoId));
   }
 
-  async remove(sessionId: string): Promise<void> {
-    await rm(this.file(sessionId), { force: true });
+  async remove(sessionId: string, repoId: string | null): Promise<void> {
+    await rm(this.file(sessionId, repoId), { force: true });
+  }
+
+  /** Every record of a Session (all its repositories). */
+  async removeAll(sessionId: string): Promise<void> {
+    let names: string[];
+    try {
+      names = await readdir(BASELINES_DIR);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (name === `${sessionId}.json` || name.startsWith(`${sessionId}-`)) await rm(path.join(BASELINES_DIR, name), { force: true });
+    }
   }
 }
 
@@ -140,7 +155,7 @@ function blockedReason(f: SyncFile): string | null {
  * host-only changes kept, both-sides changes flagged as conflicts. Without one, adds and updates
  * are applied and deletes flagged (a file only the host has may well be new host work).
  */
-export function planSync(dir: string, box: SyncManifest, host: SyncManifest, baseline: SyncManifest | null): SyncPlan {
+export function planSync(repoId: string, dir: string, box: SyncManifest, host: SyncManifest, baseline: SyncManifest | null): SyncPlan {
   const b = byPath(box);
   const h = byPath(host);
   const base = baseline ? byPath(baseline) : null;
@@ -175,7 +190,7 @@ export function planSync(dir: string, box: SyncManifest, host: SyncManifest, bas
     }
   }
   entries.sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0));
-  return { path: dir, entries, unchanged, localOnly, threeWay: baseline !== null, computedAt: new Date().toISOString() };
+  return { repoId, path: dir, entries, unchanged, localOnly, threeWay: baseline !== null, computedAt: new Date().toISOString() };
 }
 
 /** Entries a pull applies: everything non-conflicting, plus conflicts when the user overrides; never blocked ones. */
@@ -230,7 +245,7 @@ async function assertInside(dir: string, rel: string): Promise<string> {
  * Unpacks the box's tar of `adds`/`updates` into `dir` (only the expected paths, symlinks kept
  * as symlinks, never escaping), removes `deletes`, then prunes directories the deletes emptied.
  */
-export async function applySync(dir: string, entries: SyncEntry[], tar: Readable | null): Promise<SyncResult> {
+export async function applySync(repoId: string, dir: string, entries: SyncEntry[], tar: Readable | null): Promise<SyncResult> {
   const writes = entries.filter((e) => e.action !== "delete");
   const deletes = entries.filter((e) => e.action === "delete");
   const expected = new Map<string, SyncEntry>();
@@ -277,6 +292,7 @@ export async function applySync(dir: string, entries: SyncEntry[], tar: Readable
     }
   }
   return {
+    repoId,
     path: dir,
     added: writes.filter((e) => e.action === "add").length,
     updated: writes.filter((e) => e.action === "update").length,

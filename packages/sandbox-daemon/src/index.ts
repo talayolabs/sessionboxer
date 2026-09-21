@@ -26,6 +26,10 @@ import {
   DaemonPromptParams,
   DaemonRecordingPrefsSetParams,
   type DaemonRecordingPrefsSetResult,
+  DaemonReposInspectParams,
+  DaemonReposRemoveParams,
+  DaemonReposSetParams,
+  FsManifestParams,
   DaemonSessionForkParams,
   type DaemonSessionForkResult,
   DaemonSessionSwitchParams,
@@ -51,10 +55,11 @@ import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
 import { DevinMcpConfig } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
+import { Repos } from "./repos.js";
 import { Uploads } from "./uploads.js";
 import { Terminals } from "./terminals.js";
 import { WorkspaceFs } from "./workspace-fs.js";
-import { serveTar, workspaceManifest } from "./workspace-sync.js";
+import { serveTar, workspaceDir, workspaceManifest } from "./workspace-sync.js";
 
 const EVENT_BUFFER_MAX = 5000;
 
@@ -135,6 +140,8 @@ async function setLlmInspect(enabled: boolean): Promise<DaemonLlmInspectSetResul
   return { applied: agent.setAgentEnv(enabled ? LLM_INSPECTOR_ENV : {}), supported: true };
 }
 
+const repos = new Repos(workspace, log);
+
 const agent = new AgentManager(
   {
     command: acpCommand,
@@ -144,6 +151,7 @@ const agent = new AgentManager(
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
+    workspaceBriefing: () => repos.briefing(),
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     log,
@@ -221,7 +229,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       if (agent.turnActive) throw new Error("a turn is already active");
       if (agent.reporting) throw new Error("the Agent is reporting its context usage; retry in a moment");
       emit(p.attachments?.length ? { type: "user_prompt", text: p.text, attachments: p.attachments } : { type: "user_prompt", text: p.text });
-      void agent.prompt(p.text, p.attachments ?? []);
+      void agent.prompt(p.note ? `${p.note}\n\n${p.text}` : p.text, p.attachments ?? []);
       return { accepted: true };
     }
     case DAEMON_METHODS.ask: {
@@ -288,7 +296,16 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       await agent.cancel();
       return { ok: true };
     case DAEMON_METHODS.fsManifest:
-      return workspaceManifest(workspace);
+      return workspaceManifest(workspaceDir(workspace, FsManifestParams.parse(params ?? {}).dir));
+    case DAEMON_METHODS.reposSet:
+      await repos.set(DaemonReposSetParams.parse(params));
+      return { ok: true };
+    case DAEMON_METHODS.reposInspect:
+      return repos.inspect(DaemonReposInspectParams.parse(params).dirs);
+    case DAEMON_METHODS.reposRemove: {
+      const p = DaemonReposRemoveParams.parse(params);
+      return repos.remove(p.dir, p.force);
+    }
     case DAEMON_METHODS.ptyList:
       return { terminals: terminals.list() };
     case DAEMON_METHODS.ptyOpen: {

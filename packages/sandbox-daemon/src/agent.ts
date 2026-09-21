@@ -41,6 +41,8 @@ export interface AgentConfig {
   /** Standing instructions for the Agent (the Session's); empty sends none. */
   instructions: string;
   instructionsDelivery: InstructionsDelivery;
+  /** Read whenever the instructions are sent: what the Workspace holds right now (its repositories). */
+  workspaceBriefing?: () => string;
   /** Runs before every spawn with the user MCP servers (Devin reads them from a file, not over ACP). */
   writeMcpConfig?: (servers: McpServerSpec[]) => void;
   /** Runs before every spawn with the model allowlist (Claude reads `availableModels` from its settings file). */
@@ -842,8 +844,8 @@ export class AgentManager {
         if (!params.replay) throw new Error("this Agent cannot fork its session");
         const created = await this.newSessionWithRetry(conn, { cwd: this.cfg.cwd, mcpServers, ...this.systemPromptMeta() });
         await this.adoptSession(conn, created.sessionId, created.modes, created.configOptions);
-        const replay = this.cfg.instructionsDelivery === "first-prompt" && this.cfg.instructions.trim() !== ""
-          ? withInstructions(this.cfg.instructions, params.replay)
+        const replay = this.cfg.instructionsDelivery === "first-prompt" && this.instructions() !== ""
+          ? withInstructions(this.instructions(), params.replay)
           : params.replay;
         const result = await conn.agent.request("session/prompt", {
           sessionId: created.sessionId,
@@ -924,8 +926,14 @@ export class AgentManager {
 
   /** `_meta` carrying the instructions for adapters that take them as a system prompt addition. */
   private systemPromptMeta(): Pick<NewSessionRequest, "_meta"> {
-    if (this.cfg.instructionsDelivery !== "system-prompt" || this.cfg.instructions.trim() === "") return {};
-    return { _meta: { systemPrompt: { append: this.cfg.instructions.trim() } } };
+    if (this.cfg.instructionsDelivery !== "system-prompt" || this.instructions() === "") return {};
+    return { _meta: { systemPrompt: { append: this.instructions() } } };
+  }
+
+  /** The Session's instructions followed by the Workspace briefing, trimmed; empty when there is neither. */
+  private instructions(): string {
+    const briefing = this.cfg.workspaceBriefing?.().trim() ?? "";
+    return [this.cfg.instructions.trim(), briefing].filter((s) => s !== "").join("\n\n");
   }
 
   private freshSessionIds(): string[] {
@@ -934,10 +942,10 @@ export class AgentManager {
 
   /** Prefixes the instructions when this is the first prompt of a session created here (`first-prompt` delivery). */
   private firstPromptText(text: string): string {
-    if (this.cfg.instructionsDelivery !== "first-prompt" || this.cfg.instructions.trim() === "") return text;
+    if (this.cfg.instructionsDelivery !== "first-prompt" || this.instructions() === "") return text;
     if (!this.acpSessionId || !this.freshSessionIds().includes(this.acpSessionId)) return text;
     this.cfg.log(`first prompt of ${this.acpSessionId}: instructions prepended`);
-    return withInstructions(this.cfg.instructions, text);
+    return withInstructions(this.instructions(), text);
   }
 
   private markPrompted(sessionId: string): void {

@@ -1,4 +1,5 @@
 import type {
+  AddRepoRequest,
   AskResult,
   AuthDevice,
   AuthLoginRequest,
@@ -32,6 +33,8 @@ import type {
   PromptRequest,
   PublicSettings,
   PushStatus,
+  RepoRemovalBlocked,
+  SessionRepo,
   PushSubscribeRequest,
   RevertRequest,
   SavedMessage,
@@ -174,7 +177,25 @@ export const api = {
   switchBranch: (id: string, req: SwitchBranchRequest) =>
     request<Session>(`/sessions/${id}/branch`, { method: "POST", body: JSON.stringify(req) }),
   hostDirs: (path?: string) => request<HostDirListing>(`/host/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  syncPlan: (id: string) => request<SyncPlan>(`/sessions/${id}/sync`),
+  addRepo: (id: string, req: AddRepoRequest) => request<SessionRepo>(`/sessions/${id}/repos`, { method: "POST", body: JSON.stringify(req) }),
+  /** 409 with the repository's Git state when it holds work that is nowhere else and `force` is off. */
+  removeRepo: async (id: string, repoId: string, force: boolean): Promise<{ removed: true } | { removed: false; blocked: RepoRemovalBlocked }> => {
+    const res = await fetch(`/api/sessions/${id}/repos/${repoId}${force ? "?force=1" : ""}`, { method: "DELETE" });
+    if (res.status === 409) return { removed: false, blocked: (await res.json()) as RepoRemovalBlocked };
+    if (!res.ok) {
+      let message = `${res.status} ${res.statusText}`;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) message = body.error;
+      } catch {
+        // non-JSON error body
+      }
+      if (res.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: message }));
+      throw new Error(message);
+    }
+    return { removed: true };
+  },
+  syncPlan: (id: string, repoId?: string) => request<SyncPlan>(`/sessions/${id}/sync${repoId ? `?repoId=${encodeURIComponent(repoId)}` : ""}`),
   syncPull: (id: string, req: SyncRequest) => request<SyncResult>(`/sessions/${id}/sync`, { method: "POST", body: JSON.stringify(req) }),
   terminals: (id: string) => request<PtyListResult>(`/sessions/${id}/terminals`),
   openTerminal: (id: string, cols: number, rows: number) =>

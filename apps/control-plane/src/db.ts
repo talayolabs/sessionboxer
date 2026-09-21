@@ -3,14 +3,15 @@ import { randomBytes } from "node:crypto";
 import {
   AgentOption,
   BranchMethod,
-  DockerMode,
   ModelOption,
-  OptionValues,
   PROVIDERS,
   Provider,
   ROOT_BRANCH_ID,
   Session,
+  SessionRepo,
+  SessionSettings,
   SnapshotReason,
+  WORKSPACE_ROOT_REPO,
   WorkspaceSource,
   branchScope,
   type Branch,
@@ -42,30 +43,37 @@ interface SessionRow {
   provider: string;
   status: string;
   workspace_source: string;
-  docker_mode: string;
+  /** JSON array of `SessionRepo`. */
+  repos: string;
+  /** JSON `SessionSettings`. */
+  settings: string;
   container_id: string | null;
   error: string | null;
   queue_running: number;
-  auto_snapshot: number | null;
   disk_bytes: number | null;
-  /** JSON array of MCP server ids. */
-  mcp_enabled: string;
   mcp_pending: number;
-  model: string | null;
   model_pending: number;
-  /** JSON object of option values by id. */
-  options: string;
   options_pending: number;
   /** JSON array of `AgentOption`. */
   available_options: string;
-  instructions: string;
-  inspect_llm: number;
   inspect_llm_pending: number;
-  git_user_name: string;
-  git_user_email: string;
   active_branch_id: string;
   created_at: string;
   updated_at: string;
+}
+
+/** The columns `settings` replaced; an old database has the ones that existed when it was last opened. */
+interface LegacySettingsRow {
+  id: string;
+  docker_mode?: string;
+  auto_snapshot?: number | null;
+  mcp_enabled?: string;
+  model?: string | null;
+  options?: string;
+  instructions?: string;
+  inspect_llm?: number;
+  git_user_name?: string;
+  git_user_email?: string;
 }
 
 /** `sessions` joined with its Snapshot aggregates. */
@@ -125,24 +133,17 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider TEXT NOT NULL,
   status TEXT NOT NULL,
   workspace_source TEXT NOT NULL,
-  docker_mode TEXT NOT NULL DEFAULT 'none',
+  repos TEXT NOT NULL DEFAULT '[]',
+  settings TEXT,
   container_id TEXT,
   error TEXT,
   queue_running INTEGER NOT NULL DEFAULT 0,
-  auto_snapshot INTEGER,
   disk_bytes INTEGER,
-  mcp_enabled TEXT NOT NULL DEFAULT '[]',
   mcp_pending INTEGER NOT NULL DEFAULT 0,
-  model TEXT,
   model_pending INTEGER NOT NULL DEFAULT 0,
-  options TEXT NOT NULL DEFAULT '{}',
   options_pending INTEGER NOT NULL DEFAULT 0,
   available_options TEXT NOT NULL DEFAULT '[]',
-  instructions TEXT NOT NULL DEFAULT '',
-  inspect_llm INTEGER NOT NULL DEFAULT 0,
   inspect_llm_pending INTEGER NOT NULL DEFAULT 0,
-  git_user_name TEXT NOT NULL DEFAULT '',
-  git_user_email TEXT NOT NULL DEFAULT '',
   active_branch_id TEXT NOT NULL DEFAULT 'root',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -204,25 +205,22 @@ CREATE TABLE IF NOT EXISTS provider_options (
 );
 `;
 
-/** Columns added after the first release, applied to databases created before them. */
+/**
+ * Columns added after the first release, applied to databases created before them. The per-setting
+ * columns of old databases (docker_mode, auto_snapshot, mcp_enabled, model, options, instructions,
+ * inspect_llm, git_user_name, git_user_email) are left in place and folded into `settings` once.
+ */
 const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
-  { table: "sessions", column: "docker_mode", ddl: "ALTER TABLE sessions ADD COLUMN docker_mode TEXT NOT NULL DEFAULT 'none'" },
   { table: "sessions", column: "queue_running", ddl: "ALTER TABLE sessions ADD COLUMN queue_running INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "disk_bytes", ddl: "ALTER TABLE sessions ADD COLUMN disk_bytes INTEGER" },
-  { table: "sessions", column: "auto_snapshot", ddl: "ALTER TABLE sessions ADD COLUMN auto_snapshot INTEGER" },
-  { table: "sessions", column: "mcp_enabled", ddl: "ALTER TABLE sessions ADD COLUMN mcp_enabled TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "mcp_pending", ddl: "ALTER TABLE sessions ADD COLUMN mcp_pending INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "model", ddl: "ALTER TABLE sessions ADD COLUMN model TEXT" },
   { table: "sessions", column: "model_pending", ddl: "ALTER TABLE sessions ADD COLUMN model_pending INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "options", ddl: "ALTER TABLE sessions ADD COLUMN options TEXT NOT NULL DEFAULT '{}'" },
   { table: "sessions", column: "options_pending", ddl: "ALTER TABLE sessions ADD COLUMN options_pending INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "available_options", ddl: "ALTER TABLE sessions ADD COLUMN available_options TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
-  { table: "sessions", column: "instructions", ddl: "ALTER TABLE sessions ADD COLUMN instructions TEXT NOT NULL DEFAULT ''" },
-  { table: "sessions", column: "git_user_name", ddl: "ALTER TABLE sessions ADD COLUMN git_user_name TEXT NOT NULL DEFAULT ''" },
-  { table: "sessions", column: "git_user_email", ddl: "ALTER TABLE sessions ADD COLUMN git_user_email TEXT NOT NULL DEFAULT ''" },
-  { table: "sessions", column: "inspect_llm", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "inspect_llm_pending", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
+  { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];
@@ -243,8 +241,9 @@ export class Db {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
-    this.migrate();
+    const added = this.migrate();
     this.titleBranches();
+    if (added.has("repos")) this.reposFromWorkspaceSource();
     this.prs = new PrStore(this.db);
   }
 
@@ -265,10 +264,79 @@ export class Db {
     for (const r of rows) this.renameBranch(r.session_id, r.id, branchTitle(r.text));
   }
 
-  private migrate(): void {
+  /**
+   * Sessions from before the repository list cloned or copied their one source into the
+   * Workspace root itself; they get a repository entry at `.` so the list describes them too.
+   */
+  private reposFromWorkspaceSource(): void {
+    const rows = this.db
+      .prepare("SELECT id, workspace_source, created_at FROM sessions WHERE json_extract(workspace_source, '$.type') IN ('git', 'copy')")
+      .all() as Array<{ id: string; workspace_source: string; created_at: string }>;
+    const update = this.db.prepare("UPDATE sessions SET repos = ? WHERE id = ?");
+    for (const r of rows) {
+      const source = WorkspaceSource.parse(JSON.parse(r.workspace_source));
+      if (source.type !== "git" && source.type !== "copy") continue;
+      const repo: SessionRepo = {
+        id: randomBytes(4).toString("hex"),
+        name: WORKSPACE_ROOT_REPO,
+        source,
+        status: "ready",
+        error: null,
+        git: null,
+        createdAt: r.created_at,
+      };
+      update.run(JSON.stringify([repo]), r.id);
+    }
+    // Forks share their origin's Workspace layout (the Snapshot carried the files).
+    const forks = this.db
+      .prepare("SELECT id, json_extract(workspace_source, '$.sessionId') AS origin_id FROM sessions WHERE json_extract(workspace_source, '$.type') = 'fork'")
+      .all() as Array<{ id: string; origin_id: string }>;
+    const reposOf = this.db.prepare("SELECT repos, workspace_source FROM sessions WHERE id = ?");
+    for (const f of forks) {
+      let originId: string | null = f.origin_id;
+      for (let depth = 0; originId !== null && depth < 10; depth++) {
+        const origin = reposOf.get(originId) as { repos: string; workspace_source: string } | undefined;
+        if (!origin) break;
+        const repos = SessionRepo.array().parse(JSON.parse(origin.repos));
+        if (repos.length > 0) {
+          update.run(JSON.stringify(repos.map((repo) => ({ ...repo, id: randomBytes(4).toString("hex"), git: null }))), f.id);
+          break;
+        }
+        const source = WorkspaceSource.parse(JSON.parse(origin.workspace_source));
+        originId = source.type === "fork" ? source.sessionId : null;
+      }
+    }
+  }
+
+  /** Returns the names of the columns this run added. */
+  private migrate(): Set<string> {
+    const added = new Set<string>();
     for (const m of MIGRATIONS) {
       const columns = this.db.prepare(`PRAGMA table_info(${m.table})`).all() as Array<{ name: string }>;
-      if (!columns.some((c) => c.name === m.column)) this.db.exec(m.ddl);
+      if (!columns.some((c) => c.name === m.column)) {
+        this.db.exec(m.ddl);
+        added.add(m.column);
+      }
+    }
+    this.backfillSettings();
+    return added;
+  }
+
+  /** Sessions from before the `settings` column: assemble the JSON from the per-setting columns. */
+  private backfillSettings(): void {
+    const rows = this.db.prepare("SELECT * FROM sessions WHERE settings IS NULL").all() as LegacySettingsRow[];
+    const write = this.db.prepare("UPDATE sessions SET settings = ? WHERE id = ?");
+    for (const r of rows) {
+      const settings = SessionSettings.parse({
+        model: r.model ?? null,
+        options: JSON.parse(r.options ?? "{}"),
+        inspectLlm: r.inspect_llm === 1,
+        mcpEnabled: JSON.parse(r.mcp_enabled ?? "[]"),
+        instructions: r.instructions ?? "",
+        autoSnapshot: r.auto_snapshot === null || r.auto_snapshot === undefined ? null : r.auto_snapshot === 1,
+        sandbox: { dockerMode: r.docker_mode ?? "none", gitIdentity: { name: r.git_user_name ?? "", email: r.git_user_email ?? "" } },
+      });
+      write.run(JSON.stringify(settings), r.id);
     }
   }
 
@@ -291,8 +359,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, docker_mode, container_id, error, queue_running, auto_snapshot, disk_bytes, mcp_enabled, mcp_pending, model, model_pending, options, options_pending, available_options, instructions, inspect_llm, inspect_llm_pending, git_user_name, git_user_email, active_branch_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @docker_mode, @container_id, @error, @queue_running, @auto_snapshot, @disk_bytes, @mcp_enabled, @mcp_pending, @model, @model_pending, @options, @options_pending, @available_options, @instructions, @inspect_llm, @inspect_llm_pending, @git_user_name, @git_user_email, @active_branch_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -303,11 +371,10 @@ export class Db {
     const next: Session = { ...current, ...patch, updatedAt: new Date().toISOString() };
     this.db
       .prepare(
-        `UPDATE sessions SET title=@title, status=@status, container_id=@container_id, error=@error,
-           queue_running=@queue_running, auto_snapshot=@auto_snapshot, disk_bytes=@disk_bytes,
-           mcp_enabled=@mcp_enabled, mcp_pending=@mcp_pending, model=@model, model_pending=@model_pending,
-           options=@options, options_pending=@options_pending, available_options=@available_options,
-           inspect_llm=@inspect_llm, inspect_llm_pending=@inspect_llm_pending, active_branch_id=@active_branch_id, updated_at=@updated_at
+        `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, error=@error,
+           queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
+           options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
+           active_branch_id=@active_branch_id, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -618,19 +685,16 @@ export type SessionPatch = Partial<
     Session,
     | "title"
     | "status"
+    | "repos"
     | "containerId"
     | "error"
     | "queueRunning"
-    | "autoSnapshot"
+    | "settings"
     | "diskBytes"
-    | "mcpEnabled"
     | "mcpPending"
-    | "model"
     | "modelPending"
-    | "options"
     | "optionsPending"
     | "availableOptions"
-    | "inspectLlm"
     | "inspectLlmPending"
     | "activeBranchId"
   >
@@ -667,23 +731,17 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     provider: row.provider,
     status: row.status as SessionStatus,
     workspaceSource: WorkspaceSource.parse(JSON.parse(row.workspace_source)),
-    dockerMode: DockerMode.parse(row.docker_mode),
+    repos: SessionRepo.array().parse(JSON.parse(row.repos)),
+    settings: SessionSettings.parse(JSON.parse(row.settings)),
     containerId: row.container_id,
     error: row.error,
     queueRunning: row.queue_running === 1,
-    autoSnapshot: row.auto_snapshot === null ? null : row.auto_snapshot === 1,
     diskBytes: row.disk_bytes,
-    mcpEnabled: JSON.parse(row.mcp_enabled) as string[],
     mcpPending: row.mcp_pending === 1,
-    model: row.model,
     modelPending: row.model_pending === 1,
-    options: OptionValues.parse(JSON.parse(row.options)),
     optionsPending: row.options_pending === 1,
     availableOptions: AgentOption.array().parse(JSON.parse(row.available_options)),
-    instructions: row.instructions,
-    inspectLlm: row.inspect_llm === 1,
     inspectLlmPending: row.inspect_llm_pending === 1,
-    gitIdentity: { name: row.git_user_name, email: row.git_user_email },
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
     branches,
@@ -720,24 +778,17 @@ function sessionToRow(s: Session): SessionRow {
     provider: s.provider,
     status: s.status,
     workspace_source: JSON.stringify(s.workspaceSource),
-    docker_mode: s.dockerMode,
+    repos: JSON.stringify(s.repos),
+    settings: JSON.stringify(s.settings),
     container_id: s.containerId,
     error: s.error,
     queue_running: s.queueRunning ? 1 : 0,
-    auto_snapshot: s.autoSnapshot === null ? null : s.autoSnapshot ? 1 : 0,
     disk_bytes: s.diskBytes,
-    mcp_enabled: JSON.stringify(s.mcpEnabled),
     mcp_pending: s.mcpPending ? 1 : 0,
-    model: s.model,
     model_pending: s.modelPending ? 1 : 0,
-    options: JSON.stringify(s.options),
     options_pending: s.optionsPending ? 1 : 0,
     available_options: JSON.stringify(s.availableOptions),
-    instructions: s.instructions,
-    inspect_llm: s.inspectLlm ? 1 : 0,
     inspect_llm_pending: s.inspectLlmPending ? 1 : 0,
-    git_user_name: s.gitIdentity.name,
-    git_user_email: s.gitIdentity.email,
     active_branch_id: s.activeBranchId,
     created_at: s.createdAt,
     updated_at: s.updatedAt,

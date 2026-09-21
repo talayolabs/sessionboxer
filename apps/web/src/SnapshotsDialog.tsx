@@ -48,8 +48,8 @@ export function SnapshotsDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const effective = session.autoSnapshot ?? globalAutoSnapshot;
-  const overridden = session.autoSnapshot !== null;
+  const effective = session.settings.autoSnapshot ?? globalAutoSnapshot;
+  const overridden = session.settings.autoSnapshot !== null;
   const isLive = session.status === "idle" || session.status === "running";
   const canRebuild = session.status === "idle" || session.status === "stopped" || session.status === "error";
   const rebuilding = session.status === "creating" && snapshotting;

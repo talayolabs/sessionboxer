@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Several repositories per session: list git URLs and host folders when creating a session
+  (or with `sessionboxer new --git <url>[@ref] ... [dir...]`), each cloned or copied into
+  `/workspace/<name>`; add and remove repositories from a running session (removal refuses while
+  uncommitted, unpushed or not-yet-pulled work would be lost); per-repository branch/dirty state
+  in the header chips; `/workspace/.sessionboxer/repos.json` and a repository briefing for the
+  agent; **Pull to folder** and PR `#123` shortcuts follow the list. Sessions created earlier keep
+  their single project at `/workspace` (ADR-0037).
+- Control Plane: logging no longer loops on a closed stderr (Ctrl-C under `tee` hung at 100 % CPU).
+
 ## 0.1.0 — 2026-09-20
 
 First release. Sessionboxer runs coding agents (Claude Code, Devin) in one Docker Sandbox per

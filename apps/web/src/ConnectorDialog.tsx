@@ -130,6 +130,7 @@ export function ConnectorDialog({
   const canStart = (!flow || flow.status === "error") && busy === null && nameOk;
   const title = server ? `Reconnect ${preset.label}` : kind === "bitbucket" ? "Add Bitbucket" : `Add ${preset.label} MCP`;
   const tokenPage = hostOk ? `https://${hostName}/plugins/servlet/access-tokens/` : null;
+  const tokenReady = canStart && hostOk && token.trim() !== "";
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal panel connector-dialog" role="dialog" aria-modal="true" aria-labelledby="connector-title">
@@ -167,11 +168,12 @@ export function ConnectorDialog({
               <p className="muted">{takenNames.includes(name) && !server ? "That name is already used by another MCP server." : "Letters, digits, - and _ only."}</p>
             )}
             {kind === "bitbucket" && (
-              <form
+              <div
                 className="connector-token"
-                onSubmit={(e) => {
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.target instanceof HTMLButtonElement) return;
                   e.preventDefault();
-                  if (canStart && hostOk && token.trim() !== "") void start("token");
+                  if (tokenReady) void start("token");
                 }}
               >
                 <label>
@@ -210,12 +212,12 @@ export function ConnectorDialog({
                   />
                 </label>
                 <div className="connector-ways">
-                  <button type="submit" className="primary connector-way" disabled={!canStart || !hostOk || token.trim() === ""}>
+                  <button type="button" className="primary connector-way" disabled={!tokenReady} onClick={() => void start("token")}>
                     <span>{busy === "token" ? `Checking with ${hostName}…` : server ? "Reconnect" : "Connect"}</span>
                     <span className="muted">One paste; afterwards every Session with this entry is logged in without further steps.</span>
                   </button>
                 </div>
-              </form>
+              </div>
             )}
             {kind === "github" && (
             <div className="connector-ways">

@@ -52,7 +52,9 @@ export function ConnectorDialog({
   const onServerRef = useRef(onServer);
   onServerRef.current = onServer;
 
-  const nameOk = MCP_NAME_PATTERN.test(name) && (server !== null || !takenNames.includes(name));
+  // The entry exists from the first attempt on; retries in the same dialog reuse it.
+  const ownId = server?.id ?? flow?.serverId ?? null;
+  const nameOk = MCP_NAME_PATTERN.test(name) && (ownId !== null || !takenNames.includes(name));
   const hostName = host
     .trim()
     .toLowerCase()
@@ -97,7 +99,7 @@ export function ConnectorDialog({
     setError(null);
     try {
       const f = await api.connectorStart(kind, {
-        serverId: server?.id ?? null,
+        serverId: ownId,
         name,
         via,
         account,

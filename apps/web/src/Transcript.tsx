@@ -455,6 +455,12 @@ function Item({
           {item.option} now: {item.valueName}
         </div>
       );
+    case "repo_changed":
+      return (
+        <div className="marker" title={item.origin}>
+          Repository {item.action}: <code>/workspace/{item.name}</code> ({item.origin})
+        </div>
+      );
   }
 }
 

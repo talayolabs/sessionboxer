@@ -401,6 +401,123 @@ export const GitIdentity = z.object({
 });
 export type GitIdentity = z.infer<typeof GitIdentity>;
 
+// ---------------------------------------------------------------------------
+// Per-Session settings: everything a Session is configured with, as one object
+// (`Session.settings`), next to the runtime state the Control Plane and the
+// Daemon own (status, pending flags, sizes, branches). Live fields (model,
+// options, MCP, Inspect LLM, snapshots) change through `PATCH /api/sessions/:id`;
+// the Sandbox block is fixed at creation and only changes by forking.
+// ---------------------------------------------------------------------------
+
+/** How the Sandbox was built; fixed for the Session's life (a fork can differ). */
+export const SandboxSettings = z.object({
+  dockerMode: DockerMode.default("none"),
+  /** CPU limit; `null` follows `Settings.sandboxCpus` (read when a Sandbox is created or rebuilt). */
+  cpus: z.number().positive().nullable().default(null),
+  /** Memory limit; `null` follows `Settings.sandboxMemoryGb`. */
+  memoryGb: z.number().positive().nullable().default(null),
+  /** Identity the Sandbox's git uses (`user.name` / `user.email`). */
+  gitIdentity: GitIdentity.default({ name: "", email: "" }),
+});
+export type SandboxSettings = z.infer<typeof SandboxSettings>;
+
+export const SessionSettings = z.object({
+  /** Model the Agent runs (a `ModelOption.value`); `null` until the Agent has reported its default. */
+  model: z.string().nullable().default(null),
+  /** Values asked for (or reported by the Agent) of its other options, by option id. */
+  options: OptionValues.default({}),
+  /**
+   * Route the Agent's model API calls through the Sandbox's loopback inspector, which keeps the
+   * exact request/response bodies (Claude Code only; see `LlmCall`). Off by default.
+   */
+  inspectLlm: z.boolean().default(false),
+  /** Ids of the `Settings.mcpServers` entries enabled for this Session. */
+  mcpEnabled: z.array(z.string()).default([]),
+  /** Standing instructions the Agent got with this Session (see `instructionsDelivery`); fixed at creation. */
+  instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).default(""),
+  /** Override of `Settings.autoSnapshot`; `null` follows the global setting. */
+  autoSnapshot: z.boolean().nullable().default(null),
+  /** Override of `Settings.snapshotKeep`; `null` follows the global setting. */
+  snapshotKeep: z.number().int().nonnegative().nullable().default(null),
+  sandbox: SandboxSettings.default({}),
+});
+export type SessionSettings = z.infer<typeof SessionSettings>;
+
+/** Global values the `null` settings fall back to. */
+export interface SessionSettingsDefaults {
+  autoSnapshot: boolean;
+  snapshotKeep: number;
+  sandboxCpus: number;
+  sandboxMemoryGb: number;
+}
+
+/** The values in force: each `null` replaced by the global default. */
+export function resolveSessionSettings(
+  settings: SessionSettings,
+  defaults: SessionSettingsDefaults,
+): { autoSnapshot: boolean; snapshotKeep: number; cpus: number; memoryGb: number } {
+  return {
+    autoSnapshot: settings.autoSnapshot ?? defaults.autoSnapshot,
+    snapshotKeep: settings.snapshotKeep ?? defaults.snapshotKeep,
+    cpus: settings.sandbox.cpus ?? defaults.sandboxCpus,
+    memoryGb: settings.sandbox.memoryGb ?? defaults.sandboxMemoryGb,
+  };
+}
+
+/** Live settings `PATCH /api/sessions/:id` accepts; unknown keys are rejected. */
+export const SessionSettingsPatch = z
+  .object({
+    model: z.string().min(1).optional(),
+    /** Merged into the Session's option values. */
+    options: OptionValues.optional(),
+    inspectLlm: z.boolean().optional(),
+    mcpEnabled: z.array(z.string()).optional(),
+    /** `null` clears the override (follow `Settings.autoSnapshot`). */
+    autoSnapshot: z.boolean().nullable().optional(),
+    /** `null` clears the override (follow `Settings.snapshotKeep`). */
+    snapshotKeep: z.number().int().nonnegative().nullable().optional(),
+    /** Resource limits; read when the next Sandbox is built (Rebuild, fork). */
+    sandbox: z
+      .object({
+        cpus: z.number().positive().nullable().optional(),
+        memoryGb: z.number().positive().nullable().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type SessionSettingsPatch = z.infer<typeof SessionSettingsPatch>;
+
+/** Settings a new Session (or a fork) asks for; whatever is omitted takes the global default (or the origin's, for a fork). */
+export const SessionSettingsInput = z.object({
+  model: z.string().min(1).nullable().optional(),
+  options: OptionValues.optional(),
+  inspectLlm: z.boolean().optional(),
+  mcpEnabled: z.array(z.string()).optional(),
+  instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).optional(),
+  autoSnapshot: z.boolean().nullable().optional(),
+  snapshotKeep: z.number().int().nonnegative().nullable().optional(),
+  sandbox: z
+    .object({
+      /** Docker daemon inside the Sandbox; the mode is whatever the host offers. */
+      docker: z.boolean().optional(),
+      cpus: z.number().positive().nullable().optional(),
+      memoryGb: z.number().positive().nullable().optional(),
+      /** An omitted part takes `Settings.gitUserName` / `gitUserEmail`, else the host's git config; `""` sends none. */
+      gitIdentity: GitIdentity.partial().optional(),
+    })
+    .optional(),
+});
+export type SessionSettingsInput = z.infer<typeof SessionSettingsInput>;
+
+/** Where a live setting change lands, in one sentence for the UI (same wording everywhere). */
+export function applyNote(status: SessionStatus, how: "immediate" | "restart" | "next-sandbox"): string {
+  if (how === "next-sandbox") return "Applies to the next Sandbox built for this Session (Rebuild Sandbox, or a fork).";
+  if (status === "running") return "Applies when the current turn ends.";
+  if (status === "idle") return how === "restart" ? "Restarts the Agent in place; the conversation is kept." : "Applies immediately.";
+  return "Applies when the Session resumes.";
+}
+
 export const Session = z.object({
   id: z.string(),
   title: z.string(),
@@ -414,38 +531,21 @@ export const Session = z.object({
   workspaceSource: WorkspaceSource,
   /** Repositories in the Workspace, one directory each, in the order they were added. */
   repos: z.array(SessionRepo).default([]),
-  /** Identity the Sandbox's git uses (`user.name` / `user.email`); fixed at creation. */
-  gitIdentity: GitIdentity.default({ name: "", email: "" }),
-  dockerMode: DockerMode.default("none"),
-  /** Ids of the `Settings.mcpServers` entries enabled for this Session. */
-  mcpEnabled: z.array(z.string()).default([]),
+  settings: SessionSettings.default({}),
   /** The Agent is busy; the last MCP change is applied when the current turn ends. */
   mcpPending: z.boolean().default(false),
-  /** Model the Agent runs (a `ModelOption.value`); `null` until the Agent has reported its default. */
-  model: z.string().nullable().default(null),
   /** The Agent is busy; the model change is applied when the current turn ends. */
   modelPending: z.boolean().default(false),
-  /** Values asked for (or reported by the Agent) of its other options, by option id. */
-  options: OptionValues.default({}),
   /** The Agent is busy; the option change is applied when the current turn ends. */
   optionsPending: z.boolean().default(false),
   /** Options the Session's Agent currently advertises (depends on the model). */
   availableOptions: z.array(AgentOption).default([]),
-  /** Standing instructions the Agent got with this Session (see `instructionsDelivery`); fixed at creation. */
-  instructions: z.string().default(""),
-  /**
-   * Route the Agent's model API calls through the Sandbox's loopback inspector, which keeps the
-   * exact request/response bodies (Claude Code only; see `LlmCall`). Off by default.
-   */
-  inspectLlm: z.boolean().default(false),
   /** The Agent is busy; the last `inspectLlm` change is applied when the current turn ends. */
   inspectLlmPending: z.boolean().default(false),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
   /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
   queueRunning: z.boolean().default(false),
-  /** Per-Session override of `Settings.autoSnapshot`; `null` follows the global setting. */
-  autoSnapshot: z.boolean().nullable().default(null),
   /** Bytes the Sandbox container's writable layer takes on the host (last measured), `null` if unknown. */
   diskBytes: z.number().int().nonnegative().nullable().default(null),
   /** Bytes taken by this Session's Snapshot images (each Snapshot stores a full copy of the writable layer). */
@@ -467,6 +567,8 @@ export const CreateSessionRequest = z.object({
   repos: z.array(RepoSpec).max(50).optional(),
   /** Older clients: a single `git`/`copy` source, taken as one repository when `repos` is omitted. */
   workspaceSource: WorkspaceSource.default({ type: "empty" }),
+  settings: SessionSettingsInput.default({}),
+  // Flat forms of `settings.*`, kept for the CLI flags and older clients; `settings` wins where both are given.
   /** Docker daemon inside the Sandbox; defaults to the `dockerInSandbox` setting. */
   docker: z.boolean().optional(),
   /** MCP server ids to enable; defaults to the servers marked `enabledByDefault`. */
@@ -483,18 +585,49 @@ export const CreateSessionRequest = z.object({
   prompt: z.string().min(1).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
+/** What a client sends (defaults not yet filled in). */
+export type CreateSessionRequestInput = z.input<typeof CreateSessionRequest>;
+
+/** The `settings` a create request asks for, with its flat legacy fields folded in. */
+export function createRequestSettings(req: CreateSessionRequest): SessionSettingsInput {
+  const flat: SessionSettingsInput = {
+    ...(req.model !== undefined ? { model: req.model } : {}),
+    ...(req.options !== undefined ? { options: req.options } : {}),
+    ...(req.inspectLlm !== undefined ? { inspectLlm: req.inspectLlm } : {}),
+    ...(req.mcpEnabled !== undefined ? { mcpEnabled: req.mcpEnabled } : {}),
+    ...(req.instructions !== undefined ? { instructions: req.instructions } : {}),
+  };
+  const sandbox = {
+    ...(req.docker !== undefined ? { docker: req.docker } : {}),
+    ...(req.gitIdentity !== undefined ? { gitIdentity: req.gitIdentity } : {}),
+    ...req.settings.sandbox,
+  };
+  return { ...flat, ...req.settings, ...(Object.keys(sandbox).length > 0 ? { sandbox } : {}) };
+}
 
 export const UpdateSessionRequest = z.object({
   title: z.string().min(1).max(200).optional(),
-  /** `null` clears the override (follow `Settings.autoSnapshot`). */
-  autoSnapshot: z.boolean().nullable().optional(),
+  settings: SessionSettingsPatch.optional(),
+  // Flat forms of `settings.*`, kept for older clients; `settings` wins where both are given.
   mcpEnabled: z.array(z.string()).optional(),
   model: z.string().min(1).optional(),
-  /** Merged into the Session's option values. */
   options: OptionValues.optional(),
   inspectLlm: z.boolean().optional(),
+  autoSnapshot: z.boolean().nullable().optional(),
 });
 export type UpdateSessionRequest = z.infer<typeof UpdateSessionRequest>;
+
+/** The `settings` patch an update request asks for, with its flat legacy fields folded in. */
+export function updateRequestSettings(req: UpdateSessionRequest): SessionSettingsPatch {
+  return {
+    ...(req.mcpEnabled !== undefined ? { mcpEnabled: req.mcpEnabled } : {}),
+    ...(req.model !== undefined ? { model: req.model } : {}),
+    ...(req.options !== undefined ? { options: req.options } : {}),
+    ...(req.inspectLlm !== undefined ? { inspectLlm: req.inspectLlm } : {}),
+    ...(req.autoSnapshot !== undefined ? { autoSnapshot: req.autoSnapshot } : {}),
+    ...req.settings,
+  };
+}
 
 /** Where files attached to prompts land in the Workspace (`<UPLOADS_DIR>/<random>/<name>`). */
 export const UPLOADS_DIR = ".sessionboxer/uploads";
@@ -787,6 +920,8 @@ export type DeleteSnapshotsResult = z.infer<typeof DeleteSnapshotsResult>;
 export const ForkSessionRequest = z.object({
   snapshotId: z.string(),
   title: z.string().min(1).max(200).optional(),
+  /** Settings the fork differs in from the origin (the rest is copied). */
+  settings: SessionSettingsInput.default({}),
   /** Sent to the fork as soon as its Sandbox is ready. */
   prompt: z.string().min(1).optional(),
   /** Texts to put in the fork's saved-message list, in order. */

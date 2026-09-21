@@ -431,13 +431,12 @@ button.link:hover { text-decoration: underline; }
 .kv-row input:nth-child(2) { flex: 2; }
 .kv-row label.check { flex: none; color: var(--muted); font-size: 12px; gap: 4px; }
 .kv-row .small { padding: 4px 8px; flex: none; }
-.mcp-dialog { max-height: 80vh; }
 .mcp-switches { list-style: none; margin: 0; padding: 4px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); min-height: 60px; max-height: 50vh; display: flex; flex-direction: column; gap: 2px; }
 .mcp-switches[aria-busy="true"] { opacity: 0.6; }
 .mcp-switches li { padding: 4px 8px; border-radius: 5px; }
 .mcp-switches li:hover { background: #1f232d; }
 .mcp-switches li.empty { color: var(--muted); font-size: 13px; padding: 12px; text-align: left; }
-.mcp-switches li.empty a, .mcp-dialog .actions a { color: var(--accent); }
+.mcp-switches li.empty a { color: var(--accent); }
 .mcp-switches .switch { flex-wrap: nowrap; min-width: 0; font-size: 13px; }
 .mcp-switches .mcp-summary { flex: 1; }
 /* Connectors: preset MCP servers logged in with OAuth (GitHub) */
@@ -553,12 +552,27 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .sync-size { flex: none; font-size: 11px; }
 .sync-list .warn { flex: none; font-family: system-ui, sans-serif; font-size: 11.5px; }
 
-/* Instructions (Settings / New Session field, header dialog) */
+/* Instructions (Settings field, Session settings) */
 .label-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .label-row button.link { font-size: 12px; white-space: nowrap; }
-.instructions-dialog { max-height: 80vh; }
-.instructions-text { white-space: pre-wrap; word-break: break-word; font-size: 13px; max-height: 50vh; overflow: auto; }
-.instructions-dialog .empty { color: var(--muted); font-size: 13px; }
+.instructions-text { white-space: pre-wrap; word-break: break-word; font-size: 13px; max-height: 40vh; overflow: auto; margin: 0; }
+
+/* Session settings: one form for New Session, the Fork dialog and the header's Session settings dialog */
+.session-settings-dialog { max-height: 85vh; max-width: 720px; }
+.ss-form { display: flex; flex-direction: column; gap: 10px; }
+.ss-section { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.ss-section h3 { margin: 0; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.ss-section .mcp-switches { max-height: 30vh; background: var(--panel); }
+.ss-section .banner { margin: 0; }
+.ss-note { font-size: 12px; line-height: 1.4; margin: 0; }
+.ss-note a, .ss-section a.ss-note { color: var(--accent); }
+.ss-fixed { margin: 0; font-size: 13px; color: var(--text); }
+.ss-lock { color: var(--muted); font-size: 12px; }
+.ss-empty { color: var(--muted); font-size: 13px; margin: 0; padding: 0; text-align: left; }
+.ss-fork { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 4px; border-top: 1px solid var(--border); }
+.ss-fork .ss-note { flex: 1; min-width: 200px; }
+.fork-settings summary { cursor: pointer; color: var(--muted); }
+.fork-settings[open] summary { margin-bottom: 10px; }
 
 /* Pull requests: the overview pane and one pane per attached PR (ADR-0027). */
 .prs-pane { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; overflow: auto; font-size: 13px; }

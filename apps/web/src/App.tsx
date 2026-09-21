@@ -36,6 +36,7 @@ import { AttachmentSession } from "./Attachments";
 import { usePendingAttachments } from "./attachments-pending";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
+import { CopyCommand } from "./CopyCommand";
 import { Desktop } from "./Desktop";
 import { Devices } from "./Devices";
 import { FolderDialog } from "./FolderDialog";
@@ -79,6 +80,16 @@ function cleanTranslation(answer: string, original: string): string {
   }
   if (!out) throw new Error("The Provider returned an empty translation");
   return out;
+}
+
+/** Whether the secret a Session of `provider` needs to talk to its model is configured. */
+function providerTokenSet(settings: PublicSettings, provider: Provider): boolean {
+  switch (provider) {
+    case "claude-code":
+      return settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
+    case "devin":
+      return settings.providerSecretsSet.devin.WINDSURF_API_KEY;
+  }
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
@@ -345,9 +356,7 @@ export function App() {
   const items = useMemo(() => buildTranscript(events, visibleSnapshots), [events, visibleSnapshots]);
   const context = useMemo(() => deriveContext(events), [events]);
   const llmCalls = useMemo(() => llmCallsOf(events), [events]);
-  const anyTokenSet = settings
-    ? settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.providerSecretsSet.devin.WINDSURF_API_KEY
-    : true;
+  const anyTokenSet = settings ? PROVIDERS.some((p) => providerTokenSet(settings, p)) : true;
   const sysboxMissing = settings ? settings.dockerModeAvailable !== "sysbox" : false;
   const settingsWarning = !anyTokenSet ? "No Provider token configured" : sysboxMissing ? "Sysbox runtime not installed" : null;
 
@@ -1319,6 +1328,12 @@ function NewSession({
           ))}
         </select>
       </label>
+      {!providerTokenSet(settings, provider) && (
+        <p className="field-hint warn">
+          No {PROVIDER_LABELS[provider]} token configured: this Session would start without one. Add it in Settings, or pick a provider you have a token
+          for.
+        </p>
+      )}
       {models[provider].length > 0 ? (
         <>
           <ModelSelect models={models[provider]} value={model} onChange={setModel} allowDefault />
@@ -1553,9 +1568,13 @@ function SettingsView({
           autoComplete="off"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          placeholder={tokenSet ? "Leave empty to keep the current token" : "Run `claude setup-token` and paste the result"}
+          placeholder={tokenSet ? "Leave empty to keep the current token" : "Paste the token"}
         />
       </label>
+      <p className="field-hint">
+        <span>Get one on the machine you run Claude Code on:</span>
+        <CopyCommand command="claude setup-token" />
+      </p>
       <label>
         Devin token (WINDSURF_API_KEY) {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
         <input
@@ -1563,13 +1582,14 @@ function SettingsView({
           autoComplete="off"
           value={devinToken}
           onChange={(e) => setDevinToken(e.target.value)}
-          placeholder={
-            devinTokenSet
-              ? "Leave empty to keep the current token"
-              : "Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml"
-          }
+          placeholder={devinTokenSet ? "Leave empty to keep the current token" : "Paste the token"}
         />
       </label>
+      <p className="field-hint">
+        <span>Log in, then copy the token out of the credentials file it writes:</span>
+        <CopyCommand command="devin auth login" />
+        <CopyCommand command="cat ~/.local/share/devin/credentials.toml" />
+      </p>
       <label>
         <span className="label-row">
           Claude API base URL (ANTHROPIC_BASE_URL)

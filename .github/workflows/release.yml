@@ -2,8 +2,14 @@
 #   1. typecheck + build + assemble the npm package (build/sessionboxer-<version>.tgz)
 #   2. Sandbox image        ghcr.io/talayolabs/sessionboxer-sandbox:<version>  (amd64 + arm64, native runners)
 #   3. Control Plane image  ghcr.io/talayolabs/sessionboxer:<version>          (amd64 + arm64)
-#   4. npm publish sessionboxer@<version>  — only when the NPM_TOKEN repository secret exists
-#   5. GitHub Release with the CHANGELOG section for the version and the tarball attached
+#   4. Desktop app installers (apps/desktop, electron-builder): Linux AppImage + deb (x64, arm64),
+#      macOS dmg + zip (arm64, x64), Windows NSIS + zip (x64). Unsigned unless the signing secrets
+#      below exist; then electron-builder signs (and notarizes on macOS) on its own.
+#        macOS:   MAC_CSC_LINK (base64 .p12), MAC_CSC_KEY_PASSWORD,
+#                 APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID (notarization)
+#        Windows: WIN_CSC_LINK (base64 .pfx), WIN_CSC_KEY_PASSWORD
+#   5. npm publish sessionboxer@<version>  — only when the NPM_TOKEN repository secret exists
+#   6. GitHub Release with the CHANGELOG section for the version, the tarball and the installers
 # The tag must match package.json's version. Images are pushed by digest per architecture and
 # joined into one manifest list afterwards; nothing is published if a build step fails.
 name: Release
@@ -191,6 +197,69 @@ jobs:
           tag_manifest "$SANDBOX_IMAGE" "$RUNNER_TEMP/sandbox"
           tag_manifest "$CONTROL_PLANE_IMAGE" "$RUNNER_TEMP/control-plane"
 
+  desktop:
+    needs: package
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            args: --linux
+          - runner: ubuntu-24.04-arm
+            args: --linux
+          - runner: macos-15
+            args: --mac --arm64 --x64
+          - runner: windows-2025
+            args: --win
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Code-signing secrets, only when set (an empty CSC_LINK makes electron-builder fail)
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          set -eu
+          pass() { if [ -n "${!1:-}" ]; then echo "$2=${!1}" >> "$GITHUB_ENV"; fi; }
+          case "$RUNNER_OS" in
+            macOS)
+              pass MAC_CSC_LINK CSC_LINK; pass MAC_CSC_KEY_PASSWORD CSC_KEY_PASSWORD
+              pass APPLE_ID APPLE_ID; pass APPLE_APP_SPECIFIC_PASSWORD APPLE_APP_SPECIFIC_PASSWORD; pass APPLE_TEAM_ID APPLE_TEAM_ID
+              [ -n "$MAC_CSC_LINK" ] || echo "::notice::MAC_CSC_LINK is not set; the macOS app is unsigned" ;;
+            Windows)
+              pass WIN_CSC_LINK WIN_CSC_LINK; pass WIN_CSC_KEY_PASSWORD WIN_CSC_KEY_PASSWORD
+              [ -n "$WIN_CSC_LINK" ] || echo "::notice::WIN_CSC_LINK is not set; the Windows installer is unsigned" ;;
+          esac
+      - name: Package with electron-builder
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist -w @sessionboxer/desktop -- ${{ matrix.args }} --publish never
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.runner }}
+          path: |
+            build/desktop/*.AppImage
+            build/desktop/*.deb
+            build/desktop/*.dmg
+            build/desktop/*.zip
+            build/desktop/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
   npm-publish:
     needs: [package, manifests]
     runs-on: ubuntu-24.04
@@ -218,7 +287,7 @@ jobs:
           npm publish build/sessionboxer-*.tgz --access public --provenance
 
   github-release:
-    needs: [package, manifests, npm-publish]
+    needs: [package, manifests, desktop, npm-publish]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -228,6 +297,15 @@ jobs:
         with:
           name: npm-package
           path: build
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: desktop-*
+          path: build/desktop
+          merge-multiple: true
+      - name: Checksums of the installers
+        run: |
+          set -eu
+          cd build/desktop && ls -l && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: |
           set -eu
@@ -244,12 +322,14 @@ jobs:
             echo
             echo "Images: \`$SANDBOX_IMAGE:$version\`, \`$CONTROL_PLANE_IMAGE:$version\` (linux/amd64, linux/arm64)."
             echo "npm: \`npx sessionboxer@$version serve\`. Full instructions: https://github.com/${{ github.repository }}#install"
+            echo
+            echo "Desktop app (needs Docker, not Node): the \`Sessionboxer-$version-*\` files below — Linux AppImage/deb (x64, arm64), macOS dmg/zip (arm64 Apple silicon, x64 Intel), Windows installer/zip (x64); \`SHA256SUMS\` alongside. While the builds are unsigned (no signing certificate configured): on macOS run \`xattr -dr com.apple.quarantine /Applications/Sessionboxer.app\` after dragging it to Applications, on Windows choose *More info → Run anyway* in SmartScreen."
           } > "$RUNNER_TEMP/release.md"
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" build/sessionboxer-*.tgz \
+          gh release create "$GITHUB_REF_NAME" build/sessionboxer-*.tgz build/desktop/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Sessionboxer ${{ needs.package.outputs.version }}" \
             --notes-file "$RUNNER_TEMP/release.md" \

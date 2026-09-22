@@ -77,12 +77,12 @@ npm run build:image                    # …or build it here (~5 GB, a few minut
 
 To update, `git pull`, `npm run build`, `npm start`; `npm run build:image` again only when `images/sandbox` changed.
 
-**Desktop app** (early; built from source for now, no installers on the Releases page yet): an Electron tray shell in `apps/desktop` that starts the same Control Plane in the background, opens the UI in a window and keeps serving when the window is closed — the phone keeps its pairing, tunnels stay up — until you *Quit* from the tray/menu bar. It needs Docker like everything else, but not Node: the Control Plane runs on the Node inside Electron. If a `sessionboxer serve`, `sessionboxer service` or Compose install already answers at `http://127.0.0.1:4000` (or `SESSIONBOXER_URL`), the app attaches to it instead of starting another and leaves it running on quit. Same `~/.sessionboxer` as the other installs; the server log is in the app's log folder (`~/.config/Sessionboxer/logs`, `~/Library/Logs/Sessionboxer`, `%APPDATA%\Sessionboxer\logs`).
+**Desktop app** (early): installers for Linux (AppImage, deb; x64 and arm64), macOS (dmg; Apple silicon and Intel) and Windows (x64) are on the [Releases page](https://github.com/talayolabs/sessionboxer/releases) from the next version on, with `SHA256SUMS` next to them. They are not code-signed yet: macOS wants `xattr -dr com.apple.quarantine /Applications/Sessionboxer.app` after you drag the app to Applications, Windows *More info → Run anyway* in SmartScreen. Under the hood it is an Electron tray shell in `apps/desktop` that starts the same Control Plane in the background, opens the UI in a window and keeps serving when the window is closed — the phone keeps its pairing, tunnels stay up — until you *Quit* from the tray/menu bar. It needs Docker like everything else, but not Node: the Control Plane runs on the Node inside Electron. If a `sessionboxer serve`, `sessionboxer service` or Compose install already answers at `http://127.0.0.1:4000` (or `SESSIONBOXER_URL`), the app attaches to it instead of starting another and leaves it running on quit. Same `~/.sessionboxer` as the other installs; the server log is in the app's log folder (`~/.config/Sessionboxer/logs`, `~/Library/Logs/Sessionboxer`, `%APPDATA%\Sessionboxer\logs`).
 
 ```sh
 npm run build
 npm run start -w @sessionboxer/desktop   # run it from the checkout
-npm run dist -w @sessionboxer/desktop    # or package it: build/desktop/ (AppImage + deb, dmg + zip, NSIS + zip on the matching OS; `-- --dir` for an unpacked folder)
+npm run dist -w @sessionboxer/desktop    # or package it yourself: build/desktop/ (AppImage + deb, dmg + zip, NSIS + zip on the matching OS; `-- --dir` for an unpacked folder)
 ```
 
 ## First run: connect your agent

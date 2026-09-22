@@ -41,4 +41,5 @@ writeFileSync(path.join(SERVER, "package.json"), JSON.stringify({ name: "session
 run("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts", path.join(ROOT, "build", filename)], SERVER);
 console.log(`Control Plane sessionboxer@${version} installed in ${path.relative(ROOT, SERVER)}/`);
 
-run("npx", ["electron-builder", "--config", "electron-builder.yml", ...process.argv.slice(2)], DESKTOP);
+// The app carries the Control Plane's version (the root package.json's), whatever apps/desktop/package.json says.
+run("npx", ["electron-builder", "--config", "electron-builder.yml", `--config.extraMetadata.version=${version}`, ...process.argv.slice(2)], DESKTOP);

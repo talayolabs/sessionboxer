@@ -5,6 +5,12 @@
   "private": true,
   "type": "module",
   "description": "Electron tray shell: runs (or attaches to) the Control Plane in the background and shows the web UI in a window.",
+  "homepage": "https://sessionboxer.talayolabs.com",
+  "author": {
+    "name": "Talayo Labs",
+    "email": "jperelli@gmail.com"
+  },
+  "license": "MIT",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",

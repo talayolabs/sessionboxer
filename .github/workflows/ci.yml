@@ -35,3 +35,5 @@ jobs:
           docker build -f images/control-plane/Dockerfile -t sessionboxer/control-plane:ci build
           docker run --rm sessionboxer/control-plane:ci version
           docker compose -f docker-compose.yml config -q
+      - name: Desktop app packages (unpacked, Linux only; release.yml does the installers)
+        run: npm run dist -w @sessionboxer/desktop -- --linux --dir && test -x build/desktop/linux-unpacked/sessionboxer

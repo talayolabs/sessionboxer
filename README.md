@@ -46,6 +46,13 @@ curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh
 npx sessionboxer serve                 # or: npm i -g sessionboxer && sessionboxer serve
 ```
 
+Rather than keeping that terminal open, install it as a background service of your user account — started now and at every login, restarted if it dies, same `~/.sessionboxer`: a launchd agent on macOS, a systemd user unit on Linux (`loginctl enable-linger` keeps it up after you log out of a headless machine). `SESSIONBOXER_*` and `DOCKER_HOST` set in the shell that runs `install` are baked into the service.
+
+```sh
+npm i -g sessionboxer                  # not npx: the service points at the installed files
+sessionboxer service install           # prints the login link; then status | stop | start | restart | log | uninstall
+```
+
 **Docker Compose** — the home server, VPS, Raspberry Pi or Coolify case; only Docker is needed.
 
 ```sh
@@ -70,7 +77,7 @@ npm run build:image                    # …or build it here (~5 GB, a few minut
 
 To update, `git pull`, `npm run build`, `npm start`; `npm run build:image` again only when `images/sandbox` changed.
 
-**Desktop app** (early; built from source for now, no installers on the Releases page yet): an Electron tray shell in `apps/desktop` that starts the same Control Plane in the background, opens the UI in a window and keeps serving when the window is closed — the phone keeps its pairing, tunnels stay up — until you *Quit* from the tray/menu bar. It needs Docker like everything else, but not Node: the Control Plane runs on the Node inside Electron. If a `sessionboxer serve` or Compose install already answers at `http://127.0.0.1:4000` (or `SESSIONBOXER_URL`), the app attaches to it instead of starting another and leaves it running on quit. Same `~/.sessionboxer` as the other installs; the server log is in the app's log folder (`~/.config/Sessionboxer/logs`, `~/Library/Logs/Sessionboxer`, `%APPDATA%\Sessionboxer\logs`).
+**Desktop app** (early; built from source for now, no installers on the Releases page yet): an Electron tray shell in `apps/desktop` that starts the same Control Plane in the background, opens the UI in a window and keeps serving when the window is closed — the phone keeps its pairing, tunnels stay up — until you *Quit* from the tray/menu bar. It needs Docker like everything else, but not Node: the Control Plane runs on the Node inside Electron. If a `sessionboxer serve`, `sessionboxer service` or Compose install already answers at `http://127.0.0.1:4000` (or `SESSIONBOXER_URL`), the app attaches to it instead of starting another and leaves it running on quit. Same `~/.sessionboxer` as the other installs; the server log is in the app's log folder (`~/.config/Sessionboxer/logs`, `~/Library/Logs/Sessionboxer`, `%APPDATA%\Sessionboxer\logs`).
 
 ```sh
 npm run build
@@ -287,6 +294,8 @@ The `sessionboxer` command talks to the running server and opens the browser on 
 
 ```sh
 sessionboxer serve                                   # start the server (same as npm start)
+sessionboxer service install                         # …or run it in the background, now and at every login (macOS, Linux)
+sessionboxer service status | stop | start | restart | log | uninstall
 sessionboxer new .                                   # box the current directory
 sessionboxer new . -p "run the tests and fix what breaks"
 sessionboxer new . --provider devin --docker
@@ -299,7 +308,7 @@ sessionboxer new --git https://github.com/org/repo.git --name app             # 
 sessionboxer new --git https://github.com/org/repo.git --git-name "Jane Doe" --git-email jane@work.example
 sessionboxer new --empty -t scratch --no-open
 sessionboxer ls
-sessionboxer open <id> | stop <id> | resume <id> | rm <id>
+sessionboxer open [id] | stop <id> | resume <id> | rm <id>
 ```
 
 `SESSIONBOXER_URL` points it at a server other than `http://127.0.0.1:4000`; on the machine that runs the Control Plane the CLI reads the access token from `~/.sessionboxer/config.json`, elsewhere set `SESSIONBOXER_TOKEN`. `sessionboxer token` prints the token, `sessionboxer pair` a one-time login link for a browser.

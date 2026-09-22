@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `sessionboxer service install|uninstall|start|stop|restart|status|log`: the Control Plane as a
+  background service of your user account instead of a terminal kept open on `sessionboxer serve`
+  — a launchd agent on macOS (`~/Library/LaunchAgents/com.talayolabs.sessionboxer.plist`, log in
+  `~/.sessionboxer/logs/control-plane.log`), a systemd user unit on Linux
+  (`~/.config/systemd/user/sessionboxer.service`, log in the journal), started at login and
+  restarted if it dies. `install` refuses when something already answers on the port or when the
+  CLI runs from npx's cache, bakes the shell's `SESSIONBOXER_*` and `DOCKER_HOST` into the unit,
+  waits for the server and prints the login link. Not on Windows yet. `sessionboxer open` without
+  an id opens the app itself.
 - Desktop app, first cut (`apps/desktop`, ADR-0043): an Electron tray shell that runs the Control
   Plane in the background on Electron's own Node — no Node install needed, Docker still is — and
   shows the web UI in a window loaded from `http://127.0.0.1:4000`, so cookies, the service

@@ -16,6 +16,7 @@ import {
   type RepoSpec,
   type Session,
 } from "@sessionboxer/protocol";
+import { service } from "./service.js";
 
 const BASE_URL = (process.env.SESSIONBOXER_URL ?? "http://127.0.0.1:4000").replace(/\/$/, "");
 const CONFIG_FILE = path.join(process.env.SESSIONBOXER_HOME ?? path.join(homedir(), ".sessionboxer"), "config.json");
@@ -37,11 +38,13 @@ const USAGE = `sessionboxer - one Docker Sandbox with a Desktop per agent Sessio
 
 Usage:
   sessionboxer serve                       Run the Control Plane (http://127.0.0.1:4000)
+  sessionboxer service install|status|...  Run it in the background instead, now and at every login
+                                           (launchd on macOS, systemd on Linux; \`service help\` for more)
   sessionboxer new [dir...] [options]      Create a Session from copies of <dir> (default: .)
   sessionboxer new --git <url>[@ref] ...   Create a Session from git clones (repeatable, mixes with dirs)
   sessionboxer new --empty                 Create a Session with an empty Workspace
   sessionboxer ls                          List Sessions
-  sessionboxer open <id>                   Open a Session in the browser (logs it in when needed)
+  sessionboxer open [id]                   Open Sessionboxer, or a Session, in the browser (logs it in when needed)
   sessionboxer stop|resume|rm <id>         Manage a Session
   sessionboxer token                       Print the access token of the Control Plane on this machine
   sessionboxer pair                        Print a one-time login link for another browser or phone
@@ -96,13 +99,15 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "serve":
       return serve(rest);
+    case "service":
+      return service(rest);
     case "new":
       return newSession(rest);
     case "ls":
     case "list":
       return list();
     case "open":
-      return open(requireId(rest));
+      return open(rest[0]);
     case "stop":
       return show(await api<Session>("POST", `/sessions/${requireId(rest)}/stop`));
     case "resume":
@@ -258,9 +263,9 @@ async function list(): Promise<void> {
   for (const s of sessions) show(s);
 }
 
-async function open(id: string): Promise<void> {
+async function open(id: string | undefined): Promise<void> {
   // A pairing code in the URL logs the browser in if it is not yet; a logged-in one ignores it.
-  const url = pairUrl(await api<AuthPairing>("POST", "/auth/pair"), `/sessions/${id}`);
+  const url = pairUrl(await api<AuthPairing>("POST", "/auth/pair"), id === undefined ? null : `/sessions/${id}`);
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
   await new Promise<void>((resolve) => {
     const child = spawn(opener, [url], { stdio: "ignore", detached: true, shell: process.platform === "win32" });

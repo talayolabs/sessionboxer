@@ -27,4 +27,4 @@ Options weighed:
 - The PWA is unchanged and remains the phone client and the zero-install path; the desktop app and a browser tab can be open against the same server at once.
 - The server's `SESSIONBOXER_HOME`, tokens and `config.json` are shared with the npm and Compose installs; running the app next to a `sessionboxer serve` on the default port means attaching to it, not a port conflict.
 - On Linux the tray needs a StatusNotifier host (KDE, GNOME with the AppIndicator extension); without one the window still opens and `Quit` is Ctrl-Q or SIGTERM.
-- Not done here (Phase 2): installers built and attached by `release.yml` on the tag push (macOS runner for notarization, Windows signing), auto-update via GitHub Releases, a `sessionboxer service` mode (launchd/systemd) for the CLI install, and "start Docker Desktop for me".
+- Not done here (Phase 2): installers built and attached by `release.yml` on the tag push (macOS runner for notarization, Windows signing), auto-update via GitHub Releases, and "start Docker Desktop for me". The CLI install got its own background mode meanwhile: `sessionboxer service` (launchd agent / systemd user unit).

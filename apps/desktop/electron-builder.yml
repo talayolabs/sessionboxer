@@ -1,0 +1,41 @@
+# electron-builder config for the desktop tray shell; run through scripts/pack-desktop.mjs, which
+# first installs the `sessionboxer` npm package into build/desktop-server/ (copied in as resources/server).
+appId: com.talayolabs.sessionboxer
+productName: Sessionboxer
+copyright: MIT
+directories:
+  output: ../../build/desktop
+  buildResources: icons
+files:
+  - dist/**/*.js
+  - assets/**
+  - icons/icon.png
+extraResources:
+  - from: ../../build/desktop-server/node_modules
+    to: server/node_modules
+asar: true
+npmRebuild: false
+electronVersion: 44.3.0
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  entitlements: entitlements.mac.plist
+  entitlementsInherit: entitlements.mac.plist
+win:
+  target:
+    - nsis
+    - zip
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  executableName: sessionboxer
+  category: Development
+  target:
+    - AppImage
+    - deb
+publish: null

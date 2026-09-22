@@ -70,6 +70,14 @@ npm run build:image                    # …or build it here (~5 GB, a few minut
 
 To update, `git pull`, `npm run build`, `npm start`; `npm run build:image` again only when `images/sandbox` changed.
 
+**Desktop app** (early; built from source for now, no installers on the Releases page yet): an Electron tray shell in `apps/desktop` that starts the same Control Plane in the background, opens the UI in a window and keeps serving when the window is closed — the phone keeps its pairing, tunnels stay up — until you *Quit* from the tray/menu bar. It needs Docker like everything else, but not Node: the Control Plane runs on the Node inside Electron. If a `sessionboxer serve` or Compose install already answers at `http://127.0.0.1:4000` (or `SESSIONBOXER_URL`), the app attaches to it instead of starting another and leaves it running on quit. Same `~/.sessionboxer` as the other installs; the server log is in the app's log folder (`~/.config/Sessionboxer/logs`, `~/Library/Logs/Sessionboxer`, `%APPDATA%\Sessionboxer\logs`).
+
+```sh
+npm run build
+npm run start -w @sessionboxer/desktop   # run it from the checkout
+npm run dist -w @sessionboxer/desktop    # or package it: build/desktop/ (AppImage + deb, dmg + zip, NSIS + zip on the matching OS; `-- --dir` for an unpacked folder)
+```
+
 ## First run: connect your agent
 
 Open **Settings** (bottom of the sidebar) and paste a token for the agent you want to use:
@@ -335,6 +343,6 @@ Other notes: Colima does not create `/var/run/docker.sock`, so export `DOCKER_HO
 
 ## For contributors
 
-Architecture, decisions and the milestone log are in [docs/DESIGN.md](docs/DESIGN.md), the vocabulary in [CONTEXT.md](CONTEXT.md), and the reasoning behind each decision in [docs/adr](docs/adr). Layout is npm workspaces: `apps/control-plane` (server), `apps/web` (UI), `apps/cli`, `packages/sandbox-daemon` and `packages/computer-use-mcp` (run inside the box), `packages/protocol` (shared types), `images/sandbox` (the Sandbox image), `images/control-plane` (the Control Plane image for Compose). `npm run dev -w @sessionboxer/web` starts the UI with hot reload against a running server.
+Architecture, decisions and the milestone log are in [docs/DESIGN.md](docs/DESIGN.md), the vocabulary in [CONTEXT.md](CONTEXT.md), and the reasoning behind each decision in [docs/adr](docs/adr). Layout is npm workspaces: `apps/control-plane` (server), `apps/web` (UI), `apps/cli`, `apps/desktop` (Electron tray shell), `packages/sandbox-daemon` and `packages/computer-use-mcp` (run inside the box), `packages/protocol` (shared types), `images/sandbox` (the Sandbox image), `images/control-plane` (the Control Plane image for Compose). `npm run dev -w @sessionboxer/web` starts the UI with hot reload against a running server.
 
 Releasing: bump the version in the root and every workspace `package.json` (including the `@sessionboxer/*` dependency versions) and `package-lock.json` (`npm install`), add a `## <x.y.z>` section to [CHANGELOG.md](CHANGELOG.md), commit, then `git tag v<x.y.z> && git push origin main v<x.y.z>`. The [release workflow](.github/workflows/release.yml) checks that the tag matches the version, typechecks and builds, assembles the npm package (`npm run pack` → `build/sessionboxer-<x.y.z>.tgz`), builds both images for amd64 and arm64 on native runners and pushes them to GHCR as `<x.y.z>` and `latest`, publishes to npm when the `NPM_TOKEN` repository secret is set (otherwise `npm publish build/sessionboxer-*.tgz --access public` by hand), and creates the GitHub Release from the changelog section.

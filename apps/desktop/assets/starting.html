@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sessionboxer</title>
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { height: 100%; margin: 0; }
+      body { display: grid; place-items: center; font: 15px/1.5 system-ui, sans-serif; color: #222; background: #fafafa; }
+      @media (prefers-color-scheme: dark) { body { color: #ddd; background: #1e1e1e; } }
+      main { text-align: center; max-width: 34em; padding: 2em; }
+      img { width: 96px; height: 96px; }
+      p { margin: 0.5em 0; }
+      .muted { opacity: 0.7; font-size: 0.9em; }
+      .error { color: #c33; white-space: pre-wrap; text-align: left; font-family: ui-monospace, monospace; font-size: 0.85em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="../icons/icon.png" alt="" />
+      <p id="status">Starting Sessionboxer…</p>
+      <p class="muted" id="detail">The first start pulls the Sandbox image (a few GB); the log has the progress.</p>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      if (params.has("error")) {
+        document.getElementById("status").textContent = "Sessionboxer could not start";
+        const detail = document.getElementById("detail");
+        detail.className = "error";
+        detail.textContent = params.get("error");
+      }
+    </script>
+  </body>
+</html>

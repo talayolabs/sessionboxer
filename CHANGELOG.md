@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Desktop app, first cut (`apps/desktop`, ADR-0043): an Electron tray shell that runs the Control
+  Plane in the background on Electron's own Node — no Node install needed, Docker still is — and
+  shows the web UI in a window loaded from `http://127.0.0.1:4000`, so cookies, the service
+  worker, WebSockets and the same-origin VS Code proxy work as in a browser. Closing the window
+  hides it; the server, the Sessions, the phone's pairing and the tunnels stay up until *Quit* in
+  the tray menu, which stops the Control Plane the way Ctrl-C does. One instance at a time (a
+  second launch focuses the window); *Start at login*; if a `sessionboxer serve` or Compose
+  install already answers at the URL, the app attaches to it and leaves it alone on quit. The
+  window logs itself in with a one-use pairing link minted from the local access token. Without a
+  Docker engine (`DOCKER_HOST`, `/var/run/docker.sock`, the Docker Desktop, OrbStack, Colima,
+  Rancher Desktop and Podman sockets are checked) it points at the Docker install page instead
+  of starting. `npm run start -w @sessionboxer/desktop` runs it from the checkout; `npm run dist
+  -w @sessionboxer/desktop` packages it with electron-builder (AppImage/deb, dmg/zip, NSIS/zip),
+  the Control Plane going in as the `sessionboxer` npm package under `resources/server`. Not yet:
+  installers on the Releases page, signing/notarization, auto-update.
 - `better-sqlite3` 13: the Control Plane's one native module is now built on Node-API, with the
   prebuilt binaries inside the npm package. One binary serves every Node ≥ 22 and Electron, so
   installing no longer downloads a per-Node-version build (or compiles one) and the same

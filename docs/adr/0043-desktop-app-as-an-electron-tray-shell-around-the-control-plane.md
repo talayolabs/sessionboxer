@@ -1,0 +1,30 @@
+# Desktop app: an Electron tray shell around the unchanged Control Plane
+
+Sessionboxer is installed today with `npx sessionboxer serve` (needs Node 22+) or `docker compose up`; the UI is a PWA that the browser installs to the dock or the home screen. Users asked for one thing to download and double-click. An earlier note rejected Electron/Tauri as "contradicting the server model" — the server must keep running when no window is open, because the phone pairs to it through a tunnel. Re-examined, the two are compatible if the app *is* the server's supervisor rather than its replacement.
+
+Options weighed:
+
+- **Electron**, Control Plane as a child process on Electron's Node, UI loaded from `http://127.0.0.1:4000` (T3 Code's pattern). One engine (Chromium) on every OS; the app's Node runs the server, so no Node install and no second runtime to bundle.
+- **Tauri v2** with a sidecar: a bundled Node binary per platform or a compiled single binary of the Control Plane, UI in the system webview. Smaller download, but three webviews to support (WKWebView, WebView2, WebKitGTK — noVNC canvas, MediaRecorder and notifications behave differently on each), and Node SEA cannot load `better_sqlite3.node` from inside the executable, so Node would have to ship as a directory anyway.
+- **A thin launcher** that runs `sessionboxer serve` and opens the browser: still needs Node on the machine, so it does not remove the prerequisite that motivated the request.
+- **Other embeddable engines** (Ultralight, Chromely/CEF, Sciter): none can run the current UI unchanged — no `crypto`/`ImageData` in Ultralight, Chromely archived on Chromium 101, Sciter is not a browser.
+- **Keep the PWA only**: zero-install for phones stays either way; it does not help the laptop that has no Node.
+
+## Decision
+
+**Electron, as a tray shell; the Control Plane stays a separate process and the UI stays a web page.** `apps/desktop` is a new workspace with no runtime dependencies of its own. Its main process:
+
+- **Attaches or starts.** If `GET /api/health` answers at `SESSIONBOXER_URL` (default `http://127.0.0.1:4000`), the app uses that server — an `npx sessionboxer serve`, a Compose container — and never stops it. Otherwise it forks `apps/control-plane/dist/index.js` with `utilityProcess.fork` (Electron's Node, `SESSIONBOXER_HOST`/`PORT`/`HOME` from the URL and the usual `~/.sessionboxer`) and waits for health. The Control Plane does not know it is inside an app; `sessionboxer` on the command line keeps working against the same data directory and access token.
+- **Loads `http://127.0.0.1:4000`, not `file://`.** The web UI relies on HttpOnly cookies, a service worker, WebSockets and the same-origin proxy that puts OpenVSCode in an iframe; a loopback HTTP origin keeps all of that identical to the browser. The window's `session` is the persistent partition `persist:sessionboxer`, so the login cookie and the service worker survive restarts. On first load the shell mints a one-use pairing link (`POST /api/auth/pair` with the local access token, then `/#pair=<code>`), the same link the server prints for a browser.
+- **Closing the window hides it; quitting stops the server.** The tray (menu bar on macOS) is the app: *Open*, *Open in browser*, the server's status, *Show server log*, *Start at login*, *Quit*. `before-quit` sends SIGTERM to the child and waits for the Control Plane's own shutdown (Sessions, tunnels, SQLite) before exiting. `requestSingleInstanceLock` makes a second launch focus the existing window.
+- **Docker stays a prerequisite.** Before starting a server the shell looks for an engine (`DOCKER_HOST`, `/var/run/docker.sock`, Docker Desktop's `~/.docker/run/docker.sock`, OrbStack, Colima, Rancher Desktop, Podman, the Windows named pipe) and, finding none, offers the Docker install page, *Try again* or *Quit*. Bundling a runtime (Lima/WSL2/containerd) is out of scope; the Sandbox image is Linux either way.
+- **Permissions are allow-listed for the app's own origin**: notifications, microphone (dictation), clipboard, fullscreen, pointer lock; camera, geolocation, USB and everything else are refused. Links to other origins open in the default browser.
+- **Packaging reuses the npm package.** `scripts/pack-desktop.mjs` runs `scripts/pack.mjs`, `npm install`s the resulting `sessionboxer` tarball into `build/desktop-server/` and hands that to electron-builder as `resources/server/`; the Control Plane's relative paths (`../../web/dist`, the daemon it copies into boxes) resolve exactly as in `npm i -g sessionboxer`. `better-sqlite3` 13 ships Node-API prebuilds for every platform in the package, so nothing is rebuilt for Electron's ABI (`npmRebuild: false`).
+
+## Consequences
+
+- The app is Electron-sized (Chromium and Node inside: ~350 MB unpacked on Linux, of which ~75 MB is the Control Plane and its dependencies) rather than Tauri-sized; in exchange there is one rendering engine to test and the Node runtime comes free.
+- The PWA is unchanged and remains the phone client and the zero-install path; the desktop app and a browser tab can be open against the same server at once.
+- The server's `SESSIONBOXER_HOME`, tokens and `config.json` are shared with the npm and Compose installs; running the app next to a `sessionboxer serve` on the default port means attaching to it, not a port conflict.
+- On Linux the tray needs a StatusNotifier host (KDE, GNOME with the AppIndicator extension); without one the window still opens and `Quit` is Ctrl-Q or SIGTERM.
+- Not done here (Phase 2): installers built and attached by `release.yml` on the tag push (macOS runner for notarization, Windows signing), auto-update via GitHub Releases, a `sessionboxer service` mode (launchd/systemd) for the CLI install, and "start Docker Desktop for me".

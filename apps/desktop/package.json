@@ -1,0 +1,21 @@
+{
+  "name": "@sessionboxer/desktop",
+  "version": "0.1.0",
+  "productName": "Sessionboxer",
+  "private": true,
+  "type": "module",
+  "description": "Electron tray shell: runs (or attaches to) the Control Plane in the background and shows the web UI in a window.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "electron .",
+    "dist": "node ../../scripts/pack-desktop.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "44.3.0",
+    "electron-builder": "^26.16.1",
+    "typescript": "^5.6.0"
+  }
+}

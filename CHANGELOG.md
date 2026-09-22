@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `better-sqlite3` 13: the Control Plane's one native module is now built on Node-API, with the
+  prebuilt binaries inside the npm package. One binary serves every Node ≥ 22 and Electron, so
+  installing no longer downloads a per-Node-version build (or compiles one) and the same
+  `node_modules` runs under Electron's Node without a rebuild.
 - Dictation: a 🎤 button in the prompt box records a clip in the browser (tap to start, tap to
   stop) and appends its transcription to the draft; nothing is sent by itself. Transcription runs
   on the machine running Sessionboxer with whisper.cpp, offline — phones paired through a tunnel

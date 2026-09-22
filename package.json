@@ -1,7 +1,7 @@
 {
   "name": "sessionboxer",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Local session manager for coding agents: one Docker sandbox with a desktop per session.",
   "workspaces": [
     "apps/*",

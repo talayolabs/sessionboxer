@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 — 2026-09-22
+
+Install: `npx sessionboxer@1.0.0 serve`, the desktop installers below, `docker compose up` with
+this release's `docker-compose.yml`, or `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`.
+Upgrading from 0.1.0: the Sandbox image changed (`ghcr.io/talayolabs/sessionboxer-sandbox:1.0.0`
+is pulled on first use; `npm run build:image` for source installs).
 
 - `sessionboxer service install|…`: run the Control Plane as a background service of your user account (launchd on macOS, systemd user unit on Linux), started at login.
 - Desktop app, first cut: an Electron tray shell that runs the Control Plane and shows the web UI in a window; no Node install needed, Docker still is (ADR-0043). Installers for Linux, macOS and Windows are built by the release workflow and attached to each GitHub Release (unsigned for now).

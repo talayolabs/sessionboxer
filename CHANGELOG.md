@@ -13,7 +13,7 @@
   or rebase) in a PR's tab makes the Control Plane ask GitHub every 10 seconds whether the PR
   may be merged and merge it as soon as it may — every check green, reviews in, no conflict, not
   a draft — with the head commit pinned; what it is waiting for, the checks and the result are
-  shown next to the switch, and a merge raises a toast and a push notification (ADR-0038).
+  shown next to the switch, and a merge raises a toast and a push notification (ADR-0040).
 - Control Plane: logging no longer loops on a closed stderr (Ctrl-C under `tee` hung at 100 % CPU).
 - Bitbucket (Data Center / Server) connector: **Add Bitbucket** in Settings → MCP servers takes the
   host and one paste of an HTTP access token (the dialog links to the host's token page), verifies

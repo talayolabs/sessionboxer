@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Draggable splitters on a desktop: the session list ↔ chat and chat ↔ pane (Desktop, Code,
+  Terminal, Context, PRs) boundaries can be dragged; widths are remembered per browser and a
+  double-click on a splitter resets one. Hiding the session list (`«`) no longer blanks the
+  whole window; the `»` button that brings it back no longer covers the session title.
+
 - One GitHub account per repository: with several GitHub entries connected, each git repository
   of a session gets an **Account** dropdown (New Session, repository dialog, `sessionboxer new
   --git <url> --as <login>`), *auto* by default — the account that can push to the repository,

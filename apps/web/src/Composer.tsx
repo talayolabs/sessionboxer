@@ -8,6 +8,7 @@ import { Markdown } from "@tiptap/markdown";
 import { lowlight } from "./highlight";
 import { formatBytes } from "./format";
 import type { PendingAttachments } from "./attachments-pending";
+import { startSplitterDrag } from "./splitter";
 
 export type ComposerMode = "raw" | "rich";
 
@@ -382,22 +383,11 @@ export function Composer(props: ComposerProps) {
   const onSplitterPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     const chat = chatRef.current;
     if (!chat || zen) return;
-    e.preventDefault();
-    const target = e.currentTarget;
-    target.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
+    startSplitterDrag(e, (_x, y) => {
       const rect = chat.getBoundingClientRect();
-      const frac = (rect.bottom - ev.clientY) / rect.height;
+      const frac = (rect.bottom - y) / rect.height;
       onHeightFracChange(Math.min(COMPOSER_MAX_FRAC, Math.max(COMPOSER_MIN_FRAC, frac)));
-    };
-    const up = () => {
-      target.removeEventListener("pointermove", move);
-      target.removeEventListener("pointerup", up);
-      target.removeEventListener("pointercancel", up);
-    };
-    target.addEventListener("pointermove", move);
-    target.addEventListener("pointerup", up);
-    target.addEventListener("pointercancel", up);
+    });
   };
 
   const hasText = value.trim().length > 0;

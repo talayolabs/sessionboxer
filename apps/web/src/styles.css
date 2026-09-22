@@ -51,17 +51,19 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 ::-webkit-scrollbar-thumb { background: #3a4150; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: #4b5366; background-clip: content-box; }
 
-.app { display: grid; grid-template-columns: 290px 1fr; height: 100%; min-height: 0; }
+/* Session list | splitter (a 0-width column the 7px grip overflows) | main. */
+.app { display: grid; grid-template-columns: var(--sidebar-width, 290px) 0 1fr; height: 100%; min-height: 0; }
 /* Header actions sit directly in the header's flex row on a desktop; on a phone the same element is a sheet. */
 .session-actions { display: contents; }
 .session-header .more, .session-header .sheet-header, .sheet-backdrop, .topbar, .bottom-tabs, .drawer-backdrop, .drawer-close { display: none; }
 .chat[hidden] { display: none; }
 
 .sidebar { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--border); }
-.app.sidebar-collapsed { grid-template-columns: 0 1fr; }
+.app.sidebar-collapsed { grid-template-columns: 1fr; }
 .app.sidebar-collapsed .sidebar { display: none; }
 .sidebar-hide { padding: 2px 8px; }
 .sidebar-show { position: fixed; top: 10px; left: 8px; z-index: 5; padding: 2px 8px; }
+.app.sidebar-collapsed .session-header, .app.sidebar-collapsed .panel { padding-left: 46px; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand img { width: 24px; height: 24px; }
@@ -124,8 +126,10 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 
 .session-body { display: flex; flex: 1; min-height: 0; }
 .chat { display: flex; flex-direction: column; flex: 1; min-width: 360px; min-height: 0; }
+.session-body.sized .chat { min-width: 0; }
+.session-body.sized .desktop { max-width: none; }
 
-.desktop { display: flex; flex-direction: column; flex: 0 0 50%; max-width: 1040px; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }
+.desktop { display: flex; flex-direction: column; flex: 0 0 var(--pane-width, 50%); max-width: 1040px; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }
 .desktop-toolbar { flex: none; display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
 .desktop-body { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
 .desktop-screen { width: 100%; height: 100%; }
@@ -226,6 +230,10 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .splitter { flex: none; height: 7px; margin: -3px 0; cursor: row-resize; position: relative; z-index: 1; }
 .splitter::after { content: ""; position: absolute; left: 0; right: 0; top: 3px; height: 1px; background: var(--border); }
 .splitter:hover::after, .splitter:active::after { background: var(--accent); }
+/* Vertical grips (session list | chat | pane) overlap the neighbours' borders and only show a line while hovered. */
+.splitter-v { height: auto; width: 7px; margin: 0 -3px; cursor: col-resize; z-index: 2; }
+.splitter-v::after { top: 0; bottom: 0; left: 3px; right: auto; width: 1px; height: auto; background: transparent; }
+.sidebar-splitter { position: relative; }
 .composer { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; min-height: 0; container-type: inline-size; }
 .composer.sized { flex: none; }
 .composer.zen { position: fixed; inset: 0; z-index: 50; background: var(--bg); padding: 24px max(24px, calc((100vw - 960px) / 2)); }
@@ -489,7 +497,7 @@ button.link:hover { text-decoration: underline; }
 button.small { padding: 2px 8px; font-size: 12px; }
 
 /* Terminal pane: xterm.js tabs */
-.terminal { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }
+.terminal { display: flex; flex-direction: column; flex: 0 0 var(--pane-width, 50%); min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; }
 .terminal-toolbar { flex: none; display: flex; gap: 6px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
 .terminal-toolbar .tab { padding: 3px 10px; font-size: 12px; background: transparent; border: 1px solid var(--border); }
 .terminal-toolbar .tab.active { background: var(--user); color: #fff; border-color: var(--user); }
@@ -498,7 +506,7 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .terminal-screen { flex: 1; min-height: 0; overflow: hidden; }
 /* Padding on .xterm itself: the fit addon subtracts it, so the rows never spill past the pane. */
 .terminal-screen .xterm { height: 100%; box-sizing: border-box; padding: 6px 0 0 6px; }
-.code { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 0; border-left: 1px solid var(--border); background: #1f1f1f; }
+.code { display: flex; flex-direction: column; flex: 0 0 var(--pane-width, 50%); min-width: 0; border-left: 1px solid var(--border); background: #1f1f1f; }
 .code .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: 13px; }
 .code-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .code-frame { flex: 1; width: 100%; height: 100%; border: 0; background: #1f1f1f; }
@@ -598,7 +606,7 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .fork-settings[open] summary { margin-bottom: 10px; }
 
 /* Pull requests: the overview pane and one pane per attached PR (ADR-0027). */
-.prs-pane { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; overflow: auto; font-size: 13px; }
+.prs-pane { display: flex; flex-direction: column; flex: 0 0 var(--pane-width, 50%); min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; overflow: auto; font-size: 13px; }
 .prs-toolbar { flex: none; display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .prs-toolbar input { flex: 1; min-width: 0; padding: 5px 8px; }
 .prs-empty { padding: 16px; line-height: 1.5; }

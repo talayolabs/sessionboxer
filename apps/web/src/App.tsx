@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
   CONNECTORS,
@@ -31,6 +31,7 @@ import {
   type Snapshot,
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
+import { SIDEBAR_MAX_PX, SIDEBAR_MIN_PX, PANE_MAX_FRAC, PANE_MIN_FRAC, clampPane, clampSidebar, loadSize, saveSize, startSplitterDrag } from "./splitter";
 import { AttachmentSession } from "./Attachments";
 import { usePendingAttachments } from "./attachments-pending";
 import { BranchTree, type DividerRef } from "./BranchTree";
@@ -187,6 +188,9 @@ export function App() {
   useVisualViewportHeight();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sessionboxer.sidebarCollapsed") === "1");
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(() => loadSize("sessionboxer.sidebarWidth", SIDEBAR_MIN_PX, SIDEBAR_MAX_PX));
+  useEffect(() => saveSize("sessionboxer.sidebarWidth", sidebarWidth), [sidebarWidth]);
+  const appRef = useRef<HTMLDivElement>(null);
   useEffect(() => setDrawerOpen(false), [route]);
   // The service worker shows push notifications while the page is closed; a tap on one navigates here.
   useEffect(() => {
@@ -395,7 +399,11 @@ export function App() {
   };
 
   return (
-    <div className={`app${mobile ? " mobile" : ""}${drawerOpen ? " drawer-open" : ""}${!mobile && sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+    <div
+      ref={appRef}
+      className={`app${mobile ? " mobile" : ""}${drawerOpen ? " drawer-open" : ""}${!mobile && sidebarCollapsed ? " sidebar-collapsed" : ""}`}
+      style={!mobile && !sidebarCollapsed && sidebarWidth !== null ? ({ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties) : undefined}
+    >
       {mobile && drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
       {!mobile && sidebarCollapsed && (
         <button className="sidebar-show" title="Show the session list" aria-label="Show the session list" onClick={() => collapseSidebar(false)}>
@@ -556,6 +564,20 @@ export function App() {
         />
       )}
 
+      {!mobile && !sidebarCollapsed && (
+        <div
+          className="splitter splitter-v sidebar-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize the session list; double-click to reset"
+          onPointerDown={(e) => {
+            const app = appRef.current;
+            if (!app) return;
+            startSplitterDrag(e, (x) => setSidebarWidth(clampSidebar(x - app.getBoundingClientRect().left)));
+          }}
+          onDoubleClick={() => setSidebarWidth(null)}
+        />
+      )}
       <main className="main">
         {mobile && (
           <div className="topbar">
@@ -834,6 +856,9 @@ function SessionView({
   const togglePane = (id: Pane) => setPane((cur) => (cur === id ? (mobile ? "chat" : "hidden") : id));
   const [composerMode, setComposerMode] = useState<ComposerMode>(loadComposerMode);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
+  const [paneFrac, setPaneFrac] = useState<number | null>(() => loadSize("sessionboxer.paneWidth", PANE_MIN_FRAC, PANE_MAX_FRAC));
+  useEffect(() => saveSize("sessionboxer.paneWidth", paneFrac), [paneFrac]);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [zen, setZen] = useState(false);
   const [codeTarget, setCodeTarget] = useState<CodeTarget | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -1170,7 +1195,11 @@ function SessionView({
           }}
         />
       )}
-      <div className="session-body">
+      <div
+        className={`session-body${!mobile && paneFrac !== null ? " sized" : ""}`}
+        ref={bodyRef}
+        style={!mobile && paneFrac !== null ? ({ "--pane-width": `${paneFrac * 100}%` } as CSSProperties) : undefined}
+      >
         <div className="chat" ref={chatRef} hidden={!showChat}>
           <Transcript
             key={session.id}
@@ -1233,6 +1262,23 @@ function SessionView({
             attachments={attachments}
           />
         </div>
+        {!mobile && shown !== "hidden" && (
+          <div
+            className="splitter splitter-v pane-splitter"
+            role="separator"
+            aria-orientation="vertical"
+            title="Drag to resize; double-click to reset"
+            onPointerDown={(e) => {
+              const body = bodyRef.current;
+              if (!body) return;
+              startSplitterDrag(e, (x) => {
+                const rect = body.getBoundingClientRect();
+                setPaneFrac(clampPane((rect.right - x) / rect.width));
+              });
+            }}
+            onDoubleClick={() => setPaneFrac(null)}
+          />
+        )}
         {shown === "desktop" && <Desktop session={session} />}
         {shown === "code" && <CodePane session={session} target={codeTarget} />}
         {shown === "terminal" && <TerminalPane session={session} />}

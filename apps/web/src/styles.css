@@ -627,6 +627,16 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .pr-head-title { min-width: 0; line-height: 1.4; }
 .pr-head-title a { color: var(--text); text-decoration: none; }
 .pr-head-title a:hover { color: var(--accent); }
+.pr-merge { flex: none; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 12px; }
+.pr-merge label.check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 500; }
+.pr-merge label.check input { width: auto; margin: 0; }
+.pr-merge select { width: auto; padding: 1px 4px; font-size: 12px; }
+.pr-merge .muted { color: var(--muted); }
+.pr-merge-note { min-width: 0; overflow-wrap: anywhere; }
+.pr-checks { flex-basis: 100%; }
+.pr-checks summary { cursor: pointer; }
+.pr-checks ul { margin: 4px 0 0; padding-left: 18px; }
+.pr-checks a { color: inherit; }
 .pr-bulk { flex: none; display: flex; gap: 6px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 12px; }
 .pr-bulk label.check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; margin-right: 6px; }
 .pr-bulk label.check input { width: auto; margin: 0; }

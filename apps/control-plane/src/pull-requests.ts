@@ -11,6 +11,7 @@ import {
   type PrActivity,
   type PrAttachedBy,
   type PrItem,
+  type PrMergeState,
   type PullRequest,
   type PushMessage,
   prActivityLine,
@@ -21,7 +22,20 @@ import {
   type UpdatePrRequest,
 } from "@sessionboxer/protocol";
 import type { Db } from "./db.js";
-import { fetchIssueComments, fetchPrMeta, fetchReviewComments, fetchReviews, fetchThreads, tokenTransport, type GhOutcome, type GhTransport, type PrMeta } from "./github-pr.js";
+import {
+  fetchIssueComments,
+  fetchMergeInfo,
+  fetchPrMeta,
+  fetchReviewComments,
+  fetchReviews,
+  fetchThreads,
+  mergePr,
+  tokenTransport,
+  updatePrBranch,
+  type GhOutcome,
+  type GhTransport,
+  type PrMeta,
+} from "./github-pr.js";
 import { HttpError } from "./http-error.js";
 import { itemId, type PrEtags, type PrItemInput, type StoredPr } from "./pr-store.js";
 
@@ -32,6 +46,8 @@ const RUNNING_POLL_MS = 5 * 60_000;
 /** A stopped box without fallback access is re-checked at this pace (it may be resumed). */
 const PAUSED_POLL_MS = 5 * 60_000;
 const TICK_MS = 10_000;
+/** How often a PR with auto-merge on is asked whether it can be merged now. */
+const AUTO_MERGE_POLL_MS = 10_000;
 /** Closed/merged PRs are dropped from the watch list this long after they closed. */
 const UNWATCH_CLOSED_AFTER_MS = 24 * 60 * 60_000;
 const GH_API_TIMEOUT_MS = 60_000;
@@ -66,6 +82,13 @@ export class PullRequests {
   private timer: NodeJS.Timeout | null = null;
   private chain: Promise<void> = Promise.resolve();
   private readonly polling = new Set<string>();
+  private readonly merging = new Set<string>();
+  /** A `PUT …/merge` GitHub refused for good (`head sha:method`): not repeated until one of them changes. */
+  private readonly mergeRefused = new Map<string, string>();
+  /** The head sha `update-branch` was last requested for, so a slow update is not asked for twice. */
+  private readonly branchUpdated = new Map<string, string>();
+  /** Auto-merge checks held back after a rate limit / server error (ms since epoch). */
+  private readonly mergeRetryAt = new Map<string, number>();
 
   constructor(private readonly deps: PullRequestDeps) {}
 
@@ -133,14 +156,29 @@ export class PullRequests {
   detach(sessionId: string, prId: string): void {
     this.requirePr(sessionId, prId);
     this.deps.db.prs.delete(prId);
+    this.forgetMerge(prId);
     this.broadcastPrs(sessionId);
   }
 
   update(sessionId: string, prId: string, req: UpdatePrRequest): PullRequest {
     const pr = this.requirePr(sessionId, prId);
     if (req.watch !== undefined) this.deps.db.prs.updateMeta(prId, { watch: req.watch });
+    let checkMerge = false;
+    if (req.mergeMethod !== undefined && req.mergeMethod !== pr.mergeMethod) {
+      this.deps.db.prs.updateMeta(prId, { mergeMethod: req.mergeMethod });
+      this.forgetMerge(prId);
+      checkMerge = pr.autoMerge;
+    }
+    if (req.autoMerge !== undefined && req.autoMerge !== pr.autoMerge) {
+      if (req.autoMerge && (pr.state === "merged" || pr.state === "closed")) throw new HttpError(409, `${pr.owner}/${pr.repo}#${pr.number} is already ${pr.state}.`);
+      this.deps.db.prs.updateMeta(prId, { autoMerge: req.autoMerge, mergeState: null });
+      this.forgetMerge(prId);
+      this.deps.log(`pr ${sessionId}: ${pr.owner}/${pr.repo}#${pr.number} auto-merge ${req.autoMerge ? "on" : "off"}`);
+      checkMerge = req.autoMerge;
+    }
     this.broadcastPrs(sessionId);
     if (req.watch) void this.pollNow(prId);
+    if (checkMerge) void this.mergeNow(prId);
     return this.publicPr(this.deps.db.prs.get(prId) ?? pr, this.deps.getSession(sessionId)!);
   }
 
@@ -250,6 +288,164 @@ export class PullRequests {
       if (pr.syncedAt && now - Date.parse(pr.syncedAt) < interval) continue;
       void this.pollNow(pr.id);
     }
+    for (const pr of this.deps.db.prs.listAutoMerge()) {
+      if (this.merging.has(pr.id) || pr.mergeState?.merged) continue;
+      if ((this.mergeRetryAt.get(pr.id) ?? 0) > now) continue;
+      if (pr.mergeState && now - Date.parse(pr.mergeState.checkedAt) < AUTO_MERGE_POLL_MS - TICK_MS / 2) continue;
+      if (!this.deps.getSession(pr.sessionId)) continue;
+      void this.mergeNow(pr.id);
+    }
+  }
+
+  // --- Auto-merge ---------------------------------------------------------------------------------
+
+  /** One auto-merge check, serialised with the polls. */
+  private mergeNow(prId: string): Promise<void> {
+    if (this.merging.has(prId)) return this.chain;
+    this.merging.add(prId);
+    const run = this.chain.then(async () => {
+      try {
+        await this.mergeCheck(prId);
+      } catch (e) {
+        this.deps.log(`pr ${prId}: auto-merge check failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        this.merging.delete(prId);
+      }
+    });
+    this.chain = run;
+    return run;
+  }
+
+  /**
+   * Asks GitHub whether the PR can be merged and merges it when it says so: `mergeStateStatus`
+   * CLEAN (or HAS_HOOKS) means every required check passed, the reviews branch protection wants
+   * are in and there is no conflict. UNSTABLE (a non-required check failing or still running)
+   * waits, so "all checks pass" is taken literally; BEHIND gets the base merged in once per head.
+   */
+  private async mergeCheck(prId: string): Promise<void> {
+    const store = this.deps.db.prs;
+    const pr = store.get(prId);
+    if (!pr || !pr.autoMerge || pr.state === "merged" || pr.state === "closed" || pr.mergeState?.merged) return;
+    const s = this.deps.getSession(pr.sessionId);
+    if (!s || s.status === "creating") return;
+    const ref = { owner: pr.owner, repo: pr.repo, number: pr.number };
+    const prev = pr.mergeState;
+    const record = (patch: Partial<PrMergeState> & { error: string | null }): void => {
+      const state: PrMergeState = {
+        checkedAt: new Date().toISOString(),
+        status: prev?.status ?? "unknown",
+        mergeable: prev?.mergeable ?? null,
+        headSha: prev?.headSha ?? "",
+        checks: prev?.checks ?? [],
+        merged: false,
+        ...patch,
+      };
+      store.updateMeta(pr.id, { mergeState: state });
+      if (state.error && state.error !== prev?.error) this.deps.log(`pr ${s.id}: ${pr.owner}/${pr.repo}#${pr.number} auto-merge: ${state.error}`);
+      this.broadcastPrs(s.id);
+    };
+
+    const access = await this.access(pr, s);
+    if ("error" in access) {
+      record({ error: access.error });
+      return;
+    }
+    const info = await fetchMergeInfo(access.transport, ref, access.account);
+    if (info.status !== "ok") {
+      if (info.status === "error") {
+        if (info.retryAt) this.mergeRetryAt.set(pr.id, Date.parse(info.retryAt));
+        record({ error: info.kind === "unauthorized" ? `no GitHub login can see this PR (${info.detail})` : info.detail });
+      }
+      return;
+    }
+    this.mergeRetryAt.delete(pr.id);
+    const v = info.value;
+    store.updateMeta(pr.id, { state: v.state, reviewDecision: v.reviewDecision });
+    const seen = { status: v.status, mergeable: v.mergeable, headSha: v.headSha, checks: v.checks };
+    if (v.state === "merged" || v.state === "closed") {
+      store.updateMeta(pr.id, { closedAt: pr.closedAt ?? new Date().toISOString() });
+      record({ ...seen, error: null });
+      void this.pollNow(pr.id);
+      return;
+    }
+    if (v.status === "behind") {
+      if (this.branchUpdated.get(pr.id) === v.headSha) {
+        record({ ...seen, error: prev?.error ?? null });
+        return;
+      }
+      this.branchUpdated.set(pr.id, v.headSha);
+      const r = await updatePrBranch(access.transport, ref, access.account, v.headSha);
+      record({ ...seen, error: r.ok ? null : `cannot bring the branch up to date with ${pr.baseRef}: ${r.detail}` });
+      return;
+    }
+    if (v.status !== "clean" && v.status !== "has_hooks") {
+      record({ ...seen, error: null });
+      return;
+    }
+    const key = `${v.headSha}:${pr.mergeMethod}`;
+    if (this.mergeRefused.get(pr.id) === key) {
+      record({ ...seen, error: prev?.error ?? null });
+      return;
+    }
+    const r = await mergePr(access.transport, ref, access.account, pr.mergeMethod, v.headSha);
+    if (r.status === "merged") {
+      const now = new Date().toISOString();
+      store.updateMeta(pr.id, { state: "merged", closedAt: now });
+      record({ ...seen, merged: true, error: null });
+      this.forgetMerge(pr.id);
+      this.deps.log(`pr ${s.id}: merged ${pr.owner}/${pr.repo}#${pr.number} (${pr.mergeMethod}, ${v.headSha.slice(0, 7)}${access.account ? `, as @${access.account}` : ""})`);
+      const notice = { prId: pr.id, url: pr.url, title: pr.title, number: pr.number, method: pr.mergeMethod };
+      this.deps.broadcast({ type: "pr_merged", sessionId: s.id, sessionTitle: s.title, pr: notice });
+      this.deps.push({
+        title: `${s.title}: pull request merged`,
+        body: `#${pr.number} ${pr.title} was merged (${pr.mergeMethod}) once its checks passed`,
+        tag: `sessionboxer-pr-merged-${pr.id}`,
+        url: sessionRoute(s.id, `pr:${pr.id}`),
+      });
+      void this.pollNow(pr.id);
+      return;
+    }
+    if (r.status === "refused") {
+      if (!r.retry) this.mergeRefused.set(pr.id, key);
+      record({ ...seen, error: `GitHub refused the merge: ${r.detail}` });
+      return;
+    }
+    if (r.retryAt) this.mergeRetryAt.set(pr.id, Date.parse(r.retryAt));
+    record({ ...seen, error: r.detail });
+  }
+
+  /**
+   * How to reach GitHub for this PR: the Sandbox's `gh` (as the login that could read it) while
+   * the box is live, a Connector token for that login while it is stopped.
+   */
+  private async access(pr: StoredPr, s: Session): Promise<{ transport: GhTransport; account: string | null } | { error: string }> {
+    if (s.status === "idle" || s.status === "running") {
+      let logins: DaemonGhLoginsResult;
+      try {
+        logins = (await this.deps.daemonGhLogins(s.id, GH_API_TIMEOUT_MS)) as DaemonGhLoginsResult;
+      } catch (e) {
+        return { error: `cannot reach the Sandbox: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!logins.active && logins.logins.length === 0) return { error: "no GitHub login in the Sandbox (`gh auth login` there, or enable a GitHub Connector)" };
+      const account = pr.viaAccount !== null && logins.logins.includes(pr.viaAccount) && pr.viaAccount !== logins.active ? pr.viaAccount : null;
+      return { transport: this.daemonTransport(s.id), account };
+    }
+    const creds = this.deps.connectorCredentials(s).filter((c) => c.kind === "github");
+    const cred = (pr.viaAccount ? creds.find((c) => c.account === pr.viaAccount) : undefined) ?? creds[0];
+    if (!cred) {
+      return {
+        error: pr.viaAccount
+          ? `the Sandbox is stopped and @${pr.viaAccount} is not a Connector the Control Plane holds; resume it to merge`
+          : "the Sandbox is stopped; resume it (or enable a GitHub Connector) to merge",
+      };
+    }
+    return { transport: tokenTransport(cred.token), account: cred.account };
+  }
+
+  private forgetMerge(prId: string): void {
+    this.mergeRefused.delete(prId);
+    this.branchUpdated.delete(prId);
+    this.mergeRetryAt.delete(prId);
   }
 
   /** Polls one PR, serialised with every other poll (GitHub asks for that). */

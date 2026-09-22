@@ -1,4 +1,4 @@
-import type { DaemonGhApiParams, DaemonGhApiResult, PrReviewDecision, PrState, PrSyncError } from "@sessionboxer/protocol";
+import type { DaemonGhApiParams, DaemonGhApiResult, MergeMethod, PrCheck, PrMergeStatus, PrReviewDecision, PrState, PrSyncError } from "@sessionboxer/protocol";
 import type { PrItemInput } from "./pr-store.js";
 
 /**
@@ -257,6 +257,143 @@ export async function fetchThreads(t: GhTransport, ref: PrRef, account: string |
   };
 }
 
+// --- Auto-merge -----------------------------------------------------------------------------
+
+const MERGE_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
+    state isDraft mergeable mergeStateStatus reviewDecision headRefOid
+    commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+      __typename
+      ... on CheckRun { name status conclusion detailsUrl isRequired(pullRequestNumber: $number) }
+      ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
+    } } } } } }
+  } }
+}`;
+
+interface MergeQueryResponse {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        state: "OPEN" | "CLOSED" | "MERGED";
+        isDraft: boolean;
+        mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+        mergeStateStatus: string;
+        reviewDecision: string | null;
+        headRefOid: string;
+        commits: { nodes: Array<{ commit: { statusCheckRollup: { contexts: { nodes: CheckNode[] } } | null } }> };
+      } | null;
+    } | null;
+  };
+  errors?: Array<{ message: string }>;
+}
+
+type CheckNode =
+  | { __typename: "CheckRun"; name: string; status: string; conclusion: string | null; detailsUrl: string | null; isRequired: boolean }
+  | { __typename: "StatusContext"; context: string; state: string; targetUrl: string | null; isRequired: boolean };
+
+/** What GitHub knows about whether the PR can be merged right now. */
+export interface MergeInfo {
+  state: PrState;
+  status: PrMergeStatus;
+  mergeable: boolean | null;
+  reviewDecision: PrReviewDecision | null;
+  headSha: string;
+  checks: PrCheck[];
+}
+
+const MERGE_STATUSES: readonly PrMergeStatus[] = ["clean", "unstable", "blocked", "behind", "dirty", "draft", "has_hooks", "unknown"];
+
+export async function fetchMergeInfo(t: GhTransport, ref: PrRef, account: string | null): Promise<GhOutcome<MergeInfo>> {
+  let res: DaemonGhApiResult;
+  try {
+    res = await t.request({ method: "POST", path: "graphql", headers: {}, body: JSON.stringify({ query: MERGE_QUERY, variables: ref }), account });
+  } catch (e) {
+    return { status: "error", kind: "error", detail: e instanceof Error ? e.message : String(e), retryAt: null };
+  }
+  const remaining = rateRemaining(res.headers);
+  if (res.status !== 200) return classify(res);
+  const parsed = JSON.parse(res.body) as MergeQueryResponse;
+  const pr = parsed.data?.repository?.pullRequest;
+  if (!pr) {
+    const msg = parsed.errors?.map((e) => e.message).join("; ") ?? "no pull request in the reply";
+    const kind: PrSyncError = /not resolve|could not be found|NOT_FOUND/i.test(msg) ? "not_found" : "error";
+    return { status: "error", kind, detail: msg, retryAt: null };
+  }
+  const status = pr.mergeStateStatus.toLowerCase();
+  const nodes = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
+  return {
+    status: "ok",
+    etag: null,
+    remaining,
+    value: {
+      state: pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.isDraft ? "draft" : "open",
+      status: MERGE_STATUSES.find((s) => s === status) ?? "unknown",
+      mergeable: pr.mergeable === "MERGEABLE" ? true : pr.mergeable === "CONFLICTING" ? false : null,
+      reviewDecision: pr.reviewDecision === "APPROVED" ? "approved" : pr.reviewDecision === "CHANGES_REQUESTED" ? "changes_requested" : pr.reviewDecision === "REVIEW_REQUIRED" ? "review_required" : null,
+      headSha: pr.headRefOid,
+      checks: nodes.map(checkFromNode),
+    },
+  };
+}
+
+function checkFromNode(n: CheckNode): PrCheck {
+  if (n.__typename === "CheckRun") {
+    const state: PrCheck["state"] =
+      n.status !== "COMPLETED" ? "pending" : n.conclusion === null || ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(n.conclusion) ? "passed" : "failed";
+    return { name: n.name, state, required: n.isRequired, url: n.detailsUrl };
+  }
+  const state: PrCheck["state"] = n.state === "SUCCESS" ? "passed" : n.state === "PENDING" || n.state === "EXPECTED" ? "pending" : "failed";
+  return { name: n.context, state, required: n.isRequired, url: n.targetUrl };
+}
+
+export type MergeResult =
+  | { status: "merged"; sha: string }
+  /** GitHub would not do it now (405/409/422): protection, a conflict, the head moved, a disallowed method. */
+  | { status: "refused"; detail: string; retry: boolean }
+  | { status: "error"; kind: PrSyncError; detail: string; retryAt: string | null };
+
+/** `PUT …/merge` of exactly `headSha`, so a commit pushed after the checks were read is never merged blind. */
+export async function mergePr(t: GhTransport, ref: PrRef, account: string | null, method: MergeMethod, headSha: string): Promise<MergeResult> {
+  let res: DaemonGhApiResult;
+  try {
+    res = await t.request({
+      method: "PUT",
+      path: `repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/merge`,
+      headers: {},
+      body: JSON.stringify({ merge_method: method, sha: headSha }),
+      account,
+    });
+  } catch (e) {
+    return { status: "error", kind: "error", detail: e instanceof Error ? e.message : String(e), retryAt: null };
+  }
+  if (res.status === 200) {
+    const body = JSON.parse(res.body) as { sha?: string; merged?: boolean; message?: string };
+    if (body.merged === false) return { status: "refused", detail: body.message ?? "not merged", retry: true };
+    return { status: "merged", sha: body.sha ?? headSha };
+  }
+  // 409: the head moved since we looked (try again with the new one); 405/422: something to fix first.
+  if (res.status === 405 || res.status === 409 || res.status === 422) return { status: "refused", detail: message(res.body) ?? `HTTP ${res.status}`, retry: res.status === 409 };
+  const c = classify(res);
+  return { status: "error", kind: c.kind, detail: c.detail, retryAt: c.retryAt };
+}
+
+/** `PUT …/update-branch`: merges the base into the head when protection wants the branch up to date. */
+export async function updatePrBranch(t: GhTransport, ref: PrRef, account: string | null, headSha: string): Promise<{ ok: true } | { ok: false; detail: string }> {
+  let res: DaemonGhApiResult;
+  try {
+    res = await t.request({
+      method: "PUT",
+      path: `repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/update-branch`,
+      headers: {},
+      body: JSON.stringify({ expected_head_sha: headSha }),
+      account,
+    });
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+  return res.status === 202 ? { ok: true } : { ok: false, detail: message(res.body) ?? `HTTP ${res.status}` };
+}
+
 type Conditional = GhOutcome<string> & { link?: string | null };
 
 async function conditional(t: GhTransport, path: string, etag: string | undefined, account: string | null): Promise<Conditional> {
@@ -302,7 +439,7 @@ function linkNext(link: string | undefined): string | null {
   return `${u.pathname.slice(1)}${u.search}`;
 }
 
-function classify(res: DaemonGhApiResult): GhOutcome<never> {
+function classify(res: DaemonGhApiResult): { status: "error"; kind: PrSyncError; detail: string; retryAt: string | null } {
   const detail = message(res.body) ?? `HTTP ${res.status}`;
   if (res.status === 404 || res.status === 410) return { status: "error", kind: "not_found", detail, retryAt: null };
   if (res.status === 401) return { status: "error", kind: "unauthorized", detail, retryAt: null };

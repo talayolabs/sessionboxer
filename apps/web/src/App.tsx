@@ -165,7 +165,7 @@ export function App() {
   // Pull Requests attached per Session (all Sessions, for the sidebar badges) and the rows of the ones opened.
   const [prs, setPrs] = useState<Record<string, PullRequest[]>>({});
   const [prItems, setPrItems] = useState<Record<string, PrItem[]>>({});
-  const [toasts, setToasts] = useState<Array<{ id: number; sessionId: string; sessionTitle: string; prs: PrActivity[] }>>([]);
+  const [toasts, setToasts] = useState<Array<{ id: number; sessionId: string; sessionTitle: string; lines: Array<{ prId: string; text: string }> }>>([]);
   // Pane the selected Session should switch to (from a PR notification).
   const [paneRequest, setPaneRequest] = useState<{ sessionId: string; pane: string } | null>(null);
   const clearPaneRequest = useCallback(() => setPaneRequest(null), []);
@@ -335,8 +335,23 @@ export function App() {
             break;
           case "pr_activity": {
             const id = Date.now() + Math.random();
-            setToasts((prev) => [...prev.slice(-4), { id, sessionId: msg.sessionId, sessionTitle: msg.sessionTitle, prs: msg.prs }]);
-            notifyBrowser(msg.sessionId, msg.sessionTitle, msg.prs, () => openPr(msg.sessionId, msg.prs.length === 1 ? msg.prs[0]!.prId : null));
+            const lines = msg.prs.map((p) => ({ prId: p.prId, text: `#${p.number} ${p.title}: ${activityLine(p)}` }));
+            setToasts((prev) => [...prev.slice(-4), { id, sessionId: msg.sessionId, sessionTitle: msg.sessionTitle, lines }]);
+            notifyBrowser(
+              msg.sessionId,
+              `${msg.sessionTitle}: pull request feedback`,
+              lines.map((l) => l.text).join("\n"),
+              `sessionboxer-pr-${msg.prs.map((p) => p.prId).join(",")}`,
+              msg.prs.length === 1 ? msg.prs[0]!.prId : null,
+              () => openPr(msg.sessionId, msg.prs.length === 1 ? msg.prs[0]!.prId : null),
+            );
+            break;
+          }
+          case "pr_merged": {
+            const id = Date.now() + Math.random();
+            const text = `#${msg.pr.number} ${msg.pr.title}: merged (${msg.pr.method})`;
+            setToasts((prev) => [...prev.slice(-4), { id, sessionId: msg.sessionId, sessionTitle: msg.sessionTitle, lines: [{ prId: msg.pr.prId, text }] }]);
+            notifyBrowser(msg.sessionId, `${msg.sessionTitle}: pull request merged`, text, `sessionboxer-pr-merged-${msg.pr.prId}`, msg.pr.prId, () => openPr(msg.sessionId, msg.pr.prId));
             break;
           }
           case "remote":
@@ -622,16 +637,16 @@ export function App() {
                 ×
               </button>
               <div className="toast-title">{t.sessionTitle}</div>
-              {t.prs.map((p) => (
+              {t.lines.map((l) => (
                 <button
-                  key={p.prId}
+                  key={l.prId}
                   className="link toast-line"
                   onClick={() => {
                     setToasts((prev) => prev.filter((x) => x.id !== t.id));
-                    openPr(t.sessionId, p.prId);
+                    openPr(t.sessionId, l.prId);
                   }}
                 >
-                  #{p.number} {p.title}: {activityLine(p)}
+                  {l.text}
                 </button>
               ))}
             </div>
@@ -650,13 +665,10 @@ function activityLine(p: PrActivity): string {
 }
 
 /** A browser notification when the tab is in the background and permission was given (the PRs pane asks for it). */
-function notifyBrowser(sessionId: string, sessionTitle: string, prs: PrActivity[], onClick: () => void): void {
+function notifyBrowser(sessionId: string, title: string, body: string, tag: string, prId: string | null, onClick: () => void): void {
   if (typeof Notification === "undefined" || Notification.permission !== "granted" || document.visibilityState === "visible") return;
-  const body = prs.map((p) => `#${p.number}: ${activityLine(p)}`).join("\n");
-  const tag = `sessionboxer-pr-${prs.map((p) => p.prId).join(",")}`;
-  const title = `${sessionTitle}: pull request feedback`;
   // Same tag as the push the Control Plane sends for a sleeping phone, so a device that gets both sees one.
-  const url = sessionRoute(sessionId, prs.length === 1 ? `pr:${prs[0]!.prId}` : "prs");
+  const url = sessionRoute(sessionId, prId ? `pr:${prId}` : "prs");
   void showNotification(title, { body, tag, url }).then((shown) => {
     if (shown) return;
     const n = new Notification(title, { body, tag });

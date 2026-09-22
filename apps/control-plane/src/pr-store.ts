@@ -1,8 +1,10 @@
 import type Database from "better-sqlite3";
 import {
+  MergeMethod,
   PrAddressState,
   PrAttachedBy,
   PrItemKind,
+  PrMergeState,
   PrReviewDecision,
   PrState,
   PrSyncError,
@@ -36,6 +38,9 @@ CREATE TABLE IF NOT EXISTS pull_requests (
   etags TEXT NOT NULL DEFAULT '{}',
   closed_at TEXT,
   retry_at TEXT,
+  auto_merge INTEGER NOT NULL DEFAULT 0,
+  merge_method TEXT NOT NULL DEFAULT 'merge',
+  merge_state TEXT,
   UNIQUE (session_id, owner, repo, number)
 );
 CREATE TABLE IF NOT EXISTS pr_items (
@@ -67,6 +72,13 @@ CREATE TABLE IF NOT EXISTS pr_items (
 CREATE INDEX IF NOT EXISTS pr_items_pr ON pr_items (pr_id);
 `;
 
+/** Columns added after the tables first shipped. */
+const PR_MIGRATIONS: Array<{ column: string; ddl: string }> = [
+  { column: "auto_merge", ddl: "ALTER TABLE pull_requests ADD COLUMN auto_merge INTEGER NOT NULL DEFAULT 0" },
+  { column: "merge_method", ddl: "ALTER TABLE pull_requests ADD COLUMN merge_method TEXT NOT NULL DEFAULT 'merge'" },
+  { column: "merge_state", ddl: "ALTER TABLE pull_requests ADD COLUMN merge_state TEXT" },
+];
+
 /** Conditional-request cursors per endpoint. */
 export interface PrEtags {
   pr?: string;
@@ -84,7 +96,7 @@ export interface StoredPr extends PullRequest {
 
 /** What a poll learned about the PR itself. */
 export type PrMetaPatch = Partial<
-  Pick<PullRequest, "title" | "state" | "headRef" | "headRepo" | "baseRef" | "author" | "reviewDecision" | "viaAccount" | "watch">
+  Pick<PullRequest, "title" | "state" | "headRef" | "headRepo" | "baseRef" | "author" | "reviewDecision" | "viaAccount" | "watch" | "autoMerge" | "mergeMethod" | "mergeState">
 > & { closedAt?: string | null };
 
 /** A comment/review as it comes from GitHub, before the Session-side flags. */
@@ -93,6 +105,16 @@ export type PrItemInput = Omit<PrItem, "id" | "prId" | "seen" | "address">;
 export class PrStore {
   constructor(private readonly db: Database.Database) {
     this.db.exec(PR_SCHEMA);
+    const columns = new Set((this.db.prepare("PRAGMA table_info(pull_requests)").all() as Array<{ name: string }>).map((c) => c.name));
+    for (const m of PR_MIGRATIONS) if (!columns.has(m.column)) this.db.exec(m.ddl);
+  }
+
+  /** Open PRs whose auto-merge is on. */
+  listAutoMerge(): StoredPr[] {
+    const rows = this.db
+      .prepare(`${PR_SELECT} WHERE p.auto_merge = 1 AND p.state IN ('open', 'draft') ORDER BY p.attached_at ASC`)
+      .all() as PrRow[];
+    return rows.map(rowToPr);
   }
 
   list(sessionId: string): StoredPr[] {
@@ -150,6 +172,9 @@ export class PrStore {
     if (patch.viaAccount !== undefined) set("via_account", patch.viaAccount);
     if (patch.watch !== undefined) set("watch", patch.watch ? 1 : 0);
     if (patch.closedAt !== undefined) set("closed_at", patch.closedAt);
+    if (patch.autoMerge !== undefined) set("auto_merge", patch.autoMerge ? 1 : 0);
+    if (patch.mergeMethod !== undefined) set("merge_method", patch.mergeMethod);
+    if (patch.mergeState !== undefined) set("merge_state", patch.mergeState === null ? null : JSON.stringify(patch.mergeState));
     if (sets.length === 0) return;
     params.push(id);
     this.db.prepare(`UPDATE pull_requests SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -337,6 +362,9 @@ interface PrRow {
   etags: string;
   closed_at: string | null;
   retry_at: string | null;
+  auto_merge: number;
+  merge_method: string;
+  merge_state: string | null;
   unread: number;
   open_threads: number;
 }
@@ -394,10 +422,22 @@ function rowToPr(r: PrRow): StoredPr {
     syncErrorDetail: r.sync_error_detail,
     // Filled in by the manager (depends on the Session's Workspace).
     local: true,
+    autoMerge: r.auto_merge === 1,
+    mergeMethod: MergeMethod.catch("merge").parse(r.merge_method),
+    mergeState: parseMergeState(r.merge_state),
     etags: JSON.parse(r.etags) as PrEtags,
     closedAt: r.closed_at,
     retryAt: r.retry_at,
   };
+}
+
+function parseMergeState(raw: string | null): PrMergeState | null {
+  if (raw === null) return null;
+  try {
+    return PrMergeState.parse(JSON.parse(raw));
+  } catch {
+    return null;
+  }
 }
 
 function rowToItem(r: ItemRow): PrItem {

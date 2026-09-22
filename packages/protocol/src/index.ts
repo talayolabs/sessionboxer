@@ -1443,6 +1443,8 @@ export type SessionBroadcast =
    * notifies. While the Agent is busy the Control Plane holds this until `turn_ended`.
    */
   | { type: "pr_activity"; sessionId: string; sessionTitle: string; prs: PrActivity[] }
+  /** Auto-merge merged an attached Pull Request. */
+  | { type: "pr_merged"; sessionId: string; sessionTitle: string; pr: PrMergedNotice }
   /** A transport came up, went down or failed (`PublicSettings.remote` changed). */
   | { type: "remote"; remote: RemoteAccess };
 
@@ -1711,6 +1713,51 @@ export type PrAttachedBy = z.infer<typeof PrAttachedBy>;
 export const PrSyncError = z.enum(["unauthorized", "not_found", "rate_limited", "box_stopped", "error"]);
 export type PrSyncError = z.infer<typeof PrSyncError>;
 
+export const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
+export const MergeMethod = z.enum(MERGE_METHODS);
+export type MergeMethod = z.infer<typeof MergeMethod>;
+
+/** GitHub's `mergeStateStatus`, lower-cased. */
+export const PrMergeStatus = z.enum(["clean", "unstable", "blocked", "behind", "dirty", "draft", "has_hooks", "unknown"]);
+export type PrMergeStatus = z.infer<typeof PrMergeStatus>;
+
+/** One commit status or check run on the PR's head. */
+export const PrCheck = z.object({
+  name: z.string(),
+  /** `pending` until it finishes; a check that is skipped or neutral counts as `passed`. */
+  state: z.enum(["pending", "passed", "failed"]),
+  /** Branch protection requires it before merging. */
+  required: z.boolean(),
+  url: z.string().nullable(),
+});
+export type PrCheck = z.infer<typeof PrCheck>;
+
+/**
+ * What the auto-merge watcher last saw (every 10 s while it is on and the PR is open). `merged`
+ * is set once *it* merged the PR; `error` when GitHub refused the merge or could not be asked.
+ */
+export const PrMergeState = z.object({
+  checkedAt: z.string(),
+  status: PrMergeStatus,
+  /** GitHub's own conflict verdict (`null` while it is still computing). */
+  mergeable: z.boolean().nullable(),
+  headSha: z.string(),
+  checks: z.array(PrCheck),
+  error: z.string().nullable(),
+  merged: z.boolean(),
+});
+export type PrMergeState = z.infer<typeof PrMergeState>;
+
+/** One line of a `pr_merged` notification. */
+export const PrMergedNotice = z.object({
+  prId: z.string(),
+  url: z.string(),
+  title: z.string(),
+  number: z.number().int(),
+  method: MergeMethod,
+});
+export type PrMergedNotice = z.infer<typeof PrMergedNotice>;
+
 export const PullRequest = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -1743,6 +1790,10 @@ export const PullRequest = z.object({
   syncErrorDetail: z.string().nullable(),
   /** The PR's repo is the Workspace's origin, so it can be addressed locally. */
   local: z.boolean(),
+  /** Merge it as soon as GitHub says it can be (checks green, reviews in, no conflicts). */
+  autoMerge: z.boolean(),
+  mergeMethod: MergeMethod,
+  mergeState: PrMergeState.nullable(),
 });
 export type PullRequest = z.infer<typeof PullRequest>;
 
@@ -1807,7 +1858,11 @@ export type PrActivity = z.infer<typeof PrActivity>;
 export const AttachPrRequest = z.object({ ref: z.string().min(1) });
 export type AttachPrRequest = z.infer<typeof AttachPrRequest>;
 
-export const UpdatePrRequest = z.object({ watch: z.boolean().optional() });
+export const UpdatePrRequest = z.object({
+  watch: z.boolean().optional(),
+  autoMerge: z.boolean().optional(),
+  mergeMethod: MergeMethod.optional(),
+});
 export type UpdatePrRequest = z.infer<typeof UpdatePrRequest>;
 
 /**

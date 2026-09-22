@@ -1,4 +1,4 @@
-import type { PrAction, PrItem, PullRequest, Session } from "@sessionboxer/protocol";
+import { MERGE_METHODS, type MergeMethod, type PrAction, type PrItem, type PullRequest, type Session } from "@sessionboxer/protocol";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { FileLink } from "./FileLink";
@@ -15,6 +15,7 @@ const DECISION_LABEL: Record<NonNullable<PullRequest["reviewDecision"]>, string>
 const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "comment", review_comment: "inline", review: "review" };
 const ADDRESS_LABEL: Record<PrItem["address"], string> = { none: "", in_prompt: "in prompt", addressing: "addressing…", addressed: "addressed" };
 const ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Address", address_reply: "Address & reply" };
+const METHOD_LABEL: Record<MergeMethod, string> = { merge: "merge commit", squash: "squash", rebase: "rebase" };
 
 function ago(iso: string | null): string {
   if (!iso) return "never";
@@ -41,6 +42,39 @@ export function syncNote(pr: PullRequest): { text: string; level: "ok" | "warn" 
       return { text: "GitHub rate limit; retrying later", level: "warn" };
     default:
       return { text: pr.syncErrorDetail ? `error: ${pr.syncErrorDetail}` : "error", level: "error" };
+  }
+}
+
+/** One line on what auto-merge is doing / waiting for. */
+export function mergeNote(pr: PullRequest): { text: string; level: "ok" | "warn" | "error" | "muted" } {
+  const m = pr.mergeState;
+  if (pr.state === "merged") return m?.merged ? { text: `merged by auto-merge (${METHOD_LABEL[pr.mergeMethod]})`, level: "ok" } : { text: "already merged", level: "muted" };
+  if (pr.state === "closed") return { text: "closed without merging", level: "muted" };
+  if (!pr.autoMerge) return { text: "off — merges the PR as soon as GitHub allows it (checks green, reviews in, no conflicts)", level: "muted" };
+  if (!m) return { text: "checking…", level: "warn" };
+  if (m.error) return { text: m.error, level: "error" };
+  const failed = m.checks.filter((c) => c.state === "failed");
+  const pending = m.checks.filter((c) => c.state === "pending");
+  const names = (cs: typeof m.checks) => cs.slice(0, 3).map((c) => c.name).join(", ") + (cs.length > 3 ? ` +${cs.length - 3}` : "");
+  switch (m.status) {
+    case "draft":
+      return { text: "waiting: still a draft", level: "warn" };
+    case "dirty":
+      return { text: "waiting: conflicts with the base branch", level: "error" };
+    case "behind":
+      return { text: `waiting: bringing the branch up to date with ${pr.baseRef}`, level: "warn" };
+    case "blocked":
+      if (failed.length > 0) return { text: `waiting: ${failed.length} failed — ${names(failed)}`, level: "error" };
+      if (pending.length > 0) return { text: `waiting: ${pending.length} running — ${names(pending)}`, level: "warn" };
+      return { text: pr.reviewDecision === "approved" ? "waiting: blocked by branch protection" : "waiting: reviews required", level: "warn" };
+    case "unstable":
+      if (failed.length > 0) return { text: `waiting: ${failed.length} failed — ${names(failed)}`, level: "error" };
+      return { text: pending.length > 0 ? `waiting: ${pending.length} running — ${names(pending)}` : "waiting: checks not all green", level: "warn" };
+    case "clean":
+    case "has_hooks":
+      return { text: "mergeable — merging now", level: "ok" };
+    default:
+      return { text: m.mergeable === null ? "waiting: GitHub is still computing mergeability" : "waiting…", level: "warn" };
   }
 }
 
@@ -152,6 +186,11 @@ export function PrsPane({
                   </td>
                   <td>
                     <span className={`pr-state pr-state-${pr.state}`}>{STATE_LABEL[pr.state]}</span>
+                    {pr.autoMerge && pr.state !== "closed" && (
+                      <div className={`small-text ${mergeNote(pr).level}`} title={mergeNote(pr).text}>
+                        auto-merge
+                      </div>
+                    )}
                   </td>
                   <td>{pr.reviewDecision ? <span className={`pr-decision pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span> : <span className="muted">—</span>}</td>
                   <td>{pr.unread > 0 ? <span className="count">{pr.unread}</span> : <span className="muted">0</span>}</td>
@@ -247,7 +286,13 @@ export function PrPane({
   const toggleAll = (on: boolean) => setSelected(on ? new Set(visible.map((i) => i.id)) : new Set());
   const allSelected = visible.length > 0 && visible.every((i) => selected.has(i.id));
   const note = syncNote(pr);
+  const merge = mergeNote(pr);
   const n = selected.size;
+  const finished = pr.state === "merged" || pr.state === "closed";
+  const setAutoMerge = (on: boolean) => {
+    if (on && !confirm(`Merge ${pr.owner}/${pr.repo}#${pr.number} into ${pr.baseRef || "its base branch"} (${METHOD_LABEL[pr.mergeMethod]}) as soon as GitHub allows it? The Control Plane checks every 10 seconds while this is on.`)) return;
+    void run(() => api.updatePr(session.id, pr.id, { autoMerge: on }));
+  };
 
   return (
     <div className="pane prs-pane">
@@ -293,6 +338,52 @@ export function PrPane({
         >
           Detach
         </button>
+      </div>
+      <div className="pr-merge">
+        <label className="check" title="Merge this PR automatically once every check passed and nothing else blocks it">
+          <input type="checkbox" checked={pr.autoMerge} disabled={finished} onChange={(e) => setAutoMerge(e.target.checked)} />
+          Auto-merge when checks pass
+        </label>
+        <select
+          value={pr.mergeMethod}
+          disabled={finished}
+          title="How GitHub merges it"
+          onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { mergeMethod: e.target.value as MergeMethod }))}
+        >
+          {MERGE_METHODS.map((m) => (
+            <option key={m} value={m}>
+              {METHOD_LABEL[m]}
+            </option>
+          ))}
+        </select>
+        <span className={`pr-merge-note ${merge.level}`}>{merge.text}</span>
+        {pr.mergeState && pr.mergeState.checks.length > 0 && !finished && (
+          <details className="pr-checks">
+            <summary className="muted">
+              {pr.mergeState.checks.filter((c) => c.state === "passed").length}/{pr.mergeState.checks.length} checks
+            </summary>
+            <ul>
+              {pr.mergeState.checks.map((c) => (
+                <li key={c.name} className={c.state === "failed" ? "error" : c.state === "pending" ? "warn" : "ok"}>
+                  {c.url ? (
+                    <a href={c.url} target="_blank" rel="noreferrer">
+                      {c.name}
+                    </a>
+                  ) : (
+                    c.name
+                  )}{" "}
+                  · {c.state}
+                  {c.required && <span className="muted"> · required</span>}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {pr.mergeState && !finished && (
+          <span className="muted small-text" title={pr.mergeState.headSha}>
+            checked {ago(pr.mergeState.checkedAt)}
+          </span>
+        )}
       </div>
       <div className="pr-bulk">
         <label className="check">

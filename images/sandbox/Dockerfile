@@ -195,6 +195,14 @@ RUN mkdir /tmp/bb && cd /tmp/bb \
 RUN git config --system credential.https://github.com.helper '!gh auth git-credential' \
     && git config --system credential.helper '!bb auth git-credential'
 
+# A repository bound to one GitHub login (Sessionboxer per-repository accounts) gets, in its own
+# .git/config, `credential.https://github.com.helper = sessionboxer <login>` and
+# `sessionboxer.githubAccount = <login>`: git asks this helper for that login's token and the gh
+# in front of /usr/bin/gh acts as it whenever the working directory is that repository.
+COPY images/sandbox/git-credential-sessionboxer /usr/local/bin/git-credential-sessionboxer
+COPY images/sandbox/gh-as-repo-account /usr/local/bin/gh
+RUN chmod 0755 /usr/local/bin/git-credential-sessionboxer /usr/local/bin/gh
+
 ENV DISPLAY=:1 \
     SESSIONBOXER_DISPLAY_WIDTH=1024 \
     SESSIONBOXER_DISPLAY_HEIGHT=768 \

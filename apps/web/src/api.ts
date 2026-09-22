@@ -1,5 +1,6 @@
 import type {
   AddRepoRequest,
+  UpdateRepoRequest,
   AskResult,
   AuthDevice,
   AuthLoginRequest,
@@ -178,6 +179,8 @@ export const api = {
     request<Session>(`/sessions/${id}/branch`, { method: "POST", body: JSON.stringify(req) }),
   hostDirs: (path?: string) => request<HostDirListing>(`/host/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   addRepo: (id: string, req: AddRepoRequest) => request<SessionRepo>(`/sessions/${id}/repos`, { method: "POST", body: JSON.stringify(req) }),
+  updateRepo: (id: string, repoId: string, req: UpdateRepoRequest) =>
+    request<SessionRepo>(`/sessions/${id}/repos/${repoId}`, { method: "PATCH", body: JSON.stringify(req) }),
   /** 409 with the repository's Git state when it holds work that is nowhere else and `force` is off. */
   removeRepo: async (id: string, repoId: string, force: boolean): Promise<{ removed: true } | { removed: false; blocked: RepoRemovalBlocked }> => {
     const res = await fetch(`/api/sessions/${id}/repos/${repoId}${force ? "?force=1" : ""}`, { method: "DELETE" });

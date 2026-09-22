@@ -5,6 +5,7 @@ import {
   repoOriginLabel,
   repoNameFromSource,
   repoWorkAtRisk,
+  type PublicSettings,
   type RepoSource,
   type RepoSpec,
   type Session,
@@ -22,12 +23,60 @@ export interface RepoDraft {
   ref: string;
   path: string;
   name: string;
+  /** GitHub login git and `gh` act as in the directory; `undefined` lets the Control Plane pick, `null` binds none. */
+  account?: string | null;
 }
 
 let nextKey = 1;
 
 export function newRepoDraft(type: RepoSource["type"] = "git"): RepoDraft {
   return { key: nextKey++, type, url: "", ref: "", path: "", name: "" };
+}
+
+/** The GitHub logins connected in Settings (every GitHub entry's account), in Settings order without repeats. */
+export function githubAccounts(settings: PublicSettings | null): string[] {
+  const out: string[] = [];
+  for (const s of settings?.mcpServers ?? []) {
+    const a = s.connector?.kind === "github" ? s.connector.account : null;
+    if (a && !out.includes(a)) out.push(a);
+  }
+  return out;
+}
+
+const AUTO_ACCOUNT = "\u0000auto";
+const NO_ACCOUNT = "\u0000none";
+
+/** Dropdown of the connected GitHub logins: *Auto* (pick per repository), each login, or none. */
+function AccountSelect({
+  value,
+  accounts,
+  disabled,
+  onChange,
+}: {
+  value: string | null | undefined;
+  accounts: string[];
+  disabled?: boolean;
+  onChange: (account: string | null | undefined) => void;
+}) {
+  const options = value && !accounts.includes(value) ? [...accounts, value] : accounts;
+  return (
+    <select
+      aria-label="GitHub account"
+      className="repo-account"
+      title="GitHub login git push and gh act as inside this repository"
+      value={value === undefined ? AUTO_ACCOUNT : value === null ? NO_ACCOUNT : value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value === AUTO_ACCOUNT ? undefined : e.target.value === NO_ACCOUNT ? null : e.target.value)}
+    >
+      <option value={AUTO_ACCOUNT}>Account: auto</option>
+      {options.map((a) => (
+        <option key={a} value={a}>
+          @{a}
+        </option>
+      ))}
+      <option value={NO_ACCOUNT}>Active login (no binding)</option>
+    </select>
+  );
 }
 
 function draftSource(d: RepoDraft): RepoSource | null {
@@ -47,7 +96,7 @@ export function draftsToSpecs(drafts: RepoDraft[]): RepoSpec[] {
     const source = draftSource(d);
     if (!source) return [];
     const name = d.name.trim();
-    return [name ? { name, source } : { source }];
+    return [{ ...(name ? { name } : {}), source, ...(d.account !== undefined && source.type === "git" ? { account: d.account } : {}) }];
   });
 }
 
@@ -82,12 +131,15 @@ export function RepoEditor({
   onChange,
   disabled,
   compact,
+  accounts = [],
 }: {
   drafts: RepoDraft[];
   onChange: (drafts: RepoDraft[]) => void;
   disabled?: boolean;
   /** Without the "Add" buttons and the intro (one row being edited in a dialog). */
   compact?: boolean;
+  /** Connected GitHub logins a git repository can be bound to; no dropdown when empty. */
+  accounts?: string[];
 }) {
   const [browsing, setBrowsing] = useState<number | null>(null);
   const patch = (key: number, p: Partial<RepoDraft>) => onChange(drafts.map((d) => (d.key === key ? { ...d, ...p } : d)));
@@ -116,15 +168,18 @@ export function RepoEditor({
                 placeholder="https://github.com/org/repo.git"
                 spellCheck={false}
               />
-              <input
-                aria-label="Branch or tag"
-                className="repo-ref"
-                value={d.ref}
-                disabled={disabled}
-                onChange={(e) => patch(d.key, { ref: e.target.value })}
-                placeholder="branch (optional)"
-                spellCheck={false}
-              />
+              <div className="repo-ref-account">
+                <input
+                  aria-label="Branch or tag"
+                  className="repo-ref"
+                  value={d.ref}
+                  disabled={disabled}
+                  onChange={(e) => patch(d.key, { ref: e.target.value })}
+                  placeholder="branch (optional)"
+                  spellCheck={false}
+                />
+                {accounts.length > 0 && <AccountSelect value={d.account} accounts={accounts} disabled={disabled} onChange={(account) => patch(d.key, { account })} />}
+              </div>
             </>
           ) : (
             <div className="input-row">
@@ -218,6 +273,11 @@ export function RepoChips({ session, onClick }: { session: Session; onClick: () 
             <SourceIcon source={r.source} size={12} />
             {r.name === WORKSPACE_ROOT_REPO ? "workspace" : r.name}
             {r.git?.branch && <span className="muted repo-branch">{r.git.branch}</span>}
+            {r.account && (
+              <span className="muted repo-account-chip" title={`git push and gh act as @${r.account} here`}>
+                {r.account}
+              </span>
+            )}
             {mark.text && <span className={mark.className}>{mark.text}</span>}
           </span>
         );
@@ -230,10 +290,23 @@ export function RepoChips({ session, onClick }: { session: Session; onClick: () 
  * The Session's repositories with their Git state, a remover per row (asking twice when the
  * repository holds work that is nowhere else) and a form to add one to the running Sandbox.
  */
-export function ReposDialog({ session, onClose }: { session: Session; onClose: () => void }) {
+export function ReposDialog({ session, accounts, onClose }: { session: Session; accounts: string[]; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState<RepoDraft[]>([]);
+
+  const rebind = async (repo: SessionRepo, account: string | null | undefined) => {
+    if (account === undefined) return;
+    setBusy(repo.id);
+    setError(null);
+    try {
+      await api.updateRepo(session.id, repo.id, { account });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -312,6 +385,23 @@ export function ReposDialog({ session, onClose }: { session: Session; onClose: (
                 <span className={`repo-state ${mark.className}`} title={mark.title}>
                   {r.status === "pending" ? "cloning / copying\u2026" : r.status === "error" ? (r.error ?? "failed") : (state ?? "ready")}
                 </span>
+                {r.source.type === "git" && (accounts.length > 0 || r.account) && (
+                  <select
+                    aria-label={`GitHub account for ${r.name}`}
+                    className="repo-account"
+                    title="GitHub login git push and gh act as inside this repository"
+                    value={r.account ?? NO_ACCOUNT}
+                    disabled={busy !== null}
+                    onChange={(e) => void rebind(r, e.target.value === NO_ACCOUNT ? null : e.target.value)}
+                  >
+                    {(r.account && !accounts.includes(r.account) ? [...accounts, r.account] : accounts).map((a) => (
+                      <option key={a} value={a}>
+                        @{a}
+                      </option>
+                    ))}
+                    <option value={NO_ACCOUNT}>Active login (no binding)</option>
+                  </select>
+                )}
                 {r.name !== WORKSPACE_ROOT_REPO && (
                   <button
                     type="button"
@@ -349,7 +439,7 @@ export function ReposDialog({ session, onClose }: { session: Session; onClose: (
               void add();
             }}
           >
-            <RepoEditor drafts={adding} onChange={setAdding} disabled={busy !== null} compact />
+            <RepoEditor drafts={adding} onChange={setAdding} disabled={busy !== null} compact accounts={accounts} />
             {addError && adding.length > 0 && draftName(adding[0]!) !== "" && <p className="warn">{addError}</p>}
             <div className="actions">
               <button type="button" disabled={busy !== null} onClick={() => setAdding([])}>

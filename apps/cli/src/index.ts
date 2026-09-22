@@ -53,6 +53,8 @@ Options for new:
       --name <n>         Directory name instead (repeatable; applies to the --git ones in order,
                          then to the directories)
       --ref <r>          Branch or tag for a --git without an @ref (one --git only)
+      --as <login>       GitHub account git and gh act as in that repository (repeatable; applies
+                         to the --git ones in order; default: picked among the Session's logins)
   -t, --title <title>    Session title (defaults to the first prompt / directory name)
   -p, --prompt <text>    First prompt, sent once the Sandbox is ready
       --provider <id>    Provider: ${PROVIDERS.join(" | ")} (default claude-code)
@@ -154,6 +156,7 @@ async function newSession(args: string[]): Promise<void> {
       git: { type: "string", multiple: true },
       ref: { type: "string" },
       name: { type: "string", multiple: true },
+      as: { type: "string", multiple: true },
       empty: { type: "boolean", default: false },
       title: { type: "string", short: "t" },
       prompt: { type: "string", short: "p" },
@@ -188,6 +191,12 @@ async function newSession(args: string[]): Promise<void> {
   names.forEach((name, i) => {
     const spec = repos[i];
     if (spec) spec.name = name;
+  });
+  const accounts = values.as ?? [];
+  if (accounts.length > gits.length) throw new CliError("new: more --as than --git repositories");
+  accounts.forEach((account, i) => {
+    const spec = repos[i];
+    if (spec) spec.account = account;
   });
 
   const provider = Provider.safeParse(values.provider);

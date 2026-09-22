@@ -283,6 +283,7 @@ export class Db {
         status: "ready",
         error: null,
         git: null,
+        account: null,
         createdAt: r.created_at,
       };
       update.run(JSON.stringify([repo]), r.id);

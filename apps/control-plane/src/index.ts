@@ -12,6 +12,7 @@ import {
   AskRequest,
   AttachPrRequest,
   AddRepoRequest,
+  UpdateRepoRequest,
   AuthLoginRequest,
   AuthPairRedeemRequest,
   PAIR_FRAGMENT_KEY,
@@ -398,6 +399,10 @@ api.post("/sessions/:id/fork", async (c) => {
 api.post("/sessions/:id/repos", async (c) => {
   const req = AddRepoRequest.parse(await c.req.json());
   return c.json(await sessions.addRepo(c.req.param("id"), req), 201);
+});
+api.patch("/sessions/:id/repos/:repoId", async (c) => {
+  const req = UpdateRepoRequest.parse(await c.req.json());
+  return c.json(await sessions.updateRepo(c.req.param("id"), c.req.param("repoId"), req));
 });
 api.delete("/sessions/:id/repos/:repoId", async (c) => {
   const force = c.req.query("force") === "1" || c.req.query("force") === "true";

@@ -1,0 +1,19 @@
+#!/bin/sh
+# gh, acting as the GitHub login the current repository is bound to (git config
+# sessionboxer.githubAccount, set by the Sandbox Daemon) unless a token is already given through
+# the environment. `gh auth ...` (status, switch, login, git-credential) is left to gh itself.
+GH_REAL=/usr/bin/gh
+case "$1" in
+  auth | "" | -* ) exec "$GH_REAL" "$@" ;;
+esac
+if [ -z "$GH_TOKEN" ] && [ -z "$GITHUB_TOKEN" ]; then
+  account=$(git config --get sessionboxer.githubAccount 2>/dev/null || true)
+  if [ -n "$account" ]; then
+    if ! token=$("$GH_REAL" auth token --hostname github.com --user "$account" 2>/dev/null) || [ -z "$token" ]; then
+      echo "gh: this repository is bound to @$account but gh is not logged in as it (see gh auth status; enable that GitHub entry for the Session)" >&2
+      exit 1
+    fi
+    GH_TOKEN="$token" exec "$GH_REAL" "$@"
+  fi
+fi
+exec "$GH_REAL" "$@"

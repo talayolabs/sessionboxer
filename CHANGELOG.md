@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- One GitHub account per repository: with several GitHub entries connected, each git repository
+  of a session gets an **Account** dropdown (New Session, repository dialog, `sessionboxer new
+  --git <url> --as <login>`), *auto* by default — the account that can push to the repository,
+  else the one that can see it. The repository is cloned as that account and, inside its
+  directory, `git push`/`fetch` and every `gh` command act as it regardless of the box's active
+  `gh` login (the directory's git config names the login, never a token); the header chip shows
+  *as @login*, the briefing and `repos.json` carry it, PR watching / actions / auto-merge on that
+  repository prefer it. Rebind or unbind at any time. Needs an image rebuild (ADR-0041).
 - Several repositories per session: list git URLs and host folders when creating a session
   (or with `sessionboxer new --git <url>[@ref] ... [dir...]`), each cloned or copied into
   `/workspace/<name>`; add and remove repositories from a running session (removal refuses while

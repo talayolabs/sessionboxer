@@ -148,7 +148,10 @@ export class PullRequests {
       url: `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`,
       attachedBy,
     });
-    this.deps.log(`pr ${s.id}: attached ${ref.owner}/${ref.repo}#${ref.number} (${attachedBy})`);
+    // A repository bound to a login is read (and merged) as that login first; polling still falls back to the others.
+    const bound = this.repoAccount(s, ref);
+    if (bound !== null) this.deps.db.prs.updateMeta(pr.id, { viaAccount: bound });
+    this.deps.log(`pr ${s.id}: attached ${ref.owner}/${ref.repo}#${ref.number} (${attachedBy}${bound !== null ? `, as @${bound}` : ""})`);
     this.broadcastPrs(s.id);
     return pr;
   }
@@ -660,6 +663,15 @@ export class PullRequests {
         throw new HttpError(400, `This Session has ${repos.length} GitHub repositories; say which one (owner/repo#${m[1]} or the full URL).`);
       }
       return { ...repos[0]!, number: Number(m[1]) };
+    }
+    return null;
+  }
+
+  /** The login a Workspace repository of `ref`'s GitHub repository is bound to, if any. */
+  private repoAccount(s: Session, ref: { owner: string; repo: string }): string | null {
+    for (const r of s.repos) {
+      const gh = r.source.type === "git" ? parseGitHubRepo(r.source.url) : null;
+      if (gh && r.account !== null && gh.owner.toLowerCase() === ref.owner.toLowerCase() && gh.repo.toLowerCase() === ref.repo.toLowerCase()) return r.account;
     }
     return null;
   }

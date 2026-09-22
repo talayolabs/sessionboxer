@@ -77,7 +77,8 @@ function run(
   stdin: string | null,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    // Outside every repository: the account is chosen here, not by a directory's binding.
+    const child = spawn(cmd, args, { env, cwd: "/", stdio: ["pipe", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let size = 0;

@@ -22,10 +22,13 @@ export interface ClonePlan {
  * Bitbucket entry does the same for its Data Center host through `bb auth git-credential`:
  * `ssh://git@host:7999/KEY/slug.git` becomes `https://host/scm/KEY/slug.git`.
  */
-export function planClone(url: string, credentials: BoxCredential[]): ClonePlan {
+export function planClone(url: string, credentials: BoxCredential[], account: string | null = null): ClonePlan {
   const trimmed = url.trim();
   const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0" };
-  const github = credentials.find((c) => c.kind === "github") ?? null;
+  const github = credentials.find((c) => c.kind === "github" && (account === null || c.account === account)) ?? null;
+  if (account !== null && github === null && isGitHubUrl(trimmed)) {
+    throw new Error(`@${account} is bound to this repository but no enabled GitHub entry of this Session is logged in as it.`);
+  }
   const ssh = GITHUB_SSH.exec(trimmed);
   if (ssh || GITHUB_HTTPS.test(trimmed)) {
     if (github === null) {
@@ -59,6 +62,11 @@ export function planClone(url: string, credentials: BoxCredential[]): ClonePlan 
     );
   }
   return { url: httpsUrl, env, account: null };
+}
+
+export function isGitHubUrl(url: string): boolean {
+  const trimmed = url.trim();
+  return GITHUB_SSH.test(trimmed) || GITHUB_HTTPS.test(trimmed);
 }
 
 /** Adds the likely cause to git's own error when an HTTPS clone of a known host failed without a login. */

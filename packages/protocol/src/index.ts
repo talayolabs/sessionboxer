@@ -79,8 +79,18 @@ export const RepoSpec = z.object({
   /** Directory name under `/workspace`; omitted derives one from the source (last URL segment / folder name). */
   name: RepoName.optional(),
   source: RepoSource,
+  /**
+   * GitHub login (of a connected GitHub entry) git and `gh` act as inside this repository's
+   * directory. Omitted picks one for a github.com URL among the accounts enabled for the Session
+   * (the one that can push to it, else the one that can see it); `null` binds none.
+   */
+  account: z.string().min(1).nullable().optional(),
 });
 export type RepoSpec = z.infer<typeof RepoSpec>;
+
+/** Changes the account a repository is bound to (`null` unbinds it: git and `gh` fall back to the Session's active login). */
+export const UpdateRepoRequest = z.object({ account: z.string().min(1).nullable() });
+export type UpdateRepoRequest = z.infer<typeof UpdateRepoRequest>;
 
 export const REPO_STATUSES = ["pending", "ready", "error"] as const;
 export const RepoStatus = z.enum(REPO_STATUSES);
@@ -114,6 +124,8 @@ export const SessionRepo = z.object({
   error: z.string().nullable().default(null),
   /** Last git inspection (after cloning, at every turn end, on request); `null` before the first one. */
   git: RepoGitState.nullable().default(null),
+  /** GitHub login bound to the directory (`git push` and `gh` there act as it); `null` when none is. */
+  account: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type SessionRepo = z.infer<typeof SessionRepo>;
@@ -162,6 +174,8 @@ export const ReposManifestEntry = z.object({
   /** Absolute path in the Sandbox. */
   path: z.string(),
   source: RepoSource,
+  /** GitHub login `git push` and `gh` use inside this directory; `null` for the Session's active login. */
+  account: z.string().nullable().default(null),
 });
 export type ReposManifestEntry = z.infer<typeof ReposManifestEntry>;
 
@@ -1962,7 +1976,7 @@ export const DAEMON_METHODS = {
 
 /** Control Plane → Daemon: the Workspace's repositories; the Daemon writes `REPOS_MANIFEST_PATH` from them for the Agent. */
 export const DaemonReposSetParams = z.object({
-  repos: z.array(z.object({ name: z.string().min(1), source: RepoSource })),
+  repos: z.array(z.object({ name: z.string().min(1), source: RepoSource, account: z.string().nullable().default(null) })),
 });
 export type DaemonReposSetParams = z.infer<typeof DaemonReposSetParams>;
 

@@ -357,8 +357,13 @@ export function providerSetupHint(provider: Provider): string {
 
 /** Secret values leave as `null` (set) or `""` (empty); the UI sends `null` back to keep them. */
 export function toPublicMcpServer(def: McpServerDef): PublicMcpServerDef {
-  const hide = (kv: McpKeyValue): PublicMcpKeyValue => ({ ...kv, value: kv.secret && kv.value !== "" ? null : kv.value });
-  return { ...def, env: def.env.map(hide), headers: def.headers.map(hide) };
+  const tokenHeader = def.connector ? CONNECTORS[def.connector.kind].tokenHeader : null;
+  const hide = (kv: McpKeyValue, secret = kv.secret): PublicMcpKeyValue => ({ ...kv, secret, value: secret && kv.value !== "" ? null : kv.value });
+  return {
+    ...def,
+    env: def.env.map((kv) => hide(kv)),
+    headers: def.headers.map((kv) => hide(kv, kv.secret || kv.name === tokenHeader)),
+  };
 }
 
 /** The whole registry as sent by the UI, with `null` secrets filled from what is stored. */
@@ -447,6 +452,20 @@ export function rewriteHostUrl(url: string): string {
 /** Ids of the registry entries a new Session starts with when the request does not say. */
 export function defaultMcpEnabled(settings: Settings): string[] {
   return settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id);
+}
+
+/**
+ * `enabled` plus the GitHub entry logged in as each of `accounts` (a repository bound to an
+ * account needs its token in the Sandbox); throws for a login no entry has.
+ */
+export function withGitHubAccounts(settings: Settings, enabled: string[], accounts: string[]): string[] {
+  const out = [...enabled];
+  for (const account of new Set(accounts)) {
+    const entries = settings.mcpServers.filter((s) => s.connector?.kind === "github" && s.connector.account === account);
+    if (entries.length === 0) throw new Error(`No GitHub entry is logged in as @${account} (Settings → MCP servers).`);
+    if (!entries.some((e) => out.includes(e.id))) out.push(entries[0]!.id);
+  }
+  return out;
 }
 
 /** Keeps only ids that still exist in the registry. */

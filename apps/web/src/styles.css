@@ -518,6 +518,12 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .repo-chip > span, .repo-chip > svg { flex: none; }
 .repo-chip .repo-branch { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .repo-chip .repo-branch::before { content: "@"; }
+.repo-chip .repo-account-chip { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.repo-chip .repo-account-chip::before { content: "as "; }
+.repo-row .repo-ref-account { display: flex; gap: 6px; min-width: 0; }
+.repo-row .repo-ref-account .repo-ref { flex: 1 1 auto; min-width: 0; }
+.repo-account { max-width: 190px; font-size: 12.5px; }
+.repo-list li .repo-account { flex: none; }
 .repo-chips:hover .repo-chip { border-color: var(--accent); }
 .repo-chip.repo-pending { opacity: 0.6; }
 .repo-chip.repo-error { border-color: var(--error); }

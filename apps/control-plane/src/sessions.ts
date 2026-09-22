@@ -4,6 +4,8 @@ import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
   AskResult,
+  type BoxCredential,
+  type UpdateRepoRequest,
   type CompactionDetails,
   type CompactionDetailsRequest,
   type ContextBreakdown,
@@ -92,7 +94,9 @@ import {
   resolveBoxCredentials,
   resolveGitIdentity,
   resolveMcpServers,
+  withGitHubAccounts,
 } from "./config.js";
+import { pickGitHubAccount } from "./github-account.js";
 import { parseContextReport } from "./context-report.js";
 import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
@@ -336,14 +340,27 @@ export class SessionManager {
 
   // --- Repositories (`/workspace/<name>`) --------------------------------------
 
+  /** The Session's MCP set with the GitHub entries the repositories' explicit accounts need turned on (400 for an unknown login). */
+  private mcpEnabledFor(settings: Settings, enabled: string[], specs: RepoSpec[]): string[] {
+    const accounts = specs.flatMap((r) => (r.account ? [r.account] : []));
+    try {
+      return withGitHubAccounts(settings, enabled, accounts);
+    } catch (e) {
+      throw new HttpError(400, e instanceof Error ? e.message : String(e));
+    }
+  }
+
   /**
    * Turns requested repositories into Session records: host folders resolved, names derived from
-   * the source when not given and made unique (`api`, `api-2`, ...) against `taken`.
+   * the source when not given and made unique (`api`, `api-2`, ...) against `taken`, the GitHub
+   * account to act as picked among `credentials` (the Session's) when the spec leaves it open.
    */
-  private async normalizeRepos(specs: RepoSpec[], taken: SessionRepo[]): Promise<SessionRepo[]> {
+  private async normalizeRepos(specs: RepoSpec[], taken: SessionRepo[], credentials: BoxCredential[]): Promise<SessionRepo[]> {
     const names = new Set(taken.map((r) => r.name.toLowerCase()));
     const out: SessionRepo[] = [];
     for (const spec of specs) {
+      const account =
+        spec.account !== undefined ? spec.account : spec.source.type === "git" ? await pickGitHubAccount(spec.source.url, credentials) : null;
       let source = spec.source;
       if (source.type === "copy") {
         try {
@@ -368,13 +385,14 @@ export class SessionManager {
         status: "pending",
         error: null,
         git: null,
+        account,
         createdAt: new Date().toISOString(),
       });
     }
     return out;
   }
 
-  private patchRepo(id: string, repoId: string, patch: Partial<Pick<SessionRepo, "status" | "error" | "git">>): void {
+  private patchRepo(id: string, repoId: string, patch: Partial<Pick<SessionRepo, "status" | "error" | "git" | "account">>): void {
     const s = this.db.getSession(id);
     if (!s) return;
     this.update(id, { repos: s.repos.map((r) => (r.id === repoId ? { ...r, ...patch } : r)) });
@@ -387,7 +405,7 @@ export class SessionManager {
     const source = repo.source;
     if (dir !== "") await this.docker.exec(containerId, ["mkdir", "-p", "--", target], "/workspace", "agent");
     if (source.type === "git") {
-      const plan = planClone(source.url, resolveBoxCredentials(settings, session.settings.mcpEnabled));
+      const plan = planClone(source.url, resolveBoxCredentials(settings, session.settings.mcpEnabled), repo.account);
       const args = ["git", "clone", "--", plan.url, "."];
       if (source.ref) args.splice(2, 0, "--branch", source.ref);
       this.log(`cloning ${plan.url} into ${containerId.slice(0, 12)}:${target}${plan.account !== null ? ` as @${plan.account}` : ""}`);
@@ -441,7 +459,7 @@ export class SessionManager {
     const s = this.db.getSession(id);
     if (!s) return;
     const params: DaemonReposSetParams = {
-      repos: s.repos.filter((r) => r.status === "ready").map((r) => ({ name: r.name, source: r.source })),
+      repos: s.repos.filter((r) => r.status === "ready").map((r) => ({ name: r.name, source: r.source, account: r.account })),
     };
     try {
       await this.daemonCall(id, DAEMON_METHODS.reposSet, params);
@@ -489,10 +507,13 @@ export class SessionManager {
     }
     this.repoWork.add(id);
     try {
-      const [repo] = await this.normalizeRepos([spec], s.repos);
+      const settings = this.settings();
+      const mcpEnabled = this.mcpEnabledFor(settings, s.settings.mcpEnabled, [spec]);
+      if (mcpEnabled.length !== s.settings.mcpEnabled.length) await this.edit(id, { settings: { mcpEnabled } });
+      const [repo] = await this.normalizeRepos([spec], s.repos, resolveBoxCredentials(settings, mcpEnabled));
       if (!repo) throw new HttpError(400, "nothing to add");
-      this.update(id, { repos: [...s.repos, repo] });
-      await this.seedRepos(s.containerId, s, this.settings(), [repo]);
+      this.update(id, { repos: [...this.get(id).repos, repo] });
+      await this.seedRepos(s.containerId, this.get(id), settings, [repo]);
       const added = this.db.getSession(id)?.repos.find((r) => r.id === repo.id);
       if (!added) throw new HttpError(404, "the Session went away");
       if (added.status === "error") {
@@ -503,11 +524,39 @@ export class SessionManager {
       await this.pushRepos(id);
       void this.refreshRepoStates(id);
       this.appendEvent(id, { type: "repo_changed", action: "added", name: added.name, source: added.source });
-      this.note(id, `Repository "${added.name}" was added to the Workspace at /workspace/${added.name} (${repoOriginLabel(added.source)}).`);
+      this.note(
+        id,
+        `Repository "${added.name}" was added to the Workspace at /workspace/${added.name} (${repoOriginLabel(added.source)}${added.account ? `; git and gh act as @${added.account} there` : ""}).`,
+      );
       return added;
     } finally {
       this.repoWork.delete(id);
     }
+  }
+
+  /**
+   * Binds a repository's directory to another GitHub login (or to none): the record changes right
+   * away and the Daemon rewrites the directory's git config when it gets the list.
+   */
+  async updateRepo(id: string, repoId: string, req: UpdateRepoRequest): Promise<SessionRepo> {
+    const s = this.get(id);
+    const repo = s.repos.find((r) => r.id === repoId);
+    if (!repo) throw new HttpError(404, "no such repository in this Session");
+    if (req.account === repo.account) return repo;
+    const settings = this.settings();
+    const mcpEnabled = this.mcpEnabledFor(settings, s.settings.mcpEnabled, [{ source: repo.source, account: req.account }]);
+    if (mcpEnabled.length !== s.settings.mcpEnabled.length) await this.edit(id, { settings: { mcpEnabled } });
+    this.patchRepo(id, repoId, { account: req.account });
+    if (this.clients.has(id)) {
+      await this.pushRepos(id);
+      this.note(
+        id,
+        req.account
+          ? `Inside /workspace/${repo.name}, git and gh now act as @${req.account}.`
+          : `Inside /workspace/${repo.name}, git and gh now act as the Sandbox's active GitHub login (gh auth status).`,
+      );
+    }
+    return this.get(id).repos.find((r) => r.id === repoId)!;
   }
 
   /**
@@ -690,10 +739,11 @@ export class SessionManager {
     // Older clients send one `workspaceSource`; it becomes the Session's one repository.
     const legacy = req.workspaceSource;
     const specs: RepoSpec[] = req.repos ?? (legacy.type === "git" || legacy.type === "copy" ? [{ source: legacy }] : []);
-    const repos = await this.normalizeRepos(specs, []);
+    const input = createRequestSettings(req);
+    const mcpEnabled = this.mcpEnabledFor(settings, input.mcpEnabled ? knownMcpIds(settings, input.mcpEnabled) : defaultMcpEnabled(settings), specs);
+    const repos = await this.normalizeRepos(specs, [], resolveBoxCredentials(settings, mcpEnabled));
     const workspaceSource: WorkspaceSource = { type: "empty" };
     await this.docker.ensureImage();
-    const input = createRequestSettings(req);
     const dockerMode: DockerMode = (input.sandbox?.docker ?? settings.dockerInSandbox) ? await this.dockerModeAvailable() : "none";
 
     const id = randomBytes(6).toString("hex");
@@ -709,7 +759,7 @@ export class SessionManager {
         model: input.model ?? null,
         options: input.options ?? {},
         inspectLlm: req.provider === "claude-code" && (input.inspectLlm ?? false),
-        mcpEnabled: input.mcpEnabled ? knownMcpIds(settings, input.mcpEnabled) : defaultMcpEnabled(settings),
+        mcpEnabled,
         instructions: (input.instructions ?? settings.instructions).trim(),
         autoSnapshot: input.autoSnapshot ?? null,
         snapshotKeep: input.snapshotKeep ?? null,

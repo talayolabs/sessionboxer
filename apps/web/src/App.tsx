@@ -63,7 +63,7 @@ import {
   type SessionSettingsDraft,
 } from "./SessionSettingsForm";
 import { SnapshotsDialog } from "./SnapshotsDialog";
-import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, type RepoDraft } from "./Repos";
+import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
@@ -1143,7 +1143,7 @@ function SessionView({
       {inspecting && <CompactionDialog session={session} compaction={inspecting.compaction} index={inspecting.index} onClose={() => setInspecting(null)} />}
       {inspectingCall && <LlmCallDialog session={session} call={inspectingCall} calls={llmCalls} onClose={() => setInspectingCall(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
-      {reposOpen && <ReposDialog session={session} onClose={() => setReposOpen(false)} />}
+      {reposOpen && <ReposDialog session={session} accounts={githubAccounts(settings)} onClose={() => setReposOpen(false)} />}
       {forkFrom && settings && (
         <ForkDialog
           session={session}
@@ -1350,7 +1350,7 @@ function NewSession({
       )}
       <fieldset className="choice">
         <legend>Repositories (each goes to <code>/workspace/&lt;name&gt;</code> in the Sandbox; more can be added or removed later)</legend>
-        <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} />
+        <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} accounts={githubAccounts(settings)} />
         {repos.some((d) => d.type === "copy") && (
           <p className="muted">
             A host folder is copied (tracked + untracked-but-not-ignored files and <code>.git</code>); changes can be pulled back into it from the Session

@@ -44,6 +44,13 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .warn { color: var(--warn); }
 .spacer { flex: 1; }
 
+/* Thin scrollbars: the panes scroll constantly, and the platform default draws a wide light bar over dark UI. */
+* { scrollbar-width: thin; scrollbar-color: #3a4150 transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3a4150; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #4b5366; background-clip: content-box; }
+
 .app { display: grid; grid-template-columns: 290px 1fr; height: 100%; min-height: 0; }
 /* Header actions sit directly in the header's flex row on a desktop; on a phone the same element is a sheet. */
 .session-actions { display: contents; }
@@ -51,6 +58,10 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .chat[hidden] { display: none; }
 
 .sidebar { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--border); }
+.app.sidebar-collapsed { grid-template-columns: 0 1fr; }
+.app.sidebar-collapsed .sidebar { display: none; }
+.sidebar-hide { padding: 2px 8px; }
+.sidebar-show { position: fixed; top: 10px; left: 8px; z-index: 5; padding: 2px 8px; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand img { width: 24px; height: 24px; }
@@ -367,6 +378,8 @@ li.expanded .saved-text { white-space: normal; }
 .panel label.check input { width: auto; margin: 0; flex: none; }
 .panel .banner { border: 1px solid var(--border); border-radius: 6px; cursor: default; line-height: 1.4; }
 .panel .actions { display: flex; gap: 10px; justify-content: flex-end; }
+/* Save stays reachable: Settings is long enough that it would otherwise sit far below the fold. */
+.panel > .actions { position: sticky; bottom: 0; padding: 10px 0; margin-top: -10px; background: var(--bg); }
 .panel fieldset.choice { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
 .panel fieldset.choice legend { color: var(--muted); padding: 0 4px; }
 .choice-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }

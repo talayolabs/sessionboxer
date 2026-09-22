@@ -43,7 +43,13 @@ export function SavedMessages({
           <span className="chev">{open ? "\u25be" : "\u25b8"}</span>
           Saved for later ({messages.length})
         </button>
-        {queueRunning && <span className="saved-status">Playing queue: next one is sent when the Agent finishes</span>}
+        <span className={queueRunning ? "saved-status" : "saved-status held"}>
+          {queueRunning
+            ? "Playing queue: next one is sent when the Agent finishes"
+            : messages.length > 0
+              ? "Held here: nothing is sent until you press Play all (or Send on one)"
+              : ""}
+        </span>
         <span className="spacer" />
         {queueRunning ? (
           <button type="button" className="small" title="Stop after the current turn" onClick={() => onQueueToggle(false)}>

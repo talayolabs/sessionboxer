@@ -295,6 +295,15 @@ li.expanded .saved-text { white-space: normal; }
 .selection-tip::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; transform: translateX(-50%) rotate(45deg); background: var(--panel); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .selection-tip .small { padding: 2px 8px; font-size: 12px; }
 .selection-tip .error { color: var(--error); font-size: 12px; max-width: 320px; white-space: normal; }
+.toolbar .tb.mic { gap: 4px; }
+.toolbar .tb.mic.rec { color: #fff; background: var(--error); border-color: var(--error); }
+.toolbar .tb.mic.rec svg { animation: pulse 0.9s ease-in-out infinite alternate; }
+.toolbar .tb.mic.busy { color: var(--muted); }
+.mic-time { font-size: 11px; font-variant-numeric: tabular-nums; }
+.dictation-line { flex: none; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); padding: 0 2px; }
+.dictation-line.error { color: var(--error); }
+.rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--error); animation: pulse 0.9s ease-in-out infinite alternate; }
+.speech-assets .row { flex-wrap: wrap; }
 .composer-footer { flex: none; display: flex; align-items: center; gap: 10px; }
 .composer-footer .hint { font-size: 12px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-footer .model-select, .composer-footer .ctx-gauge, .composer-footer button { flex: none; white-space: nowrap; }

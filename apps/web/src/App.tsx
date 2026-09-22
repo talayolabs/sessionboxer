@@ -8,6 +8,8 @@ import {
   PROVIDERS,
   PROVIDER_LABELS,
   ROOT_BRANCH_ID,
+  SPEECH_MODELS,
+  SPEECH_MODEL_INFO,
   branchScope,
   inBranchScope,
   sessionRoute,
@@ -29,6 +31,8 @@ import {
   type SessionEvent,
   type SessionStatus,
   type Snapshot,
+  type SpeechModel,
+  type SpeechStatus,
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
 import { SIDEBAR_MAX_PX, SIDEBAR_MIN_PX, PANE_MAX_FRAC, PANE_MIN_FRAC, clampPane, clampSidebar, loadSize, saveSize, startSplitterDrag } from "./splitter";
@@ -1439,6 +1443,86 @@ function parseAliasList(text: string): string[] {
   return [...new Set(text.split(/[\s,]+/).map((s) => s.trim()).filter((s) => s.length > 0))];
 }
 
+/** What is on disk for dictation (whisper-cli and models), with a download-now button and per-model removal. */
+function SpeechAssets({ selected, saved }: { selected: SpeechModel; saved: SpeechModel }) {
+  const [status, setStatus] = useState<SpeechStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const refresh = useCallback(() => {
+    api.speechStatus().then(setStatus, (e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+  useEffect(refresh, [refresh]);
+  const downloading = status !== null && (status.engine.state === "downloading" || status.model.state === "downloading");
+  useEffect(() => {
+    if (!downloading && !working) return;
+    const timer = setInterval(refresh, 1000);
+    return () => clearInterval(timer);
+  }, [downloading, working, refresh]);
+  const prepare = async () => {
+    setWorking(true);
+    setError(null);
+    try {
+      setStatus(await api.speechPrepare());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWorking(false);
+      refresh();
+    }
+  };
+  const remove = async (model: SpeechModel) => {
+    setError(null);
+    try {
+      await api.speechDeleteModel(model);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    refresh();
+  };
+  if (!status) return error ? <p className="error">{error}</p> : <p className="muted">Checking what is downloaded…</p>;
+  const engine =
+    status.engine.state === "ready"
+      ? `whisper-cli ${status.engine.version ?? ""} ready`
+      : status.engine.state === "downloading"
+        ? "downloading whisper-cli…"
+        : status.engine.state === "error"
+          ? `whisper-cli: ${status.engine.error ?? "unavailable"}`
+          : "whisper-cli not downloaded yet";
+  const model =
+    status.model.state === "ready"
+      ? `model ${status.model.name} ready`
+      : status.model.state === "downloading"
+        ? `downloading model ${status.model.name}… ${status.model.total > 0 ? Math.floor((100 * status.model.received) / status.model.total) : 0}%`
+        : status.model.state === "error"
+          ? `model ${status.model.name}: ${status.model.error ?? "failed"}`
+          : `model ${status.model.name} not downloaded yet (${formatMb(SPEECH_MODEL_INFO[status.model.name].bytes)})`;
+  const ready = status.engine.state === "ready" && status.model.state === "ready";
+  return (
+    <div className="speech-assets">
+      <p className={status.engine.state === "error" || status.model.state === "error" ? "error" : "muted"}>
+        {engine} · {model}
+        {status.busy > 0 && ` · transcribing ${status.busy} clip${status.busy === 1 ? "" : "s"}`}
+      </p>
+      <div className="row">
+        {!ready && (
+          <button type="button" className="small" disabled={working || downloading} onClick={() => void prepare()}>
+            {downloading || working ? "Downloading…" : "Download now"}
+          </button>
+        )}
+        {selected !== saved && <span className="muted">Save to switch to {SPEECH_MODEL_INFO[selected].label}; it is downloaded on the first dictation.</span>}
+        {status.downloaded
+          .filter((m) => m !== status.model.name)
+          .map((m) => (
+            <button key={m} type="button" className="small" title={`Delete ggml-${m}.bin from this machine`} onClick={() => void remove(m)}>
+              Delete {SPEECH_MODEL_INFO[m].label} ({formatMb(SPEECH_MODEL_INFO[m].bytes)})
+            </button>
+          ))}
+      </div>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
 function SettingsView({
   settings,
   onSaved,
@@ -1468,6 +1552,8 @@ function SettingsView({
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [narrationMode, setNarrationMode] = useState<NarrationMode>(settings.recordingNarration.mode);
+  const [speechModel, setSpeechModel] = useState<SpeechModel>(settings.speech.model);
+  const [speechLanguage, setSpeechLanguage] = useState(settings.speech.language);
   const [narrationAskAbove, setNarrationAskAbove] = useState(String(settings.recordingNarration.askAboveSeconds));
   const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
   const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
@@ -1493,6 +1579,7 @@ function SettingsView({
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         recordingNarration: { mode: narrationMode, askAboveSeconds: Math.max(0, Number(narrationAskAbove) || 0) },
+        speech: { model: speechModel, language: speechLanguage },
         mcpServers,
         claudeModels: parseAliasList(claudeModels),
         instructions,
@@ -1727,6 +1814,49 @@ function SettingsView({
             </label>
           )}
         </div>
+      </fieldset>
+      <fieldset className="choice">
+        <legend>Dictation</legend>
+        <p className="muted">
+          The microphone button in the composer records a clip in the browser and whisper.cpp transcribes it on this machine, offline: nothing leaves
+          it (phones paired through a tunnel send the clip here). whisper-cli and the model are downloaded once, on first use or with the button below.
+        </p>
+        <div className="row">
+          <label>
+            Model
+            <select value={speechModel} onChange={(e) => setSpeechModel(e.target.value as SpeechModel)}>
+              {SPEECH_MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {SPEECH_MODEL_INFO[m].label} ({formatMb(SPEECH_MODEL_INFO[m].bytes)}) — {SPEECH_MODEL_INFO[m].note}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Language
+            <select value={speechLanguage} onChange={(e) => setSpeechLanguage(e.target.value)}>
+              <option value="auto">Detect (slower, one language per clip)</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="pt">Portuguese</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="it">Italian</option>
+              <option value="ca">Catalan</option>
+              <option value="nl">Dutch</option>
+              <option value="pl">Polish</option>
+              <option value="ru">Russian</option>
+              <option value="uk">Ukrainian</option>
+              <option value="tr">Turkish</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese</option>
+              <option value="ko">Korean</option>
+              <option value="hi">Hindi</option>
+              <option value="ar">Arabic</option>
+            </select>
+          </label>
+        </div>
+        <SpeechAssets selected={speechModel} saved={settings.speech.model} />
       </fieldset>
       <fieldset className="choice">
         <legend>TLS certificates in Sandboxes</legend>

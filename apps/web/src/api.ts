@@ -43,7 +43,10 @@ import type {
   SessionBroadcast,
   SessionEvent,
   Snapshot,
+  SpeechModel,
+  SpeechStatus,
   SwitchBranchRequest,
+  Transcription,
   SyncPlan,
   SyncRequest,
   SyncResult,
@@ -99,6 +102,12 @@ export const api = {
   options: () => request<ProviderOptions>("/options"),
   updateSettings: (update: UpdateSettingsRequest) =>
     request<PublicSettings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
+  speechStatus: () => request<SpeechStatus>("/speech"),
+  speechPrepare: () => request<SpeechStatus>("/speech/prepare", { method: "POST" }),
+  speechDeleteModel: (model: SpeechModel) => request<void>(`/speech/models/${model}`, { method: "DELETE" }),
+  /** `wav`: 16 kHz mono PCM. Includes first-use downloads of whisper-cli and the model, so poll `speechStatus` for progress. */
+  transcribe: (wav: Blob, signal?: AbortSignal) =>
+    request<Transcription>("/speech/transcribe", { method: "POST", body: wav, headers: { "content-type": "audio/wav" }, signal }),
   tunnelServer: (server?: string) =>
     request<{ server: string; info: TunnelServerInfo; name: string }>(`/tunnels/sessionboxer/server${server ? `?server=${encodeURIComponent(server)}` : ""}`),
   tunnelName: (name: string, server?: string) =>

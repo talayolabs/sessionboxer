@@ -37,6 +37,9 @@ import {
   QueueRequest,
   UiClientMessage,
   SaveMessageRequest,
+  SPEECH_CLIP_MAX_BYTES,
+  SPEECH_LANGUAGE_PATTERN,
+  SpeechModel,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
   UpdateSettingsRequest,
@@ -76,6 +79,7 @@ import { HostDirError, listHostDir } from "./host-dir.js";
 import { banner, log } from "./log.js";
 import { PushNotifier } from "./push.js";
 import { HttpError, SessionManager } from "./sessions.js";
+import { deleteModel, Speech } from "./speech.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
 import { checkTunnelName, tunnelName, tunnelServerInfo } from "./tunnel-frp.js";
 import { Tunnels } from "./tunnels.js";
@@ -221,6 +225,24 @@ api.put("/settings", async (c) => {
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
   return c.json(await publicSettings());
+});
+
+/** Speech to text: the browser posts a 16 kHz mono WAV clip, whisper.cpp on this machine answers with the text. */
+const speech = new Speech(log);
+api.get("/speech", async (c) => c.json(await speech.status(settings.speech)));
+api.post("/speech/prepare", async (c) => c.json(await speech.prepare(settings.speech)));
+api.post("/speech/transcribe", async (c) => {
+  const tooLarge = new HttpError(413, `The clip is larger than ${Math.round(SPEECH_CLIP_MAX_BYTES / 1024 / 1024)} MB.`);
+  if (Number(c.req.header("content-length") ?? 0) > SPEECH_CLIP_MAX_BYTES) throw tooLarge;
+  const wav = Buffer.from(await c.req.arrayBuffer());
+  if (wav.length > SPEECH_CLIP_MAX_BYTES) throw tooLarge;
+  const language = c.req.query("language")?.trim() ?? "";
+  if (language && !SPEECH_LANGUAGE_PATTERN.test(language)) throw new HttpError(400, "language must be a two-letter code or auto");
+  return c.json(await speech.transcribe(wav, settings.speech, language || null));
+});
+api.delete("/speech/models/:name", (c) => {
+  deleteModel(SpeechModel.parse(c.req.param("name")), settings.speech);
+  return c.body(null, 204);
 });
 
 /** What the configured (or given) Sessionboxer tunnel server says about itself, and the name this laptop would take there. */

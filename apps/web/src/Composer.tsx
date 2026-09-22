@@ -9,6 +9,7 @@ import { lowlight } from "./highlight";
 import { formatBytes } from "./format";
 import type { PendingAttachments } from "./attachments-pending";
 import { startSplitterDrag } from "./splitter";
+import { MAX_RECORDING_S, micSupport, startRecording, transcribe, type Recording } from "./speech";
 
 export type ComposerMode = "raw" | "rich";
 
@@ -141,7 +142,26 @@ const ICONS = {
   zen: "M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4",
   exitZen: "M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4",
   attach: "M10.5 4.5l-4.8 4.8a1.9 1.9 0 0 0 2.7 2.7l5.3-5.3a3.1 3.1 0 0 0-4.4-4.4L3.6 8a4.3 4.3 0 0 0 6.1 6.1L13 10.8",
+  mic: "M8 1.5a2.5 2.5 0 0 1 2.5 2.5v4a2.5 2.5 0 0 1-5 0V4A2.5 2.5 0 0 1 8 1.5zM3.5 8a4.5 4.5 0 0 0 9 0M8 12.5v2M5.5 14.5h5",
 };
+
+/** The mic button: idle, recording (tap again to transcribe), working (clip on its way / downloads / whisper), or the last failure. */
+type Dictation = { kind: "idle" } | { kind: "recording"; startedAt: number } | { kind: "working"; status: string } | { kind: "error"; message: string };
+
+const DICTATION_ERROR_MS = 8000;
+
+function clock(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function micError(e: unknown): string {
+  if (e instanceof DOMException) {
+    if (e.name === "NotAllowedError" || e.name === "SecurityError") return "Microphone access was denied; allow it for this site in the browser.";
+    if (e.name === "NotFoundError") return "No microphone was found.";
+    if (e.name === "NotReadableError") return "The microphone is in use by another application.";
+  }
+  return e instanceof Error ? e.message : String(e);
+}
 
 /** Files carried by a drag or a paste (`null` when there are none, e.g. plain text). */
 function droppedFiles(transfer: DataTransfer | null): File[] | null {
@@ -206,6 +226,89 @@ export function Composer(props: ComposerProps) {
   // readable until the next real selection (typing collapses the selection).
   const pinned = useRef({ translating: false, error: false });
   pinned.current = { translating, error: translateError !== null };
+  const [dictation, setDictation] = useState<Dictation>({ kind: "idle" });
+  const recordingRef = useRef<Recording | null>(null);
+  const [now, setNow] = useState(0);
+
+  /** Appends the transcript to the draft, after a space when the draft does not end in one. */
+  const appendText = useCallback(
+    (text: string) => {
+      if (mode === "rich" && editor) {
+        const chain = editor.chain().focus("end");
+        if (!editor.state.doc.textContent.endsWith(" ") && editor.state.doc.textContent.length > 0) chain.insertContent({ type: "text", text: " " });
+        chain.insertContent({ type: "text", text }).run();
+        return;
+      }
+      const cur = valueRef.current;
+      const next = cur.length === 0 || /\s$/.test(cur) ? cur + text : `${cur} ${text}`;
+      onChange(next);
+      const ta = textareaRef.current;
+      requestAnimationFrame(() => {
+        ta?.focus();
+        ta?.setSelectionRange(next.length, next.length);
+      });
+    },
+    [mode, editor, onChange],
+  );
+
+  const toggleDictation = useCallback(async () => {
+    const rec = recordingRef.current;
+    if (rec) {
+      recordingRef.current = null;
+      setDictation({ kind: "working", status: "Preparing the clip\u2026" });
+      try {
+        const wav = await rec.stop();
+        const result = await transcribe(wav, (status) => setDictation((d) => (d.kind === "working" ? { kind: "working", status } : d)));
+        if (result.text === "") {
+          setDictation({ kind: "error", message: "Nothing was understood in that clip." });
+          return;
+        }
+        appendText(result.text);
+        setDictation({ kind: "idle" });
+      } catch (e) {
+        setDictation({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+      return;
+    }
+    const support = micSupport();
+    if (!support.ok) {
+      setDictation({ kind: "error", message: support.reason });
+      return;
+    }
+    try {
+      recordingRef.current = await startRecording();
+      setDictation({ kind: "recording", startedAt: Date.now() });
+    } catch (e) {
+      setDictation({ kind: "error", message: micError(e) });
+    }
+  }, [appendText]);
+  const toggleDictationRef = useRef(toggleDictation);
+  toggleDictationRef.current = toggleDictation;
+
+  useEffect(() => {
+    if (dictation.kind !== "recording") return;
+    setNow(Date.now());
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() - dictation.startedAt >= MAX_RECORDING_S * 1000) void toggleDictationRef.current();
+    }, 500);
+    return () => clearInterval(timer);
+  }, [dictation]);
+
+  useEffect(() => {
+    if (dictation.kind !== "error") return;
+    const timer = setTimeout(() => setDictation((d) => (d.kind === "error" ? { kind: "idle" } : d)), DICTATION_ERROR_MS);
+    return () => clearTimeout(timer);
+  }, [dictation]);
+
+  // Leaving the Session mid-recording releases the microphone.
+  useEffect(
+    () => () => {
+      recordingRef.current?.cancel();
+      recordingRef.current = null;
+    },
+    [],
+  );
 
   const collapse = useCallback(() => {
     if (pinned.current.translating || pinned.current.error) return;
@@ -456,6 +559,18 @@ export function Composer(props: ComposerProps) {
           <button type="button" className="tb" title="Attach files (or drop / paste them here)" disabled={disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => fileInputRef.current?.click()}>
             <Icon d={ICONS.attach} />
           </button>
+          <button
+            type="button"
+            className={`tb mic${dictation.kind === "recording" ? " rec" : ""}${dictation.kind === "working" ? " busy" : ""}`}
+            title={dictation.kind === "recording" ? "Stop recording and transcribe" : "Dictate: tap to record, tap again to add the text (whisper.cpp on your machine)"}
+            aria-pressed={dictation.kind === "recording"}
+            disabled={disabled || dictation.kind === "working"}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void toggleDictation()}
+          >
+            <Icon d={ICONS.mic} />
+            {dictation.kind === "recording" && <span className="mic-time">{clock(Math.max(0, Math.floor((now - dictation.startedAt) / 1000)))}</span>}
+          </button>
           {TOOLS.map((t) => (
             <button
               key={t.id}
@@ -553,6 +668,20 @@ export function Composer(props: ComposerProps) {
               <button type="button" className="small" disabled={translating} onClick={() => void translate()} title="Ask the Session's Provider to translate the selection">
                 {translating ? "Translating\u2026" : "Translate to English"}
               </button>
+            )}
+          </div>
+        )}
+        {dictation.kind !== "idle" && (
+          <div className={`dictation-line${dictation.kind === "error" ? " error" : ""}`} role="status">
+            {dictation.kind === "recording" ? (
+              <>
+                <span className="rec-dot" aria-hidden="true" />
+                {"Recording\u2026 tap the microphone again to transcribe"}
+              </>
+            ) : dictation.kind === "working" ? (
+              dictation.status
+            ) : (
+              dictation.message
             )}
           </div>
         )}

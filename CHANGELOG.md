@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Dictation: a 🎤 button in the prompt box records a clip in the browser (tap to start, tap to
+  stop) and appends its transcription to the draft; nothing is sent by itself. Transcription runs
+  on the machine running Sessionboxer with whisper.cpp, offline — phones paired through a tunnel
+  send their clip there. `whisper-cli` (from this repository's `whisper-cpp-v*` Releases, built by
+  CI for Linux/macOS/Windows) and the model are downloaded once on first use, checksummed, into
+  `~/.sessionboxer/bin` and `~/.sessionboxer/models/whisper`. Settings → Dictation: model (`small`
+  by default; `tiny`, `base`, `medium (q5_0)`, `large-v3-turbo (q5_0)`), language (detect / a fixed
+  one), download ahead of time, delete models. New routes `GET /api/speech`, `POST
+  /api/speech/prepare`, `POST /api/speech/transcribe` (16 kHz mono WAV, 30 MB max), `DELETE
+  /api/speech/models/:name`, all behind the usual login (ADR-0042).
 - Draggable splitters on a desktop: the session list ↔ chat and chat ↔ pane (Desktop, Code,
   Terminal, Context, PRs) boundaries can be dragged; widths are remembered per browser and a
   double-click on a splitter resets one. Hiding the session list (`«`) no longer blanks the

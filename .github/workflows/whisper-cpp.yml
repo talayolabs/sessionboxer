@@ -1,0 +1,134 @@
+# Builds whisper.cpp's `whisper-cli` for the machines a Control Plane runs on and publishes the
+# archives as a GitHub Release of this repository, tagged `whisper-cpp-v<whisper.cpp version>`.
+# The Control Plane downloads the archive for its platform on the first use of speech-to-text
+# (apps/control-plane/src/speech.ts), the way it fetches frpc and cloudflared; upstream publishes
+# no Linux/macOS binaries of its own. The tag is independent of Sessionboxer's versions.
+#
+#   git tag whisper-cpp-v1.9.4 && git push origin whisper-cpp-v1.9.4
+#
+# Builds are static (one file, no shared ggml/libstdc++), CPU only on Linux/Windows with a
+# baseline any laptop of the last decade runs (x86-64: AVX2/FMA/F16C; arm64: armv8-a, so a
+# Raspberry Pi 4 works), Metal + Accelerate on Apple Silicon. Linux builds happen on Ubuntu 22.04
+# so the binary runs against glibc 2.35 and newer.
+name: whisper.cpp binaries
+
+on:
+  push:
+    tags: ["whisper-cpp-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "whisper.cpp version to build (its git tag without the v)"
+        required: true
+        default: "1.9.4"
+
+env:
+  WHISPER_REPO: https://github.com/ggml-org/whisper.cpp.git
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then v="${{ github.event.inputs.version }}"; else v="${GITHUB_REF_NAME#whisper-cpp-v}"; fi
+          case "$v" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "bad version '$v'" >&2; exit 1 ;; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+            container: ubuntu:22.04
+            cmake: -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_OPENMP=OFF -DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++\ -static-libgcc
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            container: ubuntu:22.04
+            cmake: -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++\ -static-libgcc
+          - target: darwin-arm64
+            runner: macos-15
+            cmake: -DGGML_NATIVE=OFF -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_OPENMP=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          - target: darwin-amd64
+            runner: macos-15-intel
+            cmake: -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_METAL=OFF -DGGML_OPENMP=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          - target: windows-amd64
+            runner: windows-2022
+            cmake: -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_OPENMP=OFF -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: Build tools (Linux container)
+        if: matrix.container != ''
+        run: |
+          set -eu
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git cmake g++ make tar gzip
+      - name: Clone whisper.cpp v${{ needs.version.outputs.version }}
+        shell: bash
+        run: git clone --depth 1 --branch "v${{ needs.version.outputs.version }}" "$WHISPER_REPO" whisper.cpp
+      - name: Configure and build whisper-cli
+        shell: bash
+        working-directory: whisper.cpp
+        run: |
+          set -eu
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_IS_DEV=OFF \
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_SDL2=OFF -DWHISPER_CURL=OFF \
+            ${{ matrix.cmake }}
+          cmake --build build --config Release --target whisper-cli -j 4
+      - name: Package
+        shell: bash
+        working-directory: whisper.cpp
+        run: |
+          set -eu
+          out="whisper-cli-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/$out"
+          if [ "${{ matrix.target }}" = "windows-amd64" ]; then bin="build/bin/Release/whisper-cli.exe"; else bin="build/bin/whisper-cli"; fi
+          cp "$bin" "dist/$out/"
+          cp LICENSE "dist/$out/LICENSE.whisper.cpp"
+          "dist/$out/$(basename "$bin")" --version
+          if [ "${{ matrix.target }}" != "windows-amd64" ] && [ "${{ matrix.target }}" != "darwin-arm64" ] && [ "${{ matrix.target }}" != "darwin-amd64" ]; then ldd "dist/$out/whisper-cli" || true; fi
+          tar -C dist -czf "$out.tar.gz" "$out"
+          ls -l "$out.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: whisper-cli-${{ matrix.target }}
+          path: whisper.cpp/whisper-cli-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [version, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: whisper-cli-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -eu
+          sha256sum whisper-cli-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          v="${{ needs.version.outputs.version }}"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "whisper.cpp $v binaries" \
+            --notes "Static \`whisper-cli\` builds of [whisper.cpp v$v](https://github.com/ggml-org/whisper.cpp/releases/tag/v$v) (MIT) for Sessionboxer's speech-to-text; the Control Plane downloads the one for its platform on first use. Not a Sessionboxer release." \
+            --verify-tag

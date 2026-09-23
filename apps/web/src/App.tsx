@@ -12,9 +12,11 @@ import {
   SPEECH_MODEL_INFO,
   branchScope,
   inBranchScope,
+  resolveSessionSettings,
   sessionRoute,
   type AgentOption,
   type Branch,
+  type E2eRun,
   type LlmCall,
   type ModelOption,
   type NarrationMode,
@@ -43,6 +45,7 @@ import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } fro
 import { CopyCommand } from "./CopyCommand";
 import { Desktop } from "./Desktop";
 import { Devices } from "./Devices";
+import { E2ePane, isRunOpen } from "./E2e";
 import { ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
@@ -170,6 +173,10 @@ export function App() {
   // Pull Requests attached per Session (all Sessions, for the sidebar badges) and the rows of the ones opened.
   const [prs, setPrs] = useState<Record<string, PullRequest[]>>({});
   const [prItems, setPrItems] = useState<Record<string, PrItem[]>>({});
+  // End-to-end verification runs of the selected Session (ADR-0044); the ref lets the WS handler see what changed.
+  const [e2eRuns, setE2eRuns] = useState<E2eRun[]>([]);
+  const e2eRunsRef = useRef<E2eRun[]>([]);
+  e2eRunsRef.current = e2eRuns;
   const [toasts, setToasts] = useState<Array<{ id: number; sessionId: string; sessionTitle: string; lines: Array<{ prId: string; text: string }> }>>([]);
   // Pane the selected Session should switch to (from a PR notification).
   const [paneRequest, setPaneRequest] = useState<{ sessionId: string; pane: string } | null>(null);
@@ -253,19 +260,22 @@ export function App() {
       setEvents([]);
       setSaved([]);
       setSnapshots([]);
+      setE2eRuns([]);
       return;
     }
     let cancelled = false;
     void run(async () => {
-      const [evs, msgs, snaps] = await Promise.all([
+      const [evs, msgs, snaps, runs] = await Promise.all([
         api.events(selectedId),
         api.savedMessages(selectedId),
         api.snapshots(selectedId),
+        api.e2eRuns(selectedId),
       ]);
       if (cancelled) return;
       setEvents(evs);
       setSaved(msgs);
       setSnapshots(snaps);
+      setE2eRuns(runs);
     });
     return () => {
       cancelled = true;
@@ -341,6 +351,21 @@ export function App() {
           case "pr_items":
             setPrItems((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.items } : prev));
             break;
+          case "e2e_changed": {
+            if (msg.sessionId !== selectedId) break;
+            const before = e2eRunsRef.current.find((r) => r.id === msg.run.id);
+            const wasRunning = new Set(before?.cases.filter((c) => c.status === "running").map((c) => c.id));
+            // A case just started: show the pane, but only for the Session on screen (never steal focus from another one).
+            if (msg.run.cases.some((c) => c.status === "running" && !wasRunning.has(c.id))) setPaneRequest({ sessionId: msg.sessionId, pane: "e2e" });
+            setE2eRuns((prev) => {
+              const i = prev.findIndex((r) => r.id === msg.run.id);
+              if (i < 0) return [msg.run, ...prev];
+              const next = [...prev];
+              next[i] = msg.run;
+              return next;
+            });
+            break;
+          }
           case "pr_activity": {
             const id = Date.now() + Math.random();
             const lines = msg.prs.map((p) => ({ prId: p.prId, text: `#${p.number} ${p.title}: ${activityLine(p)}` }));
@@ -377,6 +402,7 @@ export function App() {
           void run(async () => setEvents(await api.events(selectedId)));
           void run(async () => setSaved(await api.savedMessages(selectedId)));
           void run(async () => setSnapshots(await api.snapshots(selectedId)));
+          void run(async () => setE2eRuns(await api.e2eRuns(selectedId)));
         }
         const dialogId = snapshotsForRef.current;
         if (dialogId) void run(async () => setDialogSnapshots(await api.snapshots(dialogId)));
@@ -647,6 +673,7 @@ export function App() {
             prs={prs[selected.id] ?? EMPTY_PRS}
             prItems={prItems}
             onLoadPrItems={loadPrItems}
+            e2eRuns={e2eRuns}
             paneRequest={paneRequest?.sessionId === selected.id ? paneRequest.pane : null}
             onPaneRequestHandled={clearPaneRequest}
             mobile={mobile}
@@ -763,7 +790,7 @@ function SessionSizes({
  * shows at a time and the chat is one of them (`chat`); on a desktop the chat is always there, so `chat`
  * and `hidden` mean the same.
  */
-type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "hidden";
+type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "e2e" | "hidden";
 const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: string; hint: string }> = [
   { id: "desktop", label: "Desktop", hint: "The Sandbox's Linux desktop: browser, editor, whatever the Agent opens" },
   { id: "code", label: "Code", hint: "The files in the Sandbox's workspace, with the Agent's edits" },
@@ -773,7 +800,7 @@ const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: str
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "chat" || v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "hidden" ? v : "desktop";
+  return v === "chat" || v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "e2e" || v === "hidden" ? v : "desktop";
 }
 
 function loadComposerMode(): ComposerMode {
@@ -803,6 +830,7 @@ function SessionView({
   prs,
   prItems,
   onLoadPrItems,
+  e2eRuns,
   paneRequest,
   onPaneRequestHandled,
   mobile,
@@ -830,7 +858,9 @@ function SessionView({
   prs: PullRequest[];
   prItems: Record<string, PrItem[]>;
   onLoadPrItems: (sessionId: string, prId: string) => Promise<void>;
-  /** Pane to switch to (from a PR notification). */
+  /** End-to-end verification runs of this Session, newest first (ADR-0044). */
+  e2eRuns: E2eRun[];
+  /** Pane to switch to (from a PR notification or a verification that started). */
   paneRequest: string | null;
   onPaneRequestHandled: () => void;
   /** Phone shell: bottom tabs pick one full-width pane, header actions live in a sheet. */
@@ -894,6 +924,15 @@ function SessionView({
     if (openPrId && openPr && !prItems[openPrId]) void onLoadPrItems(session.id, openPrId);
   }, [openPrId, openPr, prItems, onLoadPrItems, session.id]);
   const prUnread = prs.reduce((n, p) => n + p.unread, 0);
+  // Verification: the effective switch, whether a run is live (tab badge), and the run a transcript marker asked to see.
+  const e2eEnabled = settings ? resolveSessionSettings(session.settings, settings).e2eVerify : (session.settings.e2eVerify ?? false);
+  const e2eLive = e2eRuns.some(isRunOpen);
+  const [e2eFocus, setE2eFocus] = useState<string | null>(null);
+  const openE2e = useCallback((runId: string | null) => {
+    setE2eFocus(runId);
+    setPane("e2e");
+  }, []);
+  const setE2eVerify = (value: boolean | null) => void run(() => api.updateSession(session.id, { settings: { e2eVerify: value } }));
   const appendToComposer = useCallback((t: string) => setText((cur) => (cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${t}` : t)), []);
   useEffect(() => localStorage.setItem("sessionboxer.composerMode", composerMode), [composerMode]);
   useEffect(() => {
@@ -1076,6 +1115,15 @@ function SessionView({
           >
             PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
           </button>
+          <button
+            role="tab"
+            aria-selected={pane === "e2e"}
+            className={`${pane === "e2e" ? "active" : ""}${e2eLive ? " e2e-tab-live" : ""}`}
+            title={pane === "e2e" ? "Hide the verification runs" : `End-to-end verification of the Agent's turns${e2eLive ? " (running now)" : e2eEnabled ? "" : " (off for this Session)"}`}
+            onClick={() => togglePane("e2e")}
+          >
+            Verification{e2eLive && <span className="count live">●</span>}
+          </button>
           {prs.map((p) => (
             <button
               key={p.id}
@@ -1218,6 +1266,7 @@ function SessionView({
             onFocused={onFocused}
             onInspectCompaction={(index, compaction) => setInspecting({ index, compaction })}
             onInspectLlmCall={setInspectingCall}
+            onOpenE2e={openE2e}
           />
           <Composer
             value={text}
@@ -1288,6 +1337,9 @@ function SessionView({
         {shown === "terminal" && <TerminalPane session={session} />}
         {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
         {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
+        {shown === "e2e" && (
+          <E2ePane session={session} runs={e2eRuns} enabled={e2eEnabled} globalEnabled={settings?.e2eVerify ?? false} focusRunId={e2eFocus} onToggle={setE2eVerify} />
+        )}
         {openPr && (
           <PrPane
             session={session}
@@ -1314,6 +1366,11 @@ function SessionView({
               onClick={() => setPane("prs")}
             >
               PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
+            </button>
+          )}
+          {(e2eRuns.length > 0 || e2eEnabled) && (
+            <button role="tab" aria-selected={shown === "e2e"} className={shown === "e2e" ? "active" : ""} onClick={() => setPane("e2e")}>
+              Verify{e2eLive && <span className="count live">●</span>}
             </button>
           )}
         </nav>
@@ -1551,6 +1608,7 @@ function SettingsView({
   const [docker, setDocker] = useState(settings.dockerInSandbox);
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
+  const [e2eVerify, setE2eVerify] = useState(settings.e2eVerify);
   const [narrationMode, setNarrationMode] = useState<NarrationMode>(settings.recordingNarration.mode);
   const [speechModel, setSpeechModel] = useState<SpeechModel>(settings.speech.model);
   const [speechLanguage, setSpeechLanguage] = useState(settings.speech.language);
@@ -1578,6 +1636,7 @@ function SettingsView({
         dockerInSandbox: docker,
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
+        e2eVerify,
         recordingNarration: { mode: narrationMode, askAboveSeconds: Math.max(0, Number(narrationAskAbove) || 0) },
         speech: { model: speechModel, language: speechLanguage },
         mcpServers,
@@ -1790,6 +1849,18 @@ function SettingsView({
         <p className="muted">
           A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
           turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
+        </p>
+      </fieldset>
+      <fieldset className="choice">
+        <legend>Verification</legend>
+        <label className="check">
+          <input type="checkbox" checked={e2eVerify} onChange={(e) => setE2eVerify(e.target.checked)} />
+          Verify each turn end to end. Default for new Sessions; each Session can override it in its ⚙ Settings or from the Verification pane.
+        </label>
+        <p className="muted">
+          After a completed turn the Agent gets a hidden follow-up: it looks at what changed, plans 2–5 test cases (up to 10 for a very large
+          change), runs them on the Sandbox desktop while recording, fixes and reruns what fails (3 attempts per case), and posts the video. Turns that
+          only answer are recorded as skipped. It costs a second turn of model time after each of yours.
         </p>
       </fieldset>
       <fieldset className="choice">

@@ -18,6 +18,7 @@ import type {
   ConnectorStartRequest,
   CreateSessionRequest,
   DeleteSnapshotsResult,
+  E2eRun,
   ForkSessionRequest,
   HostDirListing,
   LlmCall,
@@ -229,6 +230,7 @@ export const api = {
   prSeen: (id: string, prId: string) => request<void>(`/sessions/${id}/prs/${prId}/seen`, { method: "POST" }),
   prAction: (id: string, req: PrActionRequest) =>
     request<PrActionResult>(`/sessions/${id}/prs/actions`, { method: "POST", body: JSON.stringify(req) }),
+  e2eRuns: (id: string) => request<E2eRun[]>(`/sessions/${id}/e2e`),
 };
 
 /** Same-origin URL of a Session's VS Code (the Code pane's iframe), proxied by the Control Plane. */

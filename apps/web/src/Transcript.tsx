@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { branchScope, type Branch, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
+import { branchScope, type Branch, type E2eRunSummary, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { UploadedAttachments } from "./Attachments";
 import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
 import { CopyableMessage } from "./CopyMessage";
+import { formatDuration } from "./E2e";
 import { FileLink } from "./FileLink";
 import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
 import { formatMb, formatTime } from "./format";
@@ -354,6 +355,7 @@ function Item({
   branchView,
   onInspectCompaction,
   onInspectLlmCall,
+  onOpenE2e,
   llmTab,
 }: {
   item: TranscriptItem;
@@ -362,6 +364,7 @@ function Item({
   branchView: BranchView;
   onInspectCompaction: (index: number, compaction: Compaction) => void;
   onInspectLlmCall: (call: LlmCall) => void;
+  onOpenE2e: (runId: string | null) => void;
   /** This item is the first of its model call's output: show the call's tab over it. */
   llmTab: boolean;
 }) {
@@ -369,7 +372,16 @@ function Item({
     return (
       <div className="llm-labelled">
         <LlmTab call={item.llmCall} onInspect={onInspectLlmCall} />
-        <Item item={item} actions={actions} branchActions={branchActions} branchView={branchView} onInspectCompaction={onInspectCompaction} onInspectLlmCall={onInspectLlmCall} llmTab={false} />
+        <Item
+          item={item}
+          actions={actions}
+          branchActions={branchActions}
+          branchView={branchView}
+          onInspectCompaction={onInspectCompaction}
+          onInspectLlmCall={onInspectLlmCall}
+          onOpenE2e={onOpenE2e}
+          llmTab={false}
+        />
       </div>
     );
   }
@@ -461,7 +473,35 @@ function Item({
           Repository {item.action}: <code>/workspace/{item.name}</code> ({item.origin})
         </div>
       );
+    case "e2e_prompt":
+      return (
+        <button type="button" className="marker marker-e2e marker-button" title="The Control Plane asked the Agent to verify the turn above end to end. Click to open the Verification pane." onClick={() => onOpenE2e(null)}>
+          Verifying the turn end to end…
+        </button>
+      );
+    case "e2e_run":
+      return <E2eMarker run={item.run} onOpen={() => onOpenE2e(item.run.runId)} />;
   }
+}
+
+/** `Verified: 4/4 passed · 2:13 · video`; opens the Verification pane on that run. */
+function E2eMarker({ run, onOpen }: { run: E2eRunSummary; onOpen: () => void }) {
+  let text: string;
+  switch (run.status) {
+    case "skipped":
+      text = `Verification skipped: ${run.skipReason ?? "nothing testable changed"}`;
+      break;
+    case "aborted":
+      text = `Verification aborted: ${run.skipReason ?? "the verification turn did not finish"}`;
+      break;
+    default:
+      text = `Verified: ${run.passed}/${run.total} passed · ${formatDuration(run.durationMs)}${run.cycles > 1 ? ` · ${run.cycles} cycles` : ""}${run.videoPath ? " · video" : ""}`;
+  }
+  return (
+    <button type="button" className={`marker marker-e2e marker-button marker-e2e-${run.status}`} title="Open the Verification pane on this run" onClick={onOpen}>
+      {text}
+    </button>
+  );
 }
 
 /** How far from the bottom (px) still counts as "at the bottom", so a trackpad flick does not unpin the view. */
@@ -479,6 +519,7 @@ export function Transcript({
   onFocused,
   onInspectCompaction,
   onInspectLlmCall,
+  onOpenE2e,
 }: {
   items: TranscriptItem[];
   actions: SnapshotActions;
@@ -494,6 +535,8 @@ export function Transcript({
   onInspectCompaction: (index: number, compaction: Compaction) => void;
   /** An `LLM #n` tab was clicked. */
   onInspectLlmCall: (call: LlmCall) => void;
+  /** A verification marker was clicked: open the Verification pane on that run (`null` = the latest). */
+  onOpenE2e: (runId: string | null) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -569,6 +612,7 @@ export function Transcript({
               branchView={branchView}
               onInspectCompaction={onInspectCompaction}
               onInspectLlmCall={onInspectLlmCall}
+              onOpenE2e={onOpenE2e}
               llmTab={call !== undefined && call.id !== prevCall?.id}
             />
           );

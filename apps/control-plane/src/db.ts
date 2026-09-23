@@ -16,6 +16,10 @@ import {
   branchScope,
   type Branch,
   type BranchScope,
+  type E2eCase,
+  type E2eCaseStatus,
+  type E2eRun,
+  type E2eRunStatus,
   type ProviderModels,
   type ProviderOptions,
   type SavedMessage,
@@ -123,6 +127,35 @@ interface EventRow {
   body: string;
 }
 
+interface E2eRunRow {
+  id: string;
+  session_id: string;
+  turn_seq: number;
+  status: string;
+  skip_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+  video_path: string | null;
+  cycles: number;
+  summary: string | null;
+}
+
+interface E2eCaseRow {
+  id: string;
+  run_id: string;
+  idx: number;
+  title: string;
+  steps: string;
+  expected: string;
+  status: string;
+  cycle: number;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  note: string | null;
+  screenshot_path: string | null;
+}
+
 /** Stands in for "no upper bound" in SQL (a `BranchScope` uses Infinity). */
 const MAX_SEQ = Number.MAX_SAFE_INTEGER;
 
@@ -203,6 +236,35 @@ CREATE TABLE IF NOT EXISTS provider_options (
   options TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS e2e_runs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  turn_seq INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  skip_reason TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  video_path TEXT,
+  cycles INTEGER NOT NULL DEFAULT 0,
+  summary TEXT
+);
+CREATE INDEX IF NOT EXISTS e2e_runs_session ON e2e_runs(session_id, started_at);
+CREATE TABLE IF NOT EXISTS e2e_cases (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES e2e_runs(id) ON DELETE CASCADE,
+  idx INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  steps TEXT NOT NULL,
+  expected TEXT NOT NULL,
+  status TEXT NOT NULL,
+  cycle INTEGER NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  duration_ms INTEGER,
+  note TEXT,
+  screenshot_path TEXT
+);
+CREATE INDEX IF NOT EXISTS e2e_cases_run ON e2e_cases(run_id, idx, cycle);
 `;
 
 /**
@@ -571,6 +633,114 @@ export class Db {
     return { seq, sessionId, branchId, ts, body };
   }
 
+  // --- End-to-end verification runs (ADR-0044) -------------------------------------------------
+
+  insertE2eRun(sessionId: string, turnSeq: number, status: E2eRunStatus, skipReason: string | null = null): E2eRun {
+    const id = randomBytes(6).toString("hex");
+    const now = new Date().toISOString();
+    this.db
+      .prepare("INSERT INTO e2e_runs (id, session_id, turn_seq, status, skip_reason, started_at, finished_at, cycles) VALUES (?, ?, ?, ?, ?, ?, ?, 0)")
+      .run(id, sessionId, turnSeq, status, skipReason, now, skipReason ? now : null);
+    return this.getE2eRun(sessionId, id)!;
+  }
+
+  updateE2eRun(
+    runId: string,
+    patch: Partial<{ status: E2eRunStatus; skipReason: string | null; finishedAt: string | null; videoPath: string | null; cycles: number; summary: string | null }>,
+  ): void {
+    const sets: string[] = [];
+    const params: Array<string | number | null> = [];
+    const set = (col: string, value: string | number | null): void => {
+      sets.push(`${col} = ?`);
+      params.push(value);
+    };
+    if (patch.status !== undefined) set("status", patch.status);
+    if (patch.skipReason !== undefined) set("skip_reason", patch.skipReason);
+    if (patch.finishedAt !== undefined) set("finished_at", patch.finishedAt);
+    if (patch.videoPath !== undefined) set("video_path", patch.videoPath);
+    if (patch.cycles !== undefined) set("cycles", patch.cycles);
+    if (patch.summary !== undefined) set("summary", patch.summary);
+    if (sets.length === 0) return;
+    params.push(runId);
+    this.db.prepare(`UPDATE e2e_runs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+  }
+
+  getE2eRun(sessionId: string, runId: string): E2eRun | null {
+    const row = this.db.prepare("SELECT * FROM e2e_runs WHERE id = ? AND session_id = ?").get(runId, sessionId) as E2eRunRow | undefined;
+    return row ? this.e2eRunOf(row) : null;
+  }
+
+  /** Newest first. */
+  listE2eRuns(sessionId: string): E2eRun[] {
+    const rows = this.db.prepare("SELECT * FROM e2e_runs WHERE session_id = ? ORDER BY started_at DESC, id DESC").all(sessionId) as E2eRunRow[];
+    return rows.map((r) => this.e2eRunOf(r));
+  }
+
+  /** The run that has not reached a final status, if any (at most one per Session). */
+  activeE2eRun(sessionId: string): E2eRun | null {
+    const row = this.db
+      .prepare("SELECT * FROM e2e_runs WHERE session_id = ? AND status IN ('planning', 'running', 'fixing') ORDER BY started_at DESC LIMIT 1")
+      .get(sessionId) as E2eRunRow | undefined;
+    return row ? this.e2eRunOf(row) : null;
+  }
+
+  /** Runs of every Session that were left unfinished (a Control Plane restart, a stopped Sandbox). */
+  listUnfinishedE2eRuns(): E2eRun[] {
+    const rows = this.db.prepare("SELECT * FROM e2e_runs WHERE status IN ('planning', 'running', 'fixing')").all() as E2eRunRow[];
+    return rows.map((r) => this.e2eRunOf(r));
+  }
+
+  insertE2eCase(runId: string, c: { index: number; title: string; steps: string; expected: string; cycle: number; status: E2eCaseStatus }): E2eCase {
+    const id = randomBytes(6).toString("hex");
+    this.db
+      .prepare("INSERT INTO e2e_cases (id, run_id, idx, title, steps, expected, status, cycle) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, runId, c.index, c.title, c.steps, c.expected, c.status, c.cycle);
+    return this.getE2eCase(id)!;
+  }
+
+  updateE2eCase(
+    caseId: string,
+    patch: Partial<{ status: E2eCaseStatus; startedAt: string | null; finishedAt: string | null; durationMs: number | null; note: string | null; screenshotPath: string | null }>,
+  ): void {
+    const sets: string[] = [];
+    const params: Array<string | number | null> = [];
+    const set = (col: string, value: string | number | null): void => {
+      sets.push(`${col} = ?`);
+      params.push(value);
+    };
+    if (patch.status !== undefined) set("status", patch.status);
+    if (patch.startedAt !== undefined) set("started_at", patch.startedAt);
+    if (patch.finishedAt !== undefined) set("finished_at", patch.finishedAt);
+    if (patch.durationMs !== undefined) set("duration_ms", patch.durationMs);
+    if (patch.note !== undefined) set("note", patch.note);
+    if (patch.screenshotPath !== undefined) set("screenshot_path", patch.screenshotPath);
+    if (sets.length === 0) return;
+    params.push(caseId);
+    this.db.prepare(`UPDATE e2e_cases SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+  }
+
+  getE2eCase(caseId: string): E2eCase | null {
+    const row = this.db.prepare("SELECT * FROM e2e_cases WHERE id = ?").get(caseId) as E2eCaseRow | undefined;
+    return row ? e2eCaseOf(row) : null;
+  }
+
+  private e2eRunOf(r: E2eRunRow): E2eRun {
+    const cases = (this.db.prepare("SELECT * FROM e2e_cases WHERE run_id = ? ORDER BY idx ASC, cycle ASC").all(r.id) as E2eCaseRow[]).map(e2eCaseOf);
+    return {
+      id: r.id,
+      sessionId: r.session_id,
+      turnSeq: r.turn_seq,
+      status: r.status as E2eRunStatus,
+      skipReason: r.skip_reason,
+      startedAt: r.started_at,
+      finishedAt: r.finished_at,
+      videoPath: r.video_path,
+      cycles: r.cycles,
+      summary: r.summary,
+      cases,
+    };
+  }
+
   getEvent(sessionId: string, seq: number): SessionEvent | null {
     const row = this.db.prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?").get(sessionId, seq) as EventRow | undefined;
     return row ? rowToEvent(row) : null;
@@ -706,6 +876,24 @@ function scopeClause(scope: BranchScope): { sql: string; params: Array<string | 
   return {
     sql: `(${scope.map(() => "(branch_id = ? AND seq <= ?)").join(" OR ")})`,
     params: scope.flatMap((s) => [s.branchId, Number.isFinite(s.uptoSeq) ? s.uptoSeq : MAX_SEQ]),
+  };
+}
+
+function e2eCaseOf(r: E2eCaseRow): E2eCase {
+  return {
+    id: r.id,
+    runId: r.run_id,
+    index: r.idx,
+    title: r.title,
+    steps: r.steps,
+    expected: r.expected,
+    status: r.status as E2eCaseStatus,
+    cycle: r.cycle,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
+    durationMs: r.duration_ms,
+    note: r.note,
+    screenshotPath: r.screenshot_path,
   };
 }
 

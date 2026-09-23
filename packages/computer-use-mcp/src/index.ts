@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { E2eError, e2eCall, type E2eMethod } from "./e2e.js";
 import { NARRATION_LANGUAGES, NARRATION_VOICES } from "./narration.js";
 import { annotateRecording, currentRecording, narrateRecording, startRecording, stopRecording } from "./recording.js";
 import {
@@ -263,6 +264,79 @@ server.registerTool(
   "recording_status",
   { description: "Whether a desktop recording is running, since when, and how many captions it has.", inputSchema: {} },
   async () => okText(JSON.stringify(currentRecording() ?? { recording: false })),
+);
+
+// --- End-to-end verification runs (ADR-0044) -------------------------------------------------
+// The Control Plane opens a run after a user turn and asks for the `e2e-verification` skill; these
+// tools fill the run in (Daemon → Control Plane) so the user's Verification pane follows along.
+
+const e2eTool = async (method: E2eMethod, params: unknown) => {
+  try {
+    return okText(JSON.stringify(await e2eCall(method, params)));
+  } catch (e) {
+    if (e instanceof E2eError) return { isError: true as const, content: [{ type: "text" as const, text: e.message }] };
+    throw e;
+  }
+};
+
+server.registerTool(
+  "e2e_plan",
+  {
+    description:
+      "Register the test cases of the current verification run (the e2e-verification skill, step Plan), or skip the run when the turn changed nothing testable. Call it once, before start_recording. Cases are numbered from 1 in the order given; the user sees them in the Verification pane at once.",
+    inputSchema: {
+      cases: z
+        .array(
+          z.object({
+            title: z.string().min(1).max(200).describe("What the case checks, as a short sentence"),
+            steps: z.string().max(4000).describe("The steps you will take on the desktop, one per line"),
+            expected: z.string().max(2000).describe("What must be true at the end for the case to pass"),
+          }),
+        )
+        .max(10)
+        .default([])
+        .describe("2 to 5 cases normally; up to 10 only for a very large change. Empty when skipping."),
+      skip_reason: z.string().max(1000).optional().describe("Why nothing is verified (answer-only turn, research, no testable change); no cases then"),
+    },
+  },
+  ({ cases, skip_reason }) => e2eTool("plan", { cases, skipReason: skip_reason ?? null }),
+);
+
+server.registerTool(
+  "e2e_case_start",
+  {
+    description:
+      "Mark a case as running (its timer starts and the user's Verification pane opens on it). Calling it for a case that already passed or failed reruns it as a new cycle, after you fixed the code; at most 3 fix attempts per case. One case runs at a time: end the previous one first.",
+    inputSchema: { index: z.number().int().positive().describe("Case number from e2e_plan, starting at 1") },
+  },
+  ({ index }) => e2eTool("case_start", { index }),
+);
+
+server.registerTool(
+  "e2e_case_end",
+  {
+    description: "Record the result of the running case: passed, failed (then fix the code and e2e_case_start it again) or skipped (could not be exercised), with a one-line note and the screenshot that shows the final state.",
+    inputSchema: {
+      index: z.number().int().positive().describe("Case number from e2e_plan"),
+      status: z.enum(["passed", "failed", "skipped"]),
+      note: z.string().max(2000).optional().describe("One line: what you saw, and for a failure what went wrong"),
+      screenshot_path: z.string().max(1000).optional().describe("A /workspace path of a screenshot of the final state (save one with the desktop tools or a shell command)"),
+    },
+  },
+  ({ index, status, note, screenshot_path }) => e2eTool("case_end", { index, status, note: note ?? null, screenshotPath: screenshot_path ?? null }),
+);
+
+server.registerTool(
+  "e2e_finish",
+  {
+    description:
+      "Close the verification run after stop_recording: attach the video and a short summary. Cases never started are marked skipped. The run's verdict is passed when no case's last attempt failed. After this, end your reply with a short summary that mentions the video's /workspace path.",
+    inputSchema: {
+      video_path: z.string().max(1000).optional().describe("The recording's path as returned by stop_recording"),
+      summary: z.string().max(4000).optional().describe("Two or three sentences: what was verified, what failed and what you fixed"),
+    },
+  },
+  ({ video_path, summary }) => e2eTool("finish", { videoPath: video_path ?? null, summary: summary ?? null }),
 );
 
 const transport = new StdioServerTransport();

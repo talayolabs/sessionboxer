@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Verify each turn end to end (off by default; Settings, per-session ⚙ Settings, the Verification pane's switch, `sessionboxer new --e2e`): after each turn the agent plans 2–5 test cases from your prompt, runs them on the box's desktop while recording, fixes and reruns what fails, and posts the video; the **Verification** pane opens by itself and shows cases, timers and cycles live. Needs an image rebuild (ADR-0044).
+
 ## 1.0.0 — 2026-09-22
 
 Install: `npx sessionboxer@1.0.0 serve`, the desktop installers below, `docker compose up` with

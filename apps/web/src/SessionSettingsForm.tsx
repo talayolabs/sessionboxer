@@ -52,6 +52,8 @@ export interface SessionSettingsDraft {
   instructions: string;
   autoSnapshot: boolean | null;
   snapshotKeep: number | null;
+  /** Verify each turn end to end (ADR-0044); `null` follows Settings. */
+  e2eVerify: boolean | null;
   docker: boolean;
   cpus: number | null;
   memoryGb: number | null;
@@ -69,6 +71,7 @@ export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraf
     instructions: settings.instructions,
     autoSnapshot: null,
     snapshotKeep: null,
+    e2eVerify: null,
     docker: settings.dockerInSandbox,
     cpus: null,
     memoryGb: null,
@@ -87,6 +90,7 @@ export function draftFromSettings(s: SessionSettings): SessionSettingsDraft {
     instructions: s.instructions,
     autoSnapshot: s.autoSnapshot,
     snapshotKeep: s.snapshotKeep,
+    e2eVerify: s.e2eVerify,
     docker: s.sandbox.dockerMode !== "none",
     cpus: s.sandbox.cpus,
     memoryGb: s.sandbox.memoryGb,
@@ -105,6 +109,7 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
     instructions: d.instructions,
     autoSnapshot: d.autoSnapshot,
     snapshotKeep: d.snapshotKeep,
+    e2eVerify: d.e2eVerify,
     sandbox: {
       docker: d.docker,
       cpus: d.cpus,
@@ -323,6 +328,26 @@ export function SessionSettingsForm({
           onCommit={(snapshotKeep) => onChange({ snapshotKeep })}
         />
         <p className="muted ss-note">Older automatic snapshots are dropped (never one a fork was started from); 0 keeps them all.</p>
+      </section>
+
+      <section className="ss-section">
+        <h3>Verification</h3>
+        <label>
+          Verify each turn end to end
+          <select
+            value={value.e2eVerify === null ? "default" : value.e2eVerify ? "on" : "off"}
+            disabled={disabled}
+            onChange={(e) => onChange({ e2eVerify: e.target.value === "default" ? null : e.target.value === "on" })}
+          >
+            <option value="default">Settings default ({settings.e2eVerify ? "on" : "off"})</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <p className="muted ss-note">
+          After each completed turn the Agent checks what it changed, plans 2–5 test cases, runs them on the Sandbox desktop while recording, fixes
+          and reruns what fails, and hands the video to the chat. Answer-only turns are skipped. Watch it in the Verification pane.
+        </p>
       </section>
 
       <section className="ss-section">

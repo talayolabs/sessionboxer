@@ -41,6 +41,7 @@ import {
   PtyResizeParams,
   instructionsDelivery,
   isJsonRpcRequest,
+  isJsonRpcResponse,
   parseJsonRpc,
   type DaemonEvent,
   type DaemonStatus,
@@ -50,6 +51,7 @@ import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
 import { CodeServer } from "./code-server.js";
 import { readCompactionDetails } from "./compactions.js";
+import { E2eBridge } from "./e2e-bridge.js";
 import { GhApi } from "./gh-api.js";
 import { BbCredentials } from "./bb-credentials.js";
 import { GhCredentials } from "./gh-credentials.js";
@@ -191,6 +193,7 @@ const terminals = new Terminals(
 const codeServer = new CodeServer(workspace, log);
 const uploads = new Uploads(workspace, log);
 const ghApi = new GhApi(log);
+const e2eBridge = new E2eBridge(() => clients, log);
 
 function status(): DaemonStatus {
   return {
@@ -231,7 +234,12 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = DaemonPromptParams.parse(params);
       if (agent.turnActive) throw new Error("a turn is already active");
       if (agent.reporting) throw new Error("the Agent is reporting its context usage; retry in a moment");
-      emit(p.attachments?.length ? { type: "user_prompt", text: p.text, attachments: p.attachments } : { type: "user_prompt", text: p.text });
+      emit({
+        type: "user_prompt",
+        text: p.text,
+        ...(p.attachments?.length ? { attachments: p.attachments } : {}),
+        ...(p.origin ? { origin: p.origin } : {}),
+      });
       void agent.prompt(p.note ? `${p.note}\n\n${p.text}` : p.text, p.attachments ?? []);
       return { accepted: true };
     }
@@ -355,6 +363,7 @@ const http = createServer((req, res) => {
   if (codeServer.handleHttp(req, res)) return;
   if (serveTar(workspace, req, res, log)) return;
   if (uploads.handle(req, res)) return;
+  if (e2eBridge.handle(req, res)) return;
   serveRawFile(workspaceFs, req, res).catch((e: unknown) => {
     log(`raw file error: ${String(e)}`);
     if (!res.headersSent) res.writeHead(500);
@@ -378,6 +387,10 @@ wss.on("connection", (ws) => {
     let id: JsonRpcId | null = null;
     try {
       const msg = parseJsonRpc(raw.toString());
+      if (isJsonRpcResponse(msg)) {
+        e2eBridge.onResponse(msg);
+        return;
+      }
       if (!isJsonRpcRequest(msg)) return;
       id = msg.id;
       handle(ws, msg.method, msg.params)

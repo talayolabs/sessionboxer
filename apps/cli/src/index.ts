@@ -73,6 +73,9 @@ Options for new:
       --docker           Private Docker daemon inside the Sandbox (Sysbox, or --privileged
                          with a warning when Sysbox is not installed); --no-docker to disable.
                          Default: the "Docker inside Sandboxes" setting
+      --e2e              Verify each turn end to end (the Agent plans and runs test cases on the
+                         desktop after every turn, video at the end); --no-e2e to disable.
+                         Default: the "Verify each turn end to end" setting
       --no-open          Do not open the browser
 
 Environment:
@@ -172,6 +175,7 @@ async function newSession(args: string[]): Promise<void> {
       "git-name": { type: "string" },
       "git-email": { type: "string" },
       docker: { type: "boolean" },
+      e2e: { type: "boolean" },
       open: { type: "boolean", default: true },
     },
   });
@@ -229,6 +233,7 @@ async function newSession(args: string[]): Promise<void> {
       ...(values.model ? { model: values.model } : {}),
       ...(Object.keys(options).length > 0 ? { options } : {}),
       ...(instructions !== undefined ? { instructions } : {}),
+      ...(values.e2e !== undefined ? { e2eVerify: values.e2e } : {}),
       sandbox: {
         ...(values.docker !== undefined ? { docker: values.docker } : {}),
         ...(values["git-name"] !== undefined || values["git-email"] !== undefined

@@ -40,7 +40,8 @@ Older Sessions had a single repository checked out directly in `/workspace`; if
   `left_click_drag`, `right_click`, `double_click`, `triple_click`,
   `hold_key`, `wait`, `cursor_position`, `start_recording`,
   `annotate_recording`, `stop_recording`, `narrate_recording`,
-  `recording_status`.
+  `recording_status`, and `e2e_plan`, `e2e_case_start`, `e2e_case_end`,
+  `e2e_finish` for verification runs (below).
 - Always take a `screenshot` before your first action and after any action
   whose result you need to see. Other tools only return "OK".
 - Coordinates are pixels from the top-left corner; `[0, 0]` to `[1023, 767]`.
@@ -86,6 +87,25 @@ Older Sessions had a single repository checked out directly in `/workspace`; if
   file in place and returns the new caption times). Write captions in the
   language the user writes in and pass `narration_language` when it is not
   English.
+
+## Verification runs
+
+When the user has "Verify each turn end to end" on, Sessionboxer checks your
+work after each of your turns: it opens a **verification run** for that turn
+and sends you a message asking you to follow the `e2e-verification` skill
+(`/home/agent/.claude/skills/e2e-verification/SKILL.md`). The run holds the
+test cases you plan, their live status, timings, fix cycles and the final
+video; the user follows it in the Verification pane next to the chat.
+
+- Only that message starts a verification. Do not plan or run one on your own
+  during a normal turn, and never verify a verification turn.
+- Record the run through the `e2e_*` tools, not in files: `e2e_plan` (the
+  cases, or a skip reason when nothing testable changed), `e2e_case_start` /
+  `e2e_case_end` around each case (a restart after a fix is a new cycle, at
+  most 3 fix attempts per case), `e2e_finish` with the video after
+  `stop_recording`.
+- Finish that reply by naming the video's `/workspace/...` path so the user
+  gets the player in the chat.
 
 ## Handing files to the user
 

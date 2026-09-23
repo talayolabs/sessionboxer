@@ -4,6 +4,7 @@ import {
   DaemonStatus,
   PtyExitParams,
   PtyOutputParams,
+  isJsonRpcRequest,
   isJsonRpcResponse,
   parseJsonRpc,
   type DaemonEvent,
@@ -18,6 +19,8 @@ export interface DaemonClientHandlers {
   onPtyExit: (ptyId: string, exitCode: number) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
+  /** A request from the Daemon (the Agent's `e2e_*` tools); the result or thrown error is answered back. */
+  onRequest: (method: string, params: unknown) => Promise<unknown>;
   /** Cursor sent in `hello`, so the Daemon replays what we missed. */
   cursor: () => DaemonHelloParams;
   log: (msg: string) => void;
@@ -104,6 +107,14 @@ export class DaemonClient {
       clearTimeout(p.timer);
       if ("error" in msg) p.reject(new DaemonRpcError(msg.error.code, msg.error.message));
       else p.resolve(msg.result);
+      return;
+    }
+    if (isJsonRpcRequest(msg)) {
+      const id = msg.id;
+      this.handlers
+        .onRequest(msg.method, msg.params)
+        .then((result) => this.ws?.send(JSON.stringify({ jsonrpc: "2.0", id, result: result ?? null })))
+        .catch((e: unknown) => this.ws?.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: e instanceof Error ? e.message : String(e) } })));
       return;
     }
     if ("method" in msg) {

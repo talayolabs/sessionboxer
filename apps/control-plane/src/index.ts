@@ -376,6 +376,10 @@ api.post("/sessions/:id/queue", async (c) => {
   return c.json(await sessions.setQueueRunning(c.req.param("id"), req.running));
 });
 
+// End-to-end verification runs of the Session (ADR-0044).
+api.get("/sessions/:id/e2e", (c) => c.json(sessions.e2e.list(c.req.param("id"))));
+api.get("/sessions/:id/e2e/:runId", (c) => c.json(sessions.e2e.get(c.req.param("id"), c.req.param("runId"))));
+
 // Pull Requests attached to the Session (ADR-0027).
 api.get("/sessions/:id/prs", (c) => c.json(sessions.prs.list(c.req.param("id"))));
 api.post("/sessions/:id/prs", async (c) => {

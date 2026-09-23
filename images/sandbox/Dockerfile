@@ -174,6 +174,8 @@ COPY images/sandbox/firefox-policies.json /etc/firefox/policies/policies.json
 # Devin CLI loads it as an always-on rule too (`devin rules list`).
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
+# Skills the Control Plane asks for by name (ADR-0044); Claude Code discovers them here, Devin reads the file.
+COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
 RUN chmod +x /usr/local/bin/sessionboxer-entrypoint

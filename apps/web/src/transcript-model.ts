@@ -1,6 +1,7 @@
 import {
   repoOriginLabel,
   type ContentBlock,
+  type E2eRunSummary,
   type LlmCall,
   type PromptAttachment,
   type SessionEvent,
@@ -51,7 +52,10 @@ export type TranscriptItem =
   | { kind: "mcp_changed"; key: string; servers: string[] }
   | { kind: "model_changed"; key: string; model: string; name: string }
   | { kind: "option_changed"; key: string; option: string; value: string; valueName: string }
-  | { kind: "repo_changed"; key: string; action: "added" | "removed"; name: string; origin: string };
+  | { kind: "repo_changed"; key: string; action: "added" | "removed"; name: string; origin: string }
+  /** The Control Plane's hidden verification prompt: a marker, not the user's words. */
+  | { kind: "e2e_prompt"; key: string }
+  | { kind: "e2e_run"; key: string; run: E2eRunSummary };
 
 function blockText(block: ContentBlock): string {
   switch (block.type) {
@@ -124,7 +128,8 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
     switch (body.type) {
       case "user_prompt":
         markContinued(items);
-        items.push(body.attachments?.length ? { kind: "user", key, text: body.text, attachments: body.attachments } : { kind: "user", key, text: body.text });
+        if (body.origin === "e2e") items.push({ kind: "e2e_prompt", key });
+        else items.push(body.attachments?.length ? { kind: "user", key, text: body.text, attachments: body.attachments } : { kind: "user", key, text: body.text });
         {
           // Usage that landed between turns (a compaction's refresh) is the new baseline.
           const base = turn.finish(undefined);
@@ -172,6 +177,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "repo_changed":
         items.push({ kind: "repo_changed", key, action: body.action, name: body.name, origin: repoOriginLabel(body.source) });
+        break;
+      case "e2e_run":
+        items.push({ kind: "e2e_run", key, run: body.run });
         break;
       case "llm_call":
         if (body.call.kind === "turn") labelLlmCall(items, body.call);

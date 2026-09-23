@@ -203,6 +203,16 @@ The prompt tells the agent the quoted text comes from GitHub reviewers and is fe
 
 Sessions with a copied host folder (folder icon next to the agent logo in the list; a git mark means a clone) have **Pull to folder…** in the header; with several copied folders, pick which one at the top of the dialog. It compares that repository's directory in the box with the folder on your machine and shows what would change before anything is written: new files (`+`), changed files (`~`), files the agent deleted (`−`). **Pull changes** applies them; files ignored by git (`node_modules`, build output) and `.git` itself stay in the box, and anything you added or changed only on your machine is left alone. A file that changed on both sides is a conflict: it is skipped and marked *kept yours*, unless you tick **Also overwrite…** (you are asked to confirm). Symlinks that would point outside your folder are never written. Pull as often as you like; each pull records the new common state, so the next one only shows what changed since. Pulling waits for the agent's turn to end and needs the box running.
 
+### Verify each turn end to end
+
+Off by default. Turn it on in **Settings → Verification** (the default for new sessions), per session in its ⚙ Settings or in the New Session form (*Settings default / On / Off*), from the switch in the **Verification** pane, or with `sessionboxer new --e2e`.
+
+With it on, every turn the agent finishes is followed by a hidden verification turn. The agent runs the `e2e-verification` skill installed in the box: it looks at what the turn changed (`git status` in each repository, what it did), and either records the run as **skipped** with a reason (an answer, research, nothing testable) or plans **2–5 test cases** from your prompt and what it understood you wanted (up to 10 for a very large change, rarely). It then starts a desktop recording and runs the cases one by one with the mouse, keyboard and browser of the box, captioning the video as it goes. A case that fails is fixed — that is normal agent work, in the same turn — and rerun as a new *cycle* of the same case, at most three fix attempts, after which it stays failed. At the end the recording stops and the agent replies with the video, which plays inline in the chat like any recording.
+
+The **Verification** pane (**Verify** on the phone) opens by itself the moment the first case starts running, for the session you are looking at. It shows the run's status, a progress bar, each case with its state, a live timer while it runs, its cycle, the agent's note and a screenshot, the steps and expected result on click, the video when done, and earlier runs under *Earlier runs*. A marker at the end of the turn in the chat ("Verified: 4/4 passed · 2:13 · video", or "Verification skipped: …") opens the pane on that run. A run stays with the session across Stop/Resume; stopping the session or the Control Plane while one is open marks it *aborted*.
+
+A verification turn never verifies itself, and a saved message waits until the verification is over. Each opted-in turn costs a second turn of model time plus the minutes the agent spends driving the desktop, which is why it is off by default.
+
 ### Stop, resume, delete
 
 - **Stop** pauses the box. It uses no CPU or memory while stopped; the conversation, files, installed packages and everything else in the container are kept.
@@ -291,6 +301,7 @@ sessionboxer service status | stop | start | restart | log | uninstall
 sessionboxer new .                                   # box the current directory
 sessionboxer new . -p "run the tests and fix what breaks"
 sessionboxer new . --provider devin --docker
+sessionboxer new . --e2e                             # verify each turn end to end (--no-e2e to turn it off)
 sessionboxer new . --model haiku                     # a model id as the provider names it
 sessionboxer new . --model opus --option effort=high --option fast=on
 sessionboxer new . --instructions @rules.md          # standing instructions from a file ("" for none)

@@ -471,6 +471,8 @@ export const SessionSettings = z.object({
   autoSnapshot: z.boolean().nullable().default(null),
   /** Override of `Settings.snapshotKeep`; `null` follows the global setting. */
   snapshotKeep: z.number().int().nonnegative().nullable().default(null),
+  /** Override of `Settings.e2eVerify` (verify each turn end to end, see `E2eRun`); `null` follows the global setting. */
+  e2eVerify: z.boolean().nullable().default(null),
   sandbox: SandboxSettings.default({}),
 });
 export type SessionSettings = z.infer<typeof SessionSettings>;
@@ -479,6 +481,7 @@ export type SessionSettings = z.infer<typeof SessionSettings>;
 export interface SessionSettingsDefaults {
   autoSnapshot: boolean;
   snapshotKeep: number;
+  e2eVerify: boolean;
   sandboxCpus: number;
   sandboxMemoryGb: number;
 }
@@ -487,10 +490,11 @@ export interface SessionSettingsDefaults {
 export function resolveSessionSettings(
   settings: SessionSettings,
   defaults: SessionSettingsDefaults,
-): { autoSnapshot: boolean; snapshotKeep: number; cpus: number; memoryGb: number } {
+): { autoSnapshot: boolean; snapshotKeep: number; e2eVerify: boolean; cpus: number; memoryGb: number } {
   return {
     autoSnapshot: settings.autoSnapshot ?? defaults.autoSnapshot,
     snapshotKeep: settings.snapshotKeep ?? defaults.snapshotKeep,
+    e2eVerify: settings.e2eVerify ?? defaults.e2eVerify,
     cpus: settings.sandbox.cpus ?? defaults.sandboxCpus,
     memoryGb: settings.sandbox.memoryGb ?? defaults.sandboxMemoryGb,
   };
@@ -508,6 +512,8 @@ export const SessionSettingsPatch = z
     autoSnapshot: z.boolean().nullable().optional(),
     /** `null` clears the override (follow `Settings.snapshotKeep`). */
     snapshotKeep: z.number().int().nonnegative().nullable().optional(),
+    /** `null` clears the override (follow `Settings.e2eVerify`). */
+    e2eVerify: z.boolean().nullable().optional(),
     /** Resource limits; read when the next Sandbox is built (Rebuild, fork). */
     sandbox: z
       .object({
@@ -529,6 +535,7 @@ export const SessionSettingsInput = z.object({
   instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).optional(),
   autoSnapshot: z.boolean().nullable().optional(),
   snapshotKeep: z.number().int().nonnegative().nullable().optional(),
+  e2eVerify: z.boolean().nullable().optional(),
   sandbox: z
     .object({
       /** Docker daemon inside the Sandbox; the mode is whatever the host offers. */
@@ -1301,6 +1308,12 @@ export const Settings = z.object({
   autoSnapshot: z.boolean().default(true),
   /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */
   snapshotKeep: z.number().int().nonnegative().default(10),
+  /**
+   * After every completed turn, have the Agent verify its work end to end on the desktop (a
+   * hidden follow-up turn that plans test cases, records them and fixes what fails; see `E2eRun`).
+   * Default for new Sessions; off unless switched on, since it costs a second turn per prompt.
+   */
+  e2eVerify: z.boolean().default(false),
   mcpServers: z.array(McpServerDef).default([]),
   /**
    * Model aliases Claude Code may offer (its `availableModels` setting, written to the Sandbox's
@@ -1475,7 +1488,8 @@ export type ConnectorFlow = z.infer<typeof ConnectorFlow>;
 // ---------------------------------------------------------------------------
 
 export type SessionEventBody =
-  | { type: "user_prompt"; text: string; attachments?: PromptAttachment[] }
+  /** `origin: "e2e"` marks the Control Plane's hidden verification prompt (shown as a marker, not as the user's words). */
+  | { type: "user_prompt"; text: string; attachments?: PromptAttachment[]; origin?: "e2e" }
   | { type: "update"; update: SessionUpdate }
   | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage }
   | { type: "agent_error"; message: string }
@@ -1492,6 +1506,8 @@ export type SessionEventBody =
   | { type: "context_breakdown"; breakdown: ContextBreakdown }
   /** A repository was added to (cloned/copied into) or removed from the Workspace while the Session ran. */
   | { type: "repo_changed"; action: "added" | "removed"; name: string; source: RepoSource }
+  /** An end-to-end verification run of the previous turn ended (passed, failed, skipped or aborted); the UI shows a marker that opens the E2E pane. */
+  | { type: "e2e_run"; run: E2eRunSummary }
   /**
    * The inspector saw one model API call complete (summary only; bodies stay in the Sandbox).
    * Emitted after the transcript updates the response produced, so a `turn` call claims the
@@ -1534,6 +1550,8 @@ export type SessionBroadcast =
   | { type: "pr_activity"; sessionId: string; sessionTitle: string; prs: PrActivity[] }
   /** Auto-merge merged an attached Pull Request. */
   | { type: "pr_merged"; sessionId: string; sessionTitle: string; pr: PrMergedNotice }
+  /** An end-to-end verification run of the Session changed (created, a case started or ended, finished). */
+  | { type: "e2e_changed"; sessionId: string; run: E2eRun }
   /** A transport came up, went down or failed (`PublicSettings.remote` changed). */
   | { type: "remote"; remote: RemoteAccess };
 
@@ -1551,6 +1569,133 @@ export const FS_RAW_PATH = "/fs/raw";
  */
 export const FS_UPLOAD_PATH = "/fs/upload";
 export const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// End-to-end verification (ADR-0044). After a completed turn, when `e2eVerify` is on, the
+// Control Plane opens an `E2eRun` for it and sends the Agent a hidden prompt to follow the
+// `e2e-verification` skill: decide whether the work is testable, plan 2–5 cases, record the
+// desktop while running them, fix and rerun what fails (a new cycle), hand over the video.
+// The Agent writes the records through the `e2e_*` tools of the desktop MCP, which the Daemon
+// forwards to the Control Plane over its own connection (the Sandbox has no route to the API).
+// ---------------------------------------------------------------------------
+
+/** Test cases per run the planner may register; more than 5 should be rare. */
+export const E2E_MAX_CASES = 10;
+/** Fix-and-rerun attempts per case before the run gives up on it (cycles 2..1+n). */
+export const E2E_MAX_FIX_ATTEMPTS = 3;
+
+export const E2eRunStatus = z.enum(["planning", "running", "fixing", "passed", "failed", "skipped", "aborted"]);
+export type E2eRunStatus = z.infer<typeof E2eRunStatus>;
+
+export const E2eCaseStatus = z.enum(["pending", "running", "passed", "failed", "skipped"]);
+export type E2eCaseStatus = z.infer<typeof E2eCaseStatus>;
+
+/** One attempt of one test case: the same `index` appears once per cycle it was run in. */
+export const E2eCase = z.object({
+  id: z.string(),
+  runId: z.string(),
+  /** Position in the plan (1-based); stable across cycles. */
+  index: z.number().int().positive(),
+  title: z.string(),
+  /** What the Agent does, as it planned it (free text, usually numbered steps). */
+  steps: z.string(),
+  expected: z.string(),
+  status: E2eCaseStatus,
+  /** 1 for the first run of the plan; +1 for each fix-and-rerun. */
+  cycle: z.number().int().positive(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  /** Why it passed/failed/was skipped, in the Agent's words. */
+  note: z.string().nullable(),
+  /** Workspace-relative path of a screenshot taken at the end of the case. */
+  screenshotPath: z.string().nullable(),
+});
+export type E2eCase = z.infer<typeof E2eCase>;
+
+export const E2eRun = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  /** `seq` of the `turn_ended` event of the turn being verified. */
+  turnSeq: z.number().int(),
+  status: E2eRunStatus,
+  /** Set with `status: "skipped"` (nothing testable changed) and `"aborted"` (the verification turn ended without finishing). */
+  skipReason: z.string().nullable(),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+  /** Workspace-relative path of the recording, once `e2e_finish` handed it over. */
+  videoPath: z.string().nullable(),
+  /** Highest cycle any case reached (1 = no fix was needed). */
+  cycles: z.number().int().nonnegative(),
+  /** The Agent's closing words (`e2e_finish`). */
+  summary: z.string().nullable(),
+  /** Every attempt of every case, by index then cycle. */
+  cases: z.array(E2eCase),
+});
+export type E2eRun = z.infer<typeof E2eRun>;
+
+/** What the transcript marker of a finished run shows. */
+export const E2eRunSummary = z.object({
+  runId: z.string(),
+  status: E2eRunStatus,
+  /** Cases whose last attempt passed / cases planned. */
+  passed: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  cycles: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+  videoPath: z.string().nullable(),
+  skipReason: z.string().nullable(),
+});
+export type E2eRunSummary = z.infer<typeof E2eRunSummary>;
+
+/** Cases whose latest attempt passed, over the cases planned. */
+export function e2eTally(run: E2eRun): { passed: number; total: number } {
+  const latest = new Map<number, E2eCase>();
+  for (const c of run.cases) latest.set(c.index, c);
+  let passed = 0;
+  for (const c of latest.values()) if (c.status === "passed") passed++;
+  return { passed, total: latest.size };
+}
+
+/** `e2e_plan`: the cases for the run, or why it is skipped (then no cases and no recording). */
+export const E2ePlanParams = z
+  .object({
+    cases: z
+      .array(z.object({ title: z.string().min(1).max(200), steps: z.string().max(4000), expected: z.string().max(2000) }))
+      .max(E2E_MAX_CASES)
+      .default([]),
+    skipReason: z.string().max(1000).nullable().default(null),
+  })
+  .refine((p) => (p.skipReason ? p.cases.length === 0 : p.cases.length > 0), "either cases or a skipReason");
+export type E2ePlanParams = z.infer<typeof E2ePlanParams>;
+
+/** `e2e_case_start`: the case begins (again, as a new cycle, when its last attempt failed). */
+export const E2eCaseStartParams = z.object({ index: z.number().int().positive() });
+export type E2eCaseStartParams = z.infer<typeof E2eCaseStartParams>;
+
+export const E2eCaseEndParams = z.object({
+  index: z.number().int().positive(),
+  status: z.enum(["passed", "failed", "skipped"]),
+  note: z.string().max(2000).nullable().default(null),
+  /** `/workspace/...` or Workspace-relative. */
+  screenshotPath: z.string().max(1000).nullable().default(null),
+});
+export type E2eCaseEndParams = z.infer<typeof E2eCaseEndParams>;
+
+export const E2eFinishParams = z.object({
+  /** `/workspace/...` or Workspace-relative; `null` when there is no recording. */
+  videoPath: z.string().max(1000).nullable().default(null),
+  summary: z.string().max(4000).nullable().default(null),
+});
+export type E2eFinishParams = z.infer<typeof E2eFinishParams>;
+
+/** Daemon `POST /e2e` body (from the desktop MCP): one of the `DAEMON_METHODS.e2e*` methods and its params. */
+export const E2E_PATH = "/e2e";
+export const E2eBridgeRequest = z.object({
+  method: z.enum(["plan", "case_start", "case_end", "finish"]),
+  params: z.unknown(),
+});
+export type E2eBridgeRequest = z.infer<typeof E2eBridgeRequest>;
 
 // ---------------------------------------------------------------------------
 // Pulling a copied repository back into its host folder. Both sides describe their files
@@ -2047,7 +2192,20 @@ export const DAEMON_METHODS = {
   reposSet: "_sessionboxer/repos/set",
   reposInspect: "_sessionboxer/repos/inspect",
   reposRemove: "_sessionboxer/repos/remove",
+  // Daemon → Control Plane requests (the Agent's `e2e_*` tools); each answers with the `E2eRun`.
+  e2ePlan: "_sessionboxer/e2e/plan",
+  e2eCaseStart: "_sessionboxer/e2e/case-start",
+  e2eCaseEnd: "_sessionboxer/e2e/case-end",
+  e2eFinish: "_sessionboxer/e2e/finish",
 } as const;
+
+/** `E2eBridgeRequest.method` → the JSON-RPC method the Daemon sends the Control Plane. */
+export const E2E_BRIDGE_METHODS: Record<E2eBridgeRequest["method"], string> = {
+  plan: DAEMON_METHODS.e2ePlan,
+  case_start: DAEMON_METHODS.e2eCaseStart,
+  case_end: DAEMON_METHODS.e2eCaseEnd,
+  finish: DAEMON_METHODS.e2eFinish,
+};
 
 /** Control Plane → Daemon: the Workspace's repositories; the Daemon writes `REPOS_MANIFEST_PATH` from them for the Agent. */
 export const DaemonReposSetParams = z.object({
@@ -2253,7 +2411,11 @@ export type DaemonSessionSwitchResult = z.infer<typeof DaemonSessionSwitchResult
  * the Control Plane uses it to tell the Agent what changed in the Workspace since the last turn
  * (repositories added or removed).
  */
-export const DaemonPromptParams = PromptRequest.innerType().extend({ note: z.string().optional() });
+export const DaemonPromptParams = PromptRequest.innerType().extend({
+  note: z.string().optional(),
+  /** `e2e`: the Control Plane's hidden verification prompt; recorded on the `user_prompt` event. */
+  origin: z.enum(["e2e"]).optional(),
+});
 export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;
 
 /** The turn runs asynchronously; its outcome arrives as `turn_ended`/`agent_error` events. */
@@ -2322,7 +2484,7 @@ export interface DaemonEvent {
   epoch: string;
   seq: number;
   ts: string;
-  body: Exclude<SessionEventBody, { type: "status" } | { type: "forked" }>;
+  body: Exclude<SessionEventBody, { type: "status" } | { type: "forked" } | { type: "e2e_run" }>;
 }
 
 // ---------------------------------------------------------------------------

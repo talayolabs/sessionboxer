@@ -15,6 +15,7 @@ function toPatch(patch: Partial<SessionSettingsDraft>): SessionSettingsPatch {
     ...(patch.mcpEnabled !== undefined ? { mcpEnabled: patch.mcpEnabled } : {}),
     ...(patch.autoSnapshot !== undefined ? { autoSnapshot: patch.autoSnapshot } : {}),
     ...(patch.snapshotKeep !== undefined ? { snapshotKeep: patch.snapshotKeep } : {}),
+    ...(patch.e2eVerify !== undefined ? { e2eVerify: patch.e2eVerify } : {}),
     ...(Object.keys(sandbox).length > 0 ? { sandbox } : {}),
   };
 }

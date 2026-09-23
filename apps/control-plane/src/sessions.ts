@@ -101,6 +101,7 @@ import { parseContextReport } from "./context-report.js";
 import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
+import { E2eVerification } from "./e2e.js";
 import { MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
@@ -150,6 +151,8 @@ export class SessionManager {
   private readonly promptNotes = new Map<string, string[]>();
   /** Pull Requests attached to Sessions: watching, notifications, actions. */
   readonly prs: PullRequests;
+  /** End-to-end verification runs after completed turns (ADR-0044). */
+  readonly e2e: E2eVerification;
 
   constructor(
     private readonly db: Db,
@@ -175,6 +178,20 @@ export class SessionManager {
       push: (msg) => this.push(msg),
       log,
     });
+    this.e2e = new E2eVerification({
+      db,
+      getSession: (id) => db.getSession(id),
+      settings,
+      prompt: (id, text) => this.prompt(id, { text }, "e2e"),
+      appendEvent: (id, body) => {
+        const ev = this.db.appendEvent(id, body);
+        this.broadcast({ type: "event", event: ev });
+        return ev;
+      },
+      broadcast: (msg) => this.broadcast(msg),
+      log,
+    });
+    this.e2e.closeStale();
   }
 
   subscribe(fn: (msg: SessionBroadcast) => void): () => void {
@@ -763,6 +780,7 @@ export class SessionManager {
         instructions: (input.instructions ?? settings.instructions).trim(),
         autoSnapshot: input.autoSnapshot ?? null,
         snapshotKeep: input.snapshotKeep ?? null,
+        e2eVerify: input.e2eVerify ?? null,
         sandbox: {
           dockerMode,
           cpus: input.sandbox?.cpus ?? null,
@@ -845,6 +863,7 @@ export class SessionManager {
         instructions: (input.instructions ?? base.instructions).trim(),
         autoSnapshot: input.autoSnapshot !== undefined ? input.autoSnapshot : base.autoSnapshot,
         snapshotKeep: input.snapshotKeep !== undefined ? input.snapshotKeep : base.snapshotKeep,
+        e2eVerify: input.e2eVerify !== undefined ? input.e2eVerify : base.e2eVerify,
         sandbox: {
           dockerMode,
           cpus: input.sandbox?.cpus !== undefined ? input.sandbox.cpus : base.sandbox.cpus,
@@ -976,7 +995,7 @@ export class SessionManager {
     }
   }
 
-  async prompt(id: string, req: PromptRequest): Promise<void> {
+  async prompt(id: string, req: PromptRequest, origin?: "e2e"): Promise<void> {
     const s = this.get(id);
     if (s.status === "stopped") throw new HttpError(409, "Session is stopped; resume it first.");
     if (s.status === "running") throw new HttpError(409, "The Agent is still working on the previous prompt.");
@@ -991,6 +1010,7 @@ export class SessionManager {
       throw new HttpError(503, "Sandbox Daemon is not connected yet; retry in a moment.");
     }
     const params: DaemonPromptParams = req.attachments?.length ? { text: req.text, attachments: req.attachments } : { text: req.text };
+    if (origin) params.origin = origin;
     const notes = this.promptNotes.get(id) ?? [];
     const sent = notes.length;
     const note = this.pendingNote(id);
@@ -1446,6 +1466,7 @@ export class SessionManager {
         this.update(id, { queueRunning: false, mcpPending: false, modelPending: false, optionsPending: false, inspectLlmPending: false });
       }
       if (s.status === "running") await this.cancelAndWait(id);
+      this.e2e.abortActive(id, "The Sandbox was stopped during the verification.");
       this.disconnect(id);
       await this.docker.stop(s.containerId);
       const stopped = this.setStatus(id, "stopped");
@@ -1487,6 +1508,7 @@ export class SessionManager {
   async delete(id: string): Promise<void> {
     const s = this.get(id);
     this.stopping.add(id);
+    this.e2e.abortActive(id, "The Session was deleted during the verification.");
     this.disconnect(id);
     this.pendingPrompts.delete(id);
     try {
@@ -1519,6 +1541,7 @@ export class SessionManager {
       ...(patch.inspectLlm !== undefined ? { inspectLlm: patch.inspectLlm && current.provider === "claude-code" } : {}),
       ...(patch.autoSnapshot !== undefined ? { autoSnapshot: patch.autoSnapshot } : {}),
       ...(patch.snapshotKeep !== undefined ? { snapshotKeep: patch.snapshotKeep } : {}),
+      ...(patch.e2eVerify !== undefined ? { e2eVerify: patch.e2eVerify } : {}),
       sandbox: {
         ...current.settings.sandbox,
         ...(patch.sandbox?.cpus !== undefined ? { cpus: patch.sandbox.cpus } : {}),
@@ -1750,6 +1773,7 @@ export class SessionManager {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");
       },
+      onRequest: (method, params) => this.e2e.handleRequest(id, method, params),
       log: (msg) => this.log(`daemon ${id}: ${msg}`),
     });
     this.clients.set(id, client);
@@ -1826,8 +1850,11 @@ export class SessionManager {
       this.turnEnds.set(id, (this.turnEnds.get(id) ?? 0) + 1);
       const s = this.db.getSession(id);
       if (s?.status === "running") this.setStatus(id, "idle");
+      const turn = this.turnEvents(id, stored.seq);
+      const verification = E2eVerification.isVerificationTurn(turn);
+      if (verification) this.e2e.onVerificationTurnEnded(id, ev.body.type === "turn_ended" ? ev.body.stopReason : "error");
       if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
-        void this.afterTurn(id, stored.seq).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
+        void this.afterTurn(id, stored.seq, verification ? [] : turn).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
       } else {
         if (s?.queueRunning) {
           this.log(`queue ${id} paused after ${ev.body.type}`);
@@ -1835,7 +1862,6 @@ export class SessionManager {
         }
         if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
       }
-      const turn = this.turnEvents(id, stored.seq);
       if (ev.body.type === "turn_ended") this.prs.onTurnEnded(id, turn);
       void this.refreshRepoStates(id);
       if (s) {
@@ -1852,9 +1878,15 @@ export class SessionManager {
     return start === -1 ? recent : recent.slice(start);
   }
 
-  /** A completed turn: Snapshot first (so the next queued prompt does not land in it), then pump the queue. */
-  private async afterTurn(id: string, eventSeq: number): Promise<void> {
+  /**
+   * A completed turn: Snapshot first (so the next queued prompt does not land in it), then the
+   * verification of a user turn (`turn` empty for a verification turn, which is never verified
+   * itself), then the queue: a queued message waits for the verification of the previous one,
+   * and is verified in its turn like any user prompt.
+   */
+  private async afterTurn(id: string, eventSeq: number, turn: SessionEvent[]): Promise<void> {
     await this.autoSnapshot(id, eventSeq);
+    if (turn.length > 0 && (await this.e2e.afterUserTurn(id, eventSeq, turn))) return;
     await this.pumpQueue(id);
   }
 

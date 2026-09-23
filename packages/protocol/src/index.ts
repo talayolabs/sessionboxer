@@ -1304,16 +1304,16 @@ export const Settings = z.object({
   sandboxCpus: z.number().positive().default(2),
   sandboxMemoryGb: z.number().positive().default(4),
   dockerInSandbox: z.boolean().default(false),
-  /** `docker commit` the Sandbox after every Agent turn. */
-  autoSnapshot: z.boolean().default(true),
+  /** `docker commit` the Sandbox after every Agent turn; off unless switched on (ADR-0044). */
+  autoSnapshot: z.boolean().default(false),
   /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */
   snapshotKeep: z.number().int().nonnegative().default(10),
   /**
    * After every completed turn, have the Agent verify its work end to end on the desktop (a
    * hidden follow-up turn that plans test cases, records them and fixes what fails; see `E2eRun`).
-   * Default for new Sessions; off unless switched on, since it costs a second turn per prompt.
+   * Default for new Sessions; on unless switched off (ADR-0044).
    */
-  e2eVerify: z.boolean().default(false),
+  e2eVerify: z.boolean().default(true),
   mcpServers: z.array(McpServerDef).default([]),
   /**
    * Model aliases Claude Code may offer (its `availableModels` setting, written to the Sandbox's

@@ -18,7 +18,7 @@ The user wants the Agent to *prove* its work after every turn: look at what chan
 
 **UI.** A `Verification` pane (`Pane = "e2e"`): switch and effective state in the toolbar, the current or last run with a status badge, headline ("3/4 passed · 1:42 · cycle 2"), progress bar, the case list with status, live timer for the running case, cycle badge, note, screenshot thumbnail and the steps/expected on click, the video as an attachment card when done, and earlier runs in a collapsible section. When a case flips to `running` for the Session the user is looking at, the pane opens through `setPaneRequest` — the PR pane's mechanism — and never for another Session. The pane tab shows a pulsing dot while a run is open. On the phone it is a bottom tab like the others. The transcript marker at the turn's end ("Verified: 4/4 passed · 2:13 · video", or "Verification skipped: …") opens the pane on that run.
 
-**Switch.** `Settings.e2eVerify` (default **off**) and `SessionSettings.e2eVerify: boolean | null` (`null` = follow Settings; ADR-0039: one object, one form, editable live, kept by forks), plus the pane's quick toggle and `sessionboxer new --e2e | --no-e2e`. Off by default because a verification turn costs a second turn of model time and a few minutes of desktop work after every prompt; a user who wants it flips one switch.
+**Switch.** `Settings.e2eVerify` (default **on**) and `SessionSettings.e2eVerify: boolean | null` (`null` = follow Settings; ADR-0039: one object, one form, editable live, kept by forks), plus the pane's quick toggle and `sessionboxer new --e2e | --no-e2e`. On by default: a turn whose work is not checked on the desktop is the exception, and the cost (a second turn of model time and a few minutes of desktop work) is what the verification is for; a user who does not want it flips one switch. At the same time `Settings.autoSnapshot` (ADR-0009) turns default **off**: a `docker commit` after every turn was the cheap safety net when nothing else checked the turn; with the verification run in that place, the snapshot becomes the opt-in. Both defaults only decide what a missing key in `config.json` means — an existing install keeps the values it saved.
 
 ## Considered Options
 
@@ -27,7 +27,7 @@ The user wants the Agent to *prove* its work after every turn: look at what chan
 - **A separate MCP server for the lifecycle tools** (rejected): the computer-use MCP already runs in every Sandbox and the tools belong next to `start_recording`; four tools do not justify a second process.
 - **A Daemon *notification* instead of a request** (rejected): the Agent needs the answer (the run, the "no run is open" refusal, the cap) to steer itself.
 - **Verify queued saved messages differently from typed ones** (rejected): both are user turns; the queue simply waits for the verification.
-- **Default on for fresh installs** (deferred): the switch is one click and the cost is real; revisit when the skill has proven itself.
+- **Default off** (rejected): the switch is one click either way, and a feature meant to catch what the agent missed does nothing while it waits to be switched on.
 
 ## Consequences
 

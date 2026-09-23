@@ -521,7 +521,7 @@ export function App() {
               <SessionSizes
                 session={s}
                 snapshotting={snapshotting.has(s.id)}
-                autoSnapshot={s.settings.autoSnapshot ?? settings?.autoSnapshot ?? true}
+                autoSnapshot={s.settings.autoSnapshot ?? settings?.autoSnapshot ?? false}
                 onClick={() => setSnapshotsFor(s.id)}
               />
               {expanded.has(s.id) && s.branches.length > 1 && (
@@ -557,7 +557,7 @@ export function App() {
         <SnapshotsDialog
           session={snapshotsSession}
           snapshots={dialogSnapshots}
-          globalAutoSnapshot={settings?.autoSnapshot ?? true}
+          globalAutoSnapshot={settings?.autoSnapshot ?? false}
           snapshotting={snapshotting.has(snapshotsSession.id)}
           notice={error}
           onDismissNotice={() => setError(null)}
@@ -928,7 +928,7 @@ function SessionView({
   }, [openPrId, openPr, prItems, onLoadPrItems, session.id]);
   const prUnread = prs.reduce((n, p) => n + p.unread, 0);
   // Verification: the effective switch, whether a run is live (tab badge), and the run a transcript marker asked to see.
-  const e2eEnabled = settings ? resolveSessionSettings(session.settings, settings).e2eVerify : (session.settings.e2eVerify ?? false);
+  const e2eEnabled = settings ? resolveSessionSettings(session.settings, settings).e2eVerify : (session.settings.e2eVerify ?? true);
   const e2eLive = e2eRuns.some(isRunOpen);
   const [e2eFocus, setE2eFocus] = useState<string | null>(null);
   const openE2e = useCallback((runId: string | null) => {
@@ -1341,7 +1341,7 @@ function SessionView({
         {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
         {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
         {shown === "e2e" && (
-          <E2ePane session={session} runs={e2eRuns} enabled={e2eEnabled} globalEnabled={settings?.e2eVerify ?? false} focusRunId={e2eFocus} onToggle={setE2eVerify} />
+          <E2ePane session={session} runs={e2eRuns} enabled={e2eEnabled} globalEnabled={settings?.e2eVerify ?? true} focusRunId={e2eFocus} onToggle={setE2eVerify} />
         )}
         {openPr && (
           <PrPane

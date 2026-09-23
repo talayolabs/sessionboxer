@@ -39,8 +39,8 @@ More ways to install, updating and troubleshooting: [user guide → Install](doc
 - **Live desktop.** Watch the agent work; **Take control** to log in somewhere or fix things yourself.
 - **VS Code and terminals** inside the box. Files named in the chat open in the editor at that line.
 - **Videos in the chat.** Ask for a recording and the agent films the desktop, with captions and optional narration.
-- **Verified turns.** Switch it on and after each turn the agent plans test cases from your prompt, runs them on the box's desktop while recording, fixes what fails, and posts the video.
-- **Snapshots and forks.** Every finished turn is a snapshot. Fork a new session from any of them.
+- **Verified turns.** After each turn the agent plans test cases from your prompt, runs them on the box's desktop while recording, fixes what fails, and posts the video.
+- **Snapshots and forks.** Snapshot the box by hand or after every finished turn. Fork a new session from any of them.
 - **Revert and branches.** Go back to an earlier turn and try another way; the old path is kept as a branch.
 - **Pull requests.** Attach a PR and follow its comments from the chat. Have the agent address them, reply on GitHub, and **auto-merge** when checks pass.
 - **Context gauge.** How full the agent's memory is, what each turn cost, and every byte sent to the model (Claude Code).

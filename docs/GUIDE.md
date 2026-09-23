@@ -125,7 +125,7 @@ Every time the agent finishes a turn, Sessionboxer takes a **snapshot** of the b
 
 Click the size under a session in the sidebar to open its **Snapshots** popup: the machine/snapshots breakdown, a switch to turn automatic snapshots on or off for that session only, the list of its snapshots with their sizes and **Fork** / **Delete** buttons, **Delete all**, and **Snapshot now**. Sessions with automatic snapshots off show `📷×` in the sidebar.
 
-In Settings you set the default for automatic snapshots and how many to keep per session (default 10; older automatic ones are removed, manual snapshots and snapshots a fork was started from are kept). A snapshot's ✕ in the chat deletes it too; snapshots that a fork was started from cannot be deleted while that fork exists. Tokens are never stored in snapshot images.
+In Settings you set the default for automatic snapshots (off on a fresh install; a config that already has the setting keeps it) and how many to keep per session (default 10; older automatic ones are removed, manual snapshots and snapshots a fork was started from are kept). A snapshot's ✕ in the chat deletes it too; snapshots that a fork was started from cannot be deleted while that fork exists. Tokens are never stored in snapshot images.
 
 If snapshots start failing with *the Sandbox's image is missing sha256:… from Docker's content store*, Docker lost part of the image the box was created from (typically after a disk failure or an over-eager `docker image prune`); the box itself still runs, but `docker commit` needs the whole chain. **Rebuild Sandbox** in the Snapshots popup fixes it: the box is stopped, its whole filesystem is exported into a fresh single-layer image (recorded as a `rebuild` snapshot, the size of the full box), and a new box starts from it with the same session, files and conversation; the old box is removed only once the new one runs. Terminals and the Code pane reconnect afterwards. That snapshot cannot be deleted while the box runs on it. When an automatic snapshot fails, the error is shown once instead of failing silently after each turn.
 
@@ -205,13 +205,13 @@ Sessions with a copied host folder (folder icon next to the agent logo in the li
 
 ### Verify each turn end to end
 
-Off by default. Turn it on in **Settings → Verification** (the default for new sessions), per session in its ⚙ Settings or in the New Session form (*Settings default / On / Off*), from the switch in the **Verification** pane, or with `sessionboxer new --e2e`.
+On by default. Turn it off (or back on) in **Settings → Verification** (the default for new sessions), per session in its ⚙ Settings or in the New Session form (*Settings default / On / Off*), from the switch in the **Verification** pane, or with `sessionboxer new --no-e2e` / `--e2e`.
 
 With it on, every turn the agent finishes is followed by a hidden verification turn. The agent runs the `e2e-verification` skill installed in the box: it looks at what the turn changed (`git status` in each repository, what it did), and either records the run as **skipped** with a reason (an answer, research, nothing testable) or plans **2–5 test cases** from your prompt and what it understood you wanted (up to 10 for a very large change, rarely). It then starts a desktop recording and runs the cases one by one with the mouse, keyboard and browser of the box, captioning the video as it goes. A case that fails is fixed — that is normal agent work, in the same turn — and rerun as a new *cycle* of the same case, at most three fix attempts, after which it stays failed. At the end the recording stops and the agent replies with the video, which plays inline in the chat like any recording.
 
 The **Verification** pane (**Verify** on the phone) opens by itself the moment the first case starts running, for the session you are looking at. It shows the run's status, a progress bar, each case with its state, a live timer while it runs, its cycle, the agent's note and a screenshot, the steps and expected result on click, the video when done, and earlier runs under *Earlier runs*. A marker at the end of the turn in the chat ("Verified: 4/4 passed · 2:13 · video", or "Verification skipped: …") opens the pane on that run. A run stays with the session across Stop/Resume; stopping the session or the Control Plane while one is open marks it *aborted*.
 
-A verification turn never verifies itself, and a saved message waits until the verification is over. Each opted-in turn costs a second turn of model time plus the minutes the agent spends driving the desktop, which is why it is off by default.
+A verification turn never verifies itself, and a saved message waits until the verification is over. Each verified turn costs a second turn of model time plus the minutes the agent spends driving the desktop; switch it off for sessions where that is not worth it.
 
 ### Stop, resume, delete
 

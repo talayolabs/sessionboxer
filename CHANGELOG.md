@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Verify each turn end to end (off by default; Settings, per-session ⚙ Settings, the Verification pane's switch, `sessionboxer new --e2e`): after each turn the agent plans 2–5 test cases from your prompt, runs them on the box's desktop while recording, fixes and reruns what fails, and posts the video; the **Verification** pane opens by itself and shows cases, timers and cycles live. Needs an image rebuild (ADR-0044).
+- Verify each turn end to end (on by default; Settings, per-session ⚙ Settings, the Verification pane's switch, `sessionboxer new --no-e2e`): after each turn the agent plans 2–5 test cases from your prompt, runs them on the box's desktop while recording, fixes and reruns what fails, and posts the video; the **Verification** pane opens by itself and shows cases, timers and cycles live. Needs an image rebuild (ADR-0044).
+- Automatic snapshots after every turn are off by default on a fresh install (a `config.json` that has the setting keeps it); the verification run takes that place (ADR-0044).
 
 ## 1.0.0 — 2026-09-22
 

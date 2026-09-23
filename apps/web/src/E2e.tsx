@@ -143,8 +143,8 @@ function RunCard({ session, run, open }: { session: Session; run: E2eRun; open: 
         <span className={`e2e-badge e2e-badge-${run.status}`}>{RUN_LABEL[run.status]}</span>
         <span className="e2e-run-headline">{runHeadline(run, now)}</span>
         <span className="spacer" />
-        <span className="muted small-text" title={new Date(run.startedAt).toLocaleString()}>
-          turn #{run.turnSeq} · {new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        <span className="muted small-text" title={`Started ${new Date(run.startedAt).toLocaleString()}`}>
+          {new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       </header>
       {expanded && (

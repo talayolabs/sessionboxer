@@ -3,7 +3,9 @@ import {
   ANTHROPIC_DEFAULT_BASE_URL,
   CONNECTORS,
   DEFAULT_CLAUDE_MODELS,
+  DEFAULT_DOCKER_ADDRESS_POOL,
   DEFAULT_INSTRUCTIONS,
+  DOCKER_ADDRESS_POOL_PATTERN,
   DOCKER_MODE_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
@@ -1583,6 +1585,13 @@ function SpeechAssets({ selected, saved }: { selected: SpeechModel; saved: Speec
   );
 }
 
+/** Blocks rarely used by home routers (192.168.0–1.x), office LANs (10.0–10.10.x), WSL2 (172.16–31.x) or Kubernetes (10.96/10.244). */
+const DOCKER_POOL_SUGGESTIONS = [
+  { block: DEFAULT_DOCKER_ADDRESS_POOL, why: "Default — top of 192.168.x: clear of home routers (192.168.0–1.x) and Docker Desktop (192.168.65.x)" },
+  { block: "10.213.0.0/16", why: "High 10.x: clear of the 10.0–10.10.x office LANs and the 10.96/10.244 Kubernetes ranges" },
+  { block: "100.64.0.0/16", why: "Carrier-grade NAT range, unused on most LANs; not if you run Tailscale or WARP (100.64–127.x)" },
+];
+
 function SettingsView({
   settings,
   onSaved,
@@ -1609,6 +1618,7 @@ function SettingsView({
   const [cpus, setCpus] = useState(String(settings.sandboxCpus));
   const [memory, setMemory] = useState(String(settings.sandboxMemoryGb));
   const [docker, setDocker] = useState(settings.dockerInSandbox);
+  const [dockerPool, setDockerPool] = useState(settings.sandboxDockerAddressPool);
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [e2eVerify, setE2eVerify] = useState(settings.e2eVerify);
@@ -1637,6 +1647,7 @@ function SettingsView({
         sandboxCpus: Number(cpus),
         sandboxMemoryGb: Number(memory),
         dockerInSandbox: docker,
+        sandboxDockerAddressPool: dockerPool.trim(),
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         e2eVerify,
@@ -1838,6 +1849,32 @@ function SettingsView({
           Docker inside Sandboxes by default (per-Session override in New session)
         </label>
         <DockerModeNote settings={settings} enabled={docker} />
+        <label>
+          Addresses for Docker inside Sandboxes (empty = Docker's default, 172.17.0.0/16 and up)
+          <input
+            value={dockerPool}
+            autoComplete="off"
+            spellCheck={false}
+            pattern={DOCKER_ADDRESS_POOL_PATTERN.source}
+            title="An IPv4 block like 192.168.240.0/20 (/8 to /24)"
+            onChange={(e) => setDockerPool(e.target.value)}
+            placeholder="Docker's default (172.17.0.0/16 and up)"
+            list="docker-pool-suggestions"
+          />
+          <datalist id="docker-pool-suggestions">
+            {DOCKER_POOL_SUGGESTIONS.map((s) => (
+              <option key={s.block} value={s.block}>
+                {s.why}
+              </option>
+            ))}
+          </datalist>
+        </label>
+        <p className="muted">
+          The dockerd inside a Docker-enabled Sandbox carves its own networks out of this block. Hosts of your company network or VPN that fall
+          in the block are unreachable from such a Sandbox (“No route to host”), so pick one nothing you need to reach lives in — the
+          default <code>{DEFAULT_DOCKER_ADDRESS_POOL}</code> keeps clear of home routers, Docker Desktop, WSL2, company 10.x networks and
+          Kubernetes; the field suggests alternatives. Applies to Sandboxes created afterwards.
+        </p>
       </fieldset>
       <fieldset className="choice">
         <legend>Snapshots</legend>

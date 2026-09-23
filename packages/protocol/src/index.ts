@@ -1298,12 +1298,31 @@ export function prActivityLine(p: PrActivity): string {
   return `${p.count} new ${p.count === 1 ? "item" : "items"} from ${who}${p.changesRequested ? " (changes requested)" : ""}`;
 }
 
+/** An IPv4 block of /8 to /24 (`10.213.0.0/16`), carved into /24 networks by the Sandbox's dockerd. */
+export const DOCKER_ADDRESS_POOL_PATTERN = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\/(?:[89]|1\d|2[0-4])$/;
+/**
+ * The top of 192.168.x: home routers sit at 192.168.0–1.x, Docker Desktop at 192.168.65.x, company
+ * networks and Kubernetes in 10.x, WSL2 and Docker's own defaults in 172.16–31.x, Tailscale and WARP in
+ * 100.64–127.x. Sixteen /24 networks for the box.
+ */
+export const DEFAULT_DOCKER_ADDRESS_POOL = "192.168.240.0/20";
+
 export const Settings = z.object({
   gitUserName: z.string().default(""),
   gitUserEmail: z.string().default(""),
   sandboxCpus: z.number().positive().default(2),
   sandboxMemoryGb: z.number().positive().default(4),
   dockerInSandbox: z.boolean().default(false),
+  /**
+   * Addresses the dockerd inside a Docker-enabled Sandbox hands to its own networks (`--bip` and
+   * `--default-address-pool`, /24 each). Empty means Docker's default, `172.17.0.0/16` and up, which
+   * hides any company or VPN host in those ranges from the Sandbox. Applies to Sandboxes created afterwards.
+   */
+  sandboxDockerAddressPool: z
+    .string()
+    .regex(DOCKER_ADDRESS_POOL_PATTERN, "an IPv4 block like 10.213.0.0/16 (/8 to /24)")
+    .or(z.literal(""))
+    .default(DEFAULT_DOCKER_ADDRESS_POOL),
   /** `docker commit` the Sandbox after every Agent turn; off unless switched on (ADR-0044). */
   autoSnapshot: z.boolean().default(false),
   /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */

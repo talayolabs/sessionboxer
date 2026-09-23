@@ -67,7 +67,15 @@ if [[ -n "${SESSIONBOXER_DOCKER:-}" ]]; then
   # /run is part of the container's rootfs, so a stopped Sandbox keeps the
   # previous daemon's pid files.
   sudo -n rm -f /var/run/docker.pid /run/containerd/containerd.pid
-  sudo -n dockerd >>"$LOG_DIR/dockerd.log" 2>&1 &
+  # SESSIONBOXER_DOCKER_POOL (`192.168.240.0/20`): the block this dockerd carves its
+  # networks from, instead of 172.17.0.0/16 and up, which would shadow company
+  # or VPN hosts in those ranges. docker0 takes the first /24 of it.
+  dockerd_args=()
+  if [[ "${SESSIONBOXER_DOCKER_POOL:-}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+/[0-9]+$ ]]; then
+    dockerd_args=(--bip "${BASH_REMATCH[1]}.1/24" --default-address-pool "base=${SESSIONBOXER_DOCKER_POOL},size=24")
+    log "dockerd address pool ${SESSIONBOXER_DOCKER_POOL}"
+  fi
+  sudo -n dockerd "${dockerd_args[@]}" >>"$LOG_DIR/dockerd.log" 2>&1 &
   for _ in $(seq 1 150); do
     if docker info >/dev/null 2>&1; then break; fi
     sleep 0.2

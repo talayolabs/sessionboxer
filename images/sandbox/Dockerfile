@@ -70,7 +70,7 @@ RUN --mount=type=secret,id=extra-ca \
     && apt-get update && apt-get install -y --no-install-recommends \
       # dev tooling
       git build-essential python3 python3-pip python3-venv gh nodejs \
-      sudo tini procps less vim-tiny jq unzip zip bzip2 openssh-client \
+      sudo tini procps less vim-tiny jq unzip zip bzip2 openssh-client iproute2 \
       # nested Docker (ADR-0008): dockerd is started by the entrypoint only for
       # Docker-enabled Sessions; the CLI is always present.
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \

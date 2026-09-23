@@ -918,7 +918,10 @@ export class SessionManager {
       ...providerEnv(session.provider, settings),
     };
     const { dockerMode, gitIdentity } = session.settings.sandbox;
-    if (dockerMode !== "none") env.SESSIONBOXER_DOCKER = dockerMode;
+    if (dockerMode !== "none") {
+      env.SESSIONBOXER_DOCKER = dockerMode;
+      if (settings.sandboxDockerAddressPool) env.SESSIONBOXER_DOCKER_POOL = settings.sandboxDockerAddressPool;
+    }
     if (session.settings.inspectLlm) env.SESSIONBOXER_INSPECT_LLM = "1";
     if (gitIdentity.name) {
       env.GIT_AUTHOR_NAME = gitIdentity.name;

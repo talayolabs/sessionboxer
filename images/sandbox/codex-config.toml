@@ -1,0 +1,6 @@
+# Codex defaults inside a Sessionboxer Sandbox (ADR-0046). The Sandbox is the isolation, so
+# Codex runs without approvals and without its own sandbox, like the other Agents here.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+# The Codex CLI is pinned by the Sandbox image; updates come with an image rebuild.
+check_for_update_on_startup = false

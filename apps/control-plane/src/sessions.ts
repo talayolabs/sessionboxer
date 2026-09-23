@@ -14,6 +14,7 @@ import {
   DaemonContextReportResult,
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
+  type DaemonCodexAuthParams,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -86,6 +87,7 @@ import {
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
   PROVIDER_ENV_KEYS,
+  codexAuthJson,
   defaultMcpEnabled,
   knownMcpIds,
   providerEnv,
@@ -1693,6 +1695,38 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Hands the stored Codex `auth.json` to a Codex Session's Daemon, which keeps it on tmpfs where
+   * Codex reads it (ADR-0046). Before the MCP set at connect time so the Agent finds it at start;
+   * again whenever the stored file changes.
+   */
+  async pushCodexAuth(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "codex" || !client?.connected) return;
+    const params: DaemonCodexAuthParams = { authJson: codexAuthJson(this.settings()) };
+    try {
+      await client.request(DAEMON_METHODS.codexAuthSet, params);
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) {
+        this.log(`daemon ${id} predates Codex; Stop and Resume the session to refresh it`);
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /** The stored Codex login changed (Settings, or a Sandbox refreshed it): every live Codex Session gets the file. */
+  async pushCodexAuthToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.provider !== "codex" || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushCodexAuth(s.id).catch((e: unknown) => this.log(`codex auth push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
+  /** A Codex Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
+  codexAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
+
   /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
   async pushRecordingPrefs(id: string): Promise<void> {
     const client = this.clients.get(id);
@@ -1772,6 +1806,7 @@ export class SessionManager {
       onPtyExit: (ptyId, exitCode) => {
         for (const sink of this.sinksOf(id, ptyId)) sink.exit(exitCode);
       },
+      onCodexAuthChanged: (authJson) => this.codexAuthRefreshed(id, authJson),
       onDisconnected: () => {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");
@@ -1797,6 +1832,7 @@ export class SessionManager {
     this.pushClaudeModels(id)
       .then(() => this.pushLlmInspect(id))
       .then(() => this.pushRepos(id))
+      .then(() => this.pushCodexAuth(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))
       .then(() => this.pushOptions(id))

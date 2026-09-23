@@ -2,7 +2,7 @@
 
 # Sessionboxer
 
-Run coding agents in boxes. Each session gets its own Docker container with a Linux desktop. The agent (Claude Code or Devin) works inside it with a terminal, an editor, a browser, mouse and keyboard. You watch the screen and take over whenever you want.
+Run coding agents in boxes. Each session gets its own Docker container with a Linux desktop. The agent (Claude Code, Codex or Devin) works inside it with a terminal, an editor, a browser, mouse and keyboard. You watch the screen and take over whenever you want.
 
 <br clear="left" />
 
@@ -14,7 +14,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a Li
 
 - **Safe.** The agent has all permissions, but only inside its container. Delete the session and everything is gone.
 - **Sees the screen.** A real desktop with Firefox. The agent takes screenshots, clicks and types; you can watch and take control.
-- **Yours.** Your own Claude or Devin subscription, on your machine or your server. No Sessionboxer account, nothing in the cloud.
+- **Yours.** Your own Claude, ChatGPT or Devin subscription, on your machine or your server. No Sessionboxer account, nothing in the cloud.
 - **Open.** MIT licence, plain Docker, plain X11, the [Agent Client Protocol](https://agentclientprotocol.com) between the UI and the agent.
 
 ## Install
@@ -29,7 +29,7 @@ docker compose up -d                                              # with this re
 
 Or a [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Linux, macOS and Windows (no Node needed).
 
-Then open the login link the server prints, go to **Settings** and paste your agent's token: `claude setup-token` for Claude Code, or the token from `devin auth login` for Devin. Click **+ New**, add a repository, type a prompt.
+Then open the login link the server prints, go to **Settings** and paste your agent's login: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, or the token from `devin auth login` for Devin. Click **+ New**, add a repository, type a prompt.
 
 More ways to install, updating and troubleshooting: [user guide → Install](docs/GUIDE.md#install).
 
@@ -58,7 +58,7 @@ Every feature in detail: [user guide](docs/GUIDE.md).
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Runs on your machine or your server | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
 | Your existing subscription, no new account | ✓ | ✗ | ✗ | ✗ | ✗ | API key | ✓ |
-| Agents | Claude Code, Devin | Devin | Cursor | Codex | Claude Code | own agent, any model | Claude Code, Codex, Cursor, others |
+| Agents | Claude Code, Codex, Devin | Devin | Cursor | Codex | Claude Code | own agent, any model | Claude Code, Codex, Cursor, others |
 | Isolated sandbox per session | Docker | VM | VM | container | VM | Docker | ✗ (your machine) |
 | Desktop the agent drives with mouse and keyboard | ✓ | browser | ✓ | — | — | browser | ✗ |
 | Watch the screen live and take over | ✓ | ✓ | ✓ | — | — | — | ✗ |

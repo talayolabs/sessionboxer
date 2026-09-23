@@ -11,14 +11,30 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
   "claude-code": "Claude Code",
   devin: "Devin",
+  codex: "Codex",
 };
+
+/**
+ * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT
+ * account it holds; read from the id token's claims, each part `null` when absent.
+ */
+export const CodexLogin = z.object({
+  email: z.string().nullable(),
+  /** ChatGPT plan the tokens belong to (`plus`, `pro`, `team`, ...). */
+  plan: z.string().nullable(),
+  /** When Codex last refreshed the tokens (its `last_refresh`), ISO 8601. */
+  lastRefresh: z.string().nullable(),
+  /** True when the file holds an API key instead of (or besides) a ChatGPT login. */
+  apiKey: z.boolean(),
+});
+export type CodexLogin = z.infer<typeof CodexLogin>;
 
 /**
  * How a Sandbox gets its own Docker daemon: `sysbox` runs it under the Sysbox
@@ -1371,6 +1387,8 @@ export const Settings = z.object({
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string().default("") }).default({}),
       devin: z.object({ WINDSURF_API_KEY: z.string().default("") }).default({}),
+      /** The whole `~/.codex/auth.json` of a `codex login` (ChatGPT subscription); Codex's refreshes flow back here. */
+      codex: z.object({ CODEX_AUTH_JSON: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -1406,7 +1424,10 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   providerSecretsSet: z.object({
     "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
     devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
+    codex: z.object({ CODEX_AUTH_JSON: z.boolean() }),
   }),
+  /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
+  codexLogin: CodexLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -1431,6 +1452,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connector
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string() }).partial(),
       devin: z.object({ WINDSURF_API_KEY: z.string() }).partial(),
+      codex: z.object({ CODEX_AUTH_JSON: z.string() }).partial(),
     })
     .partial()
     .optional(),
@@ -2181,6 +2203,8 @@ export const DAEMON_METHODS = {
   contextReport: "_sessionboxer/context/report",
   compactionDetails: "_sessionboxer/context/compaction",
   mcpSet: "_sessionboxer/mcp/set",
+  codexAuthSet: "_sessionboxer/codex/auth/set",
+  codexAuthChanged: "_sessionboxer/codex/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -2331,6 +2355,18 @@ export const DaemonMcpSetResult = z.object({
   applied: z.boolean(),
 });
 export type DaemonMcpSetResult = z.infer<typeof DaemonMcpSetResult>;
+
+/**
+ * Codex's `auth.json` for the Sandbox (ADR-0046): the Daemon keeps it on tmpfs behind
+ * `~/.codex/auth.json`, where Codex reads its tokens from. Sent before the MCP set (the
+ * Agent starts after that one) and again whenever the stored file changes. The same shape
+ * comes back as the `codexAuthChanged` notification when Codex rewrites the file with
+ * refreshed tokens.
+ */
+export const DaemonCodexAuthParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonCodexAuthParams = z.infer<typeof DaemonCodexAuthParams>;
 
 /**
  * Switches the Agent's model (ACP `session/set_config_option` on the `model` option). Applied right

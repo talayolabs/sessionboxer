@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Codex as a third agent, on your ChatGPT subscription: `codex login` on your machine, paste `~/.codex/auth.json` in Settings; the file lives on tmpfs in the box and refreshed tokens are stored back. Needs an image rebuild (ADR-0046).
 - Verify each turn end to end (on by default; Settings, per-session ⚙ Settings, the Verification pane's switch, `sessionboxer new --no-e2e`): after each turn the agent plans 2–5 test cases from your prompt, runs them on the box's desktop while recording, fixes and reruns what fails, and posts the video; the **Verification** pane opens by itself and shows cases, timers and cycles live. Needs an image rebuild (ADR-0044).
 - Automatic snapshots after every turn are off by default on a fresh install (a `config.json` that has the setting keeps it); the verification run takes that place (ADR-0044).
 - Docker inside Sandboxes now uses `192.168.240.0/20` instead of Docker's `172.17.0.0/16`, so company or VPN hosts in 172.16–31.x stop failing with "No route to host" from Docker-enabled sessions; change it under Settings → **Addresses for Docker inside Sandboxes**. Needs an image rebuild (ADR-0045).

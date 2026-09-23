@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import type { CompactionDetails, CompactionDetailsRequest, CompactionMessage, Provider } from "@sessionboxer/protocol";
+import { PROVIDER_LABELS, type CompactionDetails, type CompactionDetailsRequest, type CompactionMessage, type Provider } from "@sessionboxer/protocol";
 
 /**
  * What a context compaction did, read from the Provider's own records (ADR-0031). Nothing
@@ -376,15 +376,17 @@ export function readCompactionDetails(store: CompactionStore, acpSessionId: stri
     if (statSync(path).size > FILE_BYTES_MAX) throw new Error(`the transcript ${path} is too large to read (${Math.round(statSync(path).size / 1024 / 1024)} MB)`);
     list = claudeCompactions(readFileSync(path, "utf8"));
     source = path.replace(store.home, "~");
-  } else {
+  } else if (store.provider === "devin") {
     const path = `${store.home}/.local/share/devin/cli/sessions.db`;
     if (!existsSync(path)) throw new Error("Devin has no sessions.db under ~/.local/share/devin/cli");
     list = devinCompactions(devinNodes(path, acpSessionId));
     source = `~/.local/share/devin/cli/sessions.db (session ${acpSessionId})`;
     notes.push("Devin records the size of the window before a compaction but not after it; the trigger is not recorded either.");
+  } else {
+    throw new Error(`${PROVIDER_LABELS[store.provider]} compactions cannot be read yet`);
   }
   const index = pick(list, req);
-  if (index === -1) throw new Error(`${store.provider === "devin" ? "Devin" : "Claude Code"} has recorded no compaction for session ${acpSessionId} yet`);
+  if (index === -1) throw new Error(`${PROVIDER_LABELS[store.provider]} has recorded no compaction for session ${acpSessionId} yet`);
   const rec = list[index];
   if (!rec) throw new Error("no such compaction");
   if (index !== req.index) notes.push(`The Provider's record #${index + 1} matched this marker best (asked for #${req.index + 1} of ${list.length}).`);

@@ -4,9 +4,11 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
   type BoxCredential,
+  type CodexLogin,
   CONNECTORS,
   connectorHasMcp,
   MCP_RESERVED_NAMES,
@@ -212,7 +214,14 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
         ...current.providerSecrets.devin,
         ...stripUndefined(providerSecrets.devin ?? {}),
       },
+      codex: {
+        ...current.providerSecrets.codex,
+        ...stripUndefined(providerSecrets.codex ?? {}),
+      },
     };
+    if (providerSecrets.codex?.CODEX_AUTH_JSON !== undefined) {
+      next.providerSecrets.codex.CODEX_AUTH_JSON = normalizeCodexAuthJson(providerSecrets.codex.CODEX_AUTH_JSON);
+    }
   }
   return Settings.parse(next);
 }
@@ -235,7 +244,9 @@ export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclud
     providerSecretsSet: {
       "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings) !== "" },
       devin: { WINDSURF_API_KEY: devinToken(settings) !== "" },
+      codex: { CODEX_AUTH_JSON: codexAuthJson(settings) !== "" },
     },
+    codexLogin: codexLogin(codexAuthJson(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -281,6 +292,91 @@ export function devinToken(settings: Settings): string {
   return process.env.WINDSURF_API_KEY || settings.providerSecrets.devin.WINDSURF_API_KEY;
 }
 
+/**
+ * Codex's `auth.json` (ADR-0046). No environment override: Codex rotates the tokens inside and
+ * the refreshed file is written back here, which a fixed environment value could not follow.
+ */
+export function codexAuthJson(settings: Settings): string {
+  return settings.providerSecrets.codex.CODEX_AUTH_JSON;
+}
+
+/** Rejects anything but the JSON object `codex login` writes; `""` forgets it. Returns it compacted. */
+export function normalizeCodexAuthJson(text: string): string {
+  if (text.trim() === "") return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new HttpError(400, "The Codex login must be the JSON in ~/.codex/auth.json, as written by `codex login`.");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new HttpError(400, "The Codex login must be the JSON object in ~/.codex/auth.json.");
+  }
+  const login = codexLogin(text);
+  if (!login) throw new HttpError(400, "This auth.json holds neither a ChatGPT login nor an API key; run `codex login` and copy ~/.codex/auth.json again.");
+  return JSON.stringify(parsed);
+}
+
+/**
+ * What an `auth.json` says about its account: the ChatGPT id token is a JWT whose claims carry the
+ * email and, under `https://api.openai.com/auth`, the plan; nothing is verified, this is only what
+ * Settings shows. `null` for an empty or unusable string.
+ */
+export function codexLogin(authJson: string): CodexLogin | null {
+  if (authJson.trim() === "") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(authJson);
+  } catch {
+    return null;
+  }
+  const file = CodexAuthFile.safeParse(parsed);
+  if (!file.success) return null;
+  const apiKey = typeof file.data.OPENAI_API_KEY === "string" && file.data.OPENAI_API_KEY !== "";
+  const tokens = file.data.tokens;
+  if (!tokens && !apiKey) return null;
+  const claims = tokens ? jwtClaims(tokens.id_token) : null;
+  const auth = claims?.["https://api.openai.com/auth"];
+  const plan = typeof auth === "object" && auth !== null && "chatgpt_plan_type" in auth ? auth.chatgpt_plan_type : null;
+  return {
+    email: typeof claims?.email === "string" ? claims.email : null,
+    plan: typeof plan === "string" ? plan : null,
+    lastRefresh: file.data.last_refresh ?? null,
+    apiKey,
+  };
+}
+
+/** The parts of Codex's `auth.json` Sessionboxer looks at (the rest is passed through untouched). */
+const CodexAuthFile = z.object({
+  OPENAI_API_KEY: z.string().nullable().optional(),
+  tokens: z.object({ id_token: z.string(), access_token: z.string(), refresh_token: z.string() }).nullable().optional(),
+  last_refresh: z.string().nullable().optional(),
+});
+
+function jwtClaims(token: string): Record<string, unknown> | null {
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which of two `auth.json` is the newer one: Codex stamps `last_refresh` when it rotates the tokens.
+ * `true` when `candidate` should replace `current` (a different file that is not older).
+ */
+export function codexAuthNewer(candidate: string, current: string): boolean {
+  const a = codexLogin(candidate);
+  if (!a) return false;
+  if (JSON.stringify(JSON.parse(candidate)) === current) return false;
+  const b = codexLogin(current);
+  if (!b?.lastRefresh || !a.lastRefresh) return true;
+  return Date.parse(a.lastRefresh) >= Date.parse(b.lastRefresh);
+}
+
 /** `ANTHROPIC_AUTH_TOKEN` for Claude Sandboxes (a company proxy's bearer credential); env override like the tokens. */
 export function claudeAuthToken(settings: Settings): string {
   return process.env.ANTHROPIC_AUTH_TOKEN || settings.claudeApi.authToken;
@@ -305,6 +401,8 @@ export function claudeBaseUrl(settings: Settings): { url: string; source: Claude
 export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   "claude-code": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
   devin: ["WINDSURF_API_KEY"],
+  // Codex's login never travels as environment: the Daemon gets it over RPC and keeps it on tmpfs.
+  codex: [],
 };
 
 /** The Provider has a credential to run with (`providerSetupHint` says what is missing otherwise). */
@@ -314,6 +412,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return claudeToken(settings) !== "" || claudeAuthToken(settings) !== "" || claudeApiKey(settings) !== "";
     case "devin":
       return devinToken(settings) !== "";
+    case "codex":
+      return codexAuthJson(settings) !== "";
   }
 }
 
@@ -339,6 +439,8 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     }
     case "devin":
       return { WINDSURF_API_KEY: devinToken(settings) };
+    case "codex":
+      return {};
   }
 }
 
@@ -348,6 +450,8 @@ export function providerSetupHint(provider: Provider): string {
       return "No Claude token configured. Run `claude setup-token` and paste it in Settings.";
     case "devin":
       return "No Devin token configured. Run `devin auth login` and paste the token from ~/.local/share/devin/credentials.toml in Settings.";
+    case "codex":
+      return "No Codex login configured. Run `codex login` (ChatGPT account) and paste ~/.codex/auth.json in Settings.";
   }
 }
 

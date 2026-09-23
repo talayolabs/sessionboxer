@@ -38,6 +38,7 @@ ARG NODE_MAJOR=22
 ARG CLAUDE_CODE_VERSION=2.1.272
 ARG CLAUDE_AGENT_ACP_VERSION=0.77.0
 ARG DEVIN_CLI_VERSION=3000.10.27
+ARG CODEX_ACP_VERSION=1.1.9
 ARG OPENVSCODE_SERVER_VERSION=1.109.5
 ARG EXTRA_CA_FINGERPRINT=
 # Build-time only (an ARG is not kept in the image): npm/node trust the system store, which
@@ -90,11 +91,15 @@ RUN curl -fsSL https://astral.sh/uv/${UV_VERSION}/install.sh -o /tmp/uv-install.
     && uv --version && uvx --version
 
 # Claude Code CLI (for the user in the terminal tab) and its ACP adapter
-# (spawned by the Sandbox Daemon over stdio).
+# (spawned by the Sandbox Daemon over stdio); Codex's ACP adapter, which bundles
+# the Codex CLI (ADR-0046).
 RUN npm install -g \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
       @agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION} \
-    && npm cache clean --force
+      @agentclientprotocol/codex-acp@${CODEX_ACP_VERSION} \
+    && npm cache clean --force \
+    && ln -s "$(npm root -g)/@agentclientprotocol/codex-acp/node_modules/@openai/codex/bin/codex.js" /usr/local/bin/codex \
+    && codex-acp --version && codex --version
 
 # VS Code in the browser (the Code pane): openvscode-server is started on demand by the
 # Sandbox Daemon on the loopback interface and reached only through the Daemon's port.
@@ -171,11 +176,15 @@ COPY images/sandbox/firefox-policies.json /etc/firefox/policies/policies.json
 
 # Agent-facing configuration and the Desktop entrypoint. The Desktop briefing
 # is installed once as ~/.claude/CLAUDE.md: Claude Code reads it natively and
-# Devin CLI loads it as an always-on rule too (`devin rules list`).
+# Devin CLI loads it as an always-on rule too (`devin rules list`). Codex reads
+# its global instructions from ~/.codex/AGENTS.md and skills from ~/.agents/skills.
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
+COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 # Skills the Control Plane asks for by name (ADR-0044); Claude Code discovers them here, Devin reads the file.
 COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
+RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent/.agents/skills && chown -Rh agent:agent /home/agent/.agents
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
 RUN chmod +x /usr/local/bin/sessionboxer-entrypoint

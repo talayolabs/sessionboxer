@@ -18,6 +18,7 @@ import {
   sessionRoute,
   type AgentOption,
   type Branch,
+  type CodexLogin,
   type E2eRun,
   type LlmCall,
   type ModelOption,
@@ -104,6 +105,14 @@ function cleanTranslation(answer: string, original: string): string {
   return out;
 }
 
+/** One line about the stored Codex login, from the metadata the Control Plane exposes (never the tokens). */
+function describeCodexLogin(login: CodexLogin): string {
+  const parts = [login.email ?? (login.apiKey ? "API key" : "ChatGPT account")];
+  if (login.plan) parts.push(`${login.plan} plan`);
+  if (login.lastRefresh) parts.push(`refreshed ${new Date(login.lastRefresh).toLocaleString()}`);
+  return parts.join(", ");
+}
+
 /** Whether the secret a Session of `provider` needs to talk to its model is configured. */
 function providerTokenSet(settings: PublicSettings, provider: Provider): boolean {
   switch (provider) {
@@ -111,6 +120,8 @@ function providerTokenSet(settings: PublicSettings, provider: Provider): boolean
       return settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
     case "devin":
       return settings.providerSecretsSet.devin.WINDSURF_API_KEY;
+    case "codex":
+      return settings.providerSecretsSet.codex.CODEX_AUTH_JSON;
   }
 }
 
@@ -629,7 +640,7 @@ export function App() {
         )}
         {!anyTokenSet && route.view !== "settings" && (
           <div className="banner banner-warn" onClick={() => setRoute({ view: "settings" })}>
-            No Provider token configured. Open Settings and add a Claude Code or Devin token.
+            No Provider token configured. Open Settings and add a Claude Code or Devin token, or a Codex login.
           </div>
         )}
         {route.view === "new" && settings && (
@@ -1606,6 +1617,9 @@ function SettingsView({
 }) {
   const [token, setToken] = useState("");
   const [devinToken, setDevinToken] = useState("");
+  const [codexAuth, setCodexAuth] = useState("");
+  const [forgetCodexAuth, setForgetCodexAuth] = useState(false);
+  const codexFileRef = useRef<HTMLInputElement>(null);
   const [claudeBaseUrl, setClaudeBaseUrl] = useState(settings.claudeApi.baseUrl);
   const [claudeAuthToken, setClaudeAuthToken] = useState("");
   const [claudeApiKey, setClaudeApiKey] = useState("");
@@ -1637,6 +1651,15 @@ function SettingsView({
   const githubSecretSet = settings.connectors.github.clientSecretSet && !forgetGithubSecret;
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
+  const codexAuthSet = settings.providerSecretsSet.codex.CODEX_AUTH_JSON && !forgetCodexAuth;
+
+  const importCodexAuth = (file: File | undefined) => {
+    if (!file) return;
+    void file.text().then((text) => {
+      setCodexAuth(text);
+      setForgetCodexAuth(false);
+    });
+  };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1667,6 +1690,7 @@ function SettingsView({
         providerSecrets: {
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
+          ...(codexAuth.trim() ? { codex: { CODEX_AUTH_JSON: codexAuth.trim() } } : forgetCodexAuth ? { codex: { CODEX_AUTH_JSON: "" } } : {}),
         },
         claudeApi: {
           baseUrl: claudeBaseUrl.trim(),
@@ -1676,6 +1700,8 @@ function SettingsView({
       });
       setToken("");
       setDevinToken("");
+      setCodexAuth("");
+      setForgetCodexAuth(false);
       setClaudeAuthToken("");
       setClaudeApiKey("");
       setForgetClaudeAuthToken(false);
@@ -1720,6 +1746,63 @@ function SettingsView({
           <span>Log in, then copy the token out of the credentials file it writes:</span>
           <CopyCommand command="devin auth login" />
           <CopyCommand command="cat ~/.local/share/devin/credentials.toml" />
+        </p>
+        <label>
+          <span className="label-row">
+            Codex: ChatGPT login (auth.json){" "}
+            {codexAuthSet ? (
+              <span className="ok">
+                (set{settings.codexLogin && !forgetCodexAuth ? `: ${describeCodexLogin(settings.codexLogin)}` : ""})
+              </span>
+            ) : (
+              <span className="warn">(not set)</span>
+            )}
+          </span>
+          <textarea
+            rows={3}
+            spellCheck={false}
+            autoComplete="off"
+            value={codexAuth}
+            onChange={(e) => {
+              setCodexAuth(e.target.value);
+              if (e.target.value.trim()) setForgetCodexAuth(false);
+            }}
+            placeholder={codexAuthSet ? "Leave empty to keep the current login" : "Paste the contents of ~/.codex/auth.json"}
+          />
+        </label>
+        <p className="field-hint">
+          <span>
+            Codex runs on your ChatGPT subscription, not on API credit. Log in on your own machine, then paste or import the file it writes; the Sandbox
+            keeps it in memory only and refreshed tokens flow back here.
+          </span>
+          <CopyCommand command="codex login" />
+          <CopyCommand command="cat ~/.codex/auth.json" />
+          <input
+            ref={codexFileRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(e) => {
+              importCodexAuth(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <button type="button" onClick={() => codexFileRef.current?.click()}>
+            Import auth.json…
+          </button>
+          {settings.providerSecretsSet.codex.CODEX_AUTH_JSON && (
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={forgetCodexAuth}
+                onChange={(e) => {
+                  setForgetCodexAuth(e.target.checked);
+                  if (e.target.checked) setCodexAuth("");
+                }}
+              />{" "}
+              Forget the stored login
+            </label>
+          )}
         </p>
       </fieldset>
       <fieldset className="choice">
@@ -1811,7 +1894,8 @@ function SettingsView({
           <textarea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
         </label>
         <p className="muted">
-          Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")} Comes on top of
+          Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
+          {deliveryNote("codex")} Comes on top of
           the Sandbox briefing (desktop, recordings, handing files to you) and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Applies to
           Sessions created afterwards.
         </p>

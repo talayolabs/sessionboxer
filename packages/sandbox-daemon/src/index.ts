@@ -16,6 +16,7 @@ import {
   type DaemonLlmInspectSetResult,
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
+  DaemonCodexAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -50,6 +51,7 @@ import {
 import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
 import { CodeServer } from "./code-server.js";
+import { CodexAuth } from "./codex-auth.js";
 import { readCompactionDetails } from "./compactions.js";
 import { E2eBridge } from "./e2e-bridge.js";
 import { GhApi } from "./gh-api.js";
@@ -98,6 +100,7 @@ function emit(body: DaemonEvent["body"]): void {
 const ACP_COMMANDS: Record<Provider, string[]> = {
   "claude-code": ["claude-agent-acp"],
   devin: ["devin", "acp"],
+  codex: ["codex-acp"],
 };
 const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
@@ -112,6 +115,14 @@ const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, l
 const bbCredentials = new BbCredentials(env.BB_CONFIG_DIR ?? `${tmpfsDir}/bb`, log);
 /** Claude's model allowlist lives in its settings file; the Control Plane sends the list before the Agent starts. */
 const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/.claude/settings.json`, log) : null;
+/** Codex's ChatGPT login: `~/.codex/auth.json` on tmpfs, refreshed tokens reported back (ADR-0046). */
+const codexHome = env.CODEX_HOME ?? `${home}/.codex`;
+const codexAuth =
+  provider === "codex"
+    ? new CodexAuth(codexHome, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.codexAuthChanged, { authJson }))
+    : null;
+/** The Sandbox is the isolation: Codex runs without approvals or its own sandbox, like the other Providers. */
+const CODEX_AGENT_ENV = { CODEX_HOME: codexHome, INITIAL_AGENT_MODE: "agent-full-access" };
 
 /** The Session's standing instructions, set by the Control Plane on the container. */
 const instructions = env.SESSIONBOXER_INSTRUCTIONS ?? "";
@@ -152,6 +163,7 @@ const agent = new AgentManager(
     command: acpCommand,
     args: acpArgs,
     cwd: workspace,
+    ...(provider === "codex" ? { env: CODEX_AGENT_ENV } : {}),
     mcpCommand,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     instructions,
@@ -254,6 +266,11 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       if (!agent.acpSessionId) throw new Error("the Agent has no session yet");
       const result: DaemonCompactionDetailsResult = readCompactionDetails({ provider, home, cwd: workspace }, agent.acpSessionId, p);
       return result;
+    }
+    case DAEMON_METHODS.codexAuthSet: {
+      if (!codexAuth) throw new Error("this Sandbox does not run Codex");
+      codexAuth.set(DaemonCodexAuthParams.parse(params).authJson);
+      return {};
     }
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);

@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import {
   DAEMON_METHODS,
+  DaemonCodexAuthParams,
   DaemonStatus,
   PtyExitParams,
   PtyOutputParams,
@@ -17,6 +18,8 @@ export interface DaemonClientHandlers {
   onStatus: (status: DaemonStatus) => void;
   onPtyOutput: (ptyId: string, data: Buffer) => void;
   onPtyExit: (ptyId: string, exitCode: number) => void;
+  /** Codex rewrote its `auth.json` (refreshed tokens); the whole file. */
+  onCodexAuthChanged: (authJson: string) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
   /** A request from the Daemon (the Agent's `e2e_*` tools); the result or thrown error is answered back. */
@@ -126,6 +129,8 @@ export class DaemonClient {
       } else if (msg.method === DAEMON_METHODS.ptyExit) {
         const p = PtyExitParams.parse(msg.params);
         this.handlers.onPtyExit(p.id, p.exitCode);
+      } else if (msg.method === DAEMON_METHODS.codexAuthChanged) {
+        this.handlers.onCodexAuthChanged(DaemonCodexAuthParams.parse(msg.params).authJson);
       }
     }
   }

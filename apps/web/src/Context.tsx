@@ -1,13 +1,11 @@
 import { useState } from "react";
-import type { ContextBreakdown, ContextContributor, LlmCall, Session } from "@sessionboxer/protocol";
+import { PROVIDER_LABELS, type ContextBreakdown, type ContextContributor, type LlmCall, type Session } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { ROTTING_FRACTION, completedCompactions, fillFraction, formatCost, formatTokens, gaugeHue, type ContextState } from "./context-model";
 import { formatTime } from "./format";
 import { LLM_KIND_LABELS, formatBytes } from "./llm-model";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
-
-const PROVIDER_NAMES = { "claude-code": "Claude Code", devin: "Devin" } as const;
 
 /**
  * The context gauge in the composer footer: how full the window is (green when light,
@@ -254,7 +252,7 @@ export function ContextPane({
     setRefreshing(true);
     void run(() => api.contextReport(session.id)).finally(() => setRefreshing(false));
   };
-  const provider = PROVIDER_NAMES[session.provider];
+  const provider = PROVIDER_LABELS[session.provider];
   return (
     <div className="pane prs-pane ctx-pane">
       <div className="prs-toolbar">

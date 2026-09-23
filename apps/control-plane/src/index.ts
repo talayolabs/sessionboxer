@@ -59,6 +59,8 @@ import {
   accessToken,
   accessTokenSource,
   applySettingsUpdate,
+  codexAuthJson,
+  codexAuthNewer,
   ensureAccessToken,
   ensureTunnelSecret,
   ensureVapidKeys,
@@ -106,6 +108,20 @@ const push = new PushNotifier(
   log,
 );
 const sessions = new SessionManager(db, docker, () => settings, log, (msg) => push.send(msg));
+// Codex rotates its ChatGPT tokens inside the Sandbox; the rewritten auth.json replaces the stored one
+// (unless it is older than what another Sandbox already sent) and reaches the other Codex Sessions.
+sessions.codexAuthRefreshed = (sessionId, authJson) => {
+  if (!codexAuthNewer(authJson, codexAuthJson(settings))) return;
+  try {
+    settings = applySettingsUpdate(settings, { providerSecrets: { codex: { CODEX_AUTH_JSON: authJson } } });
+  } catch (e) {
+    log(`codex auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  saveSettings(settings);
+  log(`codex login refreshed by session ${sessionId}; stored`);
+  void sessions.pushCodexAuthToAll();
+};
 const tunnels = new Tunnels(
   LOCAL_ORIGIN,
   settings.tunnels,
@@ -222,6 +238,7 @@ api.put("/settings", async (c) => {
   if (update.extraCaCerts !== undefined || update.trustHostCaCerts !== undefined) applyTrustedCas(settings);
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
+  if (update.providerSecrets?.codex?.CODEX_AUTH_JSON !== undefined) void sessions.pushCodexAuthToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
   return c.json(await publicSettings());

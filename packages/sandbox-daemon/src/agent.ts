@@ -36,6 +36,8 @@ export interface AgentConfig {
   command: string;
   args: string[];
   cwd: string;
+  /** Fixed environment for the Agent process, on top of the Daemon's own. */
+  env?: Record<string, string>;
   mcpCommand: string;
   stateFile: string;
   /** Standing instructions for the Agent (the Session's); empty sends none. */
@@ -93,8 +95,8 @@ function withInstructions(instructions: string, text: string): string {
 
 const CLIENT_INFO = { name: "sessionboxer-daemon", version: "0.0.0" };
 
-/** Mode ids that mean "auto-approve every tool call", per adapter (claude-agent-acp, devin acp). */
-const BYPASS_MODE_IDS = ["bypassPermissions", "bypass"];
+/** Mode ids that mean "auto-approve every tool call", per adapter (claude-agent-acp, devin acp, codex-acp). */
+const BYPASS_MODE_IDS = ["bypassPermissions", "bypass", "agent-full-access"];
 
 /** session/new can fail on transient upstream fetches (Devin's team settings); retry before giving up. */
 const NEW_SESSION_ATTEMPTS = 3;
@@ -542,7 +544,7 @@ export class AgentManager {
     if (Object.keys(agentEnv).length > 0) this.cfg.log(`agent environment overrides: ${Object.keys(agentEnv).join(", ")}`);
     const child = spawn(this.cfg.command, this.cfg.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...caEnv(), ...agentEnv },
+      env: { ...process.env, ...caEnv(), ...this.cfg.env, ...agentEnv },
       cwd: this.cfg.cwd,
     });
     this.child = child;

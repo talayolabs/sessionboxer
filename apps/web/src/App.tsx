@@ -219,6 +219,8 @@ export function App() {
 
   const selectedId = route.view === "session" ? route.id : null;
   const selected = sessions.find((s) => s.id === selectedId) ?? null;
+  // Until the new Session's runs arrive the state still holds the old Session's; never render those under the new id.
+  const selectedE2eRuns = useMemo(() => (e2eRuns.every((r) => r.sessionId === selectedId) ? e2eRuns : EMPTY_E2E_RUNS), [e2eRuns, selectedId]);
   const snapshotsSession = sessions.find((s) => s.id === snapshotsFor) ?? null;
 
   const reloadSessions = useCallback(
@@ -673,7 +675,7 @@ export function App() {
             prs={prs[selected.id] ?? EMPTY_PRS}
             prItems={prItems}
             onLoadPrItems={loadPrItems}
-            e2eRuns={e2eRuns}
+            e2eRuns={selectedE2eRuns}
             paneRequest={paneRequest?.sessionId === selected.id ? paneRequest.pane : null}
             onPaneRequestHandled={clearPaneRequest}
             mobile={mobile}
@@ -711,6 +713,7 @@ export function App() {
 }
 
 const EMPTY_PRS: PullRequest[] = [];
+const EMPTY_E2E_RUNS: E2eRun[] = [];
 
 function activityLine(p: PrActivity): string {
   const who = p.authors.length <= 2 ? p.authors.map((a) => `@${a}`).join(", ") : `@${p.authors[0]} and ${p.authors.length - 1} others`;

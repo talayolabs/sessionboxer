@@ -61,6 +61,7 @@ import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
+import { DockerIcon } from "./DockerIcon";
 import { ContextGauge, ContextPane } from "./Context";
 import { deriveContext, type Compaction, type ContextState } from "./context-model";
 import { PrPane, PrsPane } from "./PullRequests";
@@ -458,8 +459,11 @@ export function App() {
   const context = useMemo(() => deriveContext(events), [events]);
   const llmCalls = useMemo(() => llmCallsOf(events), [events]);
   const anyTokenSet = settings ? PROVIDERS.some((p) => providerTokenSet(settings, p)) : true;
-  const sysboxMissing = settings ? settings.dockerModeAvailable !== "sysbox" : false;
-  const settingsWarning = !anyTokenSet ? "No Provider token configured" : sysboxMissing ? "Sysbox runtime not installed" : null;
+  const dockerWarning =
+    settings && settings.dockerInSandbox && settings.dockerModeAvailable === "privileged"
+      ? "Sysbox runtime not installed: Docker-enabled Sandboxes run with --privileged, so the Agent can escape to your host"
+      : null;
+  const settingsWarning = !anyTokenSet ? "No Provider token configured" : dockerWarning;
 
   const topTitle =
     route.view === "new" ? "New session" : route.view === "settings" ? "Settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
@@ -542,12 +546,9 @@ export function App() {
                     </span>
                   )}
                   {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6"}</span>}
-                  {s.settings.sandbox.dockerMode !== "none" && (
-                    <span
-                      className={s.settings.sandbox.dockerMode === "privileged" ? "warn" : undefined}
-                      title={DOCKER_MODE_LABELS[s.settings.sandbox.dockerMode]}
-                    >
-                      {s.settings.sandbox.dockerMode === "privileged" ? "\u26a0 " : ""}docker
+                  {s.settings.sandbox.dockerMode === "privileged" && (
+                    <span className="docker-warn" title={PRIVILEGED_WARNING}>
+                      <DockerIcon label={PRIVILEGED_WARNING} />
                     </span>
                   )}
                   <SessionSourceIcon session={s} />
@@ -590,7 +591,16 @@ export function App() {
             {schedules.some((s) => s.lastStatus === "failed") && <span className="warn-sign" aria-label="A scheduled task failed">⚠</span>}
           </button>
           <button onClick={() => setRoute({ view: "settings" })} title={settingsWarning ?? undefined}>
-            Settings{settingsWarning && <span className="warn-sign" aria-label={settingsWarning}>⚠</span>}
+            Settings
+            {!anyTokenSet ? (
+              <span className="warn-sign" aria-label={settingsWarning ?? undefined}>⚠</span>
+            ) : (
+              dockerWarning && (
+                <span className="docker-warn">
+                  <DockerIcon label={dockerWarning} />
+                </span>
+              )
+            )}
           </button>
         </div>
       </aside>
@@ -1114,12 +1124,10 @@ function SessionView({
           <ProviderIcon provider={session.provider} size={18} />
           {mobile && <span className="muted">{PROVIDER_LABELS[session.provider]}</span>}
         </span>
-        {session.settings.sandbox.dockerMode !== "none" && (
-          <span
-            className={session.settings.sandbox.dockerMode === "privileged" ? "warn" : "muted"}
-            title={session.settings.sandbox.dockerMode === "privileged" ? PRIVILEGED_WARNING : "Private Docker daemon under the Sysbox runtime"}
-          >
-            {DOCKER_MODE_LABELS[session.settings.sandbox.dockerMode]}
+        {session.settings.sandbox.dockerMode === "privileged" && (
+          <span className="docker-warn" title={PRIVILEGED_WARNING}>
+            <DockerIcon size={18} label={PRIVILEGED_WARNING} />
+            {mobile && <span className="warn">{DOCKER_MODE_LABELS.privileged}</span>}
           </span>
         )}
         {session.repos.length > 0 ? (

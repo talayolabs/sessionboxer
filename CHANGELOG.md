@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The "Docker (privileged)" label is now a red Docker icon with the warning as tooltip — in the session header, the session list and on the Settings button when Sysbox is missing; Sysbox boxes and sessions without Docker show no Docker icon.
 - Session header shows the provider as its logo (Claude Code, Devin, Codex) with the name as a tooltip; the phone sheet keeps the name.
 - Inspect LLM is on by default for new Claude Code sessions (New Session and scheduled-task templates pre-check it; forks keep the original's setting).
 - Terminal pane: copy and paste work — Ctrl+C with a selection, Ctrl+Shift+C or Ctrl+Insert copy; Ctrl+V, Ctrl+Shift+V or Shift+Insert paste (Ctrl+V used to send `^V` to the shell); right-click menu with Copy, Paste, Select all and Clear, also in the desktop app.

@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-09-24
+
+Install: `npx sessionboxer@1.1.0 serve`, the desktop installers below, `docker compose up` with
+this release's `docker-compose.yml`, or `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`.
+Upgrading from 1.0.0: the Sandbox image changed (`ghcr.io/talayolabs/sessionboxer-sandbox:1.1.0`
+is pulled on first use; `npm run build:image` for source installs); Stop → Resume existing sessions
+to get the new image. Highlights: Codex as a third agent, scheduled tasks, color themes shared
+with VS Code, verification of each turn with a video, PR checks (GitHub and Bitbucket Data Center)
+fixed from the PR pane, forks with another agent and handoffs, usage limits with Continue /
+Auto-continue, and a chat that folds the agent's messages of a turn.
 
 - Desktop MCP: the cursor glides to its target instead of jumping — `mouse_move`, the clicks, `scroll` and `left_click_drag` with a coordinate move through an eased path (ease-in-out cubic, ~100 ms for a short hop to 300 ms across the screen, a position every 8 ms) sent to xdotool as one command chain, so it costs one process and shows in the Desktop pane and in recordings; the program under the cursor receives the intermediate motion events (hover, `dragover`) a hand-moved mouse produces. A move to the point the cursor already stands on returns at once (it used to hang 15 s in xdotool's `--sync`). `SESSIONBOXER_MOUSE_GLIDE=0` restores the jump. Needs an image rebuild.
 - Usage limits: a turn the Provider refuses for lack of credit (Claude's *You've hit your session limit · resets 2pm (UTC)*, weekly/monthly/Opus/Sonnet/fast-mode limits and *usage credit limit reached*; Codex's *usage limit* / `quota_exceeded`; Devin's *Quota exhausted* / `resource_exhausted`) no longer looks like an answer or an error: the Session stays idle with `Session.usage.limit`, a red bar with a no-entry sign above the composer counts down the time left to the reset as `days hh:mm:ss` (hover: the reset date and what the Provider said), the session list shows the sign in place of the status dot, **Continue** sends the interrupted prompt again (attachments included; *Continue where you left off.* when the Agent had already run tools) and **Auto-continue** polls the Provider every 10 s once the reset is due — a one-line question in a throwaway ACP session — and continues by itself as soon as it answers; the queue holds while a limit stands and plays on afterwards. Claude's refusal is also recognised from the API's `anthropic-ratelimit-unified-status: rejected` header, whatever the wording. Three **usage bars** above the context gauge show the Provider's metered windows, green→red without figures, the percentage and reset on hover: Claude's session / week / Fable-or-Opus windows from the `anthropic-ratelimit-unified-*` headers the LLM recorder sees (Inspect LLM on; only those headers leave the recorder), Codex's 5-hour and weekly limits from `/status` after each turn; Devin reports none and the bars say so. A scheduled run cut by a limit is marked failed with that reason. `sessions.usage` column, `POST /api/sessions/:id/usage/continue`, `POST /api/sessions/:id/usage/auto-continue`, `agent_error.limit`, `DaemonStatus.usage` (ADR-0053).

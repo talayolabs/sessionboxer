@@ -1,6 +1,6 @@
 {
   "name": "@sessionboxer/web",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Browser UI: session list, chat transcript, settings.",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@novnc/novnc": "^1.7.0",
-    "@sessionboxer/protocol": "1.0.0",
+    "@sessionboxer/protocol": "1.1.0",
     "@tiptap/extension-code-block-lowlight": "^3.31.3",
     "@tiptap/extension-list": "^3.31.3",
     "@tiptap/extensions": "^3.31.3",

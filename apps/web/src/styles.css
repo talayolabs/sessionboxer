@@ -190,6 +190,8 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .msg-copy .small:hover { color: var(--text); }
 .msg-user { background: var(--user); align-self: flex-end; }
 .msg-agent { background: var(--agent); }
+/* WhatsApp-style time at the bubble's bottom-right. */
+.msg-time { display: block; text-align: right; margin: 4px -2px -5px 0; font-size: 11px; line-height: 1; color: var(--muted); cursor: default; white-space: nowrap; }
 .thought { color: var(--muted); font-size: 13px; }
 .thought .md { padding: 6px 12px; }
 .marker { color: var(--muted); font-size: 12px; text-align: center; }

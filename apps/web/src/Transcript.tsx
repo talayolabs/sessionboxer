@@ -4,6 +4,7 @@ import { UploadedAttachments } from "./Attachments";
 import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
 import { CopyableMessage } from "./CopyMessage";
 import { formatDuration } from "./E2e";
+import { formatRelative, formatRfc5322, useClock } from "./time";
 import { FileLink } from "./FileLink";
 import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
 import { formatMb, formatTime } from "./format";
@@ -71,7 +72,7 @@ function TurnDivider({
   return (
     <div className={`turn-divider${item.tail ? " turn-divider-tail" : ""}`} data-branch={item.branchId} data-seq={item.seq}>
       <span className="turn-divider-line" />
-      <span className="turn-divider-label" title={new Date(item.ts).toLocaleString()}>
+      <span className="turn-divider-label" title={formatRfc5322(item.ts)}>
         {item.stopReason === "end_turn" ? "turn ended" : `turn ended (${item.stopReason})`} {formatTime(item.ts)}
       </span>
       <TurnStatsLabel stats={item.stats} />
@@ -354,6 +355,28 @@ function LlmTab({ call, onInspect }: { call: LlmCall; onInspect: (call: LlmCall)
   );
 }
 
+/** When a message was sent, as people say it; the exact RFC 5322 date on hover. */
+function Timestamp({ ts }: { ts: string }) {
+  const now = useClock();
+  return (
+    <time className="msg-time" dateTime={ts} title={formatRfc5322(ts)}>
+      {formatRelative(ts, now)}
+    </time>
+  );
+}
+
+/** Ticks every second while `live`; the time since `from`. */
+function useElapsed(from: number, live: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [live]);
+  return Math.max(0, now - from);
+}
+
 function Item({
   item,
   actions,
@@ -394,14 +417,14 @@ function Item({
   switch (item.kind) {
     case "user":
       return (
-        <CopyableMessage className="msg-user" text={item.text}>
+        <CopyableMessage className="msg-user" text={item.text} footer={<Timestamp ts={item.ts} />}>
           {item.text.trim() !== "" && <Markdown text={item.text} />}
           {item.attachments && <UploadedAttachments attachments={item.attachments} />}
         </CopyableMessage>
       );
     case "agent":
       return (
-        <CopyableMessage className="msg-agent" text={item.text}>
+        <CopyableMessage className="msg-agent" text={item.text} footer={<Timestamp ts={item.ts} />}>
           <Markdown text={item.text} attachments />
         </CopyableMessage>
       );
@@ -513,11 +536,15 @@ function E2eMarker({ run, onOpen }: { run: E2eRunSummary; onOpen: () => void }) 
 }
 
 /** What the Agent produces within a turn; consecutive runs of these fold into one group. */
-function isAgentSide(item: TranscriptItem): boolean {
+function isAgentSide(item: TranscriptItem): item is Extract<TranscriptItem, { kind: "agent" | "thought" | "tool" | "plan" }> {
   return item.kind === "agent" || item.kind === "thought" || item.kind === "tool" || item.kind === "plan";
 }
 
-type Row = { kind: "item"; index: number } | { kind: "group"; key: string; indices: number[]; live: boolean };
+type Row = { kind: "item"; index: number } | { kind: "group"; key: string; indices: number[]; live: boolean; startedAt: string; endedAt: string | null };
+
+function itemTs(item: TranscriptItem | undefined): string | null {
+  return item && "ts" in item ? item.ts : null;
+}
 
 /**
  * Consecutive Agent-side items become one group: always while the Agent is still working on
@@ -539,8 +566,11 @@ function groupRows(items: TranscriptItem[], running: boolean): Row[] {
       if (!next || !isAgentSide(next)) break;
       indices.push(j);
     }
-    const live = running && indices[indices.length - 1] === items.length - 1;
-    if (live || indices.length > 1) rows.push({ kind: "group", key: `g${item.key}`, indices, live });
+    const last = indices[indices.length - 1] ?? i;
+    const live = running && last === items.length - 1;
+    // The turn's end (or whatever stopped it) follows the group; the time it took runs to there.
+    const endedAt = live ? null : itemTs(items[last + 1]);
+    if (live || indices.length > 1) rows.push({ kind: "group", key: `g${item.key}`, indices, live, startedAt: item.ts, endedAt });
     else rows.push({ kind: "item", index: i });
     i += indices.length;
   }
@@ -566,10 +596,31 @@ function FoldDivider({ live, label, expanded, onToggle }: { live: boolean; label
  * The Agent's messages of one turn behind a single rule: while it works, a spinner and the count;
  * once the turn ended, only the last message (its summary) shows; open to see them all.
  */
-function AgentGroup({ items, indices, live, expanded, onToggle, render }: { items: TranscriptItem[]; indices: number[]; live: boolean; expanded: boolean; onToggle: () => void; render: (index: number) => ReactNode }) {
+function AgentGroup({
+  items,
+  indices,
+  live,
+  startedAt,
+  endedAt,
+  expanded,
+  onToggle,
+  render,
+}: {
+  items: TranscriptItem[];
+  indices: number[];
+  live: boolean;
+  startedAt: string;
+  endedAt: string | null;
+  expanded: boolean;
+  onToggle: () => void;
+  render: (index: number) => ReactNode;
+}) {
   const n = indices.length;
   const plural = n === 1 ? "message" : "messages";
-  const label = live ? `Working… ${n} ${plural} so far` : expanded ? `Fold ${n} ${plural}` : `Show all ${n} ${plural}`;
+  const elapsed = useElapsed(new Date(startedAt).getTime(), live);
+  const took = live ? elapsed : endedAt ? new Date(endedAt).getTime() - new Date(startedAt).getTime() : null;
+  const time = took !== null && Number.isFinite(took) ? ` · ${formatDuration(took)}` : "";
+  const label = live ? `Working… ${n} ${plural} so far${time}` : expanded ? `Fold ${n} ${plural}${time}` : `Show all ${n} ${plural}${time}`;
   const summary = live ? -1 : ([...indices].reverse().find((i) => items[i]?.kind === "agent") ?? indices[n - 1] ?? -1);
   return (
     <div className="fold">
@@ -710,7 +761,17 @@ export function Transcript({
           row.kind === "item" ? (
             renderItem(row.index)
           ) : (
-            <AgentGroup key={row.key} items={items} indices={row.indices} live={row.live} expanded={expanded.has(row.key)} onToggle={() => toggleGroup(row.key)} render={renderItem} />
+            <AgentGroup
+              key={row.key}
+              items={items}
+              indices={row.indices}
+              live={row.live}
+              startedAt={row.startedAt}
+              endedAt={row.endedAt}
+              expanded={expanded.has(row.key)}
+              onToggle={() => toggleGroup(row.key)}
+              render={renderItem}
+            />
           ),
         )}
       </div>

@@ -41,7 +41,7 @@ function inlineStyles(from: Element, to: HTMLElement, props: readonly string[]):
  *  syntax colours of code blocks inlined since they come from CSS classes the target has not got. */
 function renderedHtml(root: HTMLElement): string {
   const clone = root.cloneNode(true) as HTMLElement;
-  for (const el of clone.querySelectorAll(".attachment, .msg-copy")) el.remove();
+  for (const el of clone.querySelectorAll(".attachment, .msg-copy, .msg-time")) el.remove();
   for (const el of clone.querySelectorAll(".file-link")) {
     el.removeAttribute("role");
     el.removeAttribute("tabindex");
@@ -70,8 +70,8 @@ function renderedHtml(root: HTMLElement): string {
 
 type Copied = "raw" | "rich" | null;
 
-/** A chat message box with Copy (the Markdown source) and Copy rich (formatted) in its corner. */
-export function CopyableMessage({ className, text, children }: { className: string; text: string; children: ReactNode }) {
+/** A chat message box with Copy (the Markdown source) and Copy rich (formatted) in its corner; `footer` sits at its bottom-right (the time). */
+export function CopyableMessage({ className, text, footer, children }: { className: string; text: string; footer?: ReactNode; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState<Copied>(null);
   const [failed, setFailed] = useState(false);
@@ -106,6 +106,7 @@ export function CopyableMessage({ className, text, children }: { className: stri
         </button>
       </div>
       {children}
+      {footer}
     </div>
   );
 }

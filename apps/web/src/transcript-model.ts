@@ -14,12 +14,13 @@ import {
 import { TurnAccumulator, foldCompaction, isCompactionUpdate, type Compaction, type TurnStats } from "./context-model";
 
 export type TranscriptItem =
-  | { kind: "user"; key: string; text: string; attachments?: PromptAttachment[] }
-  | { kind: "agent"; key: string; text: string; llmCall?: LlmCall }
-  | { kind: "thought"; key: string; text: string; llmCall?: LlmCall }
+  | { kind: "user"; key: string; ts: string; text: string; attachments?: PromptAttachment[] }
+  | { kind: "agent"; key: string; ts: string; text: string; llmCall?: LlmCall }
+  | { kind: "thought"; key: string; ts: string; text: string; llmCall?: LlmCall }
   | {
       kind: "tool";
       key: string;
+      ts: string;
       /** The model API call this came out of (Claude with inspection on; see `labelLlmCalls`). */
       llmCall?: LlmCall;
       toolCallId: string;
@@ -31,7 +32,7 @@ export type TranscriptItem =
       rawInput?: unknown;
       rawOutput?: unknown;
     }
-  | { kind: "plan"; key: string; entries: { content: string; status: string }[] }
+  | { kind: "plan"; key: string; ts: string; entries: { content: string; status: string }[] }
   | {
       kind: "turn_ended";
       key: string;
@@ -45,8 +46,8 @@ export type TranscriptItem =
     }
   | { kind: "compaction"; key: string; compaction: Compaction; index: number }
   | { kind: "context_report"; key: string; totalTokens: number | null; maxTokens: number | null; percent: number | null }
-  | { kind: "error"; key: string; message: string }
-  | { kind: "status"; key: string; status: SessionStatus; error?: string }
+  | { kind: "error"; key: string; ts: string; message: string }
+  | { kind: "status"; key: string; ts: string; status: SessionStatus; error?: string }
   | { kind: "snapshot"; key: string; snapshot: Snapshot }
   | { kind: "forked"; key: string; fromSessionId: string; fromTitle: string; snapshotOrdinal: number; newConversation: boolean }
   | { kind: "mcp_changed"; key: string; servers: string[] }
@@ -113,23 +114,24 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
     }
   };
 
-  const appendText = (kind: "agent" | "thought", key: string, text: string) => {
+  const appendText = (kind: "agent" | "thought", key: string, ts: string, text: string) => {
     const last = items[items.length - 1];
     if (last && last.kind === kind && !last.llmCall) {
       last.text += text;
     } else {
-      items.push({ kind, key, text });
+      items.push({ kind, key, ts, text });
     }
   };
 
   for (const ev of events) {
     const key = String(ev.seq);
+    const ts = ev.ts;
     const body = ev.body;
     switch (body.type) {
       case "user_prompt":
         markContinued(items);
         if (body.origin === "e2e") items.push({ kind: "e2e_prompt", key });
-        else items.push(body.attachments?.length ? { kind: "user", key, text: body.text, attachments: body.attachments } : { kind: "user", key, text: body.text });
+        else items.push(body.attachments?.length ? { kind: "user", key, ts, text: body.text, attachments: body.attachments } : { kind: "user", key, ts, text: body.text });
         {
           // Usage that landed between turns (a compaction's refresh) is the new baseline.
           const base = turn.finish(undefined);
@@ -152,10 +154,10 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         });
         break;
       case "agent_error":
-        items.push({ kind: "error", key, message: body.message });
+        items.push({ kind: "error", key, ts, message: body.message });
         break;
       case "status":
-        items.push(body.error ? { kind: "status", key, status: body.status, error: body.error } : { kind: "status", key, status: body.status });
+        items.push(body.error ? { kind: "status", key, ts, status: body.status, error: body.error } : { kind: "status", key, ts, status: body.status });
         break;
       case "forked":
         items.push({
@@ -201,23 +203,24 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
             turn.onUsage(u);
             break;
           case "agent_message_chunk":
-            appendText("agent", key, blockText(u.content));
+            appendText("agent", key, ts, blockText(u.content));
             break;
           case "agent_thought_chunk":
-            appendText("thought", key, blockText(u.content));
+            appendText("thought", key, ts, blockText(u.content));
             break;
           case "user_message_chunk":
             // Replayed history from session/load; live prompts arrive as user_prompt.
             {
               const last = items[items.length - 1];
               if (last && last.kind === "user" && last.key.startsWith("h")) last.text += blockText(u.content);
-              else items.push({ kind: "user", key: `h${key}`, text: blockText(u.content) });
+              else items.push({ kind: "user", key: `h${key}`, ts, text: blockText(u.content) });
             }
             break;
           case "tool_call": {
             const item: Extract<TranscriptItem, { kind: "tool" }> = {
               kind: "tool",
               key,
+              ts,
               toolCallId: u.toolCallId,
               title: u.title,
               toolKind: u.kind ?? "other",
@@ -237,6 +240,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
               item = {
                 kind: "tool",
                 key,
+                ts,
                 toolCallId: u.toolCallId,
                 title: u.title ?? u.toolCallId,
                 toolKind: u.kind ?? "other",
@@ -260,6 +264,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
             items.push({
               kind: "plan",
               key,
+              ts,
               entries: u.entries.map((e) => ({ content: e.content, status: e.status })),
             });
             break;

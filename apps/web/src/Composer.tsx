@@ -34,7 +34,7 @@ export type ComposerProps = {
   heightFrac: number | null;
   onHeightFracChange: (frac: number | null) => void;
   chatRef: RefObject<HTMLDivElement | null>;
-  /** Rendered above the toolbar (the saved-messages list). */
+  /** Rendered above the toolbar (the queue and the context gauge). */
   above?: ReactNode;
   /** Rendered at the start of the footer row (the model picker). */
   footerStart?: ReactNode;

@@ -8,7 +8,7 @@ import { LLM_KIND_LABELS, formatBytes } from "./llm-model";
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
 /**
- * The context gauge in the composer footer: how full the window is (green when light,
+ * The context gauge, a full-width bar above the composer toolbar: how full the window is (green when light,
  * red from half on — "rotting", the Agent starts to forget), plus how many times the
  * conversation has been compacted. Click opens the Context pane.
  */

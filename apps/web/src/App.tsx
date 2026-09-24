@@ -1504,16 +1504,19 @@ function SessionView({
             running={session.status === "running"}
             onStop={() => void run(() => api.cancel(session.id))}
             above={
-              <SavedMessages
-                messages={saved}
-                queueRunning={session.queueRunning}
-                canSend={canPrompt}
-                onLoad={(m) => setText(m.text)}
-                onSend={(m) => void run(() => api.sendSavedMessage(session.id, m.id))}
-                onDelete={(m) => void run(() => api.deleteSavedMessage(session.id, m.id))}
-                onMove={(m, position) => void run(() => api.updateSavedMessage(session.id, m.id, { position }))}
-                onQueueToggle={(running) => void run(() => api.setQueueRunning(session.id, running))}
-              />
+              <>
+                <SavedMessages
+                  messages={saved}
+                  queueRunning={session.queueRunning}
+                  canSend={canPrompt}
+                  onLoad={(m) => setText(m.text)}
+                  onSend={(m) => void run(() => api.sendSavedMessage(session.id, m.id))}
+                  onDelete={(m) => void run(() => api.deleteSavedMessage(session.id, m.id))}
+                  onMove={(m, position) => void run(() => api.updateSavedMessage(session.id, m.id, { position }))}
+                  onQueueToggle={(running) => void run(() => api.setQueueRunning(session.id, running))}
+                />
+                <ContextGauge context={context} active={pane === "context"} onOpen={() => togglePane("context")} />
+              </>
             }
             footerStart={
               <>
@@ -1521,7 +1524,6 @@ function SessionView({
                   <ModelSelect compact models={models} value={session.settings.model} onChange={changeModel} disabled={modelBusy} pending={session.modelPending} />
                 )}
                 <OptionSelects compact options={options} values={session.settings.options} onChange={changeOption} disabled={modelBusy} pending={session.optionsPending} />
-                <ContextGauge context={context} active={pane === "context"} onOpen={() => togglePane("context")} />
               </>
             }
             disabled={!canPrompt}

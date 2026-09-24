@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Chat: the Agent's consecutive messages of a turn (text, thoughts, tool calls, plans) fold behind one GitHub-style squiggly rule — a spinner and *Working… n messages so far* while it works, then only its last message (the summary) with **Show all n messages**; open to see every message as before, and fold them again from either end.
 - Verification pane: **Run now** starts a verification turn on demand for the work so far (against the last request), whether the "Verify each turn" switch is on or off; `POST /api/sessions/:id/e2e/run`. Disabled while the Agent works, a run is open, or the session is stopped.
 - Fix: with Inspect LLM on, Claude Code took the loopback recorder for a third-party backend and capped the 1M models (Fable, Opus 5, Sonnet 5) at a 200k window — the gauge read `/ 200k` and compaction would have come at a fifth of the real window. The recorder now tells Claude Code it forwards to Anthropic when it does. Daemon change: Stop → Resume existing sessions (ADR-0032).
 - Chat: screenshots a tool call returned (the desktop MCP's) are no longer shown inline while folded; they sit inside the folded tool row, which shows a picture icon next to its chevron when it holds one.

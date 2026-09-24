@@ -208,6 +208,22 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .turn-divider .small { padding: 1px 7px; font-size: 11px; white-space: nowrap; }
 .branch-select { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
 .branch-select select { padding: 2px 6px; font-size: 12px; }
+/* The Agent's messages of a turn behind one squiggly rule (GitHub's "load more" look). */
+.fold { display: flex; flex-direction: column; gap: 10px; }
+.fold > * { flex: none; }
+.fold-divider { display: flex; align-items: center; gap: 10px; margin: 2px 0; }
+.fold-line {
+  flex: 1; height: 6px; background: var(--border);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6' viewBox='0 0 12 6'%3E%3Cpath d='M0 3q3-3 6 0t6 0' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E") repeat-x center / 12px 6px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6' viewBox='0 0 12 6'%3E%3Cpath d='M0 3q3-3 6 0t6 0' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E") repeat-x center / 12px 6px;
+}
+.fold-live .fold-line { background: var(--accent); opacity: 0.6; }
+.fold-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; font-size: 12px; color: var(--muted); border-radius: 999px; white-space: nowrap; }
+.fold-toggle:hover { color: var(--text); }
+.fold-live .fold-toggle { color: var(--text); border-color: var(--accent); }
+.fold-chevron { font-size: 11px; }
+.fold-spinner { width: 11px; height: 11px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); animation: fold-spin 0.9s linear infinite; }
+@keyframes fold-spin { to { transform: rotate(360deg); } }
 .plan { margin: 0; padding-left: 20px; color: var(--muted); }
 .plan-completed { text-decoration: line-through; }
 .plan-in_progress { color: var(--text); }

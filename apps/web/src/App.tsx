@@ -1490,6 +1490,7 @@ function SessionView({
             activeBranchId={session.activeBranchId}
             canBranch={session.status === "idle"}
             branchBusy={branching}
+            running={session.status === "running"}
             focus={focus}
             onFocused={onFocused}
             onInspectCompaction={(index, compaction) => setInspecting({ index, compaction })}

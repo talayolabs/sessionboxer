@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { branchScope, type Branch, type E2eRunSummary, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { UploadedAttachments } from "./Attachments";
 import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
@@ -510,6 +510,74 @@ function E2eMarker({ run, onOpen }: { run: E2eRunSummary; onOpen: () => void }) 
   );
 }
 
+/** What the Agent produces within a turn; consecutive runs of these fold into one group. */
+function isAgentSide(item: TranscriptItem): boolean {
+  return item.kind === "agent" || item.kind === "thought" || item.kind === "tool" || item.kind === "plan";
+}
+
+type Row = { kind: "item"; index: number } | { kind: "group"; key: string; indices: number[]; live: boolean };
+
+/**
+ * Consecutive Agent-side items become one group: always while the Agent is still working on
+ * the tail of the transcript (so the whole turn sits behind one spinner), otherwise once there
+ * are at least two of them (a lone message is its own summary).
+ */
+function groupRows(items: TranscriptItem[], running: boolean): Row[] {
+  const rows: Row[] = [];
+  for (let i = 0; i < items.length; ) {
+    const item = items[i];
+    if (!item || !isAgentSide(item)) {
+      rows.push({ kind: "item", index: i });
+      i++;
+      continue;
+    }
+    const indices: number[] = [];
+    for (let j = i; j < items.length; j++) {
+      const next = items[j];
+      if (!next || !isAgentSide(next)) break;
+      indices.push(j);
+    }
+    const live = running && indices[indices.length - 1] === items.length - 1;
+    if (live || indices.length > 1) rows.push({ kind: "group", key: `g${item.key}`, indices, live });
+    else rows.push({ kind: "item", index: i });
+    i += indices.length;
+  }
+  return rows;
+}
+
+/** GitHub-style squiggly rule with the fold's button in the middle. */
+function FoldDivider({ live, label, expanded, onToggle }: { live: boolean; label: string; expanded: boolean; onToggle: () => void }) {
+  return (
+    <div className={`fold-divider${live ? " fold-live" : ""}`}>
+      <span className="fold-line" />
+      <button type="button" className="fold-toggle" onClick={onToggle} title={expanded ? "Fold these messages back into one" : "Show every message the Agent sent"}>
+        {live && <span className="fold-spinner" aria-label="working" />}
+        {label}
+        <span className="fold-chevron">{expanded ? "▴" : "▾"}</span>
+      </button>
+      <span className="fold-line" />
+    </div>
+  );
+}
+
+/**
+ * The Agent's messages of one turn behind a single rule: while it works, a spinner and the count;
+ * once the turn ended, only the last message (its summary) shows; open to see them all.
+ */
+function AgentGroup({ items, indices, live, expanded, onToggle, render }: { items: TranscriptItem[]; indices: number[]; live: boolean; expanded: boolean; onToggle: () => void; render: (index: number) => ReactNode }) {
+  const n = indices.length;
+  const plural = n === 1 ? "message" : "messages";
+  const label = live ? `Working… ${n} ${plural} so far` : expanded ? `Fold ${n} ${plural}` : `Show all ${n} ${plural}`;
+  const summary = live ? -1 : ([...indices].reverse().find((i) => items[i]?.kind === "agent") ?? indices[n - 1] ?? -1);
+  return (
+    <div className="fold">
+      <FoldDivider live={live} label={label} expanded={expanded} onToggle={onToggle} />
+      {expanded ? indices.map(render) : summary >= 0 && render(summary)}
+      {expanded && n > 3 && <FoldDivider live={live} label={label} expanded={expanded} onToggle={onToggle} />}
+    </div>
+  );
+}
+
 /** How far from the bottom (px) still counts as "at the bottom", so a trackpad flick does not unpin the view. */
 const FOLLOW_SLACK_PX = 32;
 
@@ -521,6 +589,7 @@ export function Transcript({
   activeBranchId,
   canBranch,
   branchBusy,
+  running,
   focus,
   onFocused,
   onInspectCompaction,
@@ -534,6 +603,8 @@ export function Transcript({
   activeBranchId: string;
   canBranch: boolean;
   branchBusy: boolean;
+  /** The Agent is on a turn: its messages at the tail fold behind a spinner. */
+  running: boolean;
   /** Turn divider to scroll to and highlight once it is rendered. */
   focus: DividerRef | null;
   onFocused: () => void;
@@ -547,6 +618,14 @@ export function Transcript({
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const branchView = useBranchView(branches, activeBranchId, canBranch, branchBusy);
+  const rows = useMemo(() => groupRows(items, running), [items, running]);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const toggleGroup = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   // The view follows new content only while the reader is at the bottom; scrolling up pins it
   // where it is until they scroll back down or press the button. `following` is a ref for the
   // resize/scroll handlers, mirrored in state for the button.
@@ -601,28 +680,37 @@ export function Transcript({
     setTimeout(() => el.classList.remove("turn-divider-flash"), 2000);
     onFocused();
   }, [items, focus, onFocused]);
+  const renderItem = (i: number) => {
+    const item = items[i];
+    if (!item) return null;
+    const call = item.kind === "agent" || item.kind === "thought" || item.kind === "tool" ? item.llmCall : undefined;
+    const prev = items[i - 1];
+    const prevCall = prev && (prev.kind === "agent" || prev.kind === "thought" || prev.kind === "tool") ? prev.llmCall : undefined;
+    return (
+      <Item
+        key={item.key}
+        item={item}
+        actions={actions}
+        branchActions={branchActions}
+        branchView={branchView}
+        onInspectCompaction={onInspectCompaction}
+        onInspectLlmCall={onInspectLlmCall}
+        onOpenE2e={onOpenE2e}
+        llmTab={call !== undefined && call.id !== prevCall?.id}
+      />
+    );
+  };
   return (
     <div className="transcript" ref={root} onScroll={onScroll}>
       <div className="transcript-items" ref={list}>
         {items.length === 0 && <div className="empty">No messages yet. Send a prompt below.</div>}
-        {items.map((item, i) => {
-          const call = item.kind === "agent" || item.kind === "thought" || item.kind === "tool" ? item.llmCall : undefined;
-          const prev = items[i - 1];
-          const prevCall = prev && (prev.kind === "agent" || prev.kind === "thought" || prev.kind === "tool") ? prev.llmCall : undefined;
-          return (
-            <Item
-              key={item.key}
-              item={item}
-              actions={actions}
-              branchActions={branchActions}
-              branchView={branchView}
-              onInspectCompaction={onInspectCompaction}
-              onInspectLlmCall={onInspectLlmCall}
-              onOpenE2e={onOpenE2e}
-              llmTab={call !== undefined && call.id !== prevCall?.id}
-            />
-          );
-        })}
+        {rows.map((row) =>
+          row.kind === "item" ? (
+            renderItem(row.index)
+          ) : (
+            <AgentGroup key={row.key} items={items} indices={row.indices} live={row.live} expanded={expanded.has(row.key)} onToggle={() => toggleGroup(row.key)} render={renderItem} />
+          ),
+        )}
       </div>
       {pinned && (
         <div className="transcript-jump">

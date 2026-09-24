@@ -5,6 +5,7 @@ import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
 import { Markdown } from "@tiptap/markdown";
+import { useDraft, type Draft } from "./draft";
 import { lowlight } from "./highlight";
 import { formatBytes } from "./format";
 import type { PendingAttachments } from "./attachments-pending";
@@ -16,8 +17,8 @@ export type ComposerMode = "raw" | "rich";
 // Markdown is the source of truth in both modes: the rich editor parses it on entry and
 // serializes back on every change, so switching modes never loses content.
 export type ComposerProps = {
-  value: string;
-  onChange: (value: string) => void;
+  /** The text being written; only the composer re-renders as it changes. */
+  draft: Draft;
   onSend: () => void;
   /** Put the text in the queue, sent when the Agent is next idle (Ctrl+S). */
   onEnqueue: () => void;
@@ -189,8 +190,7 @@ function isSendKey(e: KeyboardEvent | globalThis.KeyboardEvent): boolean {
 
 export function Composer(props: ComposerProps) {
   const {
-    value,
-    onChange,
+    draft,
     onSend,
     onEnqueue,
     running = false,
@@ -209,6 +209,8 @@ export function Composer(props: ComposerProps) {
     onTranslate,
     attachments,
   } = props;
+  const value = useDraft(draft);
+  const onChange = draft.set;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const addFiles = attachments.add;

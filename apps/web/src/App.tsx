@@ -47,6 +47,7 @@ import { AttachmentSession } from "./Attachments";
 import { usePendingAttachments } from "./attachments-pending";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
+import { useDraftStore } from "./draft";
 import { CopyCommand } from "./CopyCommand";
 import { Desktop } from "./Desktop";
 import { Devices } from "./Devices";
@@ -1045,7 +1046,7 @@ function SessionView({
   schedulesPane: ReactNode;
   sessionSchedules: number;
 }) {
-  const [text, setText] = useState("");
+  const draft = useDraftStore();
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
   const [forkFrom, setForkFrom] = useState<string | null>(null);
@@ -1110,7 +1111,7 @@ function SessionView({
     setPane("e2e");
   }, []);
   const setE2eVerify = (value: boolean | null) => void run(() => api.updateSession(session.id, { settings: { e2eVerify: value } }));
-  const appendToComposer = useCallback((t: string) => setText((cur) => (cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${t}` : t)), []);
+  const appendToComposer = useCallback((t: string) => draft.set((cur) => (cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${t}` : t)), [draft]);
   useEffect(() => localStorage.setItem("sessionboxer.composerMode", composerMode), [composerMode]);
   useEffect(() => {
     if (composerHeight === null) localStorage.removeItem("sessionboxer.composerHeight");
@@ -1121,25 +1122,26 @@ function SessionView({
   const attachError = useCallback((message: string) => void run(() => Promise.reject(new Error(message))), [run]);
   const attachments = usePendingAttachments(session.id, canPrompt, attachError);
   const send = () => {
+    const text = draft.get();
     const t = text.trim();
     const files = attachments.attachments;
     if (!canPrompt || (!t && files.length === 0)) return;
     if (attachments.items.length !== files.length) return;
-    setText("");
+    draft.set("");
     void run(async () => {
       try {
         await api.prompt(session.id, files.length > 0 ? { text: t, attachments: files } : { text: t });
       } catch (e) {
-        setText((cur) => (cur.trim() === "" ? text : cur));
+        draft.set((cur) => (cur.trim() === "" ? text : cur));
         throw e;
       }
       attachments.clear();
     });
   };
   const enqueue = () => {
-    const t = text.trim();
+    const t = draft.get().trim();
     if (!t) return;
-    setText("");
+    draft.set("");
     void run(() => api.enqueueMessage(session.id, t));
   };
   const translateToEnglish = useCallback(
@@ -1498,8 +1500,7 @@ function SessionView({
             onOpenE2e={openE2e}
           />
           <Composer
-            value={text}
-            onChange={setText}
+            draft={draft}
             onSend={send}
             onEnqueue={enqueue}
             running={session.status === "running"}
@@ -1510,7 +1511,7 @@ function SessionView({
                   messages={saved}
                   queueRunning={session.queueRunning}
                   canSend={canPrompt}
-                  onLoad={(m) => setText(m.text)}
+                  onLoad={(m) => draft.set(m.text)}
                   onSend={(m) => void run(() => api.sendSavedMessage(session.id, m.id))}
                   onDelete={(m) => void run(() => api.deleteSavedMessage(session.id, m.id))}
                   onMove={(m, position) => void run(() => api.updateSavedMessage(session.id, m.id, { position }))}

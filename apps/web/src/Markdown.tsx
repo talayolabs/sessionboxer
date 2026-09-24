@@ -1,5 +1,5 @@
 import type { Element, ElementContent } from "hast";
-import { useContext, useMemo } from "react";
+import { memo, useContext, useMemo } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
@@ -47,9 +47,10 @@ function resolveHref(sessionId: string | null, href: string, base: string): stri
  * around (`OpenFile` context), paths to Workspace source files in prose, inline code or links
  * (`src/App.tsx:42`) open the file there instead. Fenced code is highlighted; ```mermaid blocks
  * are drawn as diagrams. `base` is the Workspace directory relative links resolve against (the
- * folder of a .md file being previewed).
+ * folder of a .md file being previewed). Memoised: parsing is the transcript's main cost, and a
+ * message that did not change is not parsed again when its neighbours do.
  */
-export function Markdown({ text, attachments = false, base = "" }: { text: string; attachments?: boolean; base?: string }) {
+export const Markdown = memo(function Markdown({ text, attachments = false, base = "" }: { text: string; attachments?: boolean; base?: string }) {
   const sessionId = useContext(AttachmentSession);
   const openFile = useContext(OpenFile);
   const found = useMemo(() => (attachments && sessionId ? findAttachments(text) : []), [attachments, sessionId, text]);
@@ -91,4 +92,4 @@ export function Markdown({ text, attachments = false, base = "" }: { text: strin
       <AttachmentList attachments={found} />
     </div>
   );
-}
+});

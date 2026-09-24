@@ -24,6 +24,7 @@ import {
   type DaemonLlmCallBodyParams,
   type LlmCall,
   type LlmCallBody,
+  type StopReason,
   DaemonMcpSetResult,
   DaemonModelSetResult,
   DaemonOptionSetResult,
@@ -112,6 +113,9 @@ import { PullRequests } from "./pull-requests.js";
 
 export { HttpError };
 
+/** How a turn ended: ACP's stop reason, or `error` for an `agent_error`. */
+export type TurnOutcome = StopReason | "error";
+
 const CANCEL_GRACE_MS = 8000;
 const DAEMON_WAIT_MS = 15_000;
 /** A one-shot ask spawns a fresh ACP session, which is slow on cold Providers. */
@@ -155,6 +159,8 @@ export class SessionManager {
   readonly prs: PullRequests;
   /** End-to-end verification runs after completed turns (ADR-0044). */
   readonly e2e: E2eVerification;
+  /** Told when a turn (verification included) is over and nothing follows it; see `onTurnSettled`. */
+  private readonly settledListeners = new Set<(id: string, outcome: TurnOutcome) => void>();
 
   constructor(
     private readonly db: Db,
@@ -199,6 +205,20 @@ export class SessionManager {
   subscribe(fn: (msg: SessionBroadcast) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /**
+   * Fires once a Session has settled after a turn: the turn ended (and its verification, if any),
+   * the queue had nothing more to send. `outcome` is `end_turn` for a completed turn, otherwise
+   * the stop reason or `error`.
+   */
+  onTurnSettled(fn: (id: string, outcome: TurnOutcome) => void): () => void {
+    this.settledListeners.add(fn);
+    return () => this.settledListeners.delete(fn);
+  }
+
+  private settled(id: string, outcome: TurnOutcome): void {
+    for (const fn of this.settledListeners) fn(id, outcome);
   }
 
   private broadcast(msg: SessionBroadcast): void {
@@ -726,7 +746,7 @@ export class SessionManager {
       (containerId, sessionId, exitCode) => {
         if (this.stopping.has(sessionId)) return;
         const s = this.db.getSession(sessionId);
-        if (!s || s.containerId !== containerId) return;
+        if (!s || s.containerId !== containerId || s.status === "stopped") return;
         this.disconnect(sessionId);
         this.setStatus(sessionId, "error", `Sandbox exited unexpectedly (exit code ${exitCode})`);
       },
@@ -998,6 +1018,37 @@ export class SessionManager {
     } catch (e) {
       this.log(`could not install the extra CA certificates in ${short}: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  /**
+   * A prompt from a scheduled task (ADR-0047): sent right away when the Session is idle, put at
+   * the end of its saved-message queue (which is started) when a turn is running, held until the
+   * Daemon is up when the Sandbox is stopped or still starting. Only an errored Session refuses it.
+   */
+  async promptScheduled(id: string, text: string): Promise<"sent" | "queued" | "resumed"> {
+    const s = this.get(id);
+    if (s.status === "error") throw new HttpError(409, `Session is in error state: ${s.error ?? "unknown"}`);
+    if (s.status === "running") {
+      this.saveMessage(id, text);
+      await this.setQueueRunning(id, true);
+      return "queued";
+    }
+    if (s.status === "stopped") {
+      this.pendingPrompts.set(id, { text });
+      try {
+        await this.resume(id);
+      } catch (e) {
+        this.pendingPrompts.delete(id);
+        throw e;
+      }
+      return "resumed";
+    }
+    if (!this.clients.get(id)?.connected) {
+      this.pendingPrompts.set(id, { text });
+      return "resumed";
+    }
+    await this.prompt(id, { text });
+    return "sent";
   }
 
   async prompt(id: string, req: PromptRequest, origin?: "e2e"): Promise<void> {
@@ -1900,6 +1951,7 @@ export class SessionManager {
           this.update(id, { queueRunning: false });
         }
         if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
+        this.settled(id, ev.body.type === "agent_error" ? "error" : ev.body.stopReason);
       }
       if (ev.body.type === "turn_ended") this.prs.onTurnEnded(id, turn);
       void this.refreshRepoStates(id);
@@ -1927,6 +1979,7 @@ export class SessionManager {
     await this.autoSnapshot(id, eventSeq);
     if (turn.length > 0 && (await this.e2e.afterUserTurn(id, eventSeq, turn))) return;
     await this.pumpQueue(id);
+    if (this.db.getSession(id)?.status === "idle") this.settled(id, "end_turn");
   }
 
   private async autoSnapshot(id: string, eventSeq: number): Promise<void> {

@@ -67,7 +67,7 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand img { width: 24px; height: 24px; }
-.sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
+.sidebar-footer { padding: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
 .sidebar-footer button { width: 100%; }
 .warn-sign { color: var(--warn); margin-left: 6px; }
 .session-list { list-style: none; margin: 0; padding: 6px; overflow: auto; flex: 1; }
@@ -988,3 +988,24 @@ code.token { font-size: 12px; word-break: break-all; user-select: all; backgroun
   .app.mobile .panel code, .app.mobile .panel p { overflow-wrap: anywhere; word-break: break-word; }
   .modal-backdrop { padding: 12px; }
 }
+
+/* Scheduled tasks */
+.schedules-panel { max-width: 900px; }
+.schedules-head { display: flex; align-items: center; gap: 10px; }
+.schedules-head h2 { margin: 0; }
+.schedule-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.schedule { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.schedule.disabled .schedule-text { opacity: 0.6; }
+.schedule-line { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; }
+.schedule-switch { flex: none; margin-top: 2px; }
+.schedule-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.schedule-title { display: flex; align-items: center; gap: 8px; }
+.schedule-text code { font-size: 12px; }
+.schedule-actions { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 45%; }
+.schedule-runs { border-top: 1px solid var(--border); font-size: 13px; }
+.schedule-runs th { position: static; }
+.schedule-runs td:last-child { white-space: pre-wrap; word-break: break-word; }
+.schedule-history-empty { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
+.schedule-preview { flex: none; display: flex; flex-direction: column; gap: 4px; min-height: 14px; }
+.schedule-preview .field-hint { margin: 0; }
+.field-hint.warn { color: var(--warn); }

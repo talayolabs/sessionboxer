@@ -100,6 +100,18 @@ export function draftsToSpecs(drafts: RepoDraft[]): RepoSpec[] {
   });
 }
 
+/** Drafts to edit stored specs (a scheduled task's template) again. */
+export function specsToDrafts(specs: RepoSpec[]): RepoDraft[] {
+  return specs.map((s) => ({
+    ...newRepoDraft(s.source.type),
+    url: s.source.type === "git" ? s.source.url : "",
+    ref: s.source.type === "git" ? (s.source.ref ?? "") : "",
+    path: s.source.type === "copy" ? s.source.path : "",
+    name: s.name ?? "",
+    ...(s.account !== undefined ? { account: s.account } : {}),
+  }));
+}
+
 /** What a draft would be called in `/workspace/<name>` (the typed name, else derived from the source). */
 export function draftName(d: RepoDraft): string {
   const typed = d.name.trim();

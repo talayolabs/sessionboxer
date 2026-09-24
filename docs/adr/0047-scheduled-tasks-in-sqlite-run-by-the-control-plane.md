@@ -1,0 +1,32 @@
+# Scheduled tasks in SQLite, run by the Control Plane
+
+Users want a prompt to go out on a timetable — a nightly dependency check, a Monday report, an hourly test run — without keeping a browser open. The obvious shortcut is the system's cron calling the REST API. That needs the access token outside the Control Plane, exists in different shapes on Linux, macOS and Windows and not at all inside Docker Compose or the desktop app, and gives the UI nothing to show: no next run, no history, no reason for a failure. The Control Plane, on the other hand, already runs all the time (`sessionboxer service`, compose, the Electron tray) and already ticks a scheduler for pull requests (ADR-0027).
+
+## Decision
+
+**Schedules and their runs are user data in SQLite; the Control Plane is the only scheduler.** Two tables, created like the others on start: `schedules` (name, cron expression, IANA time zone, enabled, missed-run policy, action as JSON, `next_run_at`, `last_run_at`, `last_status`) and `schedule_runs` (schedule, trigger `cron` / `manual` / `catch_up`, status `running` / `succeeded` / `failed` / `skipped`, started and finished, a human detail, the error, the Session it touched), the last 100 runs kept per schedule. Settings and tokens stay in `config.json`; nothing is written to the operating system's cron.
+
+**`croner` parses and predicts.** It is dependency-free, understands the five- and six-field syntax plus `@hourly`-style nicknames, takes an IANA time zone and gives the next N occurrences, which is what the form's preview (`POST /schedules/preview`) and the "next 3 runs" need. The web UI turns the expression into words with `cronstrue`. A bad expression or an unknown time zone is a 400 that says so.
+
+**A 30-second tick, with a compare-and-set claim.** On every tick the Scheduler reads the enabled schedules whose `next_run_at` has passed, computes the following occurrence and claims the run with `UPDATE … SET next_run_at = ? WHERE id = ? AND enabled = 1 AND next_run_at = ?`; only the claimant executes, so an overlapping tick or a `Run now` racing the clock cannot start the same occurrence twice. `Run now` executes regardless of the enabled switch and does not move the schedule.
+
+**Missed runs are a per-schedule choice.** On start, and whenever a due time is found more than five minutes in the past, the Scheduler counts the occurrences skipped between `next_run_at` and now (capped at 100). With *Skip them* (default) it records one `skipped` run naming the first missed time, in the schedule's time zone, and how many more; with *Run once when the Control Plane is back* it starts a single `catch_up` run for however many were missed. `next_run_at` is then repaired from now. Runs still `running` when the Control Plane starts are marked `failed` ("The Control Plane restarted while the run was in progress.").
+
+**Two actions, through the public `SessionManager` API.** *Send a prompt to an existing Session* uses `promptScheduled()`: an idle connected Session gets a normal prompt; a running one has the text saved and the queue started, so it goes out after the current turn; a stopped one is resumed with the prompt pending; a Session in error refuses with 409 and the run fails. *Start a new Session from a template* carries what `create()` needs — provider, repositories, the same `SessionSettingsInput` as the New Session form, an optional title, the first prompt — plus **stop when the turn ends**, on by default so scheduled boxes do not pile up while the transcript and snapshots remain. In both cases the run stays `running` until `onTurnSettled()` fires for that Session, which happens only after the auto-snapshot, the verification turn (ADR-0044) and the saved-message queue have finished; a queued prompt is therefore not "succeeded" for merely having been accepted. A run that does not settle within six hours fails. The Docker death watcher ignores a container that died after the Session was deliberately stopped, so a stop-after-turn ends as `stopped`, not `error`.
+
+**Everything is broadcast.** The Scheduler reuses the Session broadcast channel with two messages, `schedules` (the whole list, on any create / edit / delete / enable / next-run change / run start / run end) and `schedule_runs` (one schedule's history), so the page updates without a refresh. A failed run is also sent through Web Push (ADR-0035) when the user has notifications on, and the sidebar entry carries a ⚠ while any schedule's last status is `failed`.
+
+## Considered Options
+
+- **System cron (or launchd / Task Scheduler) calling the API**: three platforms, no equivalent in compose or the desktop app, the token on disk outside the Control Plane, and a second source of truth the UI would have to reconcile with.
+- **A cron expression per Session instead of a separate page**: hides the schedules in headers and cannot express "start a new Session"; the page mirrors Settings and lists everything in one place.
+- **Marking a queued prompt as succeeded once accepted**: simpler, but the history would say "succeeded" for a prompt that had not run yet and could still fail; tracking to `onTurnSettled` costs one listener.
+- **Catch-up running every missed occurrence**: after a weekend off that means dozens of identical turns; one run is what a user expects from "when it's back".
+- **A dedicated WebSocket channel for schedules**: the Session channel already reaches every UI and the messages are small.
+
+## Consequences
+
+- No image rebuild; an existing `db.sqlite` gets the two tables on the next start.
+- A Session that is prompted on a schedule behaves exactly as if the user had typed the prompt: the same snapshot, verification and queue rules apply, and its history shows the prompt as a user turn.
+- Times in the form's preview are shown in the browser's zone and labelled when that differs from the schedule's zone; the hover shows the same instant in the schedule's zone.
+- Verified live: preview and validation errors; a new-Session schedule that created a Claude Session and stopped it after the turn; a stopped Session resumed and prompted; a busy Session queueing the prompt and the run finishing only when that turn settled; enable / disable recomputing `next_run_at`; a schedule pointing at a deleted Session failing visibly; skip and catch-up after a simulated outage; a stale `running` run failed on restart; the page updating over WebSocket; the form on a 390 × 844 phone.

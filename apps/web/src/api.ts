@@ -16,7 +16,13 @@ import type {
   GhCliStatus,
   ConnectorKind,
   ConnectorStartRequest,
+  CreateScheduleRequest,
   CreateSessionRequest,
+  Schedule,
+  SchedulePreview,
+  SchedulePreviewRequest,
+  ScheduleRun,
+  UpdateScheduleRequest,
   DeleteSnapshotsResult,
   E2eRun,
   ForkSessionRequest,
@@ -119,6 +125,14 @@ export const api = {
   connectorGh: () => request<GhCliStatus>("/connectors/github/gh"),
   connectorDisconnect: (serverId: string) =>
     request<PublicSettings>(`/connectors/servers/${serverId}/disconnect`, { method: "POST" }),
+  schedules: () => request<Schedule[]>("/schedules"),
+  createSchedule: (req: CreateScheduleRequest) => request<Schedule>("/schedules", { method: "POST", body: JSON.stringify(req) }),
+  updateSchedule: (id: string, patch: UpdateScheduleRequest) =>
+    request<Schedule>(`/schedules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteSchedule: (id: string) => request<void>(`/schedules/${id}`, { method: "DELETE" }),
+  runSchedule: (id: string) => request<ScheduleRun>(`/schedules/${id}/run`, { method: "POST" }),
+  scheduleRuns: (id: string) => request<ScheduleRun[]>(`/schedules/${id}/runs`),
+  schedulePreview: (req: SchedulePreviewRequest) => request<SchedulePreview>("/schedules/preview", { method: "POST", body: JSON.stringify(req) }),
   sessions: () => request<Session[]>("/sessions"),
   createSession: (req: CreateSessionRequest) =>
     request<Session>("/sessions", { method: "POST", body: JSON.stringify(req) }),

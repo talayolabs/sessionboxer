@@ -23,8 +23,11 @@ import {
   UpdatePrRequest,
   ConnectorKind,
   ConnectorStartRequest,
+  CreateScheduleRequest,
   CreateSessionRequest,
   ForkSessionRequest,
+  SchedulePreviewRequest,
+  UpdateScheduleRequest,
   RevertRequest,
   SwitchBranchRequest,
   FS_RAW_PATH,
@@ -80,6 +83,7 @@ import { SandboxDocker } from "./docker.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
 import { banner, log } from "./log.js";
 import { PushNotifier } from "./push.js";
+import { Scheduler } from "./scheduler.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { deleteModel, Speech } from "./speech.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
@@ -122,6 +126,7 @@ sessions.codexAuthRefreshed = (sessionId, authJson) => {
   log(`codex login refreshed by session ${sessionId}; stored`);
   void sessions.pushCodexAuthToAll();
 };
+const scheduler = new Scheduler({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
 const tunnels = new Tunnels(
   LOCAL_ORIGIN,
   settings.tunnels,
@@ -397,6 +402,22 @@ api.post("/sessions/:id/queue", async (c) => {
 api.get("/sessions/:id/e2e", (c) => c.json(sessions.e2e.list(c.req.param("id"))));
 api.get("/sessions/:id/e2e/:runId", (c) => c.json(sessions.e2e.get(c.req.param("id"), c.req.param("runId"))));
 
+// Scheduled tasks (ADR-0047).
+api.get("/schedules", (c) => c.json(scheduler.list()));
+api.post("/schedules", async (c) => c.json(scheduler.create(CreateScheduleRequest.parse(await c.req.json())), 201));
+api.post("/schedules/preview", async (c) => {
+  const req = SchedulePreviewRequest.parse(await c.req.json());
+  return c.json(scheduler.preview(req.cron, req.timezone));
+});
+api.get("/schedules/:id", (c) => c.json(scheduler.get(c.req.param("id"))));
+api.patch("/schedules/:id", async (c) => c.json(scheduler.update(c.req.param("id"), UpdateScheduleRequest.parse(await c.req.json()))));
+api.delete("/schedules/:id", (c) => {
+  scheduler.delete(c.req.param("id"));
+  return c.body(null, 204);
+});
+api.post("/schedules/:id/run", async (c) => c.json(await scheduler.runNow(c.req.param("id")), 202));
+api.get("/schedules/:id/runs", (c) => c.json(scheduler.listRuns(c.req.param("id"))));
+
 // Pull Requests attached to the Session (ADR-0027).
 api.get("/sessions/:id/prs", (c) => c.json(sessions.prs.list(c.req.param("id"))));
 api.post("/sessions/:id/prs", async (c) => {
@@ -633,6 +654,7 @@ if (existsSync(webDist)) {
 }
 
 await sessions.boot();
+scheduler.start();
 if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {
   throw new Error("SESSIONBOXER_TLS_CERT and SESSIONBOXER_TLS_KEY must be set together.");
 }
@@ -691,6 +713,7 @@ const shutdown = (): void => {
   log("shutting down");
   const exit = (): void => {
     clearInterval(keepalive);
+    scheduler.stop();
     tunnels.close();
     db.close();
     server.close();

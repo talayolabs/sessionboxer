@@ -32,6 +32,8 @@ import {
   type PublicSettings,
   type PullRequest,
   type SavedMessage,
+  type Schedule,
+  type ScheduleRun,
   type Session,
   type SessionEvent,
   type SessionStatus,
@@ -75,6 +77,7 @@ import {
 } from "./SessionSettingsForm";
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
+import { Schedules } from "./Schedules";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
@@ -126,13 +129,14 @@ function providerTokenSet(settings: PublicSettings, provider: Provider): boolean
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
-type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings" };
+type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings" } | { view: "schedules" };
 
 // Routes live in the URL hash so a reload (or a shared link) lands on the same Session.
 function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, "");
   if (path === "new") return { view: "new" };
   if (path === "settings") return { view: "settings" };
+  if (path === "schedules") return { view: "schedules" };
   const m = /^sessions\/([^/]+)(?:\/(prs)|\/pr\/([^/]+))?$/.exec(path);
   if (!m) return { view: "session", id: null };
   const pane = m[2] ? "prs" : m[3] ? `pr:${m[3]}` : undefined;
@@ -142,6 +146,7 @@ function parseRoute(hash: string): Route {
 function routeToHash(route: Route): string {
   if (route.view === "new") return "#/new";
   if (route.view === "settings") return "#/settings";
+  if (route.view === "schedules") return "#/schedules";
   return route.id ? `#/sessions/${route.id}` : "#/";
 }
 
@@ -188,6 +193,8 @@ export function App() {
   const [prItems, setPrItems] = useState<Record<string, PrItem[]>>({});
   // End-to-end verification runs of the selected Session (ADR-0044); the ref lets the WS handler see what changed.
   const [e2eRuns, setE2eRuns] = useState<E2eRun[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [scheduleRuns, setScheduleRuns] = useState<Record<string, ScheduleRun[]>>({});
   const e2eRunsRef = useRef<E2eRun[]>([]);
   e2eRunsRef.current = e2eRuns;
   const [toasts, setToasts] = useState<Array<{ id: number; sessionId: string; sessionTitle: string; lines: Array<{ prId: string; text: string }> }>>([]);
@@ -266,7 +273,18 @@ export function App() {
     void run(async () => setSettings(await api.settings()));
     void run(async () => setModels(await api.models()));
     void run(async () => setOptions(await api.options()));
+    void run(async () => setSchedules(await api.schedules()));
   }, [reloadSessions, run]);
+
+  const loadScheduleRuns = useCallback(
+    (scheduleId: string) => {
+      void run(async () => {
+        const runs = await api.scheduleRuns(scheduleId);
+        setScheduleRuns((prev) => ({ ...prev, [scheduleId]: runs }));
+      });
+    },
+    [run],
+  );
 
   // Load events and saved messages when the selected session (or its active branch) changes; the WS keeps them current.
   const activeBranchId = selected?.activeBranchId ?? ROOT_BRANCH_ID;
@@ -366,6 +384,12 @@ export function App() {
           case "pr_items":
             setPrItems((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.items } : prev));
             break;
+          case "schedules":
+            setSchedules(msg.schedules);
+            break;
+          case "schedule_runs":
+            setScheduleRuns((prev) => ({ ...prev, [msg.scheduleId]: msg.runs }));
+            break;
           case "e2e_changed": {
             if (msg.sessionId !== selectedId) break;
             const before = e2eRunsRef.current.find((r) => r.id === msg.run.id);
@@ -437,7 +461,8 @@ export function App() {
   const sysboxMissing = settings ? settings.dockerModeAvailable !== "sysbox" : false;
   const settingsWarning = !anyTokenSet ? "No Provider token configured" : sysboxMissing ? "Sysbox runtime not installed" : null;
 
-  const topTitle = route.view === "new" ? "New session" : route.view === "settings" ? "Settings" : (selected?.title ?? "Sessionboxer");
+  const topTitle =
+    route.view === "new" ? "New session" : route.view === "settings" ? "Settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
   const collapseSidebar = (collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
     localStorage.setItem("sessionboxer.sidebarCollapsed", collapsed ? "1" : "0");
@@ -560,6 +585,10 @@ export function App() {
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}
         </ul>
         <div className="sidebar-footer">
+          <button onClick={() => setRoute({ view: "schedules" })} title={schedules.some((s) => s.lastStatus === "failed") ? "A scheduled task failed" : undefined}>
+            Scheduled tasks
+            {schedules.some((s) => s.lastStatus === "failed") && <span className="warn-sign" aria-label="A scheduled task failed">⚠</span>}
+          </button>
           <button onClick={() => setRoute({ view: "settings" })} title={settingsWarning ?? undefined}>
             Settings{settingsWarning && <span className="warn-sign" aria-label={settingsWarning}>⚠</span>}
           </button>
@@ -661,6 +690,19 @@ export function App() {
               setSettings(s);
               setRoute({ view: "session", id: null });
             }}
+            run={run}
+          />
+        )}
+        {route.view === "schedules" && settings && (
+          <Schedules
+            schedules={schedules}
+            runs={scheduleRuns}
+            sessions={sessions}
+            settings={settings}
+            models={models ?? EMPTY_MODELS}
+            options={options ?? EMPTY_OPTIONS}
+            onOpenSession={(id) => setRoute({ view: "session", id })}
+            loadRuns={loadScheduleRuns}
             run={run}
           />
         )}

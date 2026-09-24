@@ -45,6 +45,7 @@ More ways to install, updating and troubleshooting: [user guide → Install](doc
 - **Pull requests.** Attach a PR and follow its comments from the chat. Have the agent address them, reply on GitHub, and **auto-merge** when checks pass.
 - **Context gauge.** How full the agent's memory is, what each turn cost, and every byte sent to the model (Claude Code).
 - **MCP servers.** Register once, switch on per session. GitHub connects with one click; one account per repository.
+- **Scheduled tasks.** A prompt on a timetable (cron), into a running session or a fresh one from a template; next runs, history and Run now.
 - **Dictation.** Talk instead of typing; whisper.cpp transcribes on your machine, offline.
 - **From your phone.** Pair a device with a QR code over a tunnel; push notifications when the agent is done.
 - **Stop and resume.** A stopped box uses nothing and comes back where it was.
@@ -67,6 +68,7 @@ Every feature in detail: [user guide](docs/GUIDE.md).
 | Snapshot and fork the whole machine | ✓ | — | — | — | — | — | ✗ |
 | Revert the conversation, branches | ✓ | — | — | — | — | — | — |
 | Pull requests: follow, address, auto-merge | ✓ | follow, address | address | address | address | address | ✗ |
+| Scheduled tasks | ✓ | ✓ | ✓ | in the app | ✓ | ✓ | — |
 | See the exact model API calls | ✓ | — | — | — | — | — | — |
 | Offline dictation | ✓ | — | — | — | — | — | — |
 | Phone | PWA + push | web | iOS app | ChatGPT app | Claude app | web | iOS, Android |

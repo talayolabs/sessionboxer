@@ -214,6 +214,15 @@ The **Verification** pane (**Verify** on the phone) opens by itself the moment t
 
 A verification turn never verifies itself, and a saved message waits until the verification is over. Each verified turn costs a second turn of model time plus the minutes the agent spends driving the desktop; switch it off for sessions where that is not worth it.
 
+### Scheduled tasks
+
+**Scheduled tasks** in the sidebar (next to Settings) runs a prompt for you on a timetable: a nightly dependency check, a Monday report, a test run every hour. Each task has a name, a cron expression (`0 9 * * 1-5`, `@hourly`, …; the field suggests common ones and shows the expression in plain words plus the next three run times), a time zone (IANA name, your own by default), an on/off switch and one of two actions:
+
+- **Send a prompt to an existing Session.** Sent right away when the Session is idle; queued behind the running turn when it is busy (through the saved-message queue); a stopped Session is resumed first. A Session in error refuses it.
+- **Start a new Session from a template.** Provider, repositories, the same settings as the New Session form (model, instructions, MCP servers, verification, Docker…), the first prompt, and **Stop the Session when the turn ends** (on by default) so boxes do not pile up: the transcript and snapshots stay, and you can resume it like any stopped Session.
+
+The scheduler lives in the Control Plane, not in the system's cron, so it works the same in `sessionboxer service`, Docker Compose and the desktop app, and the page can show what happened. **Run now** runs a task on the spot, on or off. **History** lists the last 100 runs with the trigger (schedule, catch-up or manual), status, duration, what was done, the error if any and a link to the Session. A run counts as finished when the turn ends (its verification and anything queued behind it included); a failure marks the task in the list and the sidebar entry, and sends a push notification if you have them on. If the Control Plane was not running when a task was due, **Runs missed while the Control Plane was off** decides: *Skip them* (default, recorded as skipped) or *Run once when the Control Plane is back* (one catch-up run, however many were missed).
+
 ### Stop, resume, delete
 
 - **Stop** pauses the box. It uses no CPU or memory while stopped; the conversation, files, installed packages and everything else in the container are kept.
@@ -324,7 +333,7 @@ sessionboxer open [id] | stop <id> | resume <id> | rm <id>
 | | |
 | --- | --- |
 | Settings, tokens, MCP servers | `~/.sessionboxer/config.json` |
-| Sessions and chat history | `~/.sessionboxer/db.sqlite` |
+| Sessions, chat history, scheduled tasks and their runs | `~/.sessionboxer/db.sqlite` |
 | Session containers | `sbx-<session id>` on the `sessionboxer` Docker network, no published ports |
 | Workspace root in the box (repositories in `/workspace/<name>`) | `/workspace` |
 | Sandbox image | `ghcr.io/talayolabs/sessionboxer-sandbox:<version>` (pulled, or built locally by `npm run build:image`); `SESSIONBOXER_IMAGE` overrides |

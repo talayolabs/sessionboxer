@@ -973,8 +973,17 @@ export const DeleteSnapshotsResult = z.object({
 });
 export type DeleteSnapshotsResult = z.infer<typeof DeleteSnapshotsResult>;
 
+/**
+ * What the fork does with the origin's conversation: `continue` copies the transcript up to the
+ * Snapshot and the Agent resumes its own session from the image (it remembers everything);
+ * `new` keeps only the Snapshot's files and tools — empty transcript, the Agent starts a session.
+ */
+export const ForkConversation = z.enum(["continue", "new"]);
+export type ForkConversation = z.infer<typeof ForkConversation>;
+
 export const ForkSessionRequest = z.object({
   snapshotId: z.string(),
+  conversation: ForkConversation.default("continue"),
   title: z.string().min(1).max(200).optional(),
   /** Settings the fork differs in from the origin (the rest is copied). */
   settings: SessionSettingsInput.default({}),
@@ -1536,8 +1545,8 @@ export type SessionEventBody =
   | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage }
   | { type: "agent_error"; message: string }
   | { type: "status"; status: SessionStatus; error?: string }
-  /** First event of a forked Session: everything before it was copied from the origin. */
-  | { type: "forked"; fromSessionId: string; fromTitle: string; snapshotId: string; snapshotOrdinal: number }
+  /** First event of a forked Session: everything before it was copied from the origin (nothing, with `conversation: "new"`). */
+  | { type: "forked"; fromSessionId: string; fromTitle: string; snapshotId: string; snapshotOrdinal: number; conversation?: ForkConversation }
   /** The Daemon restarted the Agent with a new MCP server set (names, `desktop` excluded). */
   | { type: "mcp_changed"; servers: string[] }
   /** The Agent switched model (`name` is the human label, `model` the value). */

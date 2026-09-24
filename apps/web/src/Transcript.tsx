@@ -451,8 +451,10 @@ function Item({
     case "forked":
       return (
         <div className="marker marker-forked">
-          Forked from <a href={`#/sessions/${item.fromSessionId}`}>{item.fromTitle}</a> at snapshot #{item.snapshotOrdinal}: same
-          files, tools and conversation up to here; changes below stay in this Session.
+          Forked from <a href={`#/sessions/${item.fromSessionId}`}>{item.fromTitle}</a> at snapshot #{item.snapshotOrdinal}:{" "}
+          {item.newConversation
+            ? "same files and tools, new conversation; changes below stay in this Session."
+            : "same files, tools and conversation up to here; changes below stay in this Session."}
         </div>
       );
     case "mcp_changed":

@@ -40,6 +40,13 @@ export interface AgentConfig {
   env?: Record<string, string>;
   mcpCommand: string;
   stateFile: string;
+  /** The Sessionboxer Session this Sandbox belongs to; recorded with the persisted state. */
+  sessionId: string;
+  /**
+   * A persisted state written by another Session (a fork's Snapshot image carries the origin's) is
+   * ignored, so the Agent starts a session of its own instead of loading the origin's conversation.
+   */
+  newConversation: boolean;
   /** Standing instructions for the Agent (the Session's); empty sends none. */
   instructions: string;
   instructionsDelivery: InstructionsDelivery;
@@ -67,6 +74,8 @@ export interface AgentEvents {
 
 interface PersistedState {
   acpSessionId: string;
+  /** The Session the state was written for (absent in states written before forks could start a new conversation). */
+  sessionId?: string;
   /** ACP sessions created here that have not had a prompt yet (`first-prompt` instructions go with it). */
   freshSessionIds?: string[];
 }
@@ -518,7 +527,14 @@ export class AgentManager {
     private readonly cfg: AgentConfig,
     private readonly events: AgentEvents,
   ) {
-    this.acpSessionId = this.readState()?.acpSessionId ?? null;
+    const state = this.readState();
+    if (state && cfg.newConversation && state.sessionId !== cfg.sessionId) {
+      cfg.log(`ignoring the Agent session ${state.acpSessionId} of ${state.sessionId ?? "the origin"}: this fork starts a new conversation`);
+      this.acpSessionId = null;
+    } else {
+      this.acpSessionId = state?.acpSessionId ?? null;
+      if (state && state.sessionId !== cfg.sessionId) this.writeState(state);
+    }
   }
 
   async ensureStarted(): Promise<void> {
@@ -966,6 +982,7 @@ export class AgentManager {
       ) {
         const state = parsed as PersistedState;
         if (!Array.isArray(state.freshSessionIds)) delete state.freshSessionIds;
+        if (typeof state.sessionId !== "string") delete state.sessionId;
         return state;
       }
     } catch {
@@ -976,6 +993,6 @@ export class AgentManager {
 
   private writeState(state: PersistedState): void {
     mkdirSync(dirname(this.cfg.stateFile), { recursive: true });
-    writeFileSync(this.cfg.stateFile, JSON.stringify(state), { mode: 0o600 });
+    writeFileSync(this.cfg.stateFile, JSON.stringify({ ...state, sessionId: this.cfg.sessionId }), { mode: 0o600 });
   }
 }

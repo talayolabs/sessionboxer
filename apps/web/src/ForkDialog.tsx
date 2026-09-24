@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import type { AgentOption, ForkSessionRequest, ModelOption, PublicSettings, SavedMessage, Session, Snapshot } from "@sessionboxer/protocol";
+import type {
+  AgentOption,
+  ForkConversation,
+  ForkSessionRequest,
+  ModelOption,
+  PublicSettings,
+  SavedMessage,
+  Session,
+  Snapshot,
+} from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
 import { SessionSettingsForm, draftFromSettings, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
 
@@ -11,12 +20,12 @@ function preview(text: string): string {
 }
 
 /**
- * "Fork from a snapshot": pick the Snapshot (fork point), what the fork's first
- * message is (one of the queued messages at that point, the current queue, a new
- * prompt, or nothing) and whether the rest of the queue is copied over. The fork
- * starts with the origin's settings; "Settings" opens them for changes, including the
- * creation-only ones (Docker, instructions, git identity). The origin Session and its
- * queue are never modified.
+ * "Fork from a snapshot": pick the Snapshot (fork point), whether the fork continues the
+ * conversation or starts a new one on the same files, what the fork's first message is (one of
+ * the queued messages at that point, the current queue, a new prompt, or nothing) and whether
+ * the rest of the queue is copied over. The fork starts with the origin's settings; "Settings"
+ * opens them for changes, including the creation-only ones (Docker, instructions, git
+ * identity). The origin Session and its queue are never modified.
  */
 export function ForkDialog({
   session,
@@ -46,6 +55,7 @@ export function ForkDialog({
   busy: boolean;
 }) {
   const [snapshotId, setSnapshotId] = useState(initialSnapshotId);
+  const [conversation, setConversation] = useState<ForkConversation>("continue");
   const [title, setTitle] = useState("");
   const [first, setFirst] = useState<"none" | "custom" | `q${number}`>("none");
   const [custom, setCustom] = useState("");
@@ -84,6 +94,7 @@ export function ForkDialog({
     e.preventDefault();
     onSubmit({
       snapshotId: snapshot.id,
+      conversation,
       ...(title.trim() ? { title: title.trim() } : {}),
       settings: draftChanged ? draftToInput(draft) : {},
       ...(prompt ? { prompt } : {}),
@@ -96,8 +107,8 @@ export function ForkDialog({
       <form className="modal panel" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="fork-title">
         <h2 id="fork-title">Fork "{session.title}"</h2>
         <p className="muted">
-          A new Session with its own Sandbox started from the snapshot image: same files, installed tools and
-          conversation up to that point. The original Session, its Sandbox and its queue are left as they are.
+          A new Session with its own Sandbox started from the snapshot image: same files and installed tools, with or
+          without the conversation up to that point. The original Session, its Sandbox and its queue are left as they are.
         </p>
         <label>
           Fork point
@@ -111,6 +122,21 @@ export function ForkDialog({
             ))}
           </select>
         </label>
+        <fieldset className="choice">
+          <legend>Conversation</legend>
+          <label className="check">
+            <input type="radio" name="conversation" checked={conversation === "continue"} onChange={() => setConversation("continue")} />
+            <span className="choice-text">
+              Continue it <span className="muted">— the chat up to the snapshot is kept, the Agent remembers it</span>
+            </span>
+          </label>
+          <label className="check">
+            <input type="radio" name="conversation" checked={conversation === "new"} onChange={() => setConversation("new")} />
+            <span className="choice-text">
+              Start a new one <span className="muted">— empty chat, the Agent starts fresh on the same files</span>
+            </span>
+          </label>
+        </fieldset>
         <label>
           Title (optional)
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${session.title} (fork ${snapshot.ordinal})`} />

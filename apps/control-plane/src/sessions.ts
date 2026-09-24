@@ -847,7 +847,9 @@ export class SessionManager {
    * New Session whose Sandbox starts from one of `fromId`'s Snapshot images: same
    * filesystem as the origin at that moment (Workspace, installed tools, the
    * Agent's own session files), with the transcript up to the Snapshot copied
-   * over. The origin Session, its Sandbox and its saved messages are untouched.
+   * over — or, with `conversation: "new"`, an empty transcript and an Agent that starts
+   * a session of its own (the Daemon ignores the origin's on the first boot). The origin
+   * Session, its Sandbox and its saved messages are untouched.
    */
   async fork(fromId: string, req: ForkSessionRequest): Promise<Session> {
     const origin = this.get(fromId);
@@ -916,13 +918,16 @@ export class SessionManager {
       updatedAt: now,
     };
     this.db.insertSession(session);
-    this.db.copyEvents(origin.id, id, snapshot.eventSeq, branchScope(origin.branches, snapshot.branchId));
+    if (req.conversation === "continue") {
+      this.db.copyEvents(origin.id, id, snapshot.eventSeq, branchScope(origin.branches, snapshot.branchId));
+    }
     const marker = this.db.appendEvent(id, {
       type: "forked",
       fromSessionId: origin.id,
       fromTitle: origin.title,
       snapshotId: snapshot.id,
       snapshotOrdinal: snapshot.ordinal,
+      conversation: req.conversation,
     });
     for (const text of req.savedMessages) this.db.insertSavedMessage(id, text);
     this.broadcast({ type: "session", session });
@@ -930,7 +935,7 @@ export class SessionManager {
     if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
     void this.copyBaselines(origin, session);
 
-    void this.provision(session, settings, snapshot.imageId).catch((e: unknown) => {
+    void this.provision(session, settings, snapshot.imageId, req.conversation === "new").catch((e: unknown) => {
       this.log(`provision fork ${id} failed: ${String(e)}`);
       this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
     });
@@ -962,11 +967,13 @@ export class SessionManager {
     return env;
   }
 
-  private createSandbox(session: Session, settings: Settings, image?: string): Promise<string> {
+  private createSandbox(session: Session, settings: Settings, image?: string, newConversation = false): Promise<string> {
     const effective = resolveSessionSettings(session.settings, settings);
+    const env = this.sandboxEnv(session, settings);
+    if (newConversation) env.SESSIONBOXER_NEW_CONVERSATION = "1";
     return this.docker.create({
       sessionId: session.id,
-      env: this.sandboxEnv(session, settings),
+      env,
       cpus: effective.cpus,
       memoryGb: effective.memoryGb,
       dockerMode: session.settings.sandbox.dockerMode,
@@ -984,8 +991,8 @@ export class SessionManager {
     }
   }
 
-  private async provision(session: Session, settings: Settings, image?: string): Promise<void> {
-    const containerId = await this.createSandbox(session, settings, image);
+  private async provision(session: Session, settings: Settings, image?: string, newConversation = false): Promise<void> {
+    const containerId = await this.createSandbox(session, settings, image, newConversation);
     this.update(session.id, { containerId });
     await this.startSandbox(containerId, settings);
     // A fork's Workspace comes with its Snapshot image; only fresh Sessions seed theirs.

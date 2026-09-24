@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fork: a **Conversation** choice — **Continue it** (as before: the chat up to the snapshot is copied and the Agent remembers it) or **Start a new one** (empty chat; the Agent starts a fresh session on the same files and tools). `ForkSessionRequest.conversation: "continue" | "new"`; the Daemon ignores the origin's persisted Agent session on the fork's first boot (`SESSIONBOXER_NEW_CONVERSATION`).
 - Composer: typing no longer lags — the draft lives outside the Session view's React state, so a keystroke re-renders only the composer instead of the whole Session (header, transcript, panes); Markdown messages are memoised too, so a streaming message no longer re-parses its neighbours.
 - Chat: the Agent's consecutive messages of a turn (text, thoughts, tool calls, plans) fold behind one GitHub-style squiggly rule — a spinner and *Working… n messages so far* while it works, then only its last message (the summary) with **Show all n messages**; open to see every message as before, and fold them again from either end.
 - Verification pane: **Run now** starts a verification turn on demand for the work so far (against the last request), whether the "Verify each turn" switch is on or off; `POST /api/sessions/:id/e2e/run`. Disabled while the Agent works, a run is open, or the session is stopped.

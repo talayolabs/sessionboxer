@@ -186,6 +186,8 @@ const agent = new AgentManager(
     ...(provider === "codex" ? { env: CODEX_AGENT_ENV } : {}),
     mcpCommand,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
+    sessionId: env.SESSIONBOXER_SESSION_ID ?? "",
+    newConversation: env.SESSIONBOXER_NEW_CONVERSATION === "1",
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
     workspaceBriefing: () => repos.briefing(),

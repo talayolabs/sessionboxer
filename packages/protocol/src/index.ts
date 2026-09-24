@@ -363,11 +363,17 @@ export type ProviderOptions = Record<Provider, AgentOption[]>;
 /** Claude aliases Sessionboxer allows by default (Claude's own list plus Fable, which the SDK hides otherwise). */
 export const DEFAULT_CLAUDE_MODELS = ["opus", "sonnet", "haiku", "fable"];
 
-/** Shipped default for `Settings.instructions`. */
-export const DEFAULT_INSTRUCTIONS = [
-  "- Never author git commits as an agent: commits carry the user's git identity only, with no `Co-Authored-By` trailer, no \"generated with\" line and no mention of Claude, Devin or any other agent in commit messages or PR text.",
-  "- After changing code, when the change can be exercised, run the application and use the desktop (mouse, keyboard, screenshots) to test it end to end, watching the change work. Record a video of the core part of the change with the desktop's start_recording/stop_recording tools and hand the user the file path so it plays in the chat.",
-].join("\n");
+/** Shipped default for `Settings.instructions`. Testing the change is not asked for here: `e2eVerify` runs a verification turn after each turn. */
+export const DEFAULT_INSTRUCTIONS =
+  "- Never author git commits as an agent: commits carry the user's git identity only, with no `Co-Authored-By` trailer, no \"generated with\" line and no mention of Claude, Devin or any other agent in commit messages or PR text.";
+
+/** Earlier shipped defaults; a config.json still holding one of them verbatim is moved to the current text. */
+export const PAST_DEFAULT_INSTRUCTIONS = [
+  [
+    DEFAULT_INSTRUCTIONS,
+    "- After changing code, when the change can be exercised, run the application and use the desktop (mouse, keyboard, screenshots) to test it end to end, watching the change work. Record a video of the core part of the change with the desktop's start_recording/stop_recording tools and hand the user the file path so it plays in the chat.",
+  ].join("\n"),
+];
 
 export const INSTRUCTIONS_MAX_CHARS = 20_000;
 

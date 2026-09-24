@@ -12,6 +12,7 @@ import {
   CONNECTORS,
   connectorHasMcp,
   MCP_RESERVED_NAMES,
+  PAST_DEFAULT_INSTRUCTIONS,
   Settings,
   TUNNEL_NAME_RE,
   type DockerMode,
@@ -143,6 +144,8 @@ export function loadSettings(): Settings {
   // `quickTunnel: true` from before the transports were several means the Cloudflare one.
   if (typeof raw.quickTunnel === "boolean" && raw.tunnels === undefined) raw.tunnels = { cloudflare: { enabled: raw.quickTunnel } };
   delete raw.quickTunnel;
+  // A shipped default that was never edited follows the current one.
+  if (typeof raw.instructions === "string" && PAST_DEFAULT_INSTRUCTIONS.includes(raw.instructions)) delete raw.instructions;
   return Settings.parse(raw);
 }
 

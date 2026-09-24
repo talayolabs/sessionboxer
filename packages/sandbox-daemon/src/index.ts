@@ -134,17 +134,35 @@ const instructions = env.SESSIONBOXER_INSTRUCTIONS ?? "";
  * (ADR-0032). Its upstream is the `ANTHROPIC_BASE_URL` the Sandbox was given (a company proxy) or
  * Anthropic; the Daemon's own environment keeps that value, only the Agent process sees the loopback.
  */
+const llmUpstream = env.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_DEFAULT_BASE_URL;
 const llmInspector =
   provider === "claude-code"
     ? new LlmInspector({
         port: LLM_INSPECTOR_PORT,
-        upstream: env.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_DEFAULT_BASE_URL,
+        upstream: llmUpstream,
         dir: `${tmpfsDir}/llm`,
         log,
         onCall: (call) => emit({ type: "llm_call", call }),
       })
     : null;
-const LLM_INSPECTOR_ENV = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${LLM_INSPECTOR_PORT}` };
+/**
+ * Claude Code takes any `ANTHROPIC_BASE_URL` other than Anthropic's own for a third-party backend
+ * and then caps the 1M-native models (Fable, Opus 5) at a 200k window: wrong size on the gauge and
+ * compaction at a fifth of the real window. When the loopback only forwards to Anthropic, this
+ * flag tells it so.
+ */
+const LLM_INSPECTOR_ENV: Record<string, string> = {
+  ANTHROPIC_BASE_URL: `http://127.0.0.1:${LLM_INSPECTOR_PORT}`,
+  ...(isAnthropicApi(llmUpstream) ? { _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1" } : {}),
+};
+
+function isAnthropicApi(url: string): boolean {
+  try {
+    return new URL(url).host === new URL(ANTHROPIC_DEFAULT_BASE_URL).host;
+  } catch {
+    return false;
+  }
+}
 let llmInspectRequested = env.SESSIONBOXER_INSPECT_LLM === "1" && llmInspector !== null;
 
 /**

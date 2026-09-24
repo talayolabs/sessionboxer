@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix: with Inspect LLM on, Claude Code took the loopback recorder for a third-party backend and capped the 1M models (Fable, Opus 5, Sonnet 5) at a 200k window — the gauge read `/ 200k` and compaction would have come at a fifth of the real window. The recorder now tells Claude Code it forwards to Anthropic when it does. Daemon change: Stop → Resume existing sessions (ADR-0032).
+- Composer: the context gauge is a full-width bar above the formatting toolbar instead of a small footer control.
 - Composer: **Save for later** is **Enqueue**, and the queue plays by itself: an enqueued message goes out as soon as the Agent is idle (now, after the current turn, or when a stopped Session resumes) with no *Play all* step; **Pause** / **Resume** hold and release it. A fork's copied queue plays after its first prompt.
 - Composer: the Markdown / Rich text pair is a single **Preview** switch (on: formatted editing, off: raw Markdown).
 - Color themes: eleven light and dark themes (Sessionboxer, GitHub, Catppuccin, Solarized, Dracula, Nord, One Dark) chosen under Global settings, or following the system with a light and a dark pick; the terminal, diagrams, code blocks and the desktop frame follow, and the VS Code in the Code pane starts in and switches live to the same palette, shipped into the box as a generated VS Code theme. Stored per browser. Needs an image rebuild (ADR-0048).

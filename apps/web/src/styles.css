@@ -761,8 +761,13 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .marker-e2e-passed { color: var(--ok); }
 .marker-e2e-failed { color: var(--error); }
 
-.segmented .pr-tab { flex: none; white-space: nowrap; }
-.segmented .pr-tab-merged, .segmented .pr-tab-closed { color: var(--muted); }
+.pr-crumbs { flex: none; display: flex; gap: 6px; align-items: baseline; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--bg); font-size: 12px; }
+.pr-crumbs [aria-current] { font-weight: 500; }
+.pr-crumbs .pr-tab-merged, .pr-crumbs .pr-tab-closed { color: var(--muted); }
+.pr-text table { border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+.pr-text th, .pr-text td { border: 1px solid var(--border); padding: 2px 8px; text-align: left; }
+.pr-text img { max-width: 100%; }
+.pr-text details summary { cursor: pointer; }
 .pr-state, .pr-decision, .pr-kind { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 11px; border: 1px solid var(--border); white-space: nowrap; }
 .pr-state-open { color: var(--ok); border-color: var(--ok); }
 .pr-state-draft { color: var(--muted); }

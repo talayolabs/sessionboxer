@@ -161,6 +161,9 @@ export function PrsPane({
   };
   return (
     <div className="pane prs-pane">
+      <nav className="pr-crumbs" aria-label="Pull requests">
+        <span aria-current="page">Pull requests{prs.length > 0 && <span className="muted"> ({prs.length})</span>}</span>
+      </nav>
       <div className="prs-toolbar">
         <input
           placeholder="PR URL (GitHub or Bitbucket Data Center), owner/repo#123, or #123"
@@ -209,7 +212,7 @@ export function PrsPane({
               return (
                 <tr key={pr.id} className={pr.unread > 0 ? "unread" : ""}>
                   <td className="prs-title">
-                    <button className="link" onClick={() => onOpen(pr.id)} title="Open this PR's tab">
+                    <button className="link" onClick={() => onOpen(pr.id)} title="Open this PR">
                       <strong>
                         {pr.owner}/{pr.repo}#{pr.number}
                       </strong>{" "}
@@ -298,7 +301,7 @@ export function PrPane({
   checks,
   run,
   onPromptText,
-  onDetached,
+  onBack,
 }: {
   session: Session;
   pr: PullRequest;
@@ -309,7 +312,8 @@ export function PrPane({
   run: Runner;
   /** "To prompt": the text to put in the composer. */
   onPromptText: (text: string) => void;
-  onDetached: () => void;
+  /** Back to the list of attached PRs (breadcrumb, and after Detach). */
+  onBack: () => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<PrAction | null>(null);
@@ -391,6 +395,17 @@ export function PrPane({
 
   return (
     <div className="pane prs-pane">
+      <nav className="pr-crumbs" aria-label="Pull requests">
+        <button className="link" onClick={onBack} title="All pull requests attached to this Session">
+          Pull requests
+        </button>
+        <span className="muted" aria-hidden="true">
+          ›
+        </span>
+        <span aria-current="page" className={`pr-tab-${pr.state}`}>
+          {pr.owner}/{pr.repo}#{pr.number}
+        </span>
+      </nav>
       <div className="pr-head">
         <div className="pr-head-title">
           <a href={pr.url} target="_blank" rel="noreferrer">
@@ -433,7 +448,7 @@ export function PrPane({
           onClick={() => {
             if (confirm(`Detach ${pr.owner}/${pr.repo}#${pr.number} from this Session?`)) {
               void run(() => api.detachPr(session.id, pr.id));
-              onDetached();
+              onBack();
             }
           }}
         >
@@ -631,7 +646,7 @@ export function PrPane({
                       </div>
                     )}
                     <div className={long && !open ? "pr-text clamped" : "pr-text"}>
-                      <Markdown text={it.body || "*(no text)*"} />
+                      <Markdown text={it.body || "*(no text)*"} html />
                     </div>
                     {long && (
                       <button

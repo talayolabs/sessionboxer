@@ -2,6 +2,8 @@ import type { Element, ElementContent } from "hast";
 import { memo, useContext, useMemo } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { AttachmentList, AttachmentSession } from "./Attachments";
@@ -14,6 +16,13 @@ import { Mermaid } from "./Mermaid";
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const HIGHLIGHT: NonNullable<Options["rehypePlugins"]>[number] = [rehypeHighlight, { languages: GRAMMARS, plainText: ["mermaid"] }];
 const REHYPE_PLUGINS: NonNullable<Options["rehypePlugins"]> = [HIGHLIGHT];
+/**
+ * For text written by other people on a PR: the HTML in it is parsed and then cut down to GitHub's
+ * allowlist (tables, details/summary, images, links… no script/style/iframe/form, no on* handlers,
+ * http(s)/mailto links only, ids prefixed so they cannot clobber the page). Sanitising runs before
+ * the highlighter, which adds its own classes afterwards.
+ */
+const HTML_PLUGINS: NonNullable<Options["rehypePlugins"]> = [rehypeRaw, [rehypeSanitize, defaultSchema], HIGHLIGHT];
 
 function textOf(nodes: ElementContent[]): string {
   return nodes.map((n) => (n.type === "text" ? n.value : n.type === "element" ? textOf(n.children) : "")).join("");
@@ -47,17 +56,29 @@ function resolveHref(sessionId: string | null, href: string, base: string): stri
  * around (`OpenFile` context), paths to Workspace source files in prose, inline code or links
  * (`src/App.tsx:42`) open the file there instead. Fenced code is highlighted; ```mermaid blocks
  * are drawn as diagrams. `base` is the Workspace directory relative links resolve against (the
- * folder of a .md file being previewed). Memoised: parsing is the transcript's main cost, and a
- * message that did not change is not parsed again when its neighbours do.
+ * folder of a .md file being previewed). With `html`, inline HTML (as GitHub renders it in PR
+ * comments) is shown too, sanitised; without it HTML is dropped, as react-markdown does. Memoised:
+ * parsing is the transcript's main cost, and a message that did not change is not parsed again
+ * when its neighbours do.
  */
-export const Markdown = memo(function Markdown({ text, attachments = false, base = "" }: { text: string; attachments?: boolean; base?: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  attachments = false,
+  base = "",
+  html = false,
+}: {
+  text: string;
+  attachments?: boolean;
+  base?: string;
+  html?: boolean;
+}) {
   const sessionId = useContext(AttachmentSession);
   const openFile = useContext(OpenFile);
   const found = useMemo(() => (attachments && sessionId ? findAttachments(text) : []), [attachments, sessionId, text]);
-  const rehypePlugins = useMemo<NonNullable<Options["rehypePlugins"]>>(
-    () => (openFile ? [HIGHLIGHT, [rehypeFileLinks, { base }]] : REHYPE_PLUGINS),
-    [openFile, base],
-  );
+  const rehypePlugins = useMemo<NonNullable<Options["rehypePlugins"]>>(() => {
+    const plugins = html ? HTML_PLUGINS : REHYPE_PLUGINS;
+    return openFile ? [...plugins, [rehypeFileLinks, { base }]] : plugins;
+  }, [openFile, base, html]);
   return (
     <div className="md">
       <ReactMarkdown

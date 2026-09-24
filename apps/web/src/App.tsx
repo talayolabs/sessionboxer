@@ -1378,10 +1378,16 @@ function SessionView({
           ))}
           <button
             role="tab"
-            aria-selected={pane === "prs"}
-            className={pane === "prs" ? "active" : ""}
-            title={pane === "prs" ? "Hide pull requests" : `Pull requests attached to this Session${prUnread > 0 ? ` (${prUnread} unread)` : ""}`}
-            onClick={() => togglePane("prs")}
+            aria-selected={pane === "prs" || openPr !== null}
+            className={pane === "prs" || openPr ? "active" : ""}
+            title={
+              openPr
+                ? "Back to the list of pull requests"
+                : pane === "prs"
+                  ? "Hide pull requests"
+                  : `Pull requests attached to this Session${prs.length > 0 ? ` (${prs.length}${prUnread > 0 ? `, ${prUnread} unread` : ""})` : ""}`
+            }
+            onClick={() => (openPr ? setPane("prs") : togglePane("prs"))}
           >
             <Icon name="prs" />
             PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
@@ -1406,19 +1412,6 @@ function SessionView({
             <Icon name="scheduled" />
             Scheduled{sessionSchedules > 0 && <span className="count">{sessionSchedules}</span>}
           </button>
-          {prs.map((p) => (
-            <button
-              key={p.id}
-              role="tab"
-              aria-selected={pane === `pr:${p.id}`}
-              className={`${pane === `pr:${p.id}` ? "active" : ""} pr-tab pr-tab-${p.state}`}
-              title={`${p.owner}/${p.repo}#${p.number} ${p.title}${p.unread > 0 ? ` (${p.unread} unread)` : ""}`}
-              onClick={() => togglePane(`pr:${p.id}`)}
-            >
-              #{p.number}
-              {p.unread > 0 && <span className="count">{p.unread}</span>}
-            </button>
-          ))}
         </div>
         {(session.status === "stopped" || session.status === "error") && (
           <button title="Start the Sandbox again; the Agent picks up its conversation" onClick={() => void run(() => api.resume(session.id))}>
@@ -1595,7 +1588,7 @@ function SessionView({
             checks={prChecks[openPr.id] ?? null}
             run={run}
             onPromptText={appendToComposer}
-            onDetached={() => setPane("prs")}
+            onBack={() => setPane("prs")}
           />
         )}
       </div>

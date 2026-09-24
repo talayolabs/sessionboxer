@@ -345,6 +345,7 @@ li.expanded .saved-text { white-space: normal; }
 .toolbar { flex: none; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .toolbar .tb { display: inline-flex; align-items: center; justify-content: center; height: 26px; min-width: 30px; padding: 0 7px;
   background: transparent; border-color: transparent; font-size: 13px; color: var(--muted); }
+.toolbar .tb-sep { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--border); }
 .toolbar .tb-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .toolbar .tb:hover { color: var(--text); background: var(--panel); border-color: var(--border); }
 .toolbar .tb.active { color: var(--text); background: var(--user); border-color: var(--user); }

@@ -559,6 +559,7 @@ export function Composer(props: ComposerProps) {
           <button type="button" className="tb" title="Attach files (or drop / paste them here)" disabled={disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => fileInputRef.current?.click()}>
             <Icon d={ICONS.attach} />
           </button>
+          <span className="tb-sep" role="separator" aria-orientation="vertical" />
           <button
             type="button"
             className={`tb mic${dictation.kind === "recording" ? " rec" : ""}${dictation.kind === "working" ? " busy" : ""}`}
@@ -571,6 +572,7 @@ export function Composer(props: ComposerProps) {
             <Icon d={ICONS.mic} />
             {dictation.kind === "recording" && <span className="mic-time">{clock(Math.max(0, Math.floor((now - dictation.startedAt) / 1000)))}</span>}
           </button>
+          <span className="tb-sep" role="separator" aria-orientation="vertical" />
           {TOOLS.map((t) => (
             <button
               key={t.id}

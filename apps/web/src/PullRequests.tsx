@@ -66,10 +66,15 @@ export function mergeNote(pr: PullRequest): { text: string; level: "ok" | "warn"
       return { text: "waiting: conflicts with the base branch", level: "error" };
     case "behind":
       return { text: `waiting: bringing the branch up to date with ${pr.baseRef}`, level: "warn" };
-    case "blocked":
-      if (failed.length > 0) return { text: `waiting: ${failed.length} failed — ${names(failed)}`, level: "error" };
-      if (pending.length > 0) return { text: `waiting: ${pending.length} running — ${names(pending)}`, level: "warn" };
-      return { text: pr.reviewDecision === "approved" ? "waiting: blocked by branch protection" : "waiting: reviews required", level: "warn" };
+    case "blocked": {
+      const reasons: string[] = [];
+      if (failed.length > 0) reasons.push(`${failed.length} failed — ${names(failed)}`);
+      if (pending.length > 0) reasons.push(`${pending.length} running — ${names(pending)}`);
+      if (pr.reviewDecision === "review_required") reasons.push("an approval from a reviewer");
+      else if (pr.reviewDecision === "changes_requested") reasons.push("changes were requested by a reviewer");
+      if (reasons.length === 0) reasons.push(pr.reviewDecision === "approved" ? "blocked by branch protection" : "reviews required");
+      return { text: `waiting: ${reasons.join("; ")}`, level: failed.length > 0 ? "error" : "warn" };
+    }
     case "unstable":
       if (failed.length > 0) return { text: `waiting: ${failed.length} failed — ${names(failed)}`, level: "error" };
       return { text: pending.length > 0 ? `waiting: ${pending.length} running — ${names(pending)}` : "waiting: checks not all green", level: "warn" };

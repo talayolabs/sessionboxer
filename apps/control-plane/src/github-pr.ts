@@ -337,8 +337,37 @@ export async function fetchChecks(t: GhTransport, ref: PrRef, account: string | 
     const kind: PrSyncError = /not resolve|could not be found|NOT_FOUND/i.test(msg) ? "not_found" : "error";
     return { status: "error", kind, detail: msg, retryAt: null };
   }
-  const nodes = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
+  const nodes = latestRuns(pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []);
   return { status: "ok", etag: null, remaining, value: { headSha: pr.headRefOid, checks: nodes.map(checkInputFromNode) } };
+}
+
+/**
+ * The rollup lists every check run on the commit — a workflow that ran twice (a re-run, a push
+ * event and a pull_request event, the branch renamed) shows each job twice. Like GitHub's merge
+ * box, keep the newest run of each check (workflow / app + name); a queued re-run counts as newer.
+ */
+function latestRuns(nodes: CheckNode[]): CheckNode[] {
+  const byKey = new Map<string, CheckNode>();
+  for (const n of nodes) {
+    const key =
+      n.__typename === "CheckRun"
+        ? `run\0${n.checkSuite?.workflowRun?.workflow.name ?? n.checkSuite?.app?.name ?? ""}\0${n.name}`
+        : `status\0${n.context}`;
+    const prev = byKey.get(key);
+    if (!prev || newerRun(n, prev)) byKey.set(key, n);
+  }
+  return [...byKey.values()];
+}
+
+function newerRun(a: CheckNode, b: CheckNode): boolean {
+  if (a.__typename === "CheckRun" && b.__typename === "CheckRun") {
+    if (a.databaseId !== null && b.databaseId !== null && a.databaseId !== b.databaseId) return a.databaseId > b.databaseId;
+    if (a.startedAt === null) return b.startedAt !== null;
+    if (b.startedAt === null) return false;
+    return Date.parse(a.startedAt) > Date.parse(b.startedAt);
+  }
+  if (a.__typename === "StatusContext" && b.__typename === "StatusContext") return Date.parse(a.createdAt) > Date.parse(b.createdAt);
+  return false;
 }
 
 const SUMMARY_MAX = 4000;
@@ -405,7 +434,7 @@ export async function fetchMergeInfo(t: GhTransport, ref: PrRef, account: string
     return { status: "error", kind, detail: msg, retryAt: null };
   }
   const status = pr.mergeStateStatus.toLowerCase();
-  const nodes = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
+  const nodes = latestRuns(pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []);
   return {
     status: "ok",
     etag: null,

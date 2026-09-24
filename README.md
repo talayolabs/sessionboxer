@@ -42,7 +42,7 @@ More ways to install, updating and troubleshooting: [user guide → Install](doc
 - **Verified turns.** After each turn the agent plans test cases from your prompt, runs them on the box's desktop while recording, fixes what fails, and posts the video.
 - **Snapshots and forks.** Snapshot the box by hand or after every finished turn. Fork a new session from any of them.
 - **Revert and branches.** Go back to an earlier turn and try another way; the old path is kept as a branch.
-- **Pull requests.** Attach a PR and follow its comments and checks from the chat. Have the agent address the comments, fix the failed checks, reply on GitHub, and **auto-merge** when checks pass.
+- **Pull requests.** Attach a PR on GitHub or on your Bitbucket Data Center and follow its comments and checks (build statuses) from the chat. Have the agent address the comments, fix the failed checks, reply on the PR, and **auto-merge** GitHub PRs when checks pass.
 - **Context gauge.** How full the agent's memory is, what each turn cost, and every byte sent to the model (Claude Code).
 - **MCP servers.** Register once, switch on per session. GitHub connects with one click; one account per repository.
 - **Scheduled tasks.** A prompt on a timetable (cron), into a running session or a fresh one from a template; next runs, history and Run now.

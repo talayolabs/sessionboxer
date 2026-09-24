@@ -6,11 +6,13 @@ import {
   PrCheckState,
   PrItemKind,
   PrMergeState,
+  PrProvider,
   PrReviewDecision,
   PrState,
   PrSyncError,
   type PrCheckItem,
   type PrItem,
+  type PrRef,
   type PullRequest,
 } from "@sessionboxer/protocol";
 
@@ -43,6 +45,8 @@ CREATE TABLE IF NOT EXISTS pull_requests (
   auto_merge INTEGER NOT NULL DEFAULT 0,
   merge_method TEXT NOT NULL DEFAULT 'merge',
   merge_state TEXT,
+  provider TEXT NOT NULL DEFAULT 'github',
+  host TEXT NOT NULL DEFAULT 'github.com',
   UNIQUE (session_id, owner, repo, number)
 );
 CREATE TABLE IF NOT EXISTS pr_items (
@@ -99,6 +103,8 @@ const PR_MIGRATIONS: Array<{ column: string; ddl: string }> = [
   { column: "auto_merge", ddl: "ALTER TABLE pull_requests ADD COLUMN auto_merge INTEGER NOT NULL DEFAULT 0" },
   { column: "merge_method", ddl: "ALTER TABLE pull_requests ADD COLUMN merge_method TEXT NOT NULL DEFAULT 'merge'" },
   { column: "merge_state", ddl: "ALTER TABLE pull_requests ADD COLUMN merge_state TEXT" },
+  { column: "provider", ddl: "ALTER TABLE pull_requests ADD COLUMN provider TEXT NOT NULL DEFAULT 'github'" },
+  { column: "host", ddl: "ALTER TABLE pull_requests ADD COLUMN host TEXT NOT NULL DEFAULT 'github.com'" },
 ];
 
 /** Conditional-request cursors per endpoint. */
@@ -121,10 +127,10 @@ export type PrMetaPatch = Partial<
   Pick<PullRequest, "title" | "state" | "headRef" | "headRepo" | "baseRef" | "author" | "reviewDecision" | "viaAccount" | "watch" | "autoMerge" | "mergeMethod" | "mergeState">
 > & { closedAt?: string | null };
 
-/** A comment/review as it comes from GitHub, before the Session-side flags. */
+/** A comment/review as it comes from the provider, before the Session-side flags. */
 export type PrItemInput = Omit<PrItem, "id" | "prId" | "seen" | "address">;
 
-/** A check as it comes from GitHub, before the Session-side flags. */
+/** A check as it comes from the provider, before the Session-side flags. */
 export type PrCheckInput = Omit<PrCheckItem, "id" | "prId" | "seen" | "address" | "headSha">;
 
 export class PrStore {
@@ -159,20 +165,22 @@ export class PrStore {
     return row ? rowToPr(row) : null;
   }
 
-  find(sessionId: string, owner: string, repo: string, number: number): StoredPr | null {
+  find(sessionId: string, ref: PrRef): StoredPr | null {
     const row = this.db
-      .prepare(`${PR_SELECT} WHERE p.session_id = ? AND lower(p.owner) = lower(?) AND lower(p.repo) = lower(?) AND p.number = ?`)
-      .get(sessionId, owner, repo, number) as PrRow | undefined;
+      .prepare(
+        `${PR_SELECT} WHERE p.session_id = ? AND p.provider = ? AND lower(p.host) = lower(?) AND lower(p.owner) = lower(?) AND lower(p.repo) = lower(?) AND p.number = ?`,
+      )
+      .get(sessionId, ref.provider, ref.host, ref.owner, ref.repo, ref.number) as PrRow | undefined;
     return row ? rowToPr(row) : null;
   }
 
-  insert(pr: { id: string; sessionId: string; owner: string; repo: string; number: number; url: string; attachedBy: PullRequest["attachedBy"] }): StoredPr {
+  insert(pr: PrRef & { id: string; sessionId: string; url: string; attachedBy: PullRequest["attachedBy"] }): StoredPr {
     this.db
       .prepare(
-        `INSERT INTO pull_requests (id, session_id, owner, repo, number, url, attached_by, attached_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pull_requests (id, session_id, provider, host, owner, repo, number, url, attached_by, attached_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(pr.id, pr.sessionId, pr.owner, pr.repo, pr.number, pr.url, pr.attachedBy, new Date().toISOString());
+      .run(pr.id, pr.sessionId, pr.provider, pr.host, pr.owner, pr.repo, pr.number, pr.url, pr.attachedBy, new Date().toISOString());
     return this.get(pr.id)!;
   }
 
@@ -345,10 +353,10 @@ export class PrStore {
   }
 
   /**
-   * Replaces the PR's checks with what GitHub reports for `headSha`, keeping the Session-side
+   * Replaces the PR's checks with what the provider reports for `headSha`, keeping the Session-side
    * flags. A check is followed by name across pushes: a new head resets a failure's `seen` /
-   * `notified` (it failed again) and settles `addressing` once it passes there. Checks GitHub no
-   * longer lists stay one poll as `pending` after a push (the new head's runs may not be queued
+   * `notified` (it failed again) and settles `addressing` once it passes there. Checks the provider
+   * no longer lists stay one poll as `pending` after a push (the new head's runs may not be queued
    * yet), then go. Returns whether anything changed.
    */
   setChecks(prId: string, headSha: string, checks: PrCheckInput[]): boolean {
@@ -495,6 +503,8 @@ const PR_SELECT = `
 interface PrRow {
   id: string;
   session_id: string;
+  provider: string;
+  host: string;
   owner: string;
   repo: string;
   number: number;
@@ -577,6 +587,8 @@ function rowToPr(r: PrRow): StoredPr {
   return {
     id: r.id,
     sessionId: r.session_id,
+    provider: PrProvider.catch("github").parse(r.provider),
+    host: r.host,
     owner: r.owner,
     repo: r.repo,
     number: r.number,
@@ -626,7 +638,7 @@ function rowToCheck(r: CheckRow): PrCheckItem {
     id: r.id,
     prId: r.pr_id,
     name: r.name,
-    kind: r.kind === "status" ? "status" : "check_run",
+    kind: r.kind === "status" ? "status" : r.kind === "build" ? "build" : "check_run",
     source: r.source,
     state: PrCheckState.catch("pending").parse(r.state),
     conclusion: r.conclusion,

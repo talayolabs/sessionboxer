@@ -1,4 +1,4 @@
-import { MERGE_METHODS, type MergeMethod, type PrAction, type PrCheckItem, type PrItem, type PullRequest, type Session } from "@sessionboxer/protocol";
+import { MERGE_METHODS, PR_PROVIDER_LABEL, type MergeMethod, type PrAction, type PrCheckItem, type PrItem, type PullRequest, type Session } from "@sessionboxer/protocol";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { FileLink } from "./FileLink";
@@ -38,11 +38,11 @@ export function syncNote(pr: PullRequest): { text: string; level: "ok" | "warn" 
     case "box_stopped":
       return { text: "watching paused — Sandbox stopped", level: "warn" };
     case "unauthorized":
-      return { text: "no GitHub login can read this PR", level: "error" };
+      return { text: pr.provider === "bitbucket" ? `no Bitbucket login for ${pr.host} can read this PR` : "no GitHub login can read this PR", level: "error" };
     case "not_found":
       return { text: "PR not found (or no access)", level: "error" };
     case "rate_limited":
-      return { text: "GitHub rate limit; retrying later", level: "warn" };
+      return { text: `${PR_PROVIDER_LABEL[pr.provider]} rate limit; retrying later`, level: "warn" };
     default:
       return { text: pr.syncErrorDetail ? `error: ${pr.syncErrorDetail}` : "error", level: "error" };
   }
@@ -87,15 +87,20 @@ function actionTitle(action: PrAction, pr: PullRequest, n: number): string {
     case "prompt":
       return `Put ${what}, quoted, into the composer to edit before sending`;
     case "address":
-      return pr.local ? `Send ${what} to the Agent now (queued if busy): change the code locally, no replies on GitHub` : "The PR's repository is not this Session's Workspace";
+      return pr.local ? `Send ${what} to the Agent now (queued if busy): change the code locally, no replies on ${PR_PROVIDER_LABEL[pr.provider]}` : "The PR's repository is not this Session's Workspace";
     case "address_reply":
-      return pr.local ? `Send ${what} to the Agent: change the code, push, reply on GitHub and resolve the threads` : "The PR's repository is not this Session's Workspace";
+      return pr.local
+        ? `Send ${what} to the Agent: change the code, push, reply on ${PR_PROVIDER_LABEL[pr.provider]}${pr.provider === "github" ? " and resolve the threads" : ""}`
+        : "The PR's repository is not this Session's Workspace";
   }
 }
 
-/** Tooltip of a check's result: what GitHub literally said, and when it ran. */
+/** Tooltip of a check's result: what the provider literally said, and when it ran. */
 function checkResultTitle(c: PrCheckItem): string {
-  const lines = [c.conclusion ? `conclusion: ${c.conclusion}` : `status: ${CHECK_STATE_LABEL[c.state]}`, c.required ? "required by branch protection" : "not required"];
+  const lines = [
+    c.conclusion ? `conclusion: ${c.conclusion}` : `status: ${CHECK_STATE_LABEL[c.state]}`,
+    c.required ? (c.kind === "build" ? "a required build" : "required by branch protection") : "not required",
+  ];
   if (c.startedAt) lines.push(`started ${new Date(c.startedAt).toLocaleString()}`);
   if (c.completedAt) lines.push(`finished ${new Date(c.completedAt).toLocaleString()}`);
   return lines.join("\n");
@@ -153,7 +158,7 @@ export function PrsPane({
     <div className="pane prs-pane">
       <div className="prs-toolbar">
         <input
-          placeholder="PR URL, owner/repo#123, or #123"
+          placeholder="PR URL (GitHub or Bitbucket Data Center), owner/repo#123, or #123"
           value={ref}
           onChange={(e) => setRef(e.target.value)}
           onKeyDown={(e) => {
@@ -244,19 +249,24 @@ export function PrsPane({
                     {ago(pr.lastActivityAt)}
                   </td>
                   <td>
-                    <input type="checkbox" checked={pr.watch} title="Poll GitHub for new comments, reviews and check results" onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { watch: e.target.checked }))} />
+                    <input
+                      type="checkbox"
+                      checked={pr.watch}
+                      title={`Poll ${PR_PROVIDER_LABEL[pr.provider]} for new comments, reviews and ${pr.provider === "bitbucket" ? "build" : "check"} results`}
+                      onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { watch: e.target.checked }))}
+                    />
                   </td>
                   <td className="prs-actions">
-                    <a href={pr.url} target="_blank" rel="noreferrer" className="button small" title="Open on GitHub">
-                      GitHub ↗
+                    <a href={pr.url} target="_blank" rel="noreferrer" className="button small" title={`Open on ${PR_PROVIDER_LABEL[pr.provider]}${pr.provider === "bitbucket" ? ` (${pr.host})` : ""}`}>
+                      {PR_PROVIDER_LABEL[pr.provider]} ↗
                     </a>
-                    <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title="Poll GitHub now">
+                    <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${PR_PROVIDER_LABEL[pr.provider]} now`}>
                       Refresh
                     </button>
                     <button
                       className="small danger"
                       onClick={() => {
-                        if (confirm(`Detach ${pr.owner}/${pr.repo}#${pr.number} from this Session? Its comments are forgotten here (nothing changes on GitHub).`)) {
+                        if (confirm(`Detach ${pr.owner}/${pr.repo}#${pr.number} from this Session? Its comments are forgotten here (nothing changes on ${PR_PROVIDER_LABEL[pr.provider]}).`)) {
                           void run(() => api.detachPr(session.id, pr.id));
                         }
                       }}
@@ -337,7 +347,7 @@ export function PrPane({
     if (ids.length === 0 || busy) return;
     const itemIds = ids.filter((id) => !checkIds.has(id));
     const pickedChecks = ids.filter((id) => checkIds.has(id));
-    if (action === "address_reply" && itemIds.length > 1 && !confirm(`Ask the Agent to address ${itemIds.length} items and reply to each of them publicly on GitHub?`)) return;
+    if (action === "address_reply" && itemIds.length > 1 && !confirm(`Ask the Agent to address ${itemIds.length} items and reply to each of them publicly on ${PR_PROVIDER_LABEL[pr.provider]}?`)) return;
     setBusy(action);
     void run(async () => {
       const res = await api.prAction(session.id, { action, itemIds, checkIds: pickedChecks });
@@ -398,13 +408,19 @@ export function PrPane({
                 <code>{pr.headRef}</code> → <code>{pr.baseRef}</code>
               </>
             )}
+            {pr.provider === "bitbucket" && (
+              <>
+                {" · "}
+                <span title="A Bitbucket Data Center, read with its Connector's token">{pr.host}</span>
+              </>
+            )}
             {" · "}
             <span className={note.level === "ok" ? "" : note.level}>{note.text}</span>
             {!pr.local && <span className="warn"> · not this Workspace's repository: Address is off</span>}
           </div>
         </div>
         <span className="spacer" />
-        <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title="Poll GitHub now">
+        <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${PR_PROVIDER_LABEL[pr.provider]} now`}>
           Refresh
         </button>
         <button
@@ -419,30 +435,32 @@ export function PrPane({
           Detach
         </button>
       </div>
-      <div className="pr-merge">
-        <label className="check" title="Merge this PR automatically once every check passed and nothing else blocks it">
-          <input type="checkbox" checked={pr.autoMerge} disabled={finished} onChange={(e) => setAutoMerge(e.target.checked)} />
-          Auto-merge when checks pass
-        </label>
-        <select
-          value={pr.mergeMethod}
-          disabled={finished}
-          title="How GitHub merges it"
-          onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { mergeMethod: e.target.value as MergeMethod }))}
-        >
-          {MERGE_METHODS.map((m) => (
-            <option key={m} value={m}>
-              {METHOD_LABEL[m]}
-            </option>
-          ))}
-        </select>
-        <span className={`pr-merge-note ${merge.level}`}>{merge.text}</span>
-        {pr.mergeState && !finished && (
-          <span className="muted small-text" title={pr.mergeState.headSha}>
-            checked {ago(pr.mergeState.checkedAt)}
-          </span>
-        )}
-      </div>
+      {pr.provider === "github" && (
+        <div className="pr-merge">
+          <label className="check" title="Merge this PR automatically once every check passed and nothing else blocks it">
+            <input type="checkbox" checked={pr.autoMerge} disabled={finished} onChange={(e) => setAutoMerge(e.target.checked)} />
+            Auto-merge when checks pass
+          </label>
+          <select
+            value={pr.mergeMethod}
+            disabled={finished}
+            title="How GitHub merges it"
+            onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { mergeMethod: e.target.value as MergeMethod }))}
+          >
+            {MERGE_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {METHOD_LABEL[m]}
+              </option>
+            ))}
+          </select>
+          <span className={`pr-merge-note ${merge.level}`}>{merge.text}</span>
+          {pr.mergeState && !finished && (
+            <span className="muted small-text" title={pr.mergeState.headSha}>
+              checked {ago(pr.mergeState.checkedAt)}
+            </span>
+          )}
+        </div>
+      )}
       {checks !== null && checks.length > 0 && !finished && (
         <details className="pr-checks" open={checksOpen} onToggle={(e) => setChecksOpen(e.currentTarget.open)}>
           <summary>
@@ -495,7 +513,7 @@ export function PrPane({
                         c.name
                       )}
                       <div className="muted small-text">
-                        {c.source ?? (c.kind === "status" ? "commit status" : "check")}
+                        {c.source ?? (c.kind === "status" ? "commit status" : c.kind === "build" ? "build status" : "check")}
                         {c.required && " · required"}
                         {" · "}
                         <span title={c.headSha}>{c.headSha.slice(0, 7)}</span>
@@ -503,7 +521,7 @@ export function PrPane({
                     </td>
                     <td className="nowrap" title={checkResultTitle(c)}>
                       <span className={`pr-check-state ${c.state === "failed" ? "error" : c.state === "pending" ? "warn" : "ok"}`}>
-                        {c.state === "failed" && c.conclusion && c.conclusion !== "failure" ? c.conclusion.replace(/_/g, " ") : CHECK_STATE_LABEL[c.state]}
+                        {c.state === "failed" && c.conclusion && c.conclusion !== "failure" && c.conclusion !== "failed" ? c.conclusion.replace(/_/g, " ") : CHECK_STATE_LABEL[c.state]}
                       </span>
                       {c.completedAt ? (
                         <div className="muted small-text">{ago(c.completedAt)}</div>
@@ -630,7 +648,7 @@ export function PrPane({
                     {it.resolved && <div className="muted">resolved</div>}
                     {it.address !== "none" && <div className={it.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[it.address]}</div>}
                     <a href={it.htmlUrl} target="_blank" rel="noreferrer" className="muted">
-                      GitHub ↗
+                      {PR_PROVIDER_LABEL[pr.provider]} ↗
                     </a>
                   </td>
                   <td className="prs-actions">

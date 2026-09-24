@@ -2001,10 +2001,16 @@ export const CodeStartParams = z.object({ theme: ThemeId.optional() });
 export type CodeStartParams = z.infer<typeof CodeStartParams>;
 
 // ---------------------------------------------------------------------------
-// Pull Requests attached to a Session. The Control Plane stores them and polls GitHub for
-// comments/reviews; the HTTP requests run inside the Sandbox (`gh api`, Daemon `gh/api`) so the
-// box's own GitHub login decides what can be seen. github.com only.
+// Pull Requests attached to a Session. The Control Plane stores them and polls the provider for
+// comments/reviews/checks: GitHub through the Sandbox (`gh api`, Daemon `gh/api`) so the box's own
+// login decides what can be seen (a Connector token while it is stopped); Bitbucket Data Center
+// directly from the Control Plane with the Bitbucket Connector's token (ADR-0051).
 // ---------------------------------------------------------------------------
+
+/** Where a Pull Request lives: github.com, or a Bitbucket Data Center (self-hosted). */
+export const PrProvider = z.enum(["github", "bitbucket"]);
+export type PrProvider = z.infer<typeof PrProvider>;
+export const PR_PROVIDER_LABEL: Record<PrProvider, string> = { github: "GitHub", bitbucket: "Bitbucket" };
 
 export const PrState = z.enum(["open", "draft", "closed", "merged"]);
 export type PrState = z.infer<typeof PrState>;
@@ -2068,6 +2074,10 @@ export type PrMergedNotice = z.infer<typeof PrMergedNotice>;
 export const PullRequest = z.object({
   id: z.string(),
   sessionId: z.string(),
+  provider: PrProvider.default("github"),
+  /** `github.com`, or the Bitbucket Data Center host. */
+  host: z.string().default("github.com"),
+  /** GitHub: owner and repository; Bitbucket: project key and repository slug. */
   owner: z.string(),
   repo: z.string(),
   number: z.number().int().positive(),
@@ -2092,7 +2102,7 @@ export const PullRequest = z.object({
   checksFailed: z.number().int().nonnegative(),
   checksPending: z.number().int().nonnegative(),
   checksPassed: z.number().int().nonnegative(),
-  /** The Sandbox's GitHub login the PR is read with (`null` until one worked). Never a token. */
+  /** The login the PR is read with (the Sandbox's `gh` login, or a Connector's account); `null` until one worked. Never a token. */
   viaAccount: z.string().nullable(),
   /** Still being polled (closed/merged PRs stop after a while; the user can pause too). */
   watch: z.boolean(),
@@ -2101,7 +2111,7 @@ export const PullRequest = z.object({
   syncErrorDetail: z.string().nullable(),
   /** The PR's repo is the Workspace's origin, so it can be addressed locally. */
   local: z.boolean(),
-  /** Merge it as soon as GitHub says it can be (checks green, reviews in, no conflicts). */
+  /** Merge it as soon as GitHub says it can be (checks green, reviews in, no conflicts). GitHub only. */
   autoMerge: z.boolean(),
   mergeMethod: MergeMethod,
   mergeState: PrMergeState.nullable(),
@@ -2117,13 +2127,16 @@ export type PrAddressState = z.infer<typeof PrAddressState>;
 
 /**
  * One comment or review of a Pull Request. Inline review comments of one thread share `threadId`
- * (the root comment's id); the root has `inReplyTo: null`.
+ * (the root comment's id); the root has `inReplyTo: null`. Bitbucket: a general comment is an
+ * `issue_comment`, one anchored to a file a `review_comment`, an approval / needs-work a `review`.
  */
 export const PrItem = z.object({
   id: z.string(),
   prId: z.string(),
   kind: PrItemKind,
+  /** The provider's numeric id of the comment / review (Bitbucket: comment or activity id). */
   githubId: z.number().int(),
+  /** GitHub's node id; Bitbucket: the numeric id as a string. */
   nodeId: z.string(),
   threadId: z.string().nullable(),
   /** GraphQL id of the review thread (`PRRT_…`), what `resolveReviewThread` takes. */
@@ -2154,20 +2167,21 @@ export const PrCheckState = z.enum(["pending", "passed", "failed"]);
 export type PrCheckState = z.infer<typeof PrCheckState>;
 
 /**
- * One check run (GitHub Actions job, an app's check) or commit status on the PR's head, followed
- * across pushes by name: a new head replaces the row's state rather than adding a row.
+ * One check run (GitHub Actions job, an app's check), commit status, or Bitbucket build status on
+ * the PR's head, followed across pushes by name: a new head replaces the row's state rather than
+ * adding a row.
  */
 export const PrCheckItem = z.object({
   id: z.string(),
   prId: z.string(),
   name: z.string(),
-  kind: z.enum(["check_run", "status"]),
-  /** The workflow (GitHub Actions) or app that runs it, when GitHub says. */
+  kind: z.enum(["check_run", "status", "build"]),
+  /** The workflow (GitHub Actions) or app that runs it, when GitHub says; Bitbucket: the build key / plan. */
   source: z.string().nullable(),
   state: PrCheckState,
-  /** Check runs: GitHub's conclusion (`failure`, `timed_out`, `cancelled`, `action_required`, …); statuses: `error` / `failure`. */
+  /** Check runs: GitHub's conclusion (`failure`, `timed_out`, `cancelled`, `action_required`, …); statuses: `error` / `failure`; builds: `failed` / `cancelled`. */
   conclusion: z.string().nullable(),
-  /** Branch protection requires it before merging. */
+  /** Branch protection (GitHub) / a required-builds merge check (Bitbucket) requires it before merging. */
   required: z.boolean(),
   /** Where the log / details are (an Actions job page, the CI's own page). */
   url: z.string().nullable(),
@@ -2200,7 +2214,7 @@ export const PrActivity = z.object({
 });
 export type PrActivity = z.infer<typeof PrActivity>;
 
-/** `POST /api/sessions/:id/prs`: a github.com PR URL, `owner/repo#12`, or `#12` / `12` for the Workspace's repo. */
+/** `POST /api/sessions/:id/prs`: a github.com / Bitbucket Data Center PR URL, `owner/repo#12`, or `#12` / `12` for the Workspace's repo. */
 export const AttachPrRequest = z.object({ ref: z.string().min(1) });
 export type AttachPrRequest = z.infer<typeof AttachPrRequest>;
 
@@ -2239,24 +2253,61 @@ export const PrActionResult = z.object({
 });
 export type PrActionResult = z.infer<typeof PrActionResult>;
 
-/** Parses a github.com Pull Request URL. */
-export function parsePrUrl(url: string): { owner: string; repo: string; number: number } | null {
-  const m = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#]|$)/.exec(url.trim());
-  if (!m) return null;
-  return { owner: m[1]!, repo: m[2]!.replace(/\.git$/, ""), number: Number(m[3]) };
+/** Which Pull Request: provider, host, repository coordinates and number. */
+export interface PrRef {
+  provider: PrProvider;
+  host: string;
+  owner: string;
+  repo: string;
+  number: number;
 }
 
-/** All github.com Pull Request URLs in a text (prompts, Agent output), deduplicated in order. */
-export function findPrUrls(text: string): { owner: string; repo: string; number: number; url: string }[] {
-  const out: { owner: string; repo: string; number: number; url: string }[] = [];
+const GITHUB_PR_URL = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#]|$)/;
+/** Data Center: `https://host[/context]/projects/KEY/repos/slug/pull-requests/12[/overview…]`. */
+const BITBUCKET_PR_URL = /^https?:\/\/([^/\s:@]+(?::\d+)?)(?:\/[^\s?#]*?)?\/projects\/([^/\s?#]+)\/repos\/([^/\s?#]+)\/pull-requests\/(\d+)(?:[/?#]|$)/;
+
+/** Parses a github.com or Bitbucket Data Center Pull Request URL (bitbucket.org is Bitbucket Cloud: not supported). */
+export function parsePrUrl(url: string): PrRef | null {
+  const s = url.trim();
+  const gh = GITHUB_PR_URL.exec(s);
+  if (gh) return { provider: "github", host: "github.com", owner: gh[1]!, repo: gh[2]!.replace(/\.git$/, ""), number: Number(gh[3]) };
+  const bb = BITBUCKET_PR_URL.exec(s);
+  if (bb) {
+    // The host as the Bitbucket Connector spells it: with a non-default port, never a context path.
+    const host = bb[1]!.toLowerCase().replace(/:443$/, "");
+    if (host === "bitbucket.org" || host.endsWith(".bitbucket.org")) return null;
+    return { provider: "bitbucket", host, owner: bb[2]!, repo: bb[3]!, number: Number(bb[4]) };
+  }
+  return null;
+}
+
+/** The page of a Pull Request. */
+export function prUrl(ref: PrRef): string {
+  return ref.provider === "github"
+    ? `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`
+    : `https://${ref.host}/projects/${encodeURIComponent(ref.owner)}/repos/${encodeURIComponent(ref.repo)}/pull-requests/${ref.number}`;
+}
+
+/** `owner/repo#12` (Bitbucket: `KEY/slug#12`). */
+export function prLabel(ref: Pick<PrRef, "owner" | "repo" | "number">): string {
+  return `${ref.owner}/${ref.repo}#${ref.number}`;
+}
+
+/** All Pull Request URLs in a text (prompts, Agent output), deduplicated in order. */
+export function findPrUrls(text: string): (PrRef & { url: string })[] {
+  const out: (PrRef & { url: string })[] = [];
   const seen = new Set<string>();
-  for (const m of text.matchAll(/https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/g)) {
+  const found = [
+    ...text.matchAll(/https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/g),
+    ...text.matchAll(/https?:\/\/[^\s<>"'`)\]]+\/projects\/[^\s/]+\/repos\/[^\s/]+\/pull-requests\/\d+/g),
+  ].sort((a, b) => a.index - b.index);
+  for (const m of found) {
     const parsed = parsePrUrl(m[0]);
     if (!parsed) continue;
-    const key = `${parsed.owner.toLowerCase()}/${parsed.repo.toLowerCase()}#${parsed.number}`;
+    const key = `${parsed.host}/${parsed.owner.toLowerCase()}/${parsed.repo.toLowerCase()}#${parsed.number}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ ...parsed, url: `https://github.com/${parsed.owner}/${parsed.repo}/pull/${parsed.number}` });
+    out.push({ ...parsed, url: prUrl(parsed) });
   }
   return out;
 }

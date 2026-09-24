@@ -1,7 +1,18 @@
+# Build context for images/sandbox/Dockerfile: the three packages it compiles (sources and
+# package.json, never node_modules or dist) and images/sandbox. Everything else stays out so
+# the context is a few dozen kB and a change there cannot touch any layer.
 node_modules
 **/node_modules
 **/dist
-spike-output
-.git
-docs
 **/*.tsbuildinfo
+**/*.log
+.git
+.github
+.local
+.env*
+apps
+build
+docs
+scripts
+spike-output
+*.md

@@ -43,12 +43,9 @@ RUN node --input-type=module -e ' \
 # ---------------------------------------------------------------------------
 FROM ubuntu:24.04
 
+# Every ARG is declared right before the RUN that uses it: an ARG is part of the cache key of
+# every RUN that follows it, so a pin declared up here would rebuild the whole image when bumped.
 ARG NODE_MAJOR=22
-ARG CLAUDE_CODE_VERSION=2.1.272
-ARG CLAUDE_AGENT_ACP_VERSION=0.77.0
-ARG DEVIN_CLI_VERSION=3000.10.27
-ARG CODEX_ACP_VERSION=1.1.9
-ARG OPENVSCODE_SERVER_VERSION=1.109.5
 ARG EXTRA_CA_FINGERPRINT=
 # Build-time only (an ARG is not kept in the image): npm/node trust the system store, which
 # includes the extra CAs below, while downloading. At runtime the Control Plane manages this.
@@ -102,6 +99,9 @@ RUN curl -fsSL https://astral.sh/uv/${UV_VERSION}/install.sh -o /tmp/uv-install.
 # Claude Code CLI (for the user in the terminal tab) and its ACP adapter
 # (spawned by the Sandbox Daemon over stdio); Codex's ACP adapter, which bundles
 # the Codex CLI (ADR-0046).
+ARG CLAUDE_CODE_VERSION=2.1.272
+ARG CLAUDE_AGENT_ACP_VERSION=0.77.0
+ARG CODEX_ACP_VERSION=1.1.9
 RUN npm install -g \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
       @agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION} \
@@ -112,26 +112,13 @@ RUN npm install -g \
 
 # VS Code in the browser (the Code pane): openvscode-server is started on demand by the
 # Sandbox Daemon on the loopback interface and reached only through the Daemon's port.
+ARG OPENVSCODE_SERVER_VERSION=1.109.5
 RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "unsupported arch $arch" >&2; exit 1 ;; esac \
     && curl -fsSL "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${OPENVSCODE_SERVER_VERSION}/openvscode-server-v${OPENVSCODE_SERVER_VERSION}-linux-${arch}.tar.gz" -o /tmp/openvscode-server.tar.gz \
     && mkdir -p /opt/openvscode-server \
     && tar -xzf /tmp/openvscode-server.tar.gz -C /opt/openvscode-server --strip-components=1 \
     && rm -f /tmp/openvscode-server.tar.gz \
     && ln -s /opt/openvscode-server/bin/openvscode-server /usr/local/bin/openvscode-server
-# Sandbox defaults for the workbench (settings defaults incl. AI features off, no Get Started; a
-# stylesheet hiding the Extensions activity item and the remote indicator), linked from the
-# workbench page and served by the server's own static route.
-COPY images/sandbox/openvscode-defaults.js /opt/openvscode-server/out/vs/code/browser/workbench/sessionboxer.js
-COPY images/sandbox/openvscode-workbench.css /opt/openvscode-server/out/vs/code/browser/workbench/sessionboxer.css
-RUN html=/opt/openvscode-server/out/vs/code/browser/workbench/workbench.html \
-    && sed -i 's|</head>|\t<script src="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.js"></script>\n\t<link rel="stylesheet" href="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.css">\n\t</head>|' "$html" \
-    && grep -q sessionboxer.js "$html" && grep -q sessionboxer.css "$html"
-# Built-in extensions: one lets the Daemon open a file (at a line) in the connected editor,
-# which is how paths clicked in the chat land in the Code pane; the other carries the
-# Sessionboxer color themes the Daemon switches between (ADR-0048).
-COPY images/sandbox/vscode-sessionboxer /opt/openvscode-server/extensions/sessionboxer
-COPY --from=build /src/out/sessionboxer-themes /opt/openvscode-server/extensions/sessionboxer-themes
-
 # Kokoro TTS model (Apache-2.0) that the computer-use MCP speaks recording captions with, in
 # sherpa-onnx's packaging (ADR-0029). The release tag is rolling, so the checksum pins the
 # contents; Chinese-only files are dropped (narration offers en/es/fr/it/pt/hi).
@@ -145,61 +132,6 @@ RUN curl -fsSL "${KOKORO_URL}" -o /tmp/kokoro.tar.bz2 \
     && rm -rf /tmp/kokoro.tar.bz2 /opt/sessionboxer/tts/kokoro/dict /opt/sessionboxer/tts/kokoro/lexicon-zh.txt /opt/sessionboxer/tts/kokoro/*-zh.fst \
     && test -s /opt/sessionboxer/tts/kokoro/model.onnx
 
-# Computer-use MCP server (compiled in stage 1); sherpa-onnx-node brings the TTS runtime.
-COPY --from=build /src/packages/computer-use-mcp/package.json /opt/sessionboxer/computer-use-mcp/
-COPY --from=build /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist
-RUN cd /opt/sessionboxer/computer-use-mcp \
-    && npm install --omit=dev --no-package-lock --ignore-scripts \
-    && npm cache clean --force \
-    && ln -s /opt/sessionboxer/computer-use-mcp/dist/index.js /usr/local/bin/sessionboxer-computer-use-mcp \
-    && chmod +x /opt/sessionboxer/computer-use-mcp/dist/index.js
-
-# Sandbox Daemon (compiled in stage 1) plus the shared protocol package it
-# imports at runtime; the workspace dependency becomes a symlink. node-pty has
-# no Linux prebuilds, so it is compiled here (build-essential + python3 above).
-COPY --from=build /src/packages/protocol/package.json /opt/sessionboxer/protocol/
-COPY --from=build /src/packages/protocol/dist /opt/sessionboxer/protocol/dist
-COPY --from=build /src/packages/sandbox-daemon/package.json /opt/sessionboxer/sandbox-daemon/
-COPY --from=build /src/packages/sandbox-daemon/dist /opt/sessionboxer/sandbox-daemon/dist
-RUN cd /opt/sessionboxer/protocol \
-    && npm install --omit=dev --no-package-lock --ignore-scripts \
-    && cd /opt/sessionboxer/sandbox-daemon \
-    && npm pkg delete dependencies.@sessionboxer/protocol \
-    && npm install --omit=dev --no-package-lock --ignore-scripts \
-    && npm rebuild node-pty \
-    && mkdir -p node_modules/@sessionboxer \
-    && ln -s /opt/sessionboxer/protocol node_modules/@sessionboxer/protocol \
-    && npm cache clean --force \
-    && ln -s /opt/sessionboxer/sandbox-daemon/dist/index.js /usr/local/bin/sessionboxer-daemon \
-    && chmod +x /opt/sessionboxer/sandbox-daemon/dist/index.js
-
-# Unprivileged Agent user with passwordless sudo (the container is the boundary).
-RUN userdel -r ubuntu 2>/dev/null || true \
-    && groupadd -g 1000 agent \
-    && useradd -m -u 1000 -g 1000 -s /bin/bash agent \
-    && echo "agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agent \
-    && chmod 0440 /etc/sudoers.d/agent \
-    && usermod -aG docker agent \
-    && mkdir -p /workspace && chown agent:agent /workspace
-
-# Firefox: no first-run wizard, no update nags, no default-browser prompt.
-COPY images/sandbox/firefox-policies.json /etc/firefox/policies/policies.json
-
-# Agent-facing configuration and the Desktop entrypoint. The Desktop briefing
-# is installed once as ~/.claude/CLAUDE.md: Claude Code reads it natively and
-# Devin CLI loads it as an always-on rule too (`devin rules list`). Codex reads
-# its global instructions from ~/.codex/AGENTS.md and skills from ~/.agents/skills.
-COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
-COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
-COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
-COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
-# Skills the Control Plane asks for by name (ADR-0044); Claude Code discovers them here, Devin reads the file.
-COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
-RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent/.agents/skills && chown -Rh agent:agent /home/agent/.agents
-COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
-COPY images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
-RUN chmod +x /usr/local/bin/sessionboxer-entrypoint
-
 # bb, the gh-like CLI for Bitbucket Data Center (github.com/talayolabs/bb), bundled from a pinned
 # commit into one file; `bb pr create`, `bb api` and the git credential helper below use it.
 ARG BB_REF=0eed2a2f8a0531f61cb2c04b55ebd5bbeea55275
@@ -211,6 +143,57 @@ RUN mkdir /tmp/bb && cd /tmp/bb \
     && cd / && rm -rf /tmp/bb && npm cache clean --force \
     && bb --version
 
+# Unprivileged Agent user with passwordless sudo (the container is the boundary).
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && groupadd -g 1000 agent \
+    && useradd -m -u 1000 -g 1000 -s /bin/bash agent \
+    && echo "agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agent \
+    && chmod 0440 /etc/sudoers.d/agent \
+    && usermod -aG docker agent \
+    && mkdir -p /workspace && chown agent:agent /workspace
+
+# Devin CLI (`devin acp` is spawned by the Sandbox Daemon). The pinned installer
+# is a per-user install, so it runs as agent; its trailing `devin setup` tries
+# to log in and fails without a TTY, which is fine: credentials are injected
+# per Session (WINDSURF_API_KEY), never baked in. auto_update is off so a
+# Sandbox runs the version the image was built with.
+ARG DEVIN_CLI_VERSION=3000.10.27
+USER agent
+RUN export HOME=/home/agent PATH="/home/agent/.local/bin:$PATH" \
+    && curl -fsSL https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/setup.sh -o /tmp/devin-setup.sh \
+    && (bash /tmp/devin-setup.sh </dev/null >/tmp/devin-setup.log 2>&1 || true) \
+    && rm -f /tmp/devin-setup.sh /tmp/devin-setup.log \
+    && devin --version
+USER root
+
+# ---- Everything above changes only when a pinned version does; everything below is
+# ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
+# ---- dependencies are installed from package.json alone so a code change reuses them.
+
+# Computer-use MCP server: dependencies first (sherpa-onnx-node brings the TTS runtime), the
+# compiled code (stage 1) after.
+COPY packages/computer-use-mcp/package.json /opt/sessionboxer/computer-use-mcp/
+RUN cd /opt/sessionboxer/computer-use-mcp \
+    && npm install --omit=dev --no-package-lock --ignore-scripts \
+    && npm cache clean --force \
+    && ln -s /opt/sessionboxer/computer-use-mcp/dist/index.js /usr/local/bin/sessionboxer-computer-use-mcp
+
+# Sandbox Daemon plus the shared protocol package it imports at runtime; the workspace
+# dependency becomes a symlink. node-pty has no Linux prebuilds, so it is compiled here
+# (build-essential + python3 above).
+COPY packages/protocol/package.json /opt/sessionboxer/protocol/
+COPY packages/sandbox-daemon/package.json /opt/sessionboxer/sandbox-daemon/
+RUN cd /opt/sessionboxer/protocol \
+    && npm install --omit=dev --no-package-lock --ignore-scripts \
+    && cd /opt/sessionboxer/sandbox-daemon \
+    && npm pkg delete dependencies.@sessionboxer/protocol \
+    && npm install --omit=dev --no-package-lock --ignore-scripts \
+    && npm rebuild node-pty \
+    && mkdir -p node_modules/@sessionboxer \
+    && ln -s /opt/sessionboxer/protocol node_modules/@sessionboxer/protocol \
+    && npm cache clean --force \
+    && ln -s /opt/sessionboxer/sandbox-daemon/dist/index.js /usr/local/bin/sessionboxer-daemon
+
 # GitHub and Bitbucket logins arrive from the Control Plane while a Connector entry is enabled:
 # the Daemon writes gh's / bb's hosts.yml on tmpfs (nothing in Snapshots); git asks gh for
 # github.com and bb for every host (bb answers only for the Bitbucket hosts it is logged in to).
@@ -221,9 +204,50 @@ RUN git config --system credential.https://github.com.helper '!gh auth git-crede
 # .git/config, `credential.https://github.com.helper = sessionboxer <login>` and
 # `sessionboxer.githubAccount = <login>`: git asks this helper for that login's token and the gh
 # in front of /usr/bin/gh acts as it whenever the working directory is that repository.
-COPY images/sandbox/git-credential-sessionboxer /usr/local/bin/git-credential-sessionboxer
-COPY images/sandbox/gh-as-repo-account /usr/local/bin/gh
-RUN chmod 0755 /usr/local/bin/git-credential-sessionboxer /usr/local/bin/gh
+COPY --chmod=0755 images/sandbox/git-credential-sessionboxer /usr/local/bin/git-credential-sessionboxer
+COPY --chmod=0755 images/sandbox/gh-as-repo-account /usr/local/bin/gh
+
+# Firefox: no first-run wizard, no update nags, no default-browser prompt.
+COPY images/sandbox/firefox-policies.json /etc/firefox/policies/policies.json
+
+# Sandbox defaults for the VS Code workbench (settings defaults incl. AI features off, no Get
+# Started; a stylesheet hiding the Extensions activity item and the remote indicator), linked
+# from the workbench page and served by the server's own static route.
+COPY images/sandbox/openvscode-defaults.js /opt/openvscode-server/out/vs/code/browser/workbench/sessionboxer.js
+COPY images/sandbox/openvscode-workbench.css /opt/openvscode-server/out/vs/code/browser/workbench/sessionboxer.css
+RUN html=/opt/openvscode-server/out/vs/code/browser/workbench/workbench.html \
+    && sed -i 's|</head>|\t<script src="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.js"></script>\n\t<link rel="stylesheet" href="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.css">\n\t</head>|' "$html" \
+    && grep -q sessionboxer.js "$html" && grep -q sessionboxer.css "$html"
+# Built-in extensions: one lets the Daemon open a file (at a line) in the connected editor,
+# which is how paths clicked in the chat land in the Code pane; the other carries the
+# Sessionboxer color themes the Daemon switches between (ADR-0048).
+COPY images/sandbox/vscode-sessionboxer /opt/openvscode-server/extensions/sessionboxer
+COPY --from=build /src/out/sessionboxer-themes /opt/openvscode-server/extensions/sessionboxer-themes
+
+# Devin only exposes MCP servers from its own config to the model (the one the
+# Daemon passes over ACP connects but is invisible to mcp_list_tools/call_tool),
+# so the desktop MCP is also registered at user scope.
+COPY --chown=agent:agent images/sandbox/devin-config.json /home/agent/.config/devin/config.json
+COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.config/devin/mcp_config.json
+
+# Agent-facing configuration and the Desktop entrypoint. The Desktop briefing
+# is installed once as ~/.claude/CLAUDE.md: Claude Code reads it natively and
+# Devin CLI loads it as an always-on rule too (`devin rules list`). Codex reads
+# its global instructions from ~/.codex/AGENTS.md and skills from ~/.agents/skills.
+COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
+COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
+COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
+COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
+# Skills the Control Plane asks for by name (ADR-0044); Claude Code discovers them here, Devin reads the file.
+COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
+RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent/.agents/skills && chown -Rh agent:agent /home/agent/.agents
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
+
+# The compiled Sessionboxer code (stage 1): the layers that change with every release, last.
+COPY --from=build --chmod=0755 /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist
+COPY --from=build /src/packages/protocol/dist /opt/sessionboxer/protocol/dist
+COPY --from=build --chmod=0755 /src/packages/sandbox-daemon/dist /opt/sessionboxer/sandbox-daemon/dist
 
 ENV DISPLAY=:1 \
     SESSIONBOXER_DISPLAY_WIDTH=1024 \
@@ -237,21 +261,6 @@ ENV DISPLAY=:1 \
 
 USER agent
 WORKDIR /workspace
-
-# Devin CLI (`devin acp` is spawned by the Sandbox Daemon). The pinned installer
-# is a per-user install, so it runs as agent; its trailing `devin setup` tries
-# to log in and fails without a TTY, which is fine: credentials are injected
-# per Session (WINDSURF_API_KEY), never baked in. auto_update is off so a
-# Sandbox runs the version the image was built with.
-RUN curl -fsSL https://static.devin.ai/cli/${DEVIN_CLI_VERSION}/setup.sh -o /tmp/devin-setup.sh \
-    && (bash /tmp/devin-setup.sh </dev/null >/tmp/devin-setup.log 2>&1 || true) \
-    && rm -f /tmp/devin-setup.sh /tmp/devin-setup.log \
-    && devin --version
-# Devin only exposes MCP servers from its own config to the model (the one the
-# Daemon passes over ACP connects but is invisible to mcp_list_tools/call_tool),
-# so the desktop MCP is also registered at user scope.
-COPY --chown=agent:agent images/sandbox/devin-config.json /home/agent/.config/devin/config.json
-COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.config/devin/mcp_config.json
 
 # 6080: noVNC/websockify, 7000: Sandbox Daemon (RPC, raw files and the Code pane's
 # VS Code). Both are reached only over the Docker network, never published on the host.

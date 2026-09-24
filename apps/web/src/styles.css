@@ -501,6 +501,8 @@ button.link:hover { text-decoration: underline; }
 .connector-token a { color: var(--accent); }
 .session-header button { white-space: nowrap; }
 .session-header button.pending { border-color: var(--warn); }
+.session-header button.icon-button { width: 24px; height: 24px; padding: 0; margin-left: -6px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; color: var(--muted); }
+.session-header button.icon-button:hover { color: var(--text); }
 .session-header .count { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
 
 /* Side pane switcher */

@@ -1131,13 +1131,20 @@ function SessionView({
           </span>
         )}
         {session.repos.length > 0 ? (
-          <RepoChips session={session} onClick={() => setReposOpen(true)} />
+          <>
+            <RepoChips session={session} onClick={() => setReposOpen(true)} />
+            <button className="icon-button" title="Add repository…" aria-label="Add repository…" onClick={() => setReposOpen(true)}>
+              +
+            </button>
+          </>
         ) : (
           <>
-            <span className="muted source" title={`${sessionSourceTitle(session)}${gitIdentityNote(session)}`}>
-              <SessionSourceIcon session={session} size={14} />
-              {sessionSourceLabel(session)}
-            </span>
+            {session.workspaceSource.type !== "empty" && (
+              <span className="muted source" title={`${sessionSourceTitle(session)}${gitIdentityNote(session)}`}>
+                <SessionSourceIcon session={session} size={14} />
+                {sessionSourceLabel(session)}
+              </span>
+            )}
             <button title="Clone a git URL or copy a host folder into /workspace/<name> of this Sandbox" onClick={() => setReposOpen(true)}>
               Add repository…
             </button>

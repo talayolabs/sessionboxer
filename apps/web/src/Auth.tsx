@@ -115,7 +115,7 @@ function Login({ notice, onLoggedIn }: { notice: string | null; onLoggedIn: () =
         </div>
         <p className="muted small-text">
           The token is printed when the Control Plane starts and by <code>sessionboxer token</code> on the machine running it. From a browser that is
-          already logged in, Settings → Devices makes a one-time QR code that logs this one in without the token. This browser stays logged in until
+          already logged in, Global settings → Devices makes a one-time QR code that logs this one in without the token. This browser stays logged in until
           the device is revoked there.
         </p>
       </form>

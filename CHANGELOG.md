@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Session header: five tabs with icons — **Desktop**, **Code**, **PRs**, **Verification** and the new **Scheduled** (the scheduled tasks that prompt this session, add and edit them there) — and a **⋯** menu with the rest: Terminal, Context, Snapshot, Fork…, Pull to folder…, Settings, Stop, Delete, each with an icon. The phone sheet lists the same entries.
+- Naming: the sidebar's **Settings** is now **Global settings** (button and page title), and the per-session dialog in the header's ⋯ menu is **Session settings**.
+- Session header: five tabs with icons — **Desktop**, **Code**, **PRs**, **Verification** and the new **Scheduled** (the scheduled tasks that prompt this session, add and edit them there) — and a **⋯** menu with the rest: Terminal, Context, Snapshot, Fork…, Pull to folder…, Session settings, Stop, Delete, each with an icon. The phone sheet lists the same entries.
 - Session header: no more "empty workspace" label — **Add repository…** sits there directly, and once a repository is in the Workspace it becomes a **+** button with the same tooltip next to the repository chips.
 - The "Docker (privileged)" label is now a red Docker icon with the warning as tooltip — in the session header, the session list and on the Settings button when Sysbox is missing; Sysbox boxes and sessions without Docker show no Docker icon.
 - Session header shows the provider as its logo (Claude Code, Devin, Codex) with the name as a tooltip; the phone sheet keeps the name.
@@ -10,7 +11,7 @@
 - Terminal pane: copy and paste work — Ctrl+C with a selection, Ctrl+Shift+C or Ctrl+Insert copy; Ctrl+V, Ctrl+Shift+V or Shift+Insert paste (Ctrl+V used to send `^V` to the shell); right-click menu with Copy, Paste, Select all and Clear, also in the desktop app.
 - Scheduled tasks: a page in the sidebar to run a prompt on a cron schedule (with time zone, plain-words preview and next runs), into an existing Session or a new one from a template that stops when the turn ends; Run now, on/off, run history, skip or catch up runs missed while the Control Plane was off, push notification on failure (ADR-0047).
 - Codex as a third agent, on your ChatGPT subscription: `codex login` on your machine, paste `~/.codex/auth.json` in Settings; the file lives on tmpfs in the box and refreshed tokens are stored back. Needs an image rebuild (ADR-0046).
-- Verify each turn end to end (on by default; Settings, per-session ⚙ Settings, the Verification pane's switch, `sessionboxer new --no-e2e`): after each turn the agent plans 2–5 test cases from your prompt, runs them on the box's desktop while recording, fixes and reruns what fails, and posts the video; the **Verification** pane opens by itself and shows cases, timers and cycles live. Needs an image rebuild (ADR-0044).
+- Verify each turn end to end (on by default; Global settings, per-session Session settings, the Verification pane's switch, `sessionboxer new --no-e2e`): after each turn the agent plans 2–5 test cases from your prompt, runs them on the box's desktop while recording, fixes and reruns what fails, and posts the video; the **Verification** pane opens by itself and shows cases, timers and cycles live. Needs an image rebuild (ADR-0044).
 - Automatic snapshots after every turn are off by default on a fresh install (a `config.json` that has the setting keeps it); the verification run takes that place (ADR-0044).
 - Docker inside Sandboxes now uses `192.168.240.0/20` instead of Docker's `172.17.0.0/16`, so company or VPN hosts in 172.16–31.x stop failing with "No route to host" from Docker-enabled sessions; change it under Settings → **Addresses for Docker inside Sandboxes**. Needs an image rebuild (ADR-0045).
 

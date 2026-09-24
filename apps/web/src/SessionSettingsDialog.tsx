@@ -56,9 +56,9 @@ export function SessionSettingsDialog({
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal panel session-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="session-settings-title">
-        <h2 id="session-settings-title">Settings of "{session.title}"</h2>
+        <h2 id="session-settings-title">Session settings</h2>
         <p className="muted">
-          Changes save as you make them. Global defaults live in <a href="#/settings">Settings</a>.
+          Settings of "{session.title}"; changes save as you make them. Global defaults live in <a href="#/settings">Global settings</a>.
         </p>
         <SessionSettingsForm
           mode="live"

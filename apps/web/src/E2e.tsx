@@ -94,11 +94,11 @@ export function E2ePane({
   return (
     <div className="pane e2e-pane">
       <div className="e2e-toolbar">
-        <label className="e2e-switch" title={`Verify each turn end to end: ${override === null ? `Settings default (${globalEnabled ? "on" : "off"})` : "set for this Session"}`}>
+        <label className="e2e-switch" title={`Verify each turn end to end: ${override === null ? `Global settings default (${globalEnabled ? "on" : "off"})` : "set for this Session"}`}>
           <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked === globalEnabled ? null : e.target.checked)} />
           Verify each turn
           {override !== null && (
-            <button type="button" className="link small-text" title="Follow the Settings default again" onClick={() => onToggle(null)}>
+            <button type="button" className="link small-text" title="Follow the Global settings default again" onClick={() => onToggle(null)}>
               (reset)
             </button>
           )}

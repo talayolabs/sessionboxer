@@ -29,7 +29,7 @@ docker compose up -d                                              # with this re
 
 Or a [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Linux, macOS and Windows (no Node needed).
 
-Then open the login link the server prints, go to **Settings** and paste your agent's login: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, or the token from `devin auth login` for Devin. Click **+ New**, add a repository, type a prompt.
+Then open the login link the server prints, go to **Global settings** and paste your agent's login: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, or the token from `devin auth login` for Devin. Click **+ New**, add a repository, type a prompt.
 
 More ways to install, updating and troubleshooting: [user guide → Install](docs/GUIDE.md#install).
 

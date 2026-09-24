@@ -467,7 +467,7 @@ export function App() {
   const settingsWarning = !anyTokenSet ? "No Provider token configured" : dockerWarning;
 
   const topTitle =
-    route.view === "new" ? "New session" : route.view === "settings" ? "Settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
+    route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
   const collapseSidebar = (collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
     localStorage.setItem("sessionboxer.sidebarCollapsed", collapsed ? "1" : "0");
@@ -592,7 +592,7 @@ export function App() {
             {schedules.some((s) => s.lastStatus === "failed") && <span className="warn-sign" aria-label="A scheduled task failed">⚠</span>}
           </button>
           <button onClick={() => setRoute({ view: "settings" })} title={settingsWarning ?? undefined}>
-            Settings
+            Global settings
             {!anyTokenSet ? (
               <span className="warn-sign" aria-label={settingsWarning ?? undefined}>⚠</span>
             ) : (
@@ -680,7 +680,7 @@ export function App() {
         )}
         {!anyTokenSet && route.view !== "settings" && (
           <div className="banner banner-warn" onClick={() => setRoute({ view: "settings" })}>
-            No Provider token configured. Open Settings and add a Claude Code or Devin token, or a Codex login.
+            No Provider token configured. Open Global settings and add a Claude Code or Devin token, or a Codex login.
           </div>
         )}
         {route.view === "new" && settings && (
@@ -958,7 +958,7 @@ function SessionMenu({ items, mobile, pending }: { items: SessionMenuItem[]; mob
         ref={trigger}
         className={`more-menu${pending ? " pending" : ""}`}
         aria-label="More"
-        title={pending ? "More (a settings change applies when the current turn ends)" : "Terminal, Context, Snapshot, Fork, Settings, Stop, Delete"}
+        title={pending ? "More (a settings change applies when the current turn ends)" : "Terminal, Context, Snapshot, Fork, Session settings, Stop, Delete"}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
@@ -1204,7 +1204,7 @@ function SessionView({
     {
       key: "settings",
       icon: "settings",
-      label: "Settings",
+      label: "Session settings",
       title: `Session settings: model, instructions, MCP servers, Inspect LLM, snapshots, Sandbox\n${settingsSummary}`,
       disabled: !settings,
       pending: settingsPending,
@@ -1684,7 +1684,7 @@ function NewSession({
       </label>
       {!providerTokenSet(settings, provider) && (
         <p className="field-hint warn">
-          No {PROVIDER_LABELS[provider]} token configured: this Session would start without one. Add it in Settings, or pick a provider you have a token
+          No {PROVIDER_LABELS[provider]} token configured: this Session would start without one. Add it in Global settings, or pick a provider you have a token
           for.
         </p>
       )}
@@ -1931,7 +1931,7 @@ function SettingsView({
 
   return (
     <form className="panel" onSubmit={submit}>
-      <h2>Settings</h2>
+      <h2>Global settings</h2>
       <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Tokens, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</p>
       <fieldset className="choice">
         <legend>Provider tokens</legend>
@@ -2196,7 +2196,7 @@ function SettingsView({
         <legend>Verification</legend>
         <label className="check">
           <input type="checkbox" checked={e2eVerify} onChange={(e) => setE2eVerify(e.target.checked)} />
-          Verify each turn end to end. Default for new Sessions; each Session can override it in its ⚙ Settings or from the Verification pane.
+          Verify each turn end to end. Default for new Sessions; each Session can override it in its Session settings or from the Verification pane.
         </label>
         <p className="muted">
           After a completed turn the Agent gets a hidden follow-up: it looks at what changed, plans 2–5 test cases (up to 10 for a very large

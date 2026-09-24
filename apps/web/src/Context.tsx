@@ -183,7 +183,7 @@ function Requests({ session, calls, onInspect }: { session: Session; calls: LlmC
         <p className="muted small-text">
           {session.settings.inspectLlm
             ? "None recorded yet: the next prompt's calls will show up here and as LLM #n tabs on the bubbles."
-            : "Turn on Inspect LLM in the Session settings (header) to record the exact request and response of every call to the model."}
+            : "Turn on Inspect LLM in the Session settings (the header's ⋯ menu) to record the exact request and response of every call to the model."}
         </p>
       ) : (
         <table className="prs-table ctx-table llm-table">

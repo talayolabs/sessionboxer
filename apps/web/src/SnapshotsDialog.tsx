@@ -71,7 +71,7 @@ export function SnapshotsDialog({
           <span className="muted switch-hint">
             {overridden ? (
               <>
-                overrides Settings ({globalAutoSnapshot ? "on" : "off"}){" \u00b7 "}
+                overrides Global settings ({globalAutoSnapshot ? "on" : "off"}){" \u00b7 "}
                 <button type="button" className="link" onClick={() => onAutoSnapshotChange(null)}>
                   use default
                 </button>

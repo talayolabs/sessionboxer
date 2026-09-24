@@ -43,9 +43,54 @@ export async function xdotool(display: Display, ...args: string[]): Promise<stri
   return out.toString("utf8");
 }
 
+/** The cursor glides to its target (`SESSIONBOXER_MOUSE_GLIDE=0` makes it jump instead). */
+const GLIDE = process.env.SESSIONBOXER_MOUSE_GLIDE !== "0";
+const GLIDE_STEP_MS = 8;
+const GLIDE_MIN_MS = 100;
+const GLIDE_MAX_MS = 300;
+
+function easeInOutCubic(p: number): number {
+  return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+}
+
+/**
+ * The intermediate points of an eased glide from `from` to `to`, one per {@link GLIDE_STEP_MS};
+ * the duration grows with the square root of the distance (a short hop ~120 ms, across the
+ * screen ~300 ms). Empty when the two are (nearly) the same point.
+ */
+export function glidePath(from: Coordinate, to: Coordinate): Coordinate[] {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const distance = Math.hypot(dx, dy);
+  if (!Number.isFinite(distance) || distance < 3) return [];
+  const durationMs = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, 80 + Math.sqrt(distance) * 7));
+  const steps = Math.max(2, Math.round(durationMs / GLIDE_STEP_MS));
+  const points: Coordinate[] = [];
+  for (let i = 1; i < steps; i++) {
+    const e = easeInOutCubic(i / steps);
+    const p: Coordinate = [Math.round(from[0] + dx * e), Math.round(from[1] + dy * e)];
+    const last = points[points.length - 1] ?? from;
+    if ((last[0] !== p[0] || last[1] !== p[1]) && (p[0] !== to[0] || p[1] !== to[1])) points.push(p);
+  }
+  return points;
+}
+
+/**
+ * Move the cursor to `c`. With the glide on, the whole path goes to xdotool as one command chain
+ * (`mousemove x y sleep 0.008 …`), so the motion is smooth and costs one process, and every
+ * intermediate position is a real motion event for the application under the cursor (hover,
+ * drag-over) as with a hand-moved mouse.
+ */
 export async function mouseMove(display: Display, c: Coordinate): Promise<void> {
   assertOnScreen(display, c);
-  await xdotool(display, "mousemove", "--sync", String(c[0]), String(c[1]));
+  const from = await cursorPosition(display);
+  // `--sync` waits for the cursor to move; when it already stands on the target it waits for nothing (15 s).
+  if (from[0] === c[0] && from[1] === c[1]) return;
+  const path = GLIDE ? glidePath(from, c) : [];
+  const args: string[] = [];
+  for (const [x, y] of path) args.push("mousemove", String(x), String(y), "sleep", (GLIDE_STEP_MS / 1000).toFixed(3));
+  args.push("mousemove", "--sync", String(c[0]), String(c[1]));
+  await xdotool(display, ...args);
 }
 
 export type MouseButton = 1 | 2 | 3;

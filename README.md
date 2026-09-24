@@ -8,7 +8,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a Li
 
 [![Sessionboxer demo](docs/assets/demo-poster.jpg)](https://sessionboxer.talayolabs.com/demo.mp4)
 
-*Four and a half minutes through the UI: a new session, the desktop, VS Code and the terminal, pull requests with auto-merge, snapshots and forks, several repositories, dictation, the phone. ([MP4](https://sessionboxer.talayolabs.com/demo.mp4) · [GIF](docs/assets/demo.gif))*
+*Seven minutes through the UI (v1.1.0): a new session, the agent's turn folded into one line, the desktop, the queue and usage meters, VS Code in the UI's theme, pull requests with checks and auto-merge, forks and handoffs, several repositories, scheduled tasks, themes, dictation, the phone. ([MP4](https://sessionboxer.talayolabs.com/demo.mp4) · [GIF](docs/assets/demo.gif))*
 
 ## Why
 

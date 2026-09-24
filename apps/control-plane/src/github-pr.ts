@@ -1,5 +1,5 @@
 import type { DaemonGhApiParams, DaemonGhApiResult, MergeMethod, PrCheck, PrMergeStatus, PrReviewDecision, PrState, PrSyncError } from "@sessionboxer/protocol";
-import type { PrItemInput } from "./pr-store.js";
+import type { PrCheckInput, PrItemInput } from "./pr-store.js";
 
 /**
  * Makes GitHub REST/GraphQL requests: through the Sandbox Daemon (`gh api` in the box, the
@@ -259,14 +259,25 @@ export async function fetchThreads(t: GhTransport, ref: PrRef, account: string |
 
 // --- Auto-merge -----------------------------------------------------------------------------
 
+/** The head commit's check runs and commit statuses (GitHub's `statusCheckRollup`), as a field selection. */
+const CHECKS_SELECTION = `commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+      __typename
+      ... on CheckRun { databaseId name status conclusion detailsUrl title summary startedAt completedAt isRequired(pullRequestNumber: $number)
+        checkSuite { app { name } workflowRun { workflow { name } } } }
+      ... on StatusContext { context state targetUrl description createdAt isRequired(pullRequestNumber: $number) }
+    } } } } } }`;
+
 const MERGE_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
     state isDraft mergeable mergeStateStatus reviewDecision headRefOid
-    commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
-      __typename
-      ... on CheckRun { name status conclusion detailsUrl isRequired(pullRequestNumber: $number) }
-      ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
-    } } } } } }
+    ${CHECKS_SELECTION}
+  } }
+}`;
+
+const CHECKS_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
+    headRefOid
+    ${CHECKS_SELECTION}
   } }
 }`;
 
@@ -288,8 +299,82 @@ interface MergeQueryResponse {
 }
 
 type CheckNode =
-  | { __typename: "CheckRun"; name: string; status: string; conclusion: string | null; detailsUrl: string | null; isRequired: boolean }
-  | { __typename: "StatusContext"; context: string; state: string; targetUrl: string | null; isRequired: boolean };
+  | {
+      __typename: "CheckRun";
+      databaseId: number | null;
+      name: string;
+      status: string;
+      conclusion: string | null;
+      detailsUrl: string | null;
+      title: string | null;
+      summary: string | null;
+      startedAt: string | null;
+      completedAt: string | null;
+      isRequired: boolean;
+      checkSuite: { app: { name: string } | null; workflowRun: { workflow: { name: string } } | null } | null;
+    }
+  | { __typename: "StatusContext"; context: string; state: string; targetUrl: string | null; description: string | null; createdAt: string; isRequired: boolean };
+
+interface ChecksQueryResponse {
+  data?: { repository?: { pullRequest?: { headRefOid: string; commits: { nodes: Array<{ commit: { statusCheckRollup: { contexts: { nodes: CheckNode[] } } | null } }> } } | null } | null };
+  errors?: Array<{ message: string }>;
+}
+
+/** The checks on the PR's head right now. */
+export async function fetchChecks(t: GhTransport, ref: PrRef, account: string | null): Promise<GhOutcome<{ headSha: string; checks: PrCheckInput[] }>> {
+  let res: DaemonGhApiResult;
+  try {
+    res = await t.request({ method: "POST", path: "graphql", headers: {}, body: JSON.stringify({ query: CHECKS_QUERY, variables: ref }), account });
+  } catch (e) {
+    return { status: "error", kind: "error", detail: e instanceof Error ? e.message : String(e), retryAt: null };
+  }
+  const remaining = rateRemaining(res.headers);
+  if (res.status !== 200) return classify(res);
+  const parsed = JSON.parse(res.body) as ChecksQueryResponse;
+  const pr = parsed.data?.repository?.pullRequest;
+  if (!pr) {
+    const msg = parsed.errors?.map((e) => e.message).join("; ") ?? "no pull request in the reply";
+    const kind: PrSyncError = /not resolve|could not be found|NOT_FOUND/i.test(msg) ? "not_found" : "error";
+    return { status: "error", kind, detail: msg, retryAt: null };
+  }
+  const nodes = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
+  return { status: "ok", etag: null, remaining, value: { headSha: pr.headRefOid, checks: nodes.map(checkInputFromNode) } };
+}
+
+const SUMMARY_MAX = 4000;
+
+function checkInputFromNode(n: CheckNode): PrCheckInput {
+  const base = checkFromNode(n);
+  if (n.__typename === "CheckRun") {
+    const summary = [n.title, n.summary].filter((s): s is string => s !== null && s.trim() !== "").join("\n\n");
+    return {
+      name: base.name,
+      kind: "check_run",
+      source: n.checkSuite?.workflowRun?.workflow.name ?? n.checkSuite?.app?.name ?? null,
+      state: base.state,
+      conclusion: n.status !== "COMPLETED" ? null : (n.conclusion?.toLowerCase() ?? null),
+      required: base.required,
+      url: base.url,
+      githubId: n.databaseId,
+      summary: summary === "" ? null : summary.length > SUMMARY_MAX ? `${summary.slice(0, SUMMARY_MAX)}…` : summary,
+      startedAt: n.startedAt,
+      completedAt: n.completedAt,
+    };
+  }
+  return {
+    name: base.name,
+    kind: "status",
+    source: null,
+    state: base.state,
+    conclusion: base.state === "pending" ? null : n.state.toLowerCase(),
+    required: base.required,
+    url: base.url,
+    githubId: null,
+    summary: n.description && n.description.trim() !== "" ? n.description : null,
+    startedAt: n.createdAt,
+    completedAt: base.state === "pending" ? null : n.createdAt,
+  };
+}
 
 /** What GitHub knows about whether the PR can be merged right now. */
 export interface MergeInfo {

@@ -33,6 +33,7 @@ import type {
   LlmCallBody,
   PrActionRequest,
   PrActionResult,
+  PrCheckItem,
   PrItem,
   ProviderModels,
   ProviderOptions,
@@ -242,6 +243,7 @@ export const api = {
   prs: (id: string) => request<PullRequest[]>(`/sessions/${id}/prs`),
   attachPr: (id: string, ref: string) => request<PullRequest>(`/sessions/${id}/prs`, { method: "POST", body: JSON.stringify({ ref }) }),
   prItems: (id: string, prId: string) => request<PrItem[]>(`/sessions/${id}/prs/${prId}/items`),
+  prChecks: (id: string, prId: string) => request<PrCheckItem[]>(`/sessions/${id}/prs/${prId}/checks`),
   updatePr: (id: string, prId: string, req: UpdatePrRequest) =>
     request<PullRequest>(`/sessions/${id}/prs/${prId}`, { method: "PATCH", body: JSON.stringify(req) }),
   detachPr: (id: string, prId: string) => request<void>(`/sessions/${id}/prs/${prId}`, { method: "DELETE" }),

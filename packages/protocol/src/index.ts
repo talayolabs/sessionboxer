@@ -1318,10 +1318,18 @@ export function sessionRoute(sessionId: string, pane?: "prs" | `pr:${string}`): 
   return pane === "prs" ? `${base}/prs` : `${base}/pr/${pane.slice(3)}`;
 }
 
-/** One line about new activity on a PR ("3 new items from @a, @b (changes requested)"). */
+/** One line about new activity on a PR ("3 new items from @a, @b (changes requested); check failed: CI"). */
 export function prActivityLine(p: PrActivity): string {
-  const who = p.authors.length <= 2 ? p.authors.map((a) => `@${a}`).join(", ") : `@${p.authors[0]} and ${p.authors.length - 1} others`;
-  return `${p.count} new ${p.count === 1 ? "item" : "items"} from ${who}${p.changesRequested ? " (changes requested)" : ""}`;
+  const parts: string[] = [];
+  if (p.count > 0) {
+    const who = p.authors.length <= 2 ? p.authors.map((a) => `@${a}`).join(", ") : `@${p.authors[0]} and ${p.authors.length - 1} others`;
+    parts.push(`${p.count} new ${p.count === 1 ? "item" : "items"} from ${who}${p.changesRequested ? " (changes requested)" : ""}`);
+  }
+  if (p.failedChecks.length > 0) {
+    const names = p.failedChecks.slice(0, 3).join(", ") + (p.failedChecks.length > 3 ? ` +${p.failedChecks.length - 3}` : "");
+    parts.push(`${p.failedChecks.length === 1 ? "check failed" : `${p.failedChecks.length} checks failed`}: ${names}`);
+  }
+  return parts.join("; ");
 }
 
 /** An IPv4 block of /8 to /24 (`10.213.0.0/16`), carved into /24 networks by the Sandbox's dockerd. */
@@ -1594,6 +1602,8 @@ export type SessionBroadcast =
   | { type: "prs"; sessionId: string; prs: PullRequest[] }
   /** The comment/review rows of one Pull Request changed. */
   | { type: "pr_items"; sessionId: string; prId: string; items: PrItem[] }
+  /** The checks (check runs / commit statuses) of one Pull Request's head changed. */
+  | { type: "pr_checks"; sessionId: string; prId: string; checks: PrCheckItem[] }
   /**
    * New feedback arrived on attached Pull Requests and the Session is idle (or stopped): the UI
    * notifies. While the Agent is busy the Control Plane holds this until `turn_ended`.
@@ -2078,6 +2088,10 @@ export const PullRequest = z.object({
   unread: z.number().int().nonnegative(),
   /** Review threads still unresolved. */
   openThreads: z.number().int().nonnegative(),
+  /** Checks on the current head: failed / still running / passed. */
+  checksFailed: z.number().int().nonnegative(),
+  checksPending: z.number().int().nonnegative(),
+  checksPassed: z.number().int().nonnegative(),
   /** The Sandbox's GitHub login the PR is read with (`null` until one worked). Never a token. */
   viaAccount: z.string().nullable(),
   /** Still being polled (closed/merged PRs stop after a while; the user can pause too). */
@@ -2136,6 +2150,39 @@ export const PrItem = z.object({
 });
 export type PrItem = z.infer<typeof PrItem>;
 
+export const PrCheckState = z.enum(["pending", "passed", "failed"]);
+export type PrCheckState = z.infer<typeof PrCheckState>;
+
+/**
+ * One check run (GitHub Actions job, an app's check) or commit status on the PR's head, followed
+ * across pushes by name: a new head replaces the row's state rather than adding a row.
+ */
+export const PrCheckItem = z.object({
+  id: z.string(),
+  prId: z.string(),
+  name: z.string(),
+  kind: z.enum(["check_run", "status"]),
+  /** The workflow (GitHub Actions) or app that runs it, when GitHub says. */
+  source: z.string().nullable(),
+  state: PrCheckState,
+  /** Check runs: GitHub's conclusion (`failure`, `timed_out`, `cancelled`, `action_required`, …); statuses: `error` / `failure`. */
+  conclusion: z.string().nullable(),
+  /** Branch protection requires it before merging. */
+  required: z.boolean(),
+  /** Where the log / details are (an Actions job page, the CI's own page). */
+  url: z.string().nullable(),
+  /** Check runs: GitHub's id (`gh api repos/{o}/{r}/check-runs/{id}`). */
+  githubId: z.number().int().nullable(),
+  headSha: z.string(),
+  /** Check runs: title and summary the check reported (cut short); statuses: the description. */
+  summary: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  seen: z.boolean(),
+  address: PrAddressState,
+});
+export type PrCheckItem = z.infer<typeof PrCheckItem>;
+
 /** One line of a `pr_activity` notification. */
 export const PrActivity = z.object({
   prId: z.string(),
@@ -2143,11 +2190,13 @@ export const PrActivity = z.object({
   title: z.string(),
   number: z.number().int(),
   /** Items new since the last notification. */
-  count: z.number().int().positive(),
+  count: z.number().int().nonnegative(),
   /** Authors of those items. */
   authors: z.array(z.string()),
   /** Set when one of them is a `CHANGES_REQUESTED` review. */
   changesRequested: z.boolean(),
+  /** Names of checks that failed since the last notification. */
+  failedChecks: z.array(z.string()).default([]),
 });
 export type PrActivity = z.infer<typeof PrActivity>;
 
@@ -2171,10 +2220,15 @@ export type UpdatePrRequest = z.infer<typeof UpdatePrRequest>;
 export const PrAction = z.enum(["prompt", "address", "address_reply"]);
 export type PrAction = z.infer<typeof PrAction>;
 
-export const PrActionRequest = z.object({
-  action: PrAction,
-  itemIds: z.array(z.string()).min(1),
-});
+export const PrActionRequest = z
+  .object({
+    action: PrAction,
+    /** Comments / reviews. */
+    itemIds: z.array(z.string()).default([]),
+    /** Failed checks: the Agent reads their logs and fixes the cause. */
+    checkIds: z.array(z.string()).default([]),
+  })
+  .refine((r) => r.itemIds.length + r.checkIds.length > 0, { message: "Pick at least one comment or check." });
 export type PrActionRequest = z.infer<typeof PrActionRequest>;
 
 export const PrActionResult = z.object({

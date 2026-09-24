@@ -428,6 +428,7 @@ api.post("/sessions/:id/prs", async (c) => {
   return c.json(await sessions.prs.attach(c.req.param("id"), req.ref, "manual"), 201);
 });
 api.get("/sessions/:id/prs/:prId/items", (c) => c.json(sessions.prs.items(c.req.param("id"), c.req.param("prId"))));
+api.get("/sessions/:id/prs/:prId/checks", (c) => c.json(sessions.prs.checks(c.req.param("id"), c.req.param("prId"))));
 api.patch("/sessions/:id/prs/:prId", async (c) => {
   const req = UpdatePrRequest.parse(await c.req.json());
   return c.json(sessions.prs.update(c.req.param("id"), c.req.param("prId"), req));

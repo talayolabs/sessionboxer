@@ -3,11 +3,13 @@ import {
   MergeMethod,
   PrAddressState,
   PrAttachedBy,
+  PrCheckState,
   PrItemKind,
   PrMergeState,
   PrReviewDecision,
   PrState,
   PrSyncError,
+  type PrCheckItem,
   type PrItem,
   type PullRequest,
 } from "@sessionboxer/protocol";
@@ -70,6 +72,26 @@ CREATE TABLE IF NOT EXISTS pr_items (
   UNIQUE (pr_id, kind, github_id)
 );
 CREATE INDEX IF NOT EXISTS pr_items_pr ON pr_items (pr_id);
+CREATE TABLE IF NOT EXISTS pr_checks (
+  id TEXT PRIMARY KEY,
+  pr_id TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  source TEXT,
+  state TEXT NOT NULL,
+  conclusion TEXT,
+  required INTEGER NOT NULL DEFAULT 0,
+  url TEXT,
+  github_id INTEGER,
+  head_sha TEXT NOT NULL,
+  summary TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  seen INTEGER NOT NULL DEFAULT 0,
+  address TEXT NOT NULL DEFAULT 'none',
+  notified INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS pr_checks_pr ON pr_checks (pr_id);
 `;
 
 /** Columns added after the tables first shipped. */
@@ -101,6 +123,9 @@ export type PrMetaPatch = Partial<
 
 /** A comment/review as it comes from GitHub, before the Session-side flags. */
 export type PrItemInput = Omit<PrItem, "id" | "prId" | "seen" | "address">;
+
+/** A check as it comes from GitHub, before the Session-side flags. */
+export type PrCheckInput = Omit<PrCheckItem, "id" | "prId" | "seen" | "address" | "headSha">;
 
 export class PrStore {
   constructor(private readonly db: Database.Database) {
@@ -300,7 +325,129 @@ export class PrStore {
   }
 
   markSeen(prId: string): number {
-    return this.db.prepare("UPDATE pr_items SET seen = 1 WHERE pr_id = ? AND seen = 0").run(prId).changes;
+    return (
+      this.db.prepare("UPDATE pr_items SET seen = 1 WHERE pr_id = ? AND seen = 0").run(prId).changes + this.db.prepare("UPDATE pr_checks SET seen = 1 WHERE pr_id = ? AND seen = 0").run(prId).changes
+    );
+  }
+
+  // --- Checks ---------------------------------------------------------------------------------
+
+  checks(prId: string): PrCheckItem[] {
+    const rows = this.db.prepare("SELECT * FROM pr_checks WHERE pr_id = ? ORDER BY name ASC").all(prId) as CheckRow[];
+    return rows.map(rowToCheck);
+  }
+
+  getChecks(ids: string[]): PrCheckItem[] {
+    if (ids.length === 0) return [];
+    const rows = this.db.prepare(`SELECT * FROM pr_checks WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as CheckRow[];
+    const byId = new Map(rows.map((r) => [r.id, rowToCheck(r)]));
+    return ids.map((id) => byId.get(id)).filter((c): c is PrCheckItem => c !== undefined);
+  }
+
+  /**
+   * Replaces the PR's checks with what GitHub reports for `headSha`, keeping the Session-side
+   * flags. A check is followed by name across pushes: a new head resets a failure's `seen` /
+   * `notified` (it failed again) and settles `addressing` once it passes there. Checks GitHub no
+   * longer lists stay one poll as `pending` after a push (the new head's runs may not be queued
+   * yet), then go. Returns whether anything changed.
+   */
+  setChecks(prId: string, headSha: string, checks: PrCheckInput[]): boolean {
+    const tx = this.db.transaction((): boolean => {
+      const existing = new Map(this.checks(prId).map((c) => [c.id, c]));
+      const keep = new Set<string>();
+      let changed = false;
+      const stmt = this.db.prepare(
+        `INSERT INTO pr_checks (id, pr_id, name, kind, source, state, conclusion, required, url, github_id, head_sha, summary, started_at, completed_at, seen, address, notified)
+         VALUES (@id, @pr_id, @name, @kind, @source, @state, @conclusion, @required, @url, @github_id, @head_sha, @summary, @started_at, @completed_at, @seen, @address, @notified)
+         ON CONFLICT(id) DO UPDATE SET source = excluded.source, state = excluded.state, conclusion = excluded.conclusion, required = excluded.required,
+           url = excluded.url, github_id = excluded.github_id, head_sha = excluded.head_sha, summary = excluded.summary, started_at = excluded.started_at,
+           completed_at = excluded.completed_at, seen = excluded.seen, address = excluded.address, notified = excluded.notified`,
+      );
+      for (const c of checks) {
+        const id = checkId(prId, c.kind, c.name);
+        keep.add(id);
+        const old = existing.get(id);
+        const sameRun = old !== undefined && old.headSha === headSha && old.state === c.state;
+        const failed = c.state === "failed";
+        // Failures want a look; a run that is still failing is not new.
+        const seen = sameRun ? old.seen : !failed;
+        const notified = failed ? (sameRun ? this.checkNotified(id) : false) : true;
+        let address = old?.address ?? "none";
+        if (c.state === "passed" && (address === "addressing" || address === "in_prompt")) address = "addressed";
+        else if (failed && old && !sameRun) address = "none";
+        if (
+          !old ||
+          old.state !== c.state ||
+          old.headSha !== headSha ||
+          old.url !== c.url ||
+          old.conclusion !== c.conclusion ||
+          old.summary !== c.summary ||
+          old.completedAt !== c.completedAt ||
+          old.required !== c.required ||
+          old.address !== address ||
+          old.seen !== seen
+        ) {
+          changed = true;
+        }
+        stmt.run({
+          id,
+          pr_id: prId,
+          name: c.name,
+          kind: c.kind,
+          source: c.source,
+          state: c.state,
+          conclusion: c.conclusion,
+          required: c.required ? 1 : 0,
+          url: c.url,
+          github_id: c.githubId,
+          head_sha: headSha,
+          summary: c.summary,
+          started_at: c.startedAt,
+          completed_at: c.completedAt,
+          seen: seen ? 1 : 0,
+          address,
+          notified: notified ? 1 : 0,
+        });
+      }
+      const del = this.db.prepare("DELETE FROM pr_checks WHERE id = ?");
+      const park = this.db.prepare(
+        "UPDATE pr_checks SET state = 'pending', conclusion = NULL, head_sha = ?, url = NULL, github_id = NULL, summary = NULL, started_at = NULL, completed_at = NULL, seen = 1, notified = 1 WHERE id = ?",
+      );
+      for (const old of existing.values()) {
+        if (keep.has(old.id)) continue;
+        changed = true;
+        if (old.headSha === headSha) del.run(old.id);
+        else park.run(headSha, old.id);
+      }
+      return changed;
+    });
+    return tx();
+  }
+
+  private checkNotified(id: string): boolean {
+    const row = this.db.prepare("SELECT notified FROM pr_checks WHERE id = ?").get(id) as { notified: number } | undefined;
+    return row !== undefined && row.notified === 1;
+  }
+
+  setCheckAddress(ids: string[], state: PrAddressState): void {
+    if (ids.length === 0) return;
+    this.db.prepare(`UPDATE pr_checks SET address = ?, seen = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(state, ...ids);
+  }
+
+  /** Failed checks nobody has been told about yet, across the Session's PRs. */
+  unnotifiedChecks(sessionId: string): PrCheckItem[] {
+    const rows = this.db
+      .prepare(
+        `SELECT c.* FROM pr_checks c JOIN pull_requests p ON p.id = c.pr_id
+         WHERE p.session_id = ? AND c.notified = 0 AND c.state = 'failed' ORDER BY c.name ASC`,
+      )
+      .all(sessionId) as CheckRow[];
+    return rows.map(rowToCheck);
+  }
+
+  markChecksNotified(ids: string[]): void {
+    if (ids.length === 0) return;
+    this.db.prepare(`UPDATE pr_checks SET notified = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
   }
 
   setAddress(ids: string[], state: PrAddressState): void {
@@ -331,10 +478,18 @@ export function itemId(prId: string, kind: PrItem["kind"], githubId: number): st
   return `${prId}:${kind}:${githubId}`;
 }
 
+export function checkId(prId: string, kind: PrCheckItem["kind"], name: string): string {
+  return `${prId}:${kind}:${name}`;
+}
+
 const PR_SELECT = `
   SELECT p.*,
-    (SELECT COUNT(*) FROM pr_items i WHERE i.pr_id = p.id AND i.seen = 0 AND i.self = 0) AS unread,
-    (SELECT COUNT(*) FROM pr_items i WHERE i.pr_id = p.id AND i.kind = 'review_comment' AND i.in_reply_to IS NULL AND i.resolved = 0) AS open_threads
+    (SELECT COUNT(*) FROM pr_items i WHERE i.pr_id = p.id AND i.seen = 0 AND i.self = 0)
+      + (SELECT COUNT(*) FROM pr_checks c WHERE c.pr_id = p.id AND c.seen = 0 AND c.state = 'failed') AS unread,
+    (SELECT COUNT(*) FROM pr_items i WHERE i.pr_id = p.id AND i.kind = 'review_comment' AND i.in_reply_to IS NULL AND i.resolved = 0) AS open_threads,
+    (SELECT COUNT(*) FROM pr_checks c WHERE c.pr_id = p.id AND c.state = 'failed') AS checks_failed,
+    (SELECT COUNT(*) FROM pr_checks c WHERE c.pr_id = p.id AND c.state = 'pending') AS checks_pending,
+    (SELECT COUNT(*) FROM pr_checks c WHERE c.pr_id = p.id AND c.state = 'passed') AS checks_passed
   FROM pull_requests p`;
 
 interface PrRow {
@@ -367,6 +522,29 @@ interface PrRow {
   merge_state: string | null;
   unread: number;
   open_threads: number;
+  checks_failed: number;
+  checks_pending: number;
+  checks_passed: number;
+}
+
+interface CheckRow {
+  id: string;
+  pr_id: string;
+  name: string;
+  kind: string;
+  source: string | null;
+  state: string;
+  conclusion: string | null;
+  required: number;
+  url: string | null;
+  github_id: number | null;
+  head_sha: string;
+  summary: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  seen: number;
+  address: string;
+  notified: number;
 }
 
 interface ItemRow {
@@ -415,6 +593,9 @@ function rowToPr(r: PrRow): StoredPr {
     lastActivityAt: r.last_activity_at,
     unread: r.unread,
     openThreads: r.open_threads,
+    checksFailed: r.checks_failed,
+    checksPending: r.checks_pending,
+    checksPassed: r.checks_passed,
     viaAccount: r.via_account,
     watch: r.watch === 1,
     syncedAt: r.synced_at,
@@ -438,6 +619,27 @@ function parseMergeState(raw: string | null): PrMergeState | null {
   } catch {
     return null;
   }
+}
+
+function rowToCheck(r: CheckRow): PrCheckItem {
+  return {
+    id: r.id,
+    prId: r.pr_id,
+    name: r.name,
+    kind: r.kind === "status" ? "status" : "check_run",
+    source: r.source,
+    state: PrCheckState.catch("pending").parse(r.state),
+    conclusion: r.conclusion,
+    required: r.required === 1,
+    url: r.url,
+    githubId: r.github_id,
+    headSha: r.head_sha,
+    summary: r.summary,
+    startedAt: r.started_at,
+    completedAt: r.completed_at,
+    seen: r.seen === 1,
+    address: PrAddressState.catch("none").parse(r.address),
+  };
 }
 
 function rowToItem(r: ItemRow): PrItem {

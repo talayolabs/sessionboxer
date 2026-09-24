@@ -1,4 +1,4 @@
-import { MERGE_METHODS, type MergeMethod, type PrAction, type PrItem, type PullRequest, type Session } from "@sessionboxer/protocol";
+import { MERGE_METHODS, type MergeMethod, type PrAction, type PrCheckItem, type PrItem, type PullRequest, type Session } from "@sessionboxer/protocol";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { FileLink } from "./FileLink";
@@ -15,6 +15,9 @@ const DECISION_LABEL: Record<NonNullable<PullRequest["reviewDecision"]>, string>
 const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "comment", review_comment: "inline", review: "review" };
 const ADDRESS_LABEL: Record<PrItem["address"], string> = { none: "", in_prompt: "in prompt", addressing: "addressing…", addressed: "addressed" };
 const ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Address", address_reply: "Address & reply" };
+/** The same actions on a failed check: there is nobody to reply to, the push makes the checks run again. */
+const CHECK_ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Fix", address_reply: "Fix & push" };
+const CHECK_STATE_LABEL: Record<PrCheckItem["state"], string> = { pending: "running", passed: "passed", failed: "failed" };
 const METHOD_LABEL: Record<MergeMethod, string> = { merge: "merge commit", squash: "squash", rebase: "rebase" };
 
 function ago(iso: string | null): string {
@@ -90,6 +93,35 @@ function actionTitle(action: PrAction, pr: PullRequest, n: number): string {
   }
 }
 
+/** Tooltip of a check's result: what GitHub literally said, and when it ran. */
+function checkResultTitle(c: PrCheckItem): string {
+  const lines = [c.conclusion ? `conclusion: ${c.conclusion}` : `status: ${CHECK_STATE_LABEL[c.state]}`, c.required ? "required by branch protection" : "not required"];
+  if (c.startedAt) lines.push(`started ${new Date(c.startedAt).toLocaleString()}`);
+  if (c.completedAt) lines.push(`finished ${new Date(c.completedAt).toLocaleString()}`);
+  return lines.join("\n");
+}
+
+function checkActionTitle(action: PrAction, pr: PullRequest, n: number): string {
+  const what = n === 1 ? "this failed check" : `these ${n} failed checks`;
+  switch (action) {
+    case "prompt":
+      return `Put ${what} (name, conclusion, log link, summary) into the composer to edit before sending`;
+    case "address":
+      return pr.local ? `Send ${what} to the Agent now (queued if busy): read the log, fix the cause locally, commit; nothing pushed` : "The PR's repository is not this Session's Workspace";
+    case "address_reply":
+      return pr.local ? `Send ${what} to the Agent: read the log, fix the cause, commit and push so the checks run again` : "The PR's repository is not this Session's Workspace";
+  }
+}
+
+/** "2 failed · 1 running · 5 passed" for the overview; null when the head has no checks. */
+function checksSummary(pr: PullRequest): Array<{ text: string; level: "error" | "warn" | "ok" }> {
+  const out: Array<{ text: string; level: "error" | "warn" | "ok" }> = [];
+  if (pr.checksFailed > 0) out.push({ text: `${pr.checksFailed} failed`, level: "error" });
+  if (pr.checksPending > 0) out.push({ text: `${pr.checksPending} running`, level: "warn" });
+  if (pr.checksPassed > 0) out.push({ text: `${pr.checksPassed} passed`, level: "ok" });
+  return out;
+}
+
 // --- Overview pane -------------------------------------------------------------------------
 
 export function PrsPane({
@@ -155,6 +187,7 @@ export function PrsPane({
               <th>Review</th>
               <th>Unread</th>
               <th>Threads</th>
+              <th>Checks</th>
               <th>Activity</th>
               <th>Watch</th>
               <th></th>
@@ -195,11 +228,23 @@ export function PrsPane({
                   <td>{pr.reviewDecision ? <span className={`pr-decision pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span> : <span className="muted">—</span>}</td>
                   <td>{pr.unread > 0 ? <span className="count">{pr.unread}</span> : <span className="muted">0</span>}</td>
                   <td>{pr.openThreads > 0 ? pr.openThreads : <span className="muted">0</span>}</td>
+                  <td className="nowrap small-text">
+                    {checksSummary(pr).length === 0 ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      checksSummary(pr).map((c, i) => (
+                        <span key={c.level}>
+                          {i > 0 && <span className="muted"> · </span>}
+                          <span className={c.level}>{c.text}</span>
+                        </span>
+                      ))
+                    )}
+                  </td>
                   <td className="muted" title={pr.lastActivityAt ?? undefined}>
                     {ago(pr.lastActivityAt)}
                   </td>
                   <td>
-                    <input type="checkbox" checked={pr.watch} title="Poll GitHub for new comments and reviews" onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { watch: e.target.checked }))} />
+                    <input type="checkbox" checked={pr.watch} title="Poll GitHub for new comments, reviews and check results" onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { watch: e.target.checked }))} />
                   </td>
                   <td className="prs-actions">
                     <a href={pr.url} target="_blank" rel="noreferrer" className="button small" title="Open on GitHub">
@@ -235,6 +280,7 @@ export function PrPane({
   session,
   pr,
   items,
+  checks,
   run,
   onPromptText,
   onDetached,
@@ -243,6 +289,8 @@ export function PrPane({
   pr: PullRequest;
   /** null until loaded. */
   items: PrItem[] | null;
+  /** The head commit's checks; null until loaded. */
+  checks: PrCheckItem[] | null;
   run: Runner;
   /** "To prompt": the text to put in the composer. */
   onPromptText: (text: string) => void;
@@ -252,11 +300,16 @@ export function PrPane({
   const [busy, setBusy] = useState<PrAction | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-
-  // Looking at the tab reads the items.
+  // The Checks list opens by itself when something fails and stays as the user left it otherwise.
+  const [checksOpen, setChecksOpen] = useState(pr.checksFailed > 0);
   useEffect(() => {
-    if (pr.unread > 0 && items) void api.prSeen(session.id, pr.id).catch(() => undefined);
-  }, [session.id, pr.id, pr.unread, items]);
+    if (pr.checksFailed > 0) setChecksOpen(true);
+  }, [pr.checksFailed]);
+
+  // Looking at the tab reads the items and the failed checks.
+  useEffect(() => {
+    if (pr.unread > 0 && items && checks) void api.prSeen(session.id, pr.id).catch(() => undefined);
+  }, [session.id, pr.id, pr.unread, items, checks]);
 
   const visible = useMemo(() => {
     const all = items ?? [];
@@ -264,27 +317,54 @@ export function PrPane({
     return [...shown].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }, [items, showResolved]);
   const hidden = (items?.length ?? 0) - visible.length;
+  // Failed first, then running, then passed; a failed check can be picked, the others only read.
+  const sortedChecks = useMemo(() => {
+    const rank: Record<PrCheckItem["state"], number> = { failed: 0, pending: 1, passed: 2 };
+    return [...(checks ?? [])].sort((a, b) => rank[a.state] - rank[b.state] || a.name.localeCompare(b.name));
+  }, [checks]);
+  const failedChecks = useMemo(() => sortedChecks.filter((c) => c.state === "failed"), [sortedChecks]);
+  const checkIds = useMemo(() => new Set((checks ?? []).map((c) => c.id)), [checks]);
   useEffect(() => {
-    if (!items) return;
+    if (!items || !checks) return;
     setSelected((prev) => {
-      const ids = new Set(items.map((i) => i.id));
+      const ids = new Set([...items.map((i) => i.id), ...checks.filter((c) => c.state === "failed").map((c) => c.id)]);
       const next = new Set([...prev].filter((id) => ids.has(id)));
       return next.size === prev.size ? prev : next;
     });
-  }, [items]);
+  }, [items, checks]);
 
   const act = (action: PrAction, ids: string[]) => {
     if (ids.length === 0 || busy) return;
-    if (action === "address_reply" && ids.length > 1 && !confirm(`Ask the Agent to address ${ids.length} items and reply to each of them publicly on GitHub?`)) return;
+    const itemIds = ids.filter((id) => !checkIds.has(id));
+    const pickedChecks = ids.filter((id) => checkIds.has(id));
+    if (action === "address_reply" && itemIds.length > 1 && !confirm(`Ask the Agent to address ${itemIds.length} items and reply to each of them publicly on GitHub?`)) return;
     setBusy(action);
     void run(async () => {
-      const res = await api.prAction(session.id, { action, itemIds: ids });
+      const res = await api.prAction(session.id, { action, itemIds, checkIds: pickedChecks });
       if (action === "prompt") onPromptText(res.text);
       setSelected(new Set());
     }).finally(() => setBusy(null));
   };
   const toggleAll = (on: boolean) => setSelected(on ? new Set(visible.map((i) => i.id)) : new Set());
   const allSelected = visible.length > 0 && visible.every((i) => selected.has(i.id));
+  const toggleAllChecks = (on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const c of failedChecks)
+        if (on) next.add(c.id);
+        else next.delete(c.id);
+      return next;
+    });
+  const allChecksSelected = failedChecks.length > 0 && failedChecks.every((c) => selected.has(c.id));
+  const toggle = (id: string, on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const nChecks = [...selected].filter((id) => checkIds.has(id)).length;
+  const onlyChecks = nChecks > 0 && nChecks === selected.size;
   const note = syncNote(pr);
   const merge = mergeNote(pr);
   const n = selected.size;
@@ -357,48 +437,116 @@ export function PrPane({
           ))}
         </select>
         <span className={`pr-merge-note ${merge.level}`}>{merge.text}</span>
-        {pr.mergeState && pr.mergeState.checks.length > 0 && !finished && (
-          <details className="pr-checks">
-            <summary className="muted">
-              {pr.mergeState.checks.filter((c) => c.state === "passed").length}/{pr.mergeState.checks.length} checks
-            </summary>
-            <ul>
-              {pr.mergeState.checks.map((c) => (
-                <li key={c.name} className={c.state === "failed" ? "error" : c.state === "pending" ? "warn" : "ok"}>
-                  {c.url ? (
-                    <a href={c.url} target="_blank" rel="noreferrer">
-                      {c.name}
-                    </a>
-                  ) : (
-                    c.name
-                  )}{" "}
-                  · {c.state}
-                  {c.required && <span className="muted"> · required</span>}
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
         {pr.mergeState && !finished && (
           <span className="muted small-text" title={pr.mergeState.headSha}>
             checked {ago(pr.mergeState.checkedAt)}
           </span>
         )}
       </div>
+      {checks !== null && checks.length > 0 && !finished && (
+        <details className="pr-checks" open={checksOpen} onToggle={(e) => setChecksOpen(e.currentTarget.open)}>
+          <summary>
+            <span className="pr-checks-title">Checks</span>
+            {checksSummary(pr).map((c, i) => (
+              <span key={c.level} className="small-text">
+                {i > 0 && <span className="muted"> · </span>}
+                <span className={c.level}>{c.text}</span>
+              </span>
+            ))}
+            {failedChecks.length > 0 && <span className="muted small-text">{" — "}pick failed checks and let the Agent fix them</span>}
+          </summary>
+          <div className="pr-check-scroll">
+            <table className="prs-table pr-check-rows">
+              <thead>
+                <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      checked={allChecksSelected}
+                      disabled={failedChecks.length === 0}
+                      title={failedChecks.length === 0 ? "No failed checks" : "Select every failed check"}
+                      onChange={(e) => toggleAllChecks(e.target.checked)}
+                    />
+                  </th>
+                  <th>Check</th>
+                  <th>Result</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedChecks.map((c) => (
+                  <tr key={c.id} className={[!c.seen && c.state === "failed" ? "unread" : "", `pr-check-${c.state}`].join(" ")}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(c.id)}
+                        disabled={c.state !== "failed"}
+                        title={c.state !== "failed" ? "Only failed checks can be addressed" : undefined}
+                        onChange={(e) => toggle(c.id, e.target.checked)}
+                      />
+                    </td>
+                    <td className="pr-check-name">
+                      {c.url ? (
+                        <a href={c.url} target="_blank" rel="noreferrer" title="Open the log / details">
+                          {c.name}
+                        </a>
+                      ) : (
+                        c.name
+                      )}
+                      <div className="muted small-text">
+                        {c.source ?? (c.kind === "status" ? "commit status" : "check")}
+                        {c.required && " · required"}
+                        {" · "}
+                        <span title={c.headSha}>{c.headSha.slice(0, 7)}</span>
+                      </div>
+                    </td>
+                    <td className="nowrap" title={checkResultTitle(c)}>
+                      <span className={`pr-check-state ${c.state === "failed" ? "error" : c.state === "pending" ? "warn" : "ok"}`}>
+                        {c.state === "failed" && c.conclusion && c.conclusion !== "failure" ? c.conclusion.replace(/_/g, " ") : CHECK_STATE_LABEL[c.state]}
+                      </span>
+                      {c.completedAt ? (
+                        <div className="muted small-text">{ago(c.completedAt)}</div>
+                      ) : (
+                        c.startedAt && <div className="muted small-text">since {ago(c.startedAt)}</div>
+                      )}
+                    </td>
+                    <td className="nowrap small-text">
+                      {!c.seen && c.state === "failed" && <div className="count">new</div>}
+                      {c.address !== "none" && <div className={c.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[c.address]}</div>}
+                    </td>
+                    <td className="prs-actions">
+                      {c.state === "failed" && (
+                        <div className="pr-row-actions">
+                          {(["prompt", "address", "address_reply"] as const).map((a) => (
+                            <button key={a} className="small" disabled={busy !== null || (a !== "prompt" && !pr.local)} title={checkActionTitle(a, pr, 1)} onClick={() => act(a, [c.id])}>
+                              {CHECK_ACTION_LABEL[a]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
       <div className="pr-bulk">
         <label className="check">
           <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} disabled={visible.length === 0} />
-          {n > 0 ? `${n} selected` : "Select all"}
+          {n > 0 ? `${n} selected${nChecks > 0 ? ` (${nChecks} ${nChecks === 1 ? "check" : "checks"})` : ""}` : "Select all"}
         </label>
         {(["prompt", "address", "address_reply"] as const).map((a) => (
           <button
             key={a}
             className="small"
             disabled={n === 0 || busy !== null || (a !== "prompt" && !pr.local)}
-            title={actionTitle(a, pr, n)}
+            title={onlyChecks ? checkActionTitle(a, pr, n) : actionTitle(a, pr, n)}
             onClick={() => act(a, [...selected])}
           >
-            {busy === a ? "…" : ACTION_LABEL[a]}
+            {busy === a ? "…" : onlyChecks ? CHECK_ACTION_LABEL[a] : ACTION_LABEL[a]}
             {n > 0 ? ` (${n})` : ""}
           </button>
         ))}
@@ -433,18 +581,7 @@ export function PrPane({
               return (
                 <tr key={it.id} className={[!it.seen ? "unread" : "", it.resolved ? "resolved" : ""].join(" ")}>
                   <td>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(it.id)}
-                      onChange={(e) =>
-                        setSelected((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(it.id);
-                          else next.delete(it.id);
-                          return next;
-                        })
-                      }
-                    />
+                    <input type="checkbox" checked={selected.has(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} />
                   </td>
                   <td className="nowrap">
                     <span className={`pr-kind pr-kind-${it.kind}`}>{KIND_LABEL[it.kind]}</span>

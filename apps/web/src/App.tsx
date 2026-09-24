@@ -23,7 +23,8 @@ import {
   type LlmCall,
   type ModelOption,
   type NarrationMode,
-  type PrActivity,
+  prActivityLine,
+  type PrCheckItem,
   type PrItem,
   type Provider,
   type ProviderModels,
@@ -195,6 +196,7 @@ export function App() {
   // Pull Requests attached per Session (all Sessions, for the sidebar badges) and the rows of the ones opened.
   const [prs, setPrs] = useState<Record<string, PullRequest[]>>({});
   const [prItems, setPrItems] = useState<Record<string, PrItem[]>>({});
+  const [prChecks, setPrChecks] = useState<Record<string, PrCheckItem[]>>({});
   // End-to-end verification runs of the selected Session (ADR-0044); the ref lets the WS handler see what changed.
   const [e2eRuns, setE2eRuns] = useState<E2eRun[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -259,8 +261,9 @@ export function App() {
   );
   const loadPrItems = useCallback(
     (sessionId: string, prId: string) => run(async () => {
-      const items = await api.prItems(sessionId, prId);
+      const [items, checks] = await Promise.all([api.prItems(sessionId, prId), api.prChecks(sessionId, prId)]);
       setPrItems((prev) => ({ ...prev, [prId]: items }));
+      setPrChecks((prev) => ({ ...prev, [prId]: checks }));
     }),
     [run],
   );
@@ -388,6 +391,9 @@ export function App() {
           case "pr_items":
             setPrItems((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.items } : prev));
             break;
+          case "pr_checks":
+            setPrChecks((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.checks } : prev));
+            break;
           case "schedules":
             setSchedules(msg.schedules);
             break;
@@ -411,11 +417,13 @@ export function App() {
           }
           case "pr_activity": {
             const id = Date.now() + Math.random();
-            const lines = msg.prs.map((p) => ({ prId: p.prId, text: `#${p.number} ${p.title}: ${activityLine(p)}` }));
+            const lines = msg.prs.map((p) => ({ prId: p.prId, text: `#${p.number} ${p.title}: ${prActivityLine(p)}` }));
+            const onlyChecks = msg.prs.every((p) => p.count === 0);
+            const failed = msg.prs.reduce((n, p) => n + p.failedChecks.length, 0);
             setToasts((prev) => [...prev.slice(-4), { id, sessionId: msg.sessionId, sessionTitle: msg.sessionTitle, lines }]);
             notifyBrowser(
               msg.sessionId,
-              `${msg.sessionTitle}: pull request feedback`,
+              `${msg.sessionTitle}: ${onlyChecks ? (failed === 1 ? "a check failed" : "checks failed") : "pull request feedback"}`,
               lines.map((l) => l.text).join("\n"),
               `sessionboxer-pr-${msg.prs.map((p) => p.prId).join(",")}`,
               msg.prs.length === 1 ? msg.prs[0]!.prId : null,
@@ -742,6 +750,7 @@ export function App() {
             onFocused={clearFocus}
             prs={prs[selected.id] ?? EMPTY_PRS}
             prItems={prItems}
+            prChecks={prChecks}
             onLoadPrItems={loadPrItems}
             e2eRuns={selectedE2eRuns}
             paneRequest={paneRequest?.sessionId === selected.id ? paneRequest.pane : null}
@@ -799,11 +808,6 @@ export function App() {
 
 const EMPTY_PRS: PullRequest[] = [];
 const EMPTY_E2E_RUNS: E2eRun[] = [];
-
-function activityLine(p: PrActivity): string {
-  const who = p.authors.length <= 2 ? p.authors.map((a) => `@${a}`).join(", ") : `@${p.authors[0]} and ${p.authors.length - 1} others`;
-  return `${p.count} new ${p.count === 1 ? "item" : "items"} from ${who}${p.changesRequested ? " (changes requested)" : ""}`;
-}
 
 /** A browser notification when the tab is in the background and permission was given (the PRs pane asks for it). */
 function notifyBrowser(sessionId: string, title: string, body: string, tag: string, prId: string | null, onClick: () => void): void {
@@ -1002,6 +1006,7 @@ function SessionView({
   onFocused,
   prs,
   prItems,
+  prChecks,
   onLoadPrItems,
   e2eRuns,
   paneRequest,
@@ -1032,6 +1037,7 @@ function SessionView({
   onFocused: () => void;
   prs: PullRequest[];
   prItems: Record<string, PrItem[]>;
+  prChecks: Record<string, PrCheckItem[]>;
   onLoadPrItems: (sessionId: string, prId: string) => Promise<void>;
   /** End-to-end verification runs of this Session, newest first (ADR-0044). */
   e2eRuns: E2eRun[];
@@ -1586,6 +1592,7 @@ function SessionView({
             session={session}
             pr={openPr}
             items={prItems[openPr.id] ?? null}
+            checks={prChecks[openPr.id] ?? null}
             run={run}
             onPromptText={appendToComposer}
             onDetached={() => setPane("prs")}

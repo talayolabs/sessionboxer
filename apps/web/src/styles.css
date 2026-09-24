@@ -783,10 +783,17 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .pr-merge select { width: auto; padding: 1px 4px; font-size: 12px; }
 .pr-merge .muted { color: var(--muted); }
 .pr-merge-note { min-width: 0; overflow-wrap: anywhere; }
-.pr-checks { flex-basis: 100%; }
-.pr-checks summary { cursor: pointer; }
-.pr-checks ul { margin: 4px 0 0; padding-left: 18px; }
-.pr-checks a { color: inherit; }
+.pr-checks { flex: none; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 12px; }
+.pr-checks summary { cursor: pointer; padding: 6px 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.pr-checks-title { font-weight: 500; }
+.pr-checks[open] summary { border-bottom: 1px solid var(--border); }
+.pr-check-scroll { max-height: 40vh; overflow: auto; }
+.pr-check-rows td:first-child input, .pr-check-rows th:first-child input { width: auto; margin: 2px 0 0; }
+.pr-check-rows td.pr-check-name { width: 100%; min-width: 160px; overflow-wrap: anywhere; }
+.pr-check-rows tr.pr-check-passed td { opacity: 0.7; }
+.pr-check-name a { color: var(--text); }
+.pr-check-name a:hover { color: var(--accent); }
+.pr-check-state { font-weight: 500; text-transform: capitalize; }
 .pr-bulk { flex: none; display: flex; gap: 6px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 12px; }
 .pr-bulk label.check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; margin-right: 6px; }
 .pr-bulk label.check input { width: auto; margin: 0; }

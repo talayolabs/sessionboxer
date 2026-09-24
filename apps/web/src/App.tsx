@@ -1569,7 +1569,15 @@ function SessionView({
         {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
         {shown === "schedules" && <div className="schedules-pane">{schedulesPane}</div>}
         {shown === "e2e" && (
-          <E2ePane session={session} runs={e2eRuns} enabled={e2eEnabled} globalEnabled={settings?.e2eVerify ?? true} focusRunId={e2eFocus} onToggle={setE2eVerify} />
+          <E2ePane
+            session={session}
+            runs={e2eRuns}
+            enabled={e2eEnabled}
+            globalEnabled={settings?.e2eVerify ?? true}
+            focusRunId={e2eFocus}
+            onToggle={setE2eVerify}
+            onRunNow={() => void run(() => api.e2eRunNow(session.id))}
+          />
         )}
         {openPr && (
           <PrPane

@@ -250,6 +250,7 @@ export const api = {
   prAction: (id: string, req: PrActionRequest) =>
     request<PrActionResult>(`/sessions/${id}/prs/actions`, { method: "POST", body: JSON.stringify(req) }),
   e2eRuns: (id: string) => request<E2eRun[]>(`/sessions/${id}/e2e`),
+  e2eRunNow: (id: string) => request<E2eRun>(`/sessions/${id}/e2e/run`, { method: "POST" }),
 };
 
 /** Same-origin URL of a Session's VS Code (the Code pane's iframe), proxied by the Control Plane. */

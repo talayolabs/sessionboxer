@@ -10,9 +10,12 @@ cases, their status, timings, cycles and the final video, shown live to the
 user in the Verification pane. The Control Plane opens the run and sends you
 the message that starts this skill; you fill the run in with the `e2e_*` tools
 of the `desktop` MCP server (`e2e_plan`, `e2e_case_start`, `e2e_case_end`,
-`e2e_finish`). Do not start a verification on your own during a normal turn;
-if a user asks for one, do the work and mention that the Control Plane
-verifies turns when the switch "Verify each turn end to end" is on.
+`e2e_finish`). The run opens after a user turn when the switch "Verify each
+turn" is on, or when the user presses **Run now** in the Verification pane; in
+that case the message says so and the work so far is what you verify, against
+the user's last request. Do not start a verification on your own during a
+normal turn; if a user asks for one, do the work and mention the switch and
+the Run now button.
 
 Work through the five steps in order. Stay on this task: no unrelated work, no
 questions to the user, and never another verification of this verification.

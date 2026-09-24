@@ -9,6 +9,7 @@ import {
   type CompactionDetails,
   type CompactionDetailsRequest,
   type ContextBreakdown,
+  type E2eRun,
   DAEMON_METHODS,
   DaemonCompactionDetailsResult,
   DaemonContextReportResult,
@@ -1981,6 +1982,15 @@ export class SessionManager {
         this.push({ title: s.title, body: body.length > 200 ? `${body.slice(0, 197)}…` : body, tag: `sessionboxer-turn-${id}`, url: sessionRoute(id) });
       }
     }
+  }
+
+  /** "Run now" in the Verification pane: verifies the work so far against the last user turn of the current branch. */
+  async e2eRunNow(id: string): Promise<E2eRun> {
+    this.get(id);
+    const visible = this.db.listEvents(id, 0, 100_000, this.db.activeScope(id));
+    const start = visible.map((e) => e.body.type === "user_prompt" && e.body.origin !== "e2e").lastIndexOf(true);
+    const turn = start === -1 ? [] : visible.slice(start);
+    return this.e2e.runNow(id, visible[visible.length - 1]?.seq ?? 0, turn);
   }
 
   /** The events of the turn that ended at `endSeq`: from its `user_prompt` on. */

@@ -402,6 +402,7 @@ api.post("/sessions/:id/queue", async (c) => {
 
 // End-to-end verification runs of the Session (ADR-0044).
 api.get("/sessions/:id/e2e", (c) => c.json(sessions.e2e.list(c.req.param("id"))));
+api.post("/sessions/:id/e2e/run", async (c) => c.json(await sessions.e2eRunNow(c.req.param("id")), 201));
 api.get("/sessions/:id/e2e/:runId", (c) => c.json(sessions.e2e.get(c.req.param("id"), c.req.param("runId"))));
 
 // Scheduled tasks (ADR-0047).

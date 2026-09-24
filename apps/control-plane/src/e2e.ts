@@ -86,6 +86,31 @@ export class E2eVerification {
     return true;
   }
 
+  /**
+   * "Run now" from the Verification pane: opens a run for the last user turn (`turn`, possibly
+   * empty when nothing was asked yet) regardless of the switch and of what the turn used, and
+   * sends the prompt. Needs an idle Session with no open run.
+   */
+  async runNow(id: string, turnSeq: number, turn: SessionEvent[]): Promise<E2eRun> {
+    const s = this.deps.getSession(id);
+    if (!s) throw new HttpError(404, `session ${id} not found`);
+    if (s.status === "stopped") throw new HttpError(409, "Session is stopped; resume it first.");
+    if (s.status !== "idle") throw new HttpError(409, "The Agent is still working; run the verification when the turn has ended.");
+    const active = this.deps.db.activeE2eRun(id);
+    if (active) throw new HttpError(409, "A verification run is already open for this Session.");
+    const prompt = turn.find((e) => e.body.type === "user_prompt");
+    const request = prompt?.body.type === "user_prompt" ? prompt.body.text : null;
+    const run = this.deps.db.insertE2eRun(id, turnSeq, "planning");
+    this.deps.broadcast({ type: "e2e_changed", sessionId: id, run });
+    try {
+      await this.deps.prompt(id, verificationPrompt(run.id, request, "manual"));
+    } catch (e) {
+      this.finalize(run, "aborted", `The verification prompt could not be sent: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+    return this.get(id, run.id);
+  }
+
   /** The verification turn ended (any stop reason): whatever the Agent did not close is closed now. */
   onVerificationTurnEnded(id: string, how: "end_turn" | "cancelled" | "error" | string): void {
     const run = this.deps.db.activeE2eRun(id);
@@ -266,11 +291,18 @@ export function workspaceRelative(p: string): string {
   return trimmed.startsWith("/workspace/") ? trimmed.slice("/workspace/".length) : trimmed.replace(/^\.\//, "");
 }
 
-/** The hidden prompt that starts a verification turn; the skill has the long form. */
-export function verificationPrompt(runId: string, userPrompt: string): string {
-  const excerpt = userPrompt.length > PROMPT_EXCERPT_MAX ? `${userPrompt.slice(0, PROMPT_EXCERPT_MAX)}…` : userPrompt;
+/**
+ * The hidden prompt that starts a verification turn; the skill has the long form. `manual` is the
+ * pane's "Run now": the work so far is verified, whether or not the last turn touched anything.
+ */
+export function verificationPrompt(runId: string, userPrompt: string | null, how: "after-turn" | "manual" = "after-turn"): string {
+  const excerpt = userPrompt === null ? null : userPrompt.length > PROMPT_EXCERPT_MAX ? `${userPrompt.slice(0, PROMPT_EXCERPT_MAX)}…` : userPrompt;
+  const opening =
+    how === "manual"
+      ? `Sessionboxer: the user asked for an end-to-end verification of your work so far in this Session (verification run ${runId}). This message is from the Control Plane, not from the user; do not answer it as a question.`
+      : `Sessionboxer: verify the turn you just finished end to end (verification run ${runId}). This message is from the Control Plane, not from the user; do not answer it as a question.`;
   return [
-    `Sessionboxer: verify the turn you just finished end to end (verification run ${runId}). This message is from the Control Plane, not from the user; do not answer it as a question.`,
+    opening,
     `Follow the \`e2e-verification\` skill exactly. It is at ${SKILL_PATH}; read that file now if it is not already in your context. In short:`,
     "1. Decide: in each repository under /workspace run `git status --short` and `git diff --stat` (and `git diff --stat <base>..HEAD` if you committed) to see what the turn changed. If nothing testable changed (only an answer, research, or changes you cannot exercise on the desktop), call `e2e_plan` with a `skip_reason` and end your reply with one line saying so. No recording then.",
     "2. Plan: derive 2 to 5 test cases (up to 10 only for a very large change) from the user's request and what you understood you were asked; each with a title, steps and the expected result. Register them with one `e2e_plan` call.",
@@ -278,9 +310,8 @@ export function verificationPrompt(runId: string, userPrompt: string): string {
     `4. Fix: when a case fails, fix the code (that is normal work), then \`e2e_case_start\` the same case again and rerun it; that is a new cycle. At most ${E2E_MAX_FIX_ATTEMPTS} fix attempts per case, then leave it failed.`,
     "5. Finish: `stop_recording`, then `e2e_finish` with the video path and a short summary, and end your reply with one short paragraph (what passed, what failed and why) that mentions the video's /workspace path so the user sees it in the chat.",
     "Do not start another verification, do not ask the user anything, and do not do unrelated work in this turn.",
-    "",
-    "The user's request for the turn being verified was:",
-    "",
-    ...excerpt.split("\n").map((l) => `> ${l}`),
+    ...(excerpt === null
+      ? ["", "The user has not sent a request in this Session yet: verify the workspace as it stands."]
+      : ["", how === "manual" ? "The user's last request, which the work so far answers, was:" : "The user's request for the turn being verified was:", "", ...excerpt.split("\n").map((l) => `> ${l}`)]),
   ].join("\n");
 }

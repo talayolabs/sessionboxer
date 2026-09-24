@@ -77,6 +77,7 @@ export function E2ePane({
   globalEnabled,
   focusRunId,
   onToggle,
+  onRunNow,
 }: {
   session: Session;
   runs: E2eRun[];
@@ -86,11 +87,21 @@ export function E2ePane({
   /** Run to show on top (from a transcript marker); `null` = the latest. */
   focusRunId: string | null;
   onToggle: (value: boolean | null) => void;
+  /** Starts a verification of the work so far. */
+  onRunNow: () => void;
 }) {
   const ordered = useMemo(() => [...runs].sort((a, b) => b.turnSeq - a.turnSeq || b.startedAt.localeCompare(a.startedAt)), [runs]);
   const current = (focusRunId ? ordered.find((r) => r.id === focusRunId) : undefined) ?? ordered[0] ?? null;
   const earlier = ordered.filter((r) => r !== current);
   const override = session.settings.e2eVerify;
+  const open = runs.some(isRunOpen);
+  const runNowHint = open
+    ? "A verification run is already open"
+    : session.status === "stopped"
+      ? "Resume the Session first"
+      : session.status !== "idle"
+        ? "Wait for the Agent to finish its turn"
+        : "Verify the work so far end to end (whatever the switch says)";
   return (
     <div className="pane e2e-pane">
       <div className="e2e-toolbar">
@@ -107,11 +118,14 @@ export function E2ePane({
         <span className="muted small-text">
           {enabled ? "After each of your turns the Agent plans, runs and records end-to-end checks of its work." : "Off: turns are not verified."}
         </span>
+        <button type="button" title={runNowHint} disabled={open || session.status !== "idle"} onClick={onRunNow}>
+          Run now
+        </button>
       </div>
       {!current && (
         <div className="e2e-empty muted">
           No verification run yet.{" "}
-          {enabled ? "One starts when the Agent finishes its next turn." : "Switch the check on above and the next completed turn gets one."}
+          {enabled ? "One starts when the Agent finishes its next turn, or press Run now." : "Switch the check on above and the next completed turn gets one, or press Run now."}
         </div>
       )}
       {current && <RunCard session={session} run={current} open />}

@@ -292,7 +292,7 @@ button.primary:hover { filter: brightness(1.1); }
 button.primary.stop { background: var(--error); border-color: var(--error); }
 button.primary.stop::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; background: currentColor; border-radius: 1px; vertical-align: -1px; }
 
-/* Saved messages ("save for later") and their queue, docked above the composer toolbar. */
+/* The queue of enqueued messages, docked above the composer toolbar. */
 .saved { flex: none; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); max-height: 40%; min-height: 0; }
 .saved.playing { border-color: var(--accent); }
 .saved-header { display: flex; align-items: center; gap: 10px; padding: 4px 8px 4px 4px; }

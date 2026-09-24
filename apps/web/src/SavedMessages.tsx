@@ -9,8 +9,9 @@ function preview(text: string): string {
 }
 
 /**
- * The Session's "saved for later" prompts, in queue order. Collapsible so it takes one
- * line when not in use; the header holds the Play/Pause control for the queue.
+ * The Session's queue: enqueued prompts in the order they go out, each one sent when the
+ * Agent is idle. Collapsible so it takes one line when not in use; the header holds the
+ * Pause/Resume control.
  */
 export function SavedMessages({
   messages,
@@ -37,33 +38,35 @@ export function SavedMessages({
   if (messages.length === 0 && !queueRunning) return null;
 
   return (
-    <section className={`saved${queueRunning ? " playing" : ""}`} aria-label="Saved messages">
+    <section className={`saved${queueRunning ? " playing" : ""}`} aria-label="Queue">
       <header className="saved-header">
         <button type="button" className="tb saved-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
           <span className="chev">{open ? "\u25be" : "\u25b8"}</span>
-          Saved for later ({messages.length})
+          Queue ({messages.length})
         </button>
         <span className={queueRunning ? "saved-status" : "saved-status held"}>
           {queueRunning
-            ? "Playing queue: next one is sent when the Agent finishes"
+            ? canSend
+              ? "Next one is sent when the Agent finishes"
+              : "Next one is sent when the Session resumes"
             : messages.length > 0
-              ? "Held here: nothing is sent until you press Play all (or Send on one)"
+              ? "Paused: nothing is sent until you press Resume (or Send on one)"
               : ""}
         </span>
         <span className="spacer" />
         {queueRunning ? (
-          <button type="button" className="small" title="Stop after the current turn" onClick={() => onQueueToggle(false)}>
+          <button type="button" className="small" title="Hold the queue; the current turn finishes" onClick={() => onQueueToggle(false)}>
             {"\u23f8"} Pause
           </button>
         ) : (
           <button
             type="button"
             className="small primary"
-            title="Send the saved messages one by one, each after the previous turn ends"
-            disabled={!canSend || messages.length === 0}
+            title="Send the queued messages one by one, each after the previous turn ends"
+            disabled={messages.length === 0}
             onClick={() => onQueueToggle(true)}
           >
-            {"\u25b6"} Play all
+            {"\u25b6"} Resume
           </button>
         )}
       </header>
@@ -93,10 +96,10 @@ export function SavedMessages({
                 >
                   {"\u2193"}
                 </button>
-                <button type="button" className="small" title="Put it in the composer (keeps it saved)" onClick={() => onLoad(m)}>
+                <button type="button" className="small" title="Put it in the composer (keeps it queued)" onClick={() => onLoad(m)}>
                   Load
                 </button>
-                <button type="button" className="small" title="Send it now and remove it from the list" disabled={!canSend} onClick={() => onSend(m)}>
+                <button type="button" className="small" title="Send it now and remove it from the queue" disabled={!canSend} onClick={() => onSend(m)}>
                   Send
                 </button>
                 <button type="button" className="small danger" title="Delete" onClick={() => onDelete(m)}>

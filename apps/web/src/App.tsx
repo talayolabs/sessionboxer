@@ -547,7 +547,7 @@ export function App() {
                       {(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)}
                     </span>
                   )}
-                  {s.queueRunning && <span title="Playing the saved-message queue">{"\u25b6"}</span>}
+                  {s.queueRunning && <span title="Messages queued for the Agent">{"\u25b6"}</span>}
                   {s.settings.sandbox.dockerMode === "privileged" && (
                     <span className="docker-warn" title={PRIVILEGED_WARNING}>
                       <DockerIcon label={PRIVILEGED_WARNING} />
@@ -1136,11 +1136,11 @@ function SessionView({
       attachments.clear();
     });
   };
-  const saveForLater = () => {
+  const enqueue = () => {
     const t = text.trim();
     if (!t) return;
     setText("");
-    void run(() => api.saveMessage(session.id, t));
+    void run(() => api.enqueueMessage(session.id, t));
   };
   const translateToEnglish = useCallback(
     async (selected: string) => cleanTranslation((await api.ask(session.id, translationPrompt(selected))).text, selected),
@@ -1500,7 +1500,7 @@ function SessionView({
             value={text}
             onChange={setText}
             onSend={send}
-            onSave={saveForLater}
+            onEnqueue={enqueue}
             running={session.status === "running"}
             onStop={() => void run(() => api.cancel(session.id))}
             above={

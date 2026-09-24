@@ -377,11 +377,11 @@ api.post("/sessions/:id/branch", async (c) => {
   return c.json(await sessions.switchBranch(c.req.param("id"), req.branchId));
 });
 
-// Saved messages ("save for later") and the queue that plays them one turn at a time.
+// The queue: enqueued messages, sent one turn at a time whenever the Agent is idle.
 api.get("/sessions/:id/saved", (c) => c.json(sessions.savedMessages(c.req.param("id"))));
 api.post("/sessions/:id/saved", async (c) => {
   const req = SaveMessageRequest.parse(await c.req.json());
-  return c.json(sessions.saveMessage(c.req.param("id"), req.text), 201);
+  return c.json(await sessions.enqueueMessage(c.req.param("id"), req.text), 201);
 });
 api.patch("/sessions/:id/saved/:messageId", async (c) => {
   const req = UpdateSavedMessageRequest.parse(await c.req.json());

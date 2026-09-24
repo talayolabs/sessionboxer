@@ -140,7 +140,7 @@ export function ForkDialog({
           <label className="check">
             <input type="checkbox" checked={copyRest} onChange={(e) => setCopyRest(e.target.checked)} />
             Copy the {pickedIndex >= 0 ? "other " : ""}
-            {others.length} queued message{others.length === 1 ? "" : "s"} to the fork's "Saved for later"
+            {others.length} queued message{others.length === 1 ? "" : "s"} to the fork's queue (sent after its first prompt)
           </label>
         )}
         <details className="fork-settings" open={settingsOpen} onToggle={(e) => setSettingsOpen(e.currentTarget.open)}>

@@ -600,7 +600,7 @@ export const Session = z.object({
   inspectLlmPending: z.boolean().default(false),
   containerId: z.string().nullable(),
   error: z.string().nullable(),
-  /** The saved-message queue is being played: the next saved message is sent whenever a turn ends. */
+  /** The queue is playing: the next queued message is sent whenever the Agent is idle. Off = paused by the user (or after a cancelled/failed turn). */
   queueRunning: z.boolean().default(false),
   /** Bytes the Sandbox container's writable layer takes on the host (last measured), `null` if unknown. */
   diskBytes: z.number().int().nonnegative().nullable().default(null),
@@ -909,8 +909,8 @@ export const LlmCallBody = z.object({
 export type LlmCallBody = z.infer<typeof LlmCallBody>;
 
 // ---------------------------------------------------------------------------
-// Saved messages: prompts kept per Session ("save for later"), ordered; played
-// as a queue one turn at a time while `Session.queueRunning`.
+// The queue: enqueued prompts per Session, ordered; sent one turn at a time
+// whenever the Agent is idle while `Session.queueRunning` (off = paused).
 // ---------------------------------------------------------------------------
 
 export const SavedMessage = z.object({

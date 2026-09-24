@@ -180,9 +180,7 @@ export class SessionManager {
       connectorCredentials: (s) => resolveBoxCredentials(settings(), s.settings.mcpEnabled),
       prompt: (id, text) => this.prompt(id, { text }),
       enqueue: (id, text) => {
-        this.saveMessage(id, text);
-        const s = this.db.getSession(id);
-        if (s && !s.queueRunning) this.update(id, { queueRunning: true });
+        void this.enqueueMessage(id, text, { resumePaused: true }).catch((e: unknown) => this.log(`enqueue ${id} failed: ${String(e)}`));
       },
       broadcast: (msg) => this.broadcast(msg),
       push: (msg) => this.push(msg),
@@ -902,7 +900,7 @@ export class SessionManager {
       },
       containerId: null,
       error: null,
-      queueRunning: false,
+      queueRunning: req.savedMessages.length > 0,
       diskBytes: null,
       mcpPending: false,
       modelPending: false,
@@ -1029,15 +1027,14 @@ export class SessionManager {
 
   /**
    * A prompt from a scheduled task (ADR-0047): sent right away when the Session is idle, put at
-   * the end of its saved-message queue (which is started) when a turn is running, held until the
+   * the end of its queue (resuming it if paused) when a turn is running, held until the
    * Daemon is up when the Sandbox is stopped or still starting. Only an errored Session refuses it.
    */
   async promptScheduled(id: string, text: string): Promise<"sent" | "queued" | "resumed"> {
     const s = this.get(id);
     if (s.status === "error") throw new HttpError(409, `Session is in error state: ${s.error ?? "unknown"}`);
     if (s.status === "running") {
-      this.saveMessage(id, text);
-      await this.setQueueRunning(id, true);
+      await this.enqueueMessage(id, text, { resumePaused: true });
       return "queued";
     }
     if (s.status === "stopped") {
@@ -1211,17 +1208,28 @@ export class SessionManager {
     );
   }
 
-  // --- Saved messages and the queue ------------------------------------------
+  // --- The queue ---------------------------------------------------------------
 
   savedMessages(id: string): SavedMessage[] {
     this.get(id);
     return this.db.listSavedMessages(id);
   }
 
-  saveMessage(id: string, text: string): SavedMessage {
-    this.get(id);
+  /**
+   * Appends a message to the Session's queue and lets the queue play: the message goes out
+   * as soon as the Agent is idle (now, after the current turn, or when a stopped Sandbox is
+   * resumed). A queue the user paused with messages still in it stays paused, the new message
+   * waits behind them, unless `resumePaused` (scheduled tasks, PR actions) asks otherwise.
+   */
+  async enqueueMessage(id: string, text: string, opts: { resumePaused?: boolean } = {}): Promise<SavedMessage> {
+    const s = this.get(id);
+    const paused = !s.queueRunning && this.db.listSavedMessages(id).length > 0;
     const saved = this.db.insertSavedMessage(id, text);
     this.broadcastSaved(id);
+    if (!s.queueRunning && (!paused || opts.resumePaused) && s.status !== "error") {
+      this.update(id, { queueRunning: true });
+      await this.pumpQueue(id);
+    }
     return saved;
   }
 
@@ -1250,22 +1258,20 @@ export class SessionManager {
   }
 
   /**
-   * Play/pause the queue. While playing, the first saved message is sent as soon as
-   * the Agent is idle and again after every `turn_ended`, until the list is empty.
-   * Pausing lets the current turn finish.
+   * Play/pause the queue. While playing, the first queued message is sent as soon as
+   * the Agent is idle and again after every `turn_ended`, until the list is empty; a stopped
+   * Sandbox plays it when resumed. Pausing lets the current turn finish.
    */
   async setQueueRunning(id: string, running: boolean): Promise<Session> {
     const s = this.get(id);
-    if (running && this.db.listSavedMessages(id).length === 0) throw new HttpError(409, "No saved messages to play.");
-    if (running && (s.status === "stopped" || s.status === "error")) {
-      throw new HttpError(409, `Session is ${s.status}; resume it before playing the queue.`);
-    }
-    const next = s.queueRunning === running ? s : this.update(id, { queueRunning: running });
-    if (running && next.status === "idle") await this.pumpQueue(id);
+    if (running && this.db.listSavedMessages(id).length === 0) throw new HttpError(409, "The queue is empty.");
+    if (running && s.status === "error") throw new HttpError(409, `Session is in error state: ${s.error ?? "unknown"}`);
+    if (s.queueRunning !== running) this.update(id, { queueRunning: running });
+    if (running) await this.pumpQueue(id);
     return this.get(id);
   }
 
-  /** Sends the next saved message if the queue is playing and the Agent is idle. */
+  /** Sends the next queued message if the queue is playing and the Agent is idle and reachable. */
   private async pumpQueue(id: string): Promise<void> {
     const s = this.db.getSession(id);
     if (!s?.queueRunning || s.status !== "idle") return;
@@ -1274,6 +1280,9 @@ export class SessionManager {
       this.update(id, { queueRunning: false });
       return;
     }
+    // Between a resume and the Daemon's connection the Session is idle but unreachable;
+    // `onDaemonConnected` pumps then.
+    if (!this.clients.get(id)?.connected) return;
     try {
       await this.prompt(id, { text: next.text });
     } catch (e) {
@@ -1525,8 +1534,11 @@ export class SessionManager {
     const outerStop = this.stopping.has(id);
     this.stopping.add(id);
     try {
-      if (s.queueRunning || s.mcpPending || s.modelPending || s.optionsPending || s.inspectLlmPending) {
-        this.update(id, { queueRunning: false, mcpPending: false, modelPending: false, optionsPending: false, inspectLlmPending: false });
+      // The queue survives a stop of an idle Sandbox (it plays on resume); stopping mid-turn
+      // cancels that turn, and like any cancelled turn it pauses the queue.
+      const queueRunning = s.queueRunning && s.status !== "running";
+      if (queueRunning !== s.queueRunning || s.mcpPending || s.modelPending || s.optionsPending || s.inspectLlmPending) {
+        this.update(id, { queueRunning, mcpPending: false, modelPending: false, optionsPending: false, inspectLlmPending: false });
       }
       if (s.status === "running") await this.cancelAndWait(id);
       this.e2e.abortActive(id, "The Sandbox was stopped during the verification.");
@@ -1901,6 +1913,8 @@ export class SessionManager {
     if (pending && !status.turnActive) {
       this.pendingPrompts.delete(id);
       this.prompt(id, pending).catch((e: unknown) => this.log(`pending prompt ${id} failed: ${String(e)}`));
+    } else if (!status.turnActive) {
+      void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
     }
   }
 

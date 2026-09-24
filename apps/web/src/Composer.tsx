@@ -19,8 +19,8 @@ export type ComposerProps = {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
-  /** Keep the text for later instead of sending it (Ctrl+S). */
-  onSave: () => void;
+  /** Put the text in the queue, sent when the Agent is next idle (Ctrl+S). */
+  onEnqueue: () => void;
   /** The agent is working on a turn: Send becomes Stop and Enter does not send. */
   running?: boolean;
   onStop?: () => void;
@@ -192,7 +192,7 @@ export function Composer(props: ComposerProps) {
     value,
     onChange,
     onSend,
-    onSave,
+    onEnqueue,
     running = false,
     onStop,
     disabled,
@@ -498,10 +498,10 @@ export function Composer(props: ComposerProps) {
   const filesSettled = files.length === 0 || attachments.ready;
   const canSend = !disabled && !running && (hasText || attachments.ready) && filesSettled;
   const sized = heightFrac !== null && !zen;
-  const onSaveKey = (e: KeyboardEvent): boolean => {
+  const onEnqueueKey = (e: KeyboardEvent): boolean => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
-      if (hasText) onSave();
+      if (hasText) onEnqueue();
       return true;
     }
     return false;
@@ -526,7 +526,7 @@ export function Composer(props: ComposerProps) {
           e.preventDefault();
           submit();
         }}
-        onKeyDown={onSaveKey}
+        onKeyDown={onEnqueueKey}
         onDragOver={(e) => {
           if (disabled || !e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
@@ -686,7 +686,7 @@ export function Composer(props: ComposerProps) {
           {footerStart}
           <span className="muted hint">
             {running
-              ? "Agent is working; the message waits here"
+              ? "Agent is working; Enqueue sends it when the turn ends"
               : attachments.uploading
                 ? "Uploading files into the Sandbox\u2026"
                 : files.length > 0 && !attachments.ready
@@ -697,8 +697,8 @@ export function Composer(props: ComposerProps) {
             {" \u00b7 "}Markdown
           </span>
           <span className="spacer" />
-          <button type="button" title="Keep this message in the Session's saved list (Ctrl+S)" disabled={!hasText} onClick={onSave}>
-            Save for later
+          <button type="button" title="Add it to the queue: sent as soon as the Agent is idle (Ctrl+S)" disabled={!hasText} onClick={onEnqueue}>
+            Enqueue
           </button>
           {running ? (
             <button type="button" className="primary stop" title="Stop the agent (cancels this turn)" onClick={onStop}>

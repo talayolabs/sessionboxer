@@ -105,7 +105,7 @@ export function SnapshotsDialog({
               <span className="muted">{formatTime(s.createdAt)}</span>
               <span className="snapshot-size">{formatMb(s.sizeBytes)}</span>
               {s.queuedMessages.length > 0 && (
-                <span className="muted" title="Saved messages queued when the snapshot was taken">
+                <span className="muted" title="Messages in the queue when the snapshot was taken">
                   {s.queuedMessages.length} queued
                 </span>
               )}

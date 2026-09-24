@@ -183,7 +183,7 @@ export const api = {
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),
   resume: (id: string) => request<Session>(`/sessions/${id}/resume`, { method: "POST" }),
   savedMessages: (id: string) => request<SavedMessage[]>(`/sessions/${id}/saved`),
-  saveMessage: (id: string, text: string) =>
+  enqueueMessage: (id: string, text: string) =>
     request<SavedMessage>(`/sessions/${id}/saved`, { method: "POST", body: JSON.stringify({ text }) }),
   updateSavedMessage: (id: string, messageId: string, patch: UpdateSavedMessageRequest) =>
     request<SavedMessage>(`/sessions/${id}/saved/${messageId}`, { method: "PATCH", body: JSON.stringify(patch) }),

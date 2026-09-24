@@ -585,14 +585,11 @@ export function Composer(props: ComposerProps) {
             </button>
           ))}
           <span className="spacer" />
-          <div className="segmented small" role="tablist" aria-label="Editor mode">
-            <button type="button" role="tab" aria-selected={mode === "raw"} className={mode === "raw" ? "active" : ""} onClick={() => onModeChange("raw")}>
-              Markdown
-            </button>
-            <button type="button" role="tab" aria-selected={mode === "rich"} className={mode === "rich" ? "active" : ""} onClick={() => onModeChange("rich")}>
-              Rich text
-            </button>
-          </div>
+          <label className="check switch preview-switch" title={mode === "rich" ? "Showing formatted text; switch off for the raw Markdown" : "Showing the raw Markdown; switch on to see it formatted"}>
+            <input type="checkbox" checked={mode === "rich"} onChange={(e) => onModeChange(e.target.checked ? "rich" : "raw")} />
+            <span className="slider" aria-hidden="true" />
+            Preview
+          </label>
           <button type="button" className="tb" title={zen ? "Exit zen mode (Esc)" : "Zen mode"} aria-pressed={zen} onClick={() => onZenChange(!zen)}>
             <Icon d={zen ? ICONS.exitZen : ICONS.zen} />
           </button>

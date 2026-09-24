@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Composer: the Markdown / Rich text pair is a single **Preview** switch (on: formatted editing, off: raw Markdown).
 - Color themes: eleven light and dark themes (Sessionboxer, GitHub, Catppuccin, Solarized, Dracula, Nord, One Dark) chosen under Global settings, or following the system with a light and a dark pick; the terminal, diagrams, code blocks and the desktop frame follow, and the VS Code in the Code pane starts in and switches live to the same palette, shipped into the box as a generated VS Code theme. Stored per browser. Needs an image rebuild (ADR-0048).
 - Naming: the sidebar's **Settings** is now **Global settings** (button and page title), and the per-session dialog in the header's ⋯ menu is **Session settings**.
 - Session header: five tabs with icons — **Desktop**, **Code**, **PRs**, **Verification** and the new **Scheduled** (the scheduled tasks that prompt this session, add and edit them there) — and a **⋯** menu with the rest: Terminal, Context, Snapshot, Fork…, Pull to folder…, Session settings, Stop, Delete, each with an icon. The phone sheet lists the same entries.

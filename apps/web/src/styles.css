@@ -82,8 +82,6 @@ code { background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
 .brand img { width: 24px; height: 24px; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
 .sidebar-footer button { width: 100%; }
-.theme-quick { display: flex; align-items: center; gap: 8px; }
-.theme-quick select { flex: 1; min-width: 0; }
 .theme-swatch { display: inline-flex; gap: 2px; padding: 3px; width: 34px; height: 18px; box-sizing: border-box; border: 1px solid; border-radius: 4px; flex: none; }
 .theme-swatch span { flex: 1; border-radius: 2px; }
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }

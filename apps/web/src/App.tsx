@@ -68,7 +68,7 @@ import { deriveContext, type Compaction, type ContextState } from "./context-mod
 import { PrPane, PrsPane } from "./PullRequests";
 import { SavedMessages } from "./SavedMessages";
 import { SessionSettingsDialog } from "./SessionSettingsDialog";
-import { ThemeFieldset, ThemeQuickSelect } from "./ThemePicker";
+import { ThemeFieldset } from "./ThemePicker";
 import {
   DockerModeNote,
   PRIVILEGED_WARNING,
@@ -588,7 +588,6 @@ export function App() {
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}
         </ul>
         <div className="sidebar-footer">
-          <ThemeQuickSelect />
           <button onClick={() => setRoute({ view: "schedules" })} title={schedules.some((s) => s.lastStatus === "failed") ? "A scheduled task failed" : undefined}>
             Scheduled tasks
             {schedules.some((s) => s.lastStatus === "failed") && <span className="warn-sign" aria-label="A scheduled task failed">⚠</span>}

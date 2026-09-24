@@ -1,8 +1,6 @@
 import { THEMES, THEME_IDS, type Theme, type ThemeId, type ThemePreference } from "@sessionboxer/protocol";
 import { readThemePreference, setThemePreference, useTheme } from "./theme";
 
-const SYSTEM = "system";
-
 /** A theme's look in four strokes: background, panel, accent and text. */
 function Swatch({ theme }: { theme: Theme }) {
   const c = theme.colors;
@@ -93,34 +91,5 @@ export function ThemeFieldset() {
         </div>
       )}
     </fieldset>
-  );
-}
-
-/** Compact theme select for the sidebar footer: the fixed themes plus "Follow the system". */
-export function ThemeQuickSelect() {
-  const active = useTheme();
-  const pref = readThemePreference();
-  const value = pref.mode === SYSTEM ? SYSTEM : pref.theme;
-  const onChange = (next: string) => {
-    if (next === SYSTEM) {
-      setThemePreference({
-        mode: "system",
-        light: pref.mode === "system" ? pref.light : active.kind === "light" ? active.id : "sessionboxer-light",
-        dark: pref.mode === "system" ? pref.dark : active.kind === "dark" ? active.id : "sessionboxer-dark",
-      });
-    } else setThemePreference({ mode: "fixed", theme: next as ThemeId });
-  };
-  return (
-    <label className="theme-quick" title="Color theme (also in Global settings)">
-      <Swatch theme={active} />
-      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Color theme">
-        {THEME_IDS.map((id) => (
-          <option key={id} value={id}>
-            {THEMES[id].label}
-          </option>
-        ))}
-        <option value={SYSTEM}>Follow the system{pref.mode === SYSTEM ? ` (${active.label})` : ""}</option>
-      </select>
-    </label>
   );
 }

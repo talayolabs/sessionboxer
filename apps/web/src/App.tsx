@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
   CONNECTORS,
@@ -62,6 +62,7 @@ import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
 import { DockerIcon } from "./DockerIcon";
+import { Icon, type IconName } from "./Icons";
 import { ContextGauge, ContextPane } from "./Context";
 import { deriveContext, type Compaction, type ContextState } from "./context-model";
 import { PrPane, PrsPane } from "./PullRequests";
@@ -746,6 +747,23 @@ export function App() {
             mobile={mobile}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
+            sessionSchedules={schedules.filter((s) => s.action.type === "prompt" && s.action.sessionId === selected.id).length}
+            schedulesPane={
+              settings && (
+                <Schedules
+                  schedules={schedules}
+                  runs={scheduleRuns}
+                  sessions={sessions}
+                  settings={settings}
+                  models={models ?? EMPTY_MODELS}
+                  options={options ?? EMPTY_OPTIONS}
+                  onOpenSession={(id) => setRoute({ view: "session", id })}
+                  loadRuns={loadScheduleRuns}
+                  run={run}
+                  forSession={selected}
+                />
+              )
+            }
           />
         )}
       </main>
@@ -858,17 +876,102 @@ function SessionSizes({
  * shows at a time and the chat is one of them (`chat`); on a desktop the chat is always there, so `chat`
  * and `hidden` mean the same.
  */
-type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "e2e" | "hidden";
-const PANES: Array<{ id: "desktop" | "code" | "terminal" | "context"; label: string; hint: string }> = [
+type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "e2e" | "schedules" | "hidden";
+/** The panes with a tab of their own in the header; Terminal and Context live in the header's "…" menu. */
+const PANES: Array<{ id: "desktop" | "code"; label: string; hint: string }> = [
   { id: "desktop", label: "Desktop", hint: "The Sandbox's Linux desktop: browser, editor, whatever the Agent opens" },
   { id: "code", label: "Code", hint: "The files in the Sandbox's workspace, with the Agent's edits" },
+];
+const MENU_PANES: Array<{ id: "terminal" | "context"; label: string; hint: string }> = [
   { id: "terminal", label: "Terminal", hint: "A shell inside the Sandbox, alongside the one the Agent uses" },
   { id: "context", label: "Context", hint: "What the Agent is carrying in its context window, and the model calls behind it" },
 ];
+const SCHEDULES_HINT = "Prompts sent to this Session on a schedule";
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "chat" || v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "e2e" || v === "hidden" ? v : "desktop";
+  return v === "chat" || v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "e2e" || v === "schedules" || v === "hidden"
+    ? v
+    : "desktop";
+}
+
+type SessionMenuItem = {
+  key: string;
+  icon: IconName;
+  label: string;
+  title?: string;
+  disabled?: boolean;
+  danger?: boolean;
+  /** A pane entry that is currently shown. */
+  active?: boolean;
+  pending?: boolean;
+  count?: number;
+  onPick: () => void;
+};
+
+/** The Session's secondary actions: a "…" dropdown on a desktop, plain buttons inside the phone's action sheet. */
+function SessionMenu({ items, mobile, pending }: { items: SessionMenuItem[]; mobile: boolean; pending: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const buttons = items.map((it) => (
+    <button
+      key={it.key}
+      type="button"
+      role={mobile ? undefined : "menuitem"}
+      className={`${mobile ? "" : "menu-item session-menu-item"}${it.danger ? " danger" : ""}${it.active ? " active" : ""}${it.pending ? " pending" : ""}`}
+      disabled={it.disabled}
+      title={it.title}
+      onClick={() => {
+        setOpen(false);
+        it.onPick();
+      }}
+    >
+      <Icon name={it.icon} />
+      {it.label}
+      {it.count !== undefined && it.count > 0 && <span className="count">{it.count}</span>}
+      {it.pending && <span className="warn-sign">pending</span>}
+    </button>
+  ));
+  if (mobile) return <>{buttons}</>;
+  return (
+    <div className="menu-anchor session-menu" ref={ref}>
+      <button
+        type="button"
+        ref={trigger}
+        className={`more-menu${pending ? " pending" : ""}`}
+        aria-label="More"
+        title={pending ? "More (a settings change applies when the current turn ends)" : "Terminal, Context, Snapshot, Fork, Settings, Stop, Delete"}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {"\u22ef"}
+      </button>
+      {open && (
+        <div className="menu session-menu-list" role="menu">
+          {buttons}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function loadComposerMode(): ComposerMode {
@@ -904,6 +1007,8 @@ function SessionView({
   mobile,
   run,
   onForked,
+  schedulesPane,
+  sessionSchedules,
 }: {
   session: Session;
   /** `null` until loaded; the Session settings dialog needs it (MCP registry, global defaults). */
@@ -935,6 +1040,9 @@ function SessionView({
   mobile: boolean;
   run: Runner;
   onForked: (s: Session) => void;
+  /** The Scheduled pane: the scheduled tasks that prompt this Session, and how many there are. */
+  schedulesPane: ReactNode;
+  sessionSchedules: number;
 }) {
   const [text, setText] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
@@ -1049,6 +1157,81 @@ function SessionView({
     ...(session.provider === "claude-code" ? [`Inspect LLM: ${session.settings.inspectLlm ? "on" : "off"}`] : []),
     ...(settingsPending ? ["A change applies when the current turn ends"] : []),
   ].join("\n");
+  const canStop = (session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId !== null;
+  const menuItems: SessionMenuItem[] = [
+    ...MENU_PANES.map(
+      (p): SessionMenuItem => ({
+        key: p.id,
+        icon: p.id,
+        label: p.label,
+        title: `${p.hint}. Click to ${pane === p.id ? "hide" : "show"} it.`,
+        active: pane === p.id,
+        onPick: () => togglePane(p.id),
+      }),
+    ),
+    {
+      key: "snapshot",
+      icon: "snapshot",
+      label: snapshotting ? "Snapshotting\u2026" : "Snapshot",
+      title: isLive ? "docker commit the Sandbox now (a fork point)" : "Snapshots need a running Sandbox",
+      disabled: !isLive || snapshotting,
+      onPick: () => void run(() => api.createSnapshot(session.id)),
+    },
+    {
+      key: "fork",
+      icon: "fork",
+      label: "Fork\u2026",
+      title: latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first",
+      disabled: !latestSnapshot,
+      onPick: () => latestSnapshot && setForkFrom(latestSnapshot.id),
+    },
+    ...(copiedRepos.length > 0
+      ? [
+          {
+            key: "pull",
+            icon: "pull" as const,
+            label: "Pull to folder\u2026",
+            title: !isLive
+              ? "Pulling needs a running Sandbox (Resume first)"
+              : session.status === "running"
+                ? "Wait for the Agent to finish its turn"
+                : `Copy the box's changes back into ${copiedRepos.map((r) => (r.source.type === "copy" ? r.source.path : "")).join(", ")} (you see what changes first)`,
+            disabled: !isLive || session.status === "running",
+            onPick: () => setSyncOpen(true),
+          },
+        ]
+      : []),
+    {
+      key: "settings",
+      icon: "settings",
+      label: "Settings",
+      title: `Session settings: model, instructions, MCP servers, Inspect LLM, snapshots, Sandbox\n${settingsSummary}`,
+      disabled: !settings,
+      pending: settingsPending,
+      count: mcpActive.length,
+      onPick: () => setSettingsOpen(true),
+    },
+    ...(canStop
+      ? [
+          {
+            key: "stop",
+            icon: "stop" as const,
+            label: "Stop",
+            title: "Stop the Sandbox; the conversation stays and Resume brings it back",
+            onPick: () => void run(() => api.stop(session.id)),
+          },
+        ]
+      : []),
+    {
+      key: "delete",
+      icon: "delete",
+      label: "Delete",
+      danger: true,
+      onPick: () => {
+        if (confirm(`Delete "${session.title}" and its Sandbox?`)) void run(() => api.deleteSession(session.id));
+      },
+    },
+  ];
   const changeModel = (model: string | null) => {
     if (!model || model === session.settings.model) return;
     setModelBusy(true);
@@ -1169,6 +1352,7 @@ function SessionView({
           </label>
         )}
         <span className="spacer" />
+        <div className="header-tabs">
         <div className="segmented" role="tablist" aria-label="Side pane">
           {PANES.map((p) => (
             <button
@@ -1179,6 +1363,7 @@ function SessionView({
               title={`${p.hint}. Click to ${pane === p.id ? "hide" : "show"} it.`}
               onClick={() => togglePane(p.id)}
             >
+              <Icon name={p.id} />
               {p.label}
             </button>
           ))}
@@ -1189,6 +1374,7 @@ function SessionView({
             title={pane === "prs" ? "Hide pull requests" : `Pull requests attached to this Session${prUnread > 0 ? ` (${prUnread} unread)` : ""}`}
             onClick={() => togglePane("prs")}
           >
+            <Icon name="prs" />
             PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
           </button>
           <button
@@ -1198,7 +1384,18 @@ function SessionView({
             title={pane === "e2e" ? "Hide the verification runs" : `End-to-end verification of the Agent's turns${e2eLive ? " (running now)" : e2eEnabled ? "" : " (off for this Session)"}`}
             onClick={() => togglePane("e2e")}
           >
+            <Icon name="verification" />
             Verification{e2eLive && <span className="count live">●</span>}
+          </button>
+          <button
+            role="tab"
+            aria-selected={pane === "schedules"}
+            className={pane === "schedules" ? "active" : ""}
+            title={pane === "schedules" ? "Hide the scheduled prompts" : `${SCHEDULES_HINT}${sessionSchedules > 0 ? ` (${sessionSchedules})` : ""}`}
+            onClick={() => togglePane("schedules")}
+          >
+            <Icon name="scheduled" />
+            Scheduled{sessionSchedules > 0 && <span className="count">{sessionSchedules}</span>}
           </button>
           {prs.map((p) => (
             <button
@@ -1214,59 +1411,13 @@ function SessionView({
             </button>
           ))}
         </div>
-        <button
-          disabled={!isLive || snapshotting}
-          title={isLive ? "docker commit the Sandbox now (a fork point)" : "Snapshots need a running Sandbox"}
-          onClick={() => void run(() => api.createSnapshot(session.id))}
-        >
-          {snapshotting ? "Snapshotting\u2026" : "Snapshot"}
-        </button>
-        <button
-          disabled={!latestSnapshot}
-          title={latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first"}
-          onClick={() => latestSnapshot && setForkFrom(latestSnapshot.id)}
-        >
-          Fork…
-        </button>
-        {copiedRepos.length > 0 && (
-          <button
-            disabled={!isLive || session.status === "running"}
-            title={
-              !isLive
-                ? "Pulling needs a running Sandbox (Resume first)"
-                : session.status === "running"
-                  ? "Wait for the Agent to finish its turn"
-                  : `Copy the box's changes back into ${copiedRepos.map((r) => (r.source.type === "copy" ? r.source.path : "")).join(", ")} (you see what changes first)`
-            }
-            onClick={() => setSyncOpen(true)}
-          >
-            Pull to folder…
+        {(session.status === "stopped" || session.status === "error") && (
+          <button title="Start the Sandbox again; the Agent picks up its conversation" onClick={() => void run(() => api.resume(session.id))}>
+            <Icon name="resume" /> Resume
           </button>
         )}
-        <button
-          className={settingsPending ? "pending" : ""}
-          disabled={!settings}
-          title={`Session settings: model, instructions, MCP servers, Inspect LLM, snapshots, Sandbox\n${settingsSummary}`}
-          onClick={() => setSettingsOpen(true)}
-        >
-          {"\u2699"} Settings
-          {mcpActive.length > 0 && <span className="count">{mcpActive.length}</span>}
-          {settingsPending && <span className="warn-sign">pending</span>}
-        </button>
-        {(session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId && (
-          <button onClick={() => void run(() => api.stop(session.id))}>Stop</button>
-        )}
-        {(session.status === "stopped" || session.status === "error") && (
-          <button onClick={() => void run(() => api.resume(session.id))}>Resume</button>
-        )}
-        <button
-          className="danger"
-          onClick={() => {
-            if (confirm(`Delete "${session.title}" and its Sandbox?`)) void run(() => api.deleteSession(session.id));
-          }}
-        >
-          Delete
-        </button>
+        <SessionMenu mobile={mobile} pending={settingsPending} items={menuItems} />
+        </div>
         </div>
       </header>
       {session.error && <div className="banner banner-error">{session.error}</div>}
@@ -1413,6 +1564,7 @@ function SessionView({
         {shown === "terminal" && <TerminalPane session={session} />}
         {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
         {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
+        {shown === "schedules" && <div className="schedules-pane">{schedulesPane}</div>}
         {shown === "e2e" && (
           <E2ePane session={session} runs={e2eRuns} enabled={e2eEnabled} globalEnabled={settings?.e2eVerify ?? true} focusRunId={e2eFocus} onToggle={setE2eVerify} />
         )}
@@ -1447,6 +1599,11 @@ function SessionView({
           {(e2eRuns.length > 0 || e2eEnabled) && (
             <button role="tab" aria-selected={shown === "e2e"} className={shown === "e2e" ? "active" : ""} onClick={() => setPane("e2e")}>
               Verify{e2eLive && <span className="count live">●</span>}
+            </button>
+          )}
+          {sessionSchedules > 0 && (
+            <button role="tab" aria-selected={shown === "schedules"} className={shown === "schedules" ? "active" : ""} title={SCHEDULES_HINT} onClick={() => setPane("schedules")}>
+              Scheduled<span className="count">{sessionSchedules}</span>
             </button>
           )}
         </nav>

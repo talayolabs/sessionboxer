@@ -510,6 +510,27 @@ button.link:hover { text-decoration: underline; }
 .segmented button { border: 0; border-radius: 0; padding: 6px 12px; }
 .segmented button + button { border-left: 1px solid var(--border); }
 .segmented button.active { background: var(--user); color: #fff; }
+.segmented button, .session-header button { display: inline-flex; align-items: center; gap: 6px; }
+.icon { flex: none; }
+
+/* The tabs, Resume and the "…" menu wrap onto the next line together. */
+.header-tabs { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; }
+
+/* The header's "…" menu: the Session's secondary actions */
+.session-header .more-menu { width: 32px; padding: 0 8px; font-size: 18px; line-height: 1; justify-content: center; }
+.menu.session-menu-list { left: auto; right: 0; min-width: 200px; }
+.menu-item.session-menu-item { flex-direction: row; align-items: center; gap: 8px; }
+.menu-item.session-menu-item:disabled { opacity: 0.45; }
+.menu-item.session-menu-item:disabled:hover { background: none; }
+.session-menu-item.active { color: var(--accent); }
+.session-menu-item.active .icon { color: var(--accent); }
+.session-menu-item.danger:hover:not(:disabled) { color: var(--error); }
+.session-menu-item.pending .icon { color: var(--warn); }
+.session-menu-item .count, .session-menu-item .warn-sign { margin-left: auto; }
+
+/* The Scheduled pane: the Schedules panel inside a Session */
+.schedules-pane { display: flex; flex-direction: column; flex: 0 0 var(--pane-width, 50%); min-width: 0; border-left: 1px solid var(--border); background: #0b0d11; overflow: auto; font-size: 13px; }
+.schedules-pane .panel { max-width: none; padding: 14px; }
 button.small { padding: 2px 8px; font-size: 12px; }
 
 /* Terminal pane: xterm.js tabs */
@@ -952,13 +973,14 @@ code.token { font-size: 12px; word-break: break-all; user-select: all; backgroun
   .app.mobile .session-actions .sheet-header .spacer { display: none; }
   .app.mobile .session-actions > .muted { max-width: none; white-space: normal; word-break: break-all; }
   .app.mobile .session-actions > .spacer { display: none; }
-  .app.mobile .session-actions > button { min-height: 44px; text-align: left; }
+  .app.mobile .session-actions > button, .app.mobile .session-actions .header-tabs > button { min-height: 44px; text-align: left; }
+  .app.mobile .header-tabs { display: contents; }
   .app.mobile .session-actions .branch-select { display: flex; align-items: center; gap: 8px; }
   .app.mobile .session-actions .branch-select select { flex: 1; }
 
   .app.mobile .session-body { min-height: 0; }
   .app.mobile .chat { min-width: 0; width: 100%; }
-  .app.mobile .desktop, .app.mobile .code, .app.mobile .terminal, .app.mobile .prs-pane, .app.mobile .e2e-pane {
+  .app.mobile .desktop, .app.mobile .code, .app.mobile .terminal, .app.mobile .prs-pane, .app.mobile .e2e-pane, .app.mobile .schedules-pane {
     flex: 1 1 auto; width: 100%; max-width: none; border-left: 0;
   }
   .app.mobile .e2e-toolbar > .muted { flex: 1 1 100%; }

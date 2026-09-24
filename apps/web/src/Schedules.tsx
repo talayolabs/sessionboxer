@@ -81,7 +81,7 @@ function actionSummary(action: ScheduleAction, sessions: Session[]): string {
 }
 
 export function Schedules({
-  schedules,
+  schedules: allSchedules,
   runs,
   sessions,
   settings,
@@ -90,6 +90,7 @@ export function Schedules({
   onOpenSession,
   loadRuns,
   run,
+  forSession,
 }: {
   schedules: Schedule[];
   runs: Record<string, ScheduleRun[]>;
@@ -100,7 +101,10 @@ export function Schedules({
   onOpenSession: (id: string) => void;
   loadRuns: (scheduleId: string) => void;
   run: Runner;
+  /** Set inside a Session: only the tasks that prompt it, and new ones target it. */
+  forSession?: Session;
 }) {
+  const schedules = forSession ? allSchedules.filter((s) => s.action.type === "prompt" && s.action.sessionId === forSession.id) : allSchedules;
   const [editing, setEditing] = useState<"new" | string | null>(null);
   const [history, setHistory] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -122,6 +126,7 @@ export function Schedules({
         options={options}
         run={run}
         onDone={() => setEditing(null)}
+        forSession={forSession}
       />
     );
   }
@@ -134,17 +139,18 @@ export function Schedules({
   return (
     <div className="panel schedules-panel">
       <div className="schedules-head">
-        <h2>Scheduled tasks</h2>
+        <h2>{forSession ? "Scheduled prompts" : "Scheduled tasks"}</h2>
         <span className="spacer" />
         <button type="button" className="primary" onClick={() => setEditing("new")}>
           + New task
         </button>
       </div>
       <p className="muted">
-        The Control Plane runs these while it is up (cron syntax, in the time zone of your choice). A task prompts one of your Sessions, or starts a
-        new one from a template.
+        {forSession
+          ? "Prompts the Control Plane sends to this Session on a schedule (cron syntax, in the time zone of your choice); all tasks are under Scheduled tasks in the sidebar."
+          : "The Control Plane runs these while it is up (cron syntax, in the time zone of your choice). A task prompts one of your Sessions, or starts a new one from a template."}
       </p>
-      {schedules.length === 0 && <p className="placeholder-inline muted">No scheduled tasks yet.</p>}
+      {schedules.length === 0 && <p className="placeholder-inline muted">{forSession ? "Nothing scheduled for this Session yet." : "No scheduled tasks yet."}</p>}
       <ul className="schedule-list">
         {schedules.map((s) => {
           const running = (runs[s.id] ?? []).some((r) => r.status === "running");
@@ -269,6 +275,7 @@ function ScheduleForm({
   options,
   run,
   onDone,
+  forSession,
 }: {
   schedule: Schedule | null;
   sessions: Session[];
@@ -277,16 +284,19 @@ function ScheduleForm({
   options: ProviderOptions;
   run: Runner;
   onDone: () => void;
+  forSession?: Session;
 }) {
   const [name, setName] = useState(schedule?.name ?? "");
   const [cron, setCron] = useState(schedule?.cron ?? "0 9 * * 1-5");
   const [timezone, setTimezone] = useState(schedule?.timezone ?? localTimeZone());
   const [enabled, setEnabled] = useState(schedule?.enabled ?? true);
   const [missedPolicy, setMissedPolicy] = useState<ScheduleMissedPolicy>(schedule?.missedPolicy ?? "skip");
-  const [actionType, setActionType] = useState<ScheduleAction["type"]>(schedule?.action.type ?? (sessions.length > 0 ? "prompt" : "new_session"));
+  const [actionType, setActionType] = useState<ScheduleAction["type"]>(
+    schedule?.action.type ?? (forSession || sessions.length > 0 ? "prompt" : "new_session"),
+  );
   const promptAction = schedule?.action.type === "prompt" ? schedule.action : null;
   const newAction = schedule?.action.type === "new_session" ? schedule.action : null;
-  const [sessionId, setSessionId] = useState(promptAction?.sessionId ?? sessions[0]?.id ?? "");
+  const [sessionId, setSessionId] = useState(promptAction?.sessionId ?? forSession?.id ?? sessions[0]?.id ?? "");
   const [text, setText] = useState(promptAction?.text ?? "");
   const [provider, setProvider] = useState<Provider>(newAction?.provider ?? "claude-code");
   const [repos, setRepos] = useState<RepoDraft[]>(() => specsToDrafts(newAction?.repos ?? []));
@@ -423,30 +433,34 @@ function ScheduleForm({
           </select>
         </label>
       </div>
-      <fieldset className="choice">
-        <legend>What to do</legend>
-        <label className="check">
-          <input type="radio" name="action" checked={actionType === "prompt"} onChange={() => setActionType("prompt")} />
-          Send a prompt to an existing Session
-        </label>
-        <label className="check">
-          <input type="radio" name="action" checked={actionType === "new_session"} onChange={() => setActionType("new_session")} />
-          Start a new Session from a template
-        </label>
-      </fieldset>
+      {!forSession && (
+        <fieldset className="choice">
+          <legend>What to do</legend>
+          <label className="check">
+            <input type="radio" name="action" checked={actionType === "prompt"} onChange={() => setActionType("prompt")} />
+            Send a prompt to an existing Session
+          </label>
+          <label className="check">
+            <input type="radio" name="action" checked={actionType === "new_session"} onChange={() => setActionType("new_session")} />
+            Start a new Session from a template
+          </label>
+        </fieldset>
+      )}
       {actionType === "prompt" && (
         <>
-          <label>
-            Session
-            <select value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
-              {sessions.length === 0 && <option value="">No Sessions yet</option>}
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.title} ({PROVIDER_LABELS[s.provider]}, {s.status})
-                </option>
-              ))}
-            </select>
-          </label>
+          {!forSession && (
+            <label>
+              Session
+              <select value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
+                {sessions.length === 0 && <option value="">No Sessions yet</option>}
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title} ({PROVIDER_LABELS[s.provider]}, {s.status})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <p className="field-hint">
             Sent right away when the Session is idle, queued behind the running turn otherwise; a stopped Session is resumed first. The Session
             keeps its transcript and snapshots.

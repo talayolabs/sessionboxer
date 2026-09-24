@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Session header: five tabs with icons — **Desktop**, **Code**, **PRs**, **Verification** and the new **Scheduled** (the scheduled tasks that prompt this session, add and edit them there) — and a **⋯** menu with the rest: Terminal, Context, Snapshot, Fork…, Pull to folder…, Settings, Stop, Delete, each with an icon. The phone sheet lists the same entries.
 - Session header: no more "empty workspace" label — **Add repository…** sits there directly, and once a repository is in the Workspace it becomes a **+** button with the same tooltip next to the repository chips.
 - The "Docker (privileged)" label is now a red Docker icon with the warning as tooltip — in the session header, the session list and on the Settings button when Sysbox is missing; Sysbox boxes and sessions without Docker show no Docker icon.
 - Session header shows the provider as its logo (Claude Code, Devin, Codex) with the name as a tooltip; the phone sheet keeps the name.

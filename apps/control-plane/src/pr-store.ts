@@ -372,7 +372,7 @@ export class PrStore {
            completed_at = excluded.completed_at, seen = excluded.seen, address = excluded.address, notified = excluded.notified`,
       );
       for (const c of checks) {
-        const id = checkId(prId, c.kind, c.name);
+        const id = checkId(prId, c.kind, c.source, c.name);
         keep.add(id);
         const old = existing.get(id);
         const sameRun = old !== undefined && old.headSha === headSha && old.state === c.state;
@@ -486,8 +486,9 @@ export function itemId(prId: string, kind: PrItem["kind"], githubId: number): st
   return `${prId}:${kind}:${githubId}`;
 }
 
-export function checkId(prId: string, kind: PrCheckItem["kind"], name: string): string {
-  return `${prId}:${kind}:${name}`;
+/** A check is followed across runs by its origin (workflow / app / build plan) and name. */
+export function checkId(prId: string, kind: PrCheckItem["kind"], source: string | null, name: string): string {
+  return `${prId}:${kind}:${source ?? ""}:${name}`;
 }
 
 const PR_SELECT = `

@@ -18,6 +18,8 @@ import {
   PAIR_FRAGMENT_KEY,
   PAIRING_TTL_MS,
   CodeOpenParams,
+  CodeStartParams,
+  CodeThemeParams,
   CompactionDetailsRequest,
   PrActionRequest,
   UpdatePrRequest,
@@ -551,9 +553,16 @@ api.get(
 // Code pane: VS Code (openvscode-server) inside the Sandbox. Lifecycle under /code-server;
 // the workbench itself, assets and its WebSocket are proxied under /code/* with the browser
 // prefix forwarded, which is what the pane's iframe loads.
-api.post("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStart(c.req.param("id"))));
+api.post("/sessions/:id/code-server", async (c) => {
+  const params = CodeStartParams.parse(await c.req.json().catch(() => ({})));
+  return c.json(await sessions.codeStart(c.req.param("id"), params));
+});
 api.get("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStatus(c.req.param("id"))));
 api.delete("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStop(c.req.param("id"))));
+api.post("/sessions/:id/code-server/theme", async (c) => {
+  await sessions.codeTheme(c.req.param("id"), CodeThemeParams.parse(await c.req.json()));
+  return c.json({ ok: true });
+});
 api.post("/sessions/:id/code-server/open", async (c) => {
   await sessions.codeOpen(c.req.param("id"), CodeOpenParams.parse(await c.req.json()));
   return c.json({ ok: true });

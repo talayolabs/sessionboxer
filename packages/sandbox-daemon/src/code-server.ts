@@ -1,10 +1,20 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import type { Duplex } from "node:stream";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { CODE_PATH, type CodeOpenParams, type CodeServerStatus } from "@sessionboxer/protocol";
+import {
+  CODE_PATH,
+  THEMES,
+  VSCODE_THEMES_EXTENSION,
+  vscodeThemeLabel,
+  type CodeOpenParams,
+  type CodeServerStatus,
+  type CodeStartParams,
+  type ThemeId,
+} from "@sessionboxer/protocol";
 import { caEnv } from "./ca-env.js";
 
 const env = process.env;
@@ -20,6 +30,15 @@ const STOP_GRACE_MS = 5_000;
 const STDERR_TAIL_LINES = 20;
 /** The built-in extension that takes open requests, relative to the server's install root. */
 const OPEN_EXTENSION = join("extensions", "sessionboxer", "package.json");
+/** The generated extension with the Sessionboxer color themes, relative to the server's install root. */
+const THEMES_EXTENSION = join("extensions", VSCODE_THEMES_EXTENSION, "package.json");
+/**
+ * The server's Machine ("Remote") settings. User settings of a web VS Code live in the browser,
+ * so this is the file the box can write; VS Code watches it and applies edits to the open
+ * windows, and its window-scoped values override the user's.
+ */
+const MACHINE_SETTINGS =
+  env.SESSIONBOXER_CODE_MACHINE_SETTINGS ?? join(homedir(), ".openvscode-server", "data", "Machine", "settings.json");
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -40,6 +59,36 @@ function signalTree(proc: ChildProcess, signal: NodeJS.Signals): void {
  * HTTP port (plain and WebSocket upgrades) are forwarded to it with the prefix stripped; the
  * `X-Forwarded-Prefix` the Control Plane sets tells the server the path the browser sees.
  */
+const COLOR_THEME_KEY = "workbench.colorTheme";
+const COLOR_THEME_LINE = /^([ \t]*)"workbench\.colorTheme"[ \t]*:[ \t]*"(?:[^"\\]|\\.)*"/m;
+
+/**
+ * The settings text with `workbench.colorTheme` set to `label`. Plain JSON is rewritten as
+ * a whole; a hand-edited file with comments or trailing commas (VS Code accepts JSONC) is only
+ * touched on the theme's own line, so nothing else in it is lost.
+ */
+export function withColorTheme(text: string, label: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = undefined;
+  }
+  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const settings = parsed as Record<string, unknown>;
+    if (settings[COLOR_THEME_KEY] === label) return text;
+    settings[COLOR_THEME_KEY] = label;
+    return `${JSON.stringify(settings, null, 2)}\n`;
+  }
+  const value = JSON.stringify(label);
+  if (COLOR_THEME_LINE.test(text)) return text.replace(COLOR_THEME_LINE, `$1${JSON.stringify(COLOR_THEME_KEY)}: ${value}`);
+  const open = text.indexOf("{");
+  if (open === -1) return `{\n  ${JSON.stringify(COLOR_THEME_KEY)}: ${value}\n}\n`;
+  const rest = text.slice(open + 1);
+  const comma = /^\s*}/.test(rest) ? "" : ",";
+  return `${text.slice(0, open + 1)}\n  ${JSON.stringify(COLOR_THEME_KEY)}: ${value}${comma}${rest}`;
+}
+
 export class CodeServer {
   private proc: ChildProcess | null = null;
   private state: CodeServerStatus["state"] = "stopped";
@@ -60,7 +109,14 @@ export class CodeServer {
     return { state: this.state, version: this.version, error: this.error, startedAt: this.startedAt };
   }
 
-  start(): Promise<CodeServerStatus> {
+  start(params: CodeStartParams = {}): Promise<CodeServerStatus> {
+    if (params.theme) {
+      try {
+        this.setTheme(params.theme);
+      } catch (e) {
+        this.log(`code theme not applied: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     if (this.state === "running") return Promise.resolve(this.status());
     if (!this.starting) {
       this.starting = this.launch().finally(() => {
@@ -122,6 +178,34 @@ export class CodeServer {
       await sleep(500);
     }
     throw new Error(`VS Code has no window connected to open the file in (${last}); open the Code pane and retry.`);
+  }
+
+  /**
+   * Switches the editor to the VS Code rendering of a Sessionboxer theme (ADR-0048) by writing
+   * `workbench.colorTheme` into the server's Machine settings: read when a window connects and,
+   * while windows are connected, applied live by VS Code's own settings watcher. Works with no
+   * server running too. A theme picked in VS Code itself lands in the browser's user settings,
+   * which this overrides: the UI's theme is the one in effect.
+   */
+  setTheme(id: ThemeId): void {
+    const root = serverRoot();
+    if (root !== null && !existsSync(join(root, THEMES_EXTENSION))) {
+      throw new Error("this Sandbox's VS Code lacks the Sessionboxer themes (it predates them); Stop → Resume the Session to install them.");
+    }
+    const label = vscodeThemeLabel(THEMES[id]);
+    let text = "";
+    try {
+      text = readFileSync(MACHINE_SETTINGS, "utf8");
+    } catch {
+      // First start: no settings yet.
+    }
+    const next = withColorTheme(text, label);
+    if (next === text) return;
+    mkdirSync(dirname(MACHINE_SETTINGS), { recursive: true });
+    const tmp = `${MACHINE_SETTINGS}.${process.pid}.tmp`;
+    writeFileSync(tmp, next);
+    renameSync(tmp, MACHINE_SETTINGS);
+    this.log(`code theme: ${label}`);
   }
 
   /** Absolute path inside the Workspace, whatever form the chat used. */

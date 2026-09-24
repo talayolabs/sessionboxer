@@ -32,6 +32,8 @@ import {
   DaemonSessionForkResult,
   DaemonSessionSwitchResult,
   CodeOpenParams,
+  type CodeStartParams,
+  type CodeThemeParams,
   CodeServerStatus,
   DaemonStatus,
   NOVNC_PORT,
@@ -664,8 +666,13 @@ export class SessionManager {
 
   // --- Code pane (VS Code in the Sandbox) ----------------------------------
 
-  async codeStart(id: string): Promise<CodeServerStatus> {
-    return CodeServerStatus.parse(await this.daemonCall(id, DAEMON_METHODS.codeStart, {}, CODE_START_TIMEOUT_MS));
+  async codeStart(id: string, params: CodeStartParams): Promise<CodeServerStatus> {
+    return CodeServerStatus.parse(await this.daemonCall(id, DAEMON_METHODS.codeStart, params, CODE_START_TIMEOUT_MS));
+  }
+
+  /** Switches the Session's VS Code to a Sessionboxer theme (ADR-0048), running or not. */
+  async codeTheme(id: string, params: CodeThemeParams): Promise<void> {
+    await this.daemonCall(id, DAEMON_METHODS.codeTheme, params);
   }
 
   async codeStatus(id: string): Promise<CodeServerStatus> {

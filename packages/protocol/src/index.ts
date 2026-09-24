@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ThemeId } from "./themes.js";
 import type { SessionUpdate, StopReason } from "@agentclientprotocol/sdk";
 
 export type { SessionUpdate, StopReason, ContentBlock, ToolCallContent, ToolCallLocation } from "@agentclientprotocol/sdk";
@@ -1972,6 +1973,14 @@ export const CodeOpenParams = z.object({
 });
 export type CodeOpenParams = z.infer<typeof CodeOpenParams>;
 
+/** The Sessionboxer theme the Session's VS Code should use (ADR-0048); the Daemon sets `workbench.colorTheme`. */
+export const CodeThemeParams = z.object({ theme: ThemeId });
+export type CodeThemeParams = z.infer<typeof CodeThemeParams>;
+
+/** `codeStart` params: the theme to have in place before the first window connects. */
+export const CodeStartParams = z.object({ theme: ThemeId.optional() });
+export type CodeStartParams = z.infer<typeof CodeStartParams>;
+
 // ---------------------------------------------------------------------------
 // Pull Requests attached to a Session. The Control Plane stores them and polls GitHub for
 // comments/reviews; the HTTP requests run inside the Sandbox (`gh api`, Daemon `gh/api`) so the
@@ -2340,6 +2349,7 @@ export const DAEMON_METHODS = {
   codeStatus: "_sessionboxer/code/status",
   codeStop: "_sessionboxer/code/stop",
   codeOpen: "_sessionboxer/code/open",
+  codeTheme: "_sessionboxer/code/theme",
   ghApi: "_sessionboxer/gh/api",
   ghLogins: "_sessionboxer/gh/logins",
   llmInspectSet: "_sessionboxer/llm/inspect/set",
@@ -2707,3 +2717,5 @@ export function parseJsonRpc(raw: string): JsonRpcMessage {
   }
   return value as JsonRpcMessage;
 }
+
+export * from "./themes.js";

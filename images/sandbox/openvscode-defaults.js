@@ -12,6 +12,8 @@
     "extensions.autoUpdate": false,
     "extensions.autoCheckUpdates": false,
     "files.autoSave": "afterDelay",
+    // The UI's default theme (ADR-0048); the Daemon writes the one in effect to the Machine settings.
+    "workbench.colorTheme": "Sessionboxer Dark",
     "git.openRepositoryInParentFolders": "always",
     // One agent per Session, the one in the chat: VS Code's own AI surface stays off.
     "chat.disableAIFeatures": true,

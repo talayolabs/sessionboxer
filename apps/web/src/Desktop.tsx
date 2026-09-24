@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { currentTheme, useTheme } from "./theme";
 import RFB, { type ClipboardEventDetail } from "@novnc/novnc";
 import type { Session } from "@sessionboxer/protocol";
 import { DESKTOP_HEIGHT, DESKTOP_WIDTH } from "@sessionboxer/protocol";
@@ -31,6 +32,12 @@ export function Desktop({ session }: { session: Session }) {
   const screen = useRef<HTMLDivElement>(null);
   const rfb = useRef<RFB | null>(null);
   const [state, setState] = useState<ConnState>("connecting");
+  const theme = useTheme();
+
+  useEffect(() => {
+    const client = rfb.current;
+    if (client) client.background = theme.colors.sunken;
+  }, [theme]);
   const [attempt, setAttempt] = useState(0);
   const [control, setControl] = useState(false);
   const [clipOpen, setClipOpen] = useState(false);
@@ -93,7 +100,7 @@ export function Desktop({ session }: { session: Session }) {
     setState("connecting");
     const client = new RFB(target, desktopUrl(session.id), { shared: true });
     client.scaleViewport = true;
-    client.background = "#0b0d11";
+    client.background = currentTheme().colors.sunken;
     client.viewOnly = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     // noVNC emits `disconnect` asynchronously, also for the disconnect() below,

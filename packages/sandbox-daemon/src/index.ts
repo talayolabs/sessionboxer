@@ -6,6 +6,8 @@ import { WebSocketServer, type WebSocket } from "ws";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
   CodeOpenParams,
+  CodeStartParams,
+  CodeThemeParams,
   DAEMON_METHODS,
   DAEMON_PORT,
   LLM_INSPECTOR_PORT,
@@ -357,13 +359,16 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       terminals.close(PtyIdParams.parse(params).id);
       return {};
     case DAEMON_METHODS.codeStart:
-      return codeServer.start();
+      return codeServer.start(CodeStartParams.parse(params ?? {}));
     case DAEMON_METHODS.codeStatus:
       return codeServer.status();
     case DAEMON_METHODS.codeStop:
       return codeServer.stop();
     case DAEMON_METHODS.codeOpen:
       await codeServer.open(CodeOpenParams.parse(params));
+      return {};
+    case DAEMON_METHODS.codeTheme:
+      codeServer.setTheme(CodeThemeParams.parse(params).theme);
       return {};
     case DAEMON_METHODS.ghApi:
       return ghApi.request(DaemonGhApiParams.parse(params));

@@ -8,6 +8,8 @@ import type {
   AuthPairRedeemRequest,
   AuthPrincipal,
   CodeOpenParams,
+  CodeStartParams,
+  CodeThemeParams,
   CodeServerStatus,
   CompactionDetails,
   CompactionDetailsRequest,
@@ -229,7 +231,10 @@ export const api = {
     request<PtyInfo>(`/sessions/${id}/terminals`, { method: "POST", body: JSON.stringify({ cols, rows }) }),
   closeTerminal: (id: string, ptyId: string) =>
     request<void>(`/sessions/${id}/terminals/${ptyId}`, { method: "DELETE" }),
-  codeStart: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "POST" }),
+  codeStart: (id: string, params: CodeStartParams) =>
+    request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "POST", body: JSON.stringify(params) }),
+  codeTheme: (id: string, params: CodeThemeParams) =>
+    request<{ ok: true }>(`/sessions/${id}/code-server/theme`, { method: "POST", body: JSON.stringify(params) }),
   codeStatus: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`),
   codeStop: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "DELETE" }),
   codeOpen: (id: string, target: CodeOpenParams) =>

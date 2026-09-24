@@ -5,7 +5,7 @@ import { PassThrough, Readable } from "node:stream";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { pack as packStream } from "tar-stream";
-import { DAEMON_PORT, NOVNC_PORT, type DockerMode } from "@sessionboxer/protocol";
+import { DAEMON_PORT, NOVNC_PORT, VSCODE_THEMES_EXTENSION, vscodeThemeExtensionFiles, type DockerMode } from "@sessionboxer/protocol";
 import { SANDBOX_CA_FILE } from "./ca-certs.js";
 import { ROOT_DIR, SANDBOX_HOST_ALIAS, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 import { log } from "./log.js";
@@ -17,25 +17,32 @@ export const SYSBOX_RUNTIME = "sysbox-runc";
 const LOOPBACK = "127.0.0.1";
 
 /**
- * The Sandbox Daemon, the protocol package and the VS Code extension as they are in this
+ * The Sandbox Daemon, the protocol package and the VS Code extensions as they are in this
  * checkout, copied into every Sandbox before it starts so they always match the Control
  * Plane, also for Sandboxes created from an older image or resumed or forked from a snapshot
  * that carries older copies. Their npm dependencies still come from the image (`npm run
  * build:image` when the Dockerfile or those dependencies change).
  */
-interface SyncEntry {
+interface SyncEntryBase {
+  /** Directory in the Sandbox that receives the contents as a subdirectory named `name`. */
+  dest: string;
+  name: string;
+  /** Skipped, with a log line, when `dest` is missing in the Sandbox (an image without that component). */
+  optional?: boolean;
+}
+interface SyncDirEntry extends SyncEntryBase {
   /** Directory in this checkout whose contents go into the Sandbox. */
   host: string;
   /** File that must exist in `host` for the checkout to count as built. */
   marker: string;
-  /** Directory in the Sandbox that receives `host` as a subdirectory named `name`. */
-  dest: string;
-  name: string;
   /** Files (relative to `host`) that keep the executable bit. */
   executable?: string[];
-  /** Skipped, with a log line, when `dest` is missing in the Sandbox (an image without that component). */
-  optional?: boolean;
 }
+interface SyncFilesEntry extends SyncEntryBase {
+  /** Generated contents by relative path. */
+  files: () => Record<string, string>;
+}
+type SyncEntry = SyncDirEntry | SyncFilesEntry;
 const SANDBOX_SYNC: SyncEntry[] = [
   { host: join(ROOT_DIR, "packages/protocol/dist"), marker: "index.js", dest: "/opt/sessionboxer/protocol", name: "dist" },
   {
@@ -53,6 +60,7 @@ const SANDBOX_SYNC: SyncEntry[] = [
     name: "sessionboxer",
     optional: true,
   },
+  { files: vscodeThemeExtensionFiles, dest: "/opt/openvscode-server/extensions", name: VSCODE_THEMES_EXTENSION, optional: true },
 ];
 
 /**
@@ -241,17 +249,8 @@ export class SandboxDocker {
   async syncDaemon(containerId: string): Promise<string[]> {
     const skipped: string[] = [];
     for (const entry of SANDBOX_SYNC) {
-      if (!existsSync(join(entry.host, entry.marker))) throw new Error(`${entry.host} is not built; run \`npm run build\``);
-      const executable = new Set((entry.executable ?? []).map((f) => join(entry.name, f)));
-      const archive = pack(entry.host, {
-        map: (header) => {
-          header.name = join(entry.name, header.name);
-          header.uid = 0;
-          header.gid = 0;
-          header.mode = header.type === "directory" || executable.has(header.name) ? 0o755 : 0o644;
-          return header;
-        },
-      });
+      if ("host" in entry && !existsSync(join(entry.host, entry.marker))) throw new Error(`${entry.host} is not built; run \`npm run build\``);
+      const archive = "host" in entry ? packDir(entry) : packFiles(entry);
       if (entry.optional && !(await this.pathExists(containerId, entry.dest))) {
         archive.destroy();
         skipped.push(`${entry.dest}/${entry.name} (no ${entry.dest} in this Sandbox's image)`);
@@ -537,4 +536,27 @@ function missingContentDigest(e: unknown): string | null {
 
 function isStatus(e: unknown, status: number): boolean {
   return typeof e === "object" && e !== null && (e as { statusCode?: unknown }).statusCode === status;
+}
+
+function packDir(entry: SyncDirEntry): Readable {
+  const executable = new Set((entry.executable ?? []).map((f) => join(entry.name, f)));
+  return pack(entry.host, {
+    map: (header) => {
+      header.name = join(entry.name, header.name);
+      header.uid = 0;
+      header.gid = 0;
+      header.mode = header.type === "directory" || executable.has(header.name) ? 0o755 : 0o644;
+      return header;
+    },
+  });
+}
+
+function packFiles(entry: SyncFilesEntry): Readable {
+  const tar = packStream();
+  const mtime = new Date();
+  for (const [path, content] of Object.entries(entry.files())) {
+    tar.entry({ name: join(entry.name, path), mode: 0o644, uid: 0, gid: 0, mtime }, content);
+  }
+  tar.finalize();
+  return Readable.from(tar);
 }

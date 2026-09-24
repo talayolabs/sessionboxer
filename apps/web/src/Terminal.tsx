@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { currentTheme, useTheme, xtermTheme } from "./theme";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -186,6 +187,12 @@ function TerminalView({ sessionId, pty, onClose }: { sessionId: string; pty: Pty
   const [state, setState] = useState<ViewState>({ kind: "connecting" });
   const [menu, setMenu] = useState<MenuState>(null);
   const [menuNote, setMenuNote] = useState<string | null>(null);
+  const theme = useTheme();
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.theme = xtermTheme(theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!menu) return;
@@ -233,7 +240,7 @@ function TerminalView({ sessionId, pty, onClose }: { sessionId: string; pty: Pty
       fontSize: 13,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
       scrollback: 5000,
-      theme: { background: "#0b0d11" },
+      theme: xtermTheme(currentTheme()),
     });
     termRef.current = term;
     const fit = new FitAddon();

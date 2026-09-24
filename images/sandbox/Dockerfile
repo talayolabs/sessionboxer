@@ -28,6 +28,15 @@ COPY packages/sandbox-daemon packages/sandbox-daemon
 RUN npm run build -w @sessionboxer/computer-use-mcp \
     && npm run build -w @sessionboxer/protocol \
     && npm run build -w @sessionboxer/sandbox-daemon
+# The VS Code extension with the Sessionboxer color themes, generated from the same palettes
+# the UI uses (ADR-0048).
+RUN node --input-type=module -e ' \
+      import { mkdirSync, writeFileSync } from "node:fs"; import { dirname, join } from "node:path"; \
+      import { vscodeThemeExtensionFiles } from "./packages/protocol/dist/index.js"; \
+      for (const [path, content] of Object.entries(vscodeThemeExtensionFiles())) { \
+        const file = join("/src/out/sessionboxer-themes", path); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, content); \
+      }' \
+    && test -s /src/out/sessionboxer-themes/package.json
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime image
@@ -117,9 +126,11 @@ COPY images/sandbox/openvscode-workbench.css /opt/openvscode-server/out/vs/code/
 RUN html=/opt/openvscode-server/out/vs/code/browser/workbench/workbench.html \
     && sed -i 's|</head>|\t<script src="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.js"></script>\n\t<link rel="stylesheet" href="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/sessionboxer.css">\n\t</head>|' "$html" \
     && grep -q sessionboxer.js "$html" && grep -q sessionboxer.css "$html"
-# Built-in extension: lets the Daemon open a file (at a line) in the connected editor, which
-# is how paths clicked in the chat land in the Code pane.
+# Built-in extensions: one lets the Daemon open a file (at a line) in the connected editor,
+# which is how paths clicked in the chat land in the Code pane; the other carries the
+# Sessionboxer color themes the Daemon switches between (ADR-0048).
 COPY images/sandbox/vscode-sessionboxer /opt/openvscode-server/extensions/sessionboxer
+COPY --from=build /src/out/sessionboxer-themes /opt/openvscode-server/extensions/sessionboxer-themes
 
 # Kokoro TTS model (Apache-2.0) that the computer-use MCP speaks recording captions with, in
 # sherpa-onnx's packaging (ADR-0029). The release tag is rolling, so the checksum pins the

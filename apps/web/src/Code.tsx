@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CodeOpenParams, CodeServerStatus, Session } from "@sessionboxer/protocol";
 import { api, codeUrl } from "./api";
+import { currentTheme, useTheme } from "./theme";
 
 /** A file to show; `nonce` makes clicking the same reference twice open it twice. */
 export type CodeTarget = CodeOpenParams & { nonce: number };
@@ -51,7 +52,7 @@ export function CodePane({ session, target = null }: { session: Session; target?
     setBusy(true);
     setError(null);
     try {
-      const next = await api.codeStart(session.id);
+      const next = await api.codeStart(session.id, { theme: currentTheme().id });
       setStatus(next);
       if (next.state === "failed") setError(next.error ?? "VS Code failed to start.");
       else setGeneration((g) => g + 1);
@@ -75,6 +76,7 @@ export function CodePane({ session, target = null }: { session: Session; target?
         if (current.state === "running") {
           setStatus(current);
           setGeneration((g) => g + 1);
+          api.codeTheme(session.id, { theme: currentTheme().id }).catch((e: unknown) => console.warn("VS Code theme not applied:", e));
           return;
         }
         await start();
@@ -86,6 +88,19 @@ export function CodePane({ session, target = null }: { session: Session; target?
       cancelled = true;
     };
   }, [session.id, live, start]);
+
+  // The UI theme switched while this pane shows the editor: follow it (ADR-0048). The first
+  // theme is already in place from `start`, so a running server only hears about changes.
+  const theme = useTheme();
+  const themeRef = useRef(theme.id);
+  useEffect(() => {
+    if (themeRef.current === theme.id) return;
+    themeRef.current = theme.id;
+    if (!live) return;
+    api.codeTheme(session.id, { theme: theme.id }).catch((e: unknown) => {
+      setError(`Could not switch the VS Code theme: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  }, [session.id, live, theme]);
 
   const restart = async () => {
     setBusy(true);

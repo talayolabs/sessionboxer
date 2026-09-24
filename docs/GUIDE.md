@@ -164,6 +164,10 @@ Files the chat names are links into that editor: a project path in a reply, a pr
 
 **Terminal** (in the header's ⋯ menu) opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback. Copy and paste work like in a desktop terminal: select text and press Ctrl+C (with a selection it copies; without one it interrupts, as usual), Ctrl+Shift+C or Ctrl+Insert; paste with Ctrl+V, Ctrl+Shift+V or Shift+Insert (⌘C / ⌘V on a Mac). Right-click for a menu with Copy, Paste, Select all and Clear — the desktop app has no browser menu, so this is the mouse route there too. Paste from the menu needs a secure page (`127.0.0.1` or https), which is where browsers allow reading the clipboard; the keyboard shortcuts work everywhere.
 
+### Color themes
+
+Pick a theme at the foot of the session list or under **Global settings → Theme**: Sessionboxer Dark (the default) and Light, GitHub, Catppuccin, Solarized, Dracula, Nord, One Dark — eleven, light and dark. **Follow the system** takes a light and a dark choice and switches with your operating system. The whole window follows — chat, terminal, diagrams, code blocks, the desktop's frame — and so does the VS Code in the Code pane: it starts in the theme you have and switches live when you change it, since the same palette is shipped into the box as a VS Code color theme. The choice is per browser (stored in it, not in `config.json`), so a phone and a laptop can differ; two browsers on the same session's VS Code will each impose their theme on it in turn, and a theme picked in VS Code's own picker is overridden by the session's. Needs the current image for a fresh box; an older box gets the themes on Stop → Resume.
+
 ### How full is the context
 
 Every agent works inside a context window, and the fuller it gets the worse it works: it forgets earlier instructions, repeats itself, and at some point the agent *compacts* the conversation into a summary and loses detail. Sessionboxer shows where you are.

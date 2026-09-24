@@ -982,14 +982,18 @@ export type DeleteSnapshotsResult = z.infer<typeof DeleteSnapshotsResult>;
 /**
  * What the fork does with the origin's conversation: `continue` copies the transcript up to the
  * Snapshot and the Agent resumes its own session from the image (it remembers everything);
- * `new` keeps only the Snapshot's files and tools — empty transcript, the Agent starts a session.
+ * `new` keeps only the Snapshot's files and tools — empty transcript, the Agent starts a session;
+ * `handoff` is `new` plus a handoff document the origin's Agent writes now (a hidden turn in the
+ * origin, from its whole memory) and the fork's Agent gets as its first message.
  */
-export const ForkConversation = z.enum(["continue", "new"]);
+export const ForkConversation = z.enum(["continue", "new", "handoff"]);
 export type ForkConversation = z.infer<typeof ForkConversation>;
 
 export const ForkSessionRequest = z.object({
   snapshotId: z.string(),
   conversation: ForkConversation.default("continue"),
+  /** The fork's Agent; the origin's when omitted. Another one needs `new` or `handoff` (an Agent's memory cannot be loaded into another). */
+  provider: Provider.optional(),
   title: z.string().min(1).max(200).optional(),
   /** Settings the fork differs in from the origin (the rest is copied). */
   settings: SessionSettingsInput.default({}),
@@ -1552,15 +1556,31 @@ export type ConnectorFlow = z.infer<typeof ConnectorFlow>;
 // `update` events carry ACP `session/update` payloads verbatim.
 // ---------------------------------------------------------------------------
 
+/**
+ * Who wrote a `user_prompt` that is not the user's own words (shown as a marker): `e2e` the Control
+ * Plane's hidden verification prompt; `handoff_request` its request to write a handoff for a fork;
+ * `handoff` the handoff document a fork starts with.
+ */
+export const PromptOrigin = z.enum(["e2e", "handoff_request", "handoff"]);
+export type PromptOrigin = z.infer<typeof PromptOrigin>;
+
 export type SessionEventBody =
-  /** `origin: "e2e"` marks the Control Plane's hidden verification prompt (shown as a marker, not as the user's words). */
-  | { type: "user_prompt"; text: string; attachments?: PromptAttachment[]; origin?: "e2e" }
+  | { type: "user_prompt"; text: string; attachments?: PromptAttachment[]; origin?: PromptOrigin }
   | { type: "update"; update: SessionUpdate }
   | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage }
   | { type: "agent_error"; message: string }
   | { type: "status"; status: SessionStatus; error?: string }
   /** First event of a forked Session: everything before it was copied from the origin (nothing, with `conversation: "new"`). */
-  | { type: "forked"; fromSessionId: string; fromTitle: string; snapshotId: string; snapshotOrdinal: number; conversation?: ForkConversation }
+  | {
+      type: "forked";
+      fromSessionId: string;
+      fromTitle: string;
+      snapshotId: string;
+      snapshotOrdinal: number;
+      conversation?: ForkConversation;
+      /** The origin's Agent, when the fork runs another one. */
+      fromProvider?: Provider;
+    }
   /** The Daemon restarted the Agent with a new MCP server set (names, `desktop` excluded). */
   | { type: "mcp_changed"; servers: string[] }
   /** The Agent switched model (`name` is the human label, `model` the value). */
@@ -2711,8 +2731,6 @@ export type DaemonSessionSwitchResult = z.infer<typeof DaemonSessionSwitchResult
  */
 export const DaemonPromptParams = PromptRequest.innerType().extend({
   note: z.string().optional(),
-  /** `e2e`: the Control Plane's hidden verification prompt; recorded on the `user_prompt` event. */
-  origin: z.enum(["e2e"]).optional(),
 });
 export type DaemonPromptParams = z.infer<typeof DaemonPromptParams>;
 

@@ -68,6 +68,8 @@ import {
   type ForkSessionRequest,
   type OptionValues,
   type PromptRequest,
+  type PromptOrigin,
+  PROVIDER_LABELS,
   type PushMessage,
   sessionRoute,
   type ProviderModels,
@@ -108,6 +110,7 @@ import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { E2eVerification } from "./e2e.js";
+import { extractHandoff, handoffMessage, handoffRequestPrompt, isHiddenTurn, lastAgentMessage } from "./handoff.js";
 import { MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
@@ -145,7 +148,11 @@ export class SessionManager {
   private readonly clients = new Map<string, DaemonClient>();
   private readonly terminalSinks = new Map<string, Set<TerminalSink>>();
   private readonly stopping = new Set<string>();
-  private readonly pendingPrompts = new Map<string, PromptRequest>();
+  private readonly pendingPrompts = new Map<string, PromptRequest & { origin?: PromptOrigin }>();
+  /** Origin the next `user_prompt` event of a Session is recorded with (set by `prompt` for a hidden prompt). */
+  private readonly promptOrigins = new Map<string, PromptOrigin>();
+  /** Handoffs being written, by origin Session: settled by the end of the hidden turn, or aborted when the origin goes away. */
+  private readonly handoffs = new Map<string, { forkId: string; settle: (outcome: { text: string } | { error: string }) => void }>();
   /** Turns ended per Session, to notice a turn that was over before the prompt RPC even returned. */
   private readonly turnEnds = new Map<string, number>();
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
@@ -848,17 +855,26 @@ export class SessionManager {
    * filesystem as the origin at that moment (Workspace, installed tools, the
    * Agent's own session files), with the transcript up to the Snapshot copied
    * over — or, with `conversation: "new"`, an empty transcript and an Agent that starts
-   * a session of its own (the Daemon ignores the origin's on the first boot). The origin
-   * Session, its Sandbox and its saved messages are untouched.
+   * a session of its own (the Daemon ignores the origin's on the first boot), or, with
+   * `"handoff"`, that plus a handoff document the origin's Agent writes first (a hidden
+   * turn in the origin) and the fork's Agent gets as its first message. The fork's Agent
+   * may be another Provider with `new` or `handoff`. The origin Session, its Sandbox and
+   * its saved messages are untouched.
    */
   async fork(fromId: string, req: ForkSessionRequest): Promise<Session> {
     const origin = this.get(fromId);
     const snapshot = this.db.getSnapshot(fromId, req.snapshotId);
     if (!snapshot) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
     const settings = this.settings();
-    if (!providerReady(origin.provider, settings)) {
-      throw new HttpError(400, providerSetupHint(origin.provider));
+    const provider = req.provider ?? origin.provider;
+    const sameAgent = provider === origin.provider;
+    if (!sameAgent && req.conversation === "continue") {
+      throw new HttpError(400, `${PROVIDER_LABELS[provider]} cannot continue ${PROVIDER_LABELS[origin.provider]}'s conversation; start a new one or hand off.`);
     }
+    if (!providerReady(provider, settings)) {
+      throw new HttpError(400, providerSetupHint(provider));
+    }
+    if (req.conversation === "handoff") this.assertCanWriteHandoff(origin);
     if (!(await this.docker.imageExists(snapshot.imageId))) {
       throw new HttpError(409, `The image of snapshot ${snapshot.ordinal} is gone from Docker; delete the snapshot.`);
     }
@@ -874,8 +890,8 @@ export class SessionManager {
     const now = new Date().toISOString();
     const session: Session = {
       id,
-      title: req.title ?? `${origin.title} (fork ${snapshot.ordinal})`,
-      provider: origin.provider,
+      title: req.title ?? `${origin.title} (${sameAgent ? "fork" : `${PROVIDER_LABELS[provider]}, fork`} ${snapshot.ordinal})`,
+      provider,
       status: "creating",
       workspaceSource: {
         type: "fork",
@@ -886,9 +902,10 @@ export class SessionManager {
       // The Snapshot holds the origin's directories; their records come along (fresh ids, state re-read on connect).
       repos: origin.repos.map((r) => ({ ...r, id: randomBytes(4).toString("hex"), git: null })),
       settings: {
-        model: input.model !== undefined ? input.model : base.model,
-        options: input.options ?? base.options,
-        inspectLlm: origin.provider === "claude-code" && (input.inspectLlm ?? base.inspectLlm),
+        // Model and options are the origin Provider's; another Provider starts from its defaults.
+        model: input.model !== undefined ? input.model : sameAgent ? base.model : null,
+        options: input.options ?? (sameAgent ? base.options : {}),
+        inspectLlm: provider === "claude-code" && (input.inspectLlm ?? (sameAgent ? base.inspectLlm : true)),
         mcpEnabled: knownMcpIds(settings, input.mcpEnabled ?? base.mcpEnabled),
         instructions: (input.instructions ?? base.instructions).trim(),
         autoSnapshot: input.autoSnapshot !== undefined ? input.autoSnapshot : base.autoSnapshot,
@@ -928,18 +945,76 @@ export class SessionManager {
       snapshotId: snapshot.id,
       snapshotOrdinal: snapshot.ordinal,
       conversation: req.conversation,
+      ...(sameAgent ? {} : { fromProvider: origin.provider }),
     });
     for (const text of req.savedMessages) this.db.insertSavedMessage(id, text);
     this.broadcast({ type: "session", session });
     this.broadcast({ type: "event", event: marker });
-    if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
     void this.copyBaselines(origin, session);
 
+    if (req.conversation === "handoff") {
+      void this.forkWithHandoff(origin, session, snapshot.imageId, snapshot.ordinal, settings, req.prompt);
+      return session;
+    }
+    if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
     void this.provision(session, settings, snapshot.imageId, req.conversation === "new").catch((e: unknown) => {
       this.log(`provision fork ${id} failed: ${String(e)}`);
       this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
     });
     return session;
+  }
+
+  /** The origin's Agent must be there, idle, to write the handoff; a clear 409 otherwise. */
+  private assertCanWriteHandoff(origin: Session): void {
+    const who = `${PROVIDER_LABELS[origin.provider]} in "${origin.title}"`;
+    if (this.handoffs.has(origin.id)) throw new HttpError(409, `${who} is already writing a handoff for another fork; wait for it.`);
+    if (origin.status === "stopped") throw new HttpError(409, `${who} has to write the handoff: resume the Session first (or fork with a new conversation).`);
+    if (origin.status === "running") throw new HttpError(409, `${who} is still working; the handoff can be written once the turn has ended.`);
+    if (origin.status === "error") throw new HttpError(409, `${who} is in error state (${origin.error ?? "unknown"}); fork with a new conversation instead.`);
+    if (origin.status !== "idle" || !this.clients.get(origin.id)?.connected) {
+      throw new HttpError(503, `${who} is not reachable yet; retry in a moment.`);
+    }
+  }
+
+  /**
+   * The handoff fork's path: the origin's Agent writes the document in a hidden turn (its end,
+   * or the origin going away, settles it), then the fork is provisioned with the document as its
+   * pending first prompt. A failure leaves the fork in error state saying what happened.
+   */
+  private async forkWithHandoff(origin: Session, fork: Session, imageId: string, snapshotOrdinal: number, settings: Settings, userPrompt: string | undefined): Promise<void> {
+    let doc: string;
+    try {
+      const written = new Promise<{ text: string } | { error: string }>((settle) => this.handoffs.set(origin.id, { forkId: fork.id, settle }));
+      await this.prompt(origin.id, { text: handoffRequestPrompt(origin.provider, fork.provider) }, "handoff_request");
+      const outcome = await written;
+      if ("error" in outcome) throw new Error(outcome.error);
+      const extracted = extractHandoff(outcome.text);
+      if ("refusal" in extracted) throw new Error(`${PROVIDER_LABELS[origin.provider]} wrote no handoff, it replied: ${extracted.refusal}`);
+      doc = extracted.doc;
+    } catch (e) {
+      this.handoffs.delete(origin.id);
+      const message = e instanceof Error ? e.message : String(e);
+      this.log(`handoff ${origin.id} → ${fork.id} failed: ${message}`);
+      if (this.db.getSession(fork.id)) this.setStatus(fork.id, "error", `The handoff could not be written — ${message.replace(/[.\s]+$/, "")}. Delete this Session and fork again.`);
+      return;
+    }
+    this.handoffs.delete(origin.id);
+    if (!this.db.getSession(fork.id)) return;
+    this.pendingPrompts.set(fork.id, { text: handoffMessage(doc, origin, origin.provider, fork.provider, snapshotOrdinal, userPrompt), origin: "handoff" });
+    try {
+      await this.provision(fork, settings, imageId, true);
+    } catch (e) {
+      this.log(`provision fork ${fork.id} failed: ${String(e)}`);
+      this.setStatus(fork.id, "error", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** The hidden handoff turn of `originId` ended (or the origin went away): hands its outcome to the waiting fork. */
+  private settleHandoff(originId: string, outcome: { text: string } | { error: string }): void {
+    const pending = this.handoffs.get(originId);
+    if (!pending) return;
+    this.handoffs.delete(originId);
+    pending.settle(outcome);
   }
 
   /** Environment a Session's Sandbox is created with. */
@@ -1063,7 +1138,12 @@ export class SessionManager {
     return "sent";
   }
 
-  async prompt(id: string, req: PromptRequest, origin?: "e2e"): Promise<void> {
+  /**
+   * `origin` marks a prompt that is not the user's own words (a hidden verification or handoff
+   * request, or a fork's handoff): it is recorded on the `user_prompt` event the Daemon sends
+   * back, which the UI shows as a marker.
+   */
+  async prompt(id: string, req: PromptRequest, origin?: PromptOrigin): Promise<void> {
     const s = this.get(id);
     if (s.status === "stopped") throw new HttpError(409, "Session is stopped; resume it first.");
     if (s.status === "running") throw new HttpError(409, "The Agent is still working on the previous prompt.");
@@ -1071,20 +1151,25 @@ export class SessionManager {
     const client = this.clients.get(id);
     if (!client?.connected) {
       if (s.status === "creating") {
-        this.pendingPrompts.set(id, req);
+        this.pendingPrompts.set(id, origin ? { ...req, origin } : req);
         this.prs.onPrompt(id, req.text);
         return;
       }
       throw new HttpError(503, "Sandbox Daemon is not connected yet; retry in a moment.");
     }
     const params: DaemonPromptParams = req.attachments?.length ? { text: req.text, attachments: req.attachments } : { text: req.text };
-    if (origin) params.origin = origin;
     const notes = this.promptNotes.get(id) ?? [];
     const sent = notes.length;
     const note = this.pendingNote(id);
     if (note !== undefined) params.note = note;
     const endedBefore = this.turnEnds.get(id) ?? 0;
-    await client.request(DAEMON_METHODS.prompt, params);
+    if (origin) this.promptOrigins.set(id, origin);
+    try {
+      await client.request(DAEMON_METHODS.prompt, params);
+    } catch (e) {
+      this.promptOrigins.delete(id);
+      throw e;
+    }
     notes.splice(0, sent);
     // A slash command answered locally ends its turn within the same batch of Daemon messages
     // as the RPC reply; the Daemon's own status notifications are authoritative then.
@@ -1550,6 +1635,7 @@ export class SessionManager {
       }
       if (s.status === "running") await this.cancelAndWait(id);
       this.e2e.abortActive(id, "The Sandbox was stopped during the verification.");
+      this.settleHandoff(id, { error: "the origin Session was stopped while its Agent was writing it." });
       this.disconnect(id);
       await this.docker.stop(s.containerId);
       const stopped = this.setStatus(id, "stopped");
@@ -1592,8 +1678,10 @@ export class SessionManager {
     const s = this.get(id);
     this.stopping.add(id);
     this.e2e.abortActive(id, "The Session was deleted during the verification.");
+    this.settleHandoff(id, { error: "the origin Session was deleted while its Agent was writing it." });
     this.disconnect(id);
     this.pendingPrompts.delete(id);
+    this.promptOrigins.delete(id);
     try {
       if (s.containerId) await this.docker.remove(s.containerId);
     } finally {
@@ -1920,7 +2008,8 @@ export class SessionManager {
     const pending = this.pendingPrompts.get(id);
     if (pending && !status.turnActive) {
       this.pendingPrompts.delete(id);
-      this.prompt(id, pending).catch((e: unknown) => this.log(`pending prompt ${id} failed: ${String(e)}`));
+      const { origin, ...req } = pending;
+      this.prompt(id, req, origin).catch((e: unknown) => this.log(`pending prompt ${id} failed: ${String(e)}`));
     } else if (!status.turnActive) {
       void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
     }
@@ -1956,7 +2045,15 @@ export class SessionManager {
   private onDaemonEvent(id: string, ev: DaemonEvent): void {
     const cursor = this.db.getDaemonCursor(id);
     if (cursor && cursor.epoch === ev.epoch && ev.seq <= cursor.lastSeq) return;
-    const body = ev.body.type === "llm_call" ? { ...ev.body, call: { ...ev.body.call, ordinal: this.db.countLlmCalls(id) + 1 } } : ev.body;
+    let body = ev.body;
+    if (body.type === "llm_call") body = { ...body, call: { ...body.call, ordinal: this.db.countLlmCalls(id) + 1 } };
+    if (body.type === "user_prompt") {
+      const origin = this.promptOrigins.get(id);
+      if (origin) {
+        this.promptOrigins.delete(id);
+        body = { ...body, origin };
+      }
+    }
     const stored = this.db.appendEvent(id, body, ev.ts);
     this.db.setDaemonCursor(id, ev.epoch, ev.seq);
     this.broadcast({ type: "event", event: stored });
@@ -1972,8 +2069,13 @@ export class SessionManager {
       const turn = this.turnEvents(id, stored.seq);
       const verification = E2eVerification.isVerificationTurn(turn);
       if (verification) this.e2e.onVerificationTurnEnded(id, ev.body.type === "turn_ended" ? ev.body.stopReason : "error");
+      if (this.handoffs.has(id) && turn[0]?.body.type === "user_prompt" && turn[0].body.origin === "handoff_request") {
+        if (ev.body.type === "agent_error") this.settleHandoff(id, { error: `${PROVIDER_LABELS[s?.provider ?? "claude-code"]} failed: ${ev.body.message}` });
+        else if (ev.body.stopReason !== "end_turn") this.settleHandoff(id, { error: `the turn ended early (${ev.body.stopReason}).` });
+        else this.settleHandoff(id, { text: lastAgentMessage(turn) });
+      }
       if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
-        void this.afterTurn(id, stored.seq, verification ? [] : turn).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
+        void this.afterTurn(id, stored.seq, isHiddenTurn(turn) ? [] : turn).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
       } else {
         if (s?.queueRunning) {
           this.log(`queue ${id} paused after ${ev.body.type}`);
@@ -1995,7 +2097,7 @@ export class SessionManager {
   async e2eRunNow(id: string): Promise<E2eRun> {
     this.get(id);
     const visible = this.db.listEvents(id, 0, 100_000, this.db.activeScope(id));
-    const start = visible.map((e) => e.body.type === "user_prompt" && e.body.origin !== "e2e").lastIndexOf(true);
+    const start = visible.map((e) => e.body.type === "user_prompt" && e.body.origin !== "e2e" && e.body.origin !== "handoff_request").lastIndexOf(true);
     const turn = start === -1 ? [] : visible.slice(start);
     return this.e2e.runNow(id, visible[visible.length - 1]?.seq ?? 0, turn);
   }
@@ -2037,6 +2139,7 @@ export class SessionManager {
     const current = this.db.getSession(id);
     if (!current) throw new HttpError(404, `session ${id} not found`);
     if (current.status === status && current.error === error) return current;
+    if (status === "error") this.settleHandoff(id, { error: `the origin Session failed while its Agent was writing it (${error ?? "unknown"}).` });
     const s = this.update(id, { status, error });
     const stored = this.db.appendEvent(id, error ? { type: "status", status, error } : { type: "status", status });
     this.broadcast({ type: "event", event: stored });

@@ -63,6 +63,7 @@ import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
+import { providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
 import { Icon, type IconName } from "./Icons";
 import { ContextGauge, ContextPane } from "./Context";
@@ -119,18 +120,6 @@ function describeCodexLogin(login: CodexLogin): string {
   if (login.plan) parts.push(`${login.plan} plan`);
   if (login.lastRefresh) parts.push(`refreshed ${new Date(login.lastRefresh).toLocaleString()}`);
   return parts.join(", ");
-}
-
-/** Whether the secret a Session of `provider` needs to talk to its model is configured. */
-function providerTokenSet(settings: PublicSettings, provider: Provider): boolean {
-  switch (provider) {
-    case "claude-code":
-      return settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
-    case "devin":
-      return settings.providerSecretsSet.devin.WINDSURF_API_KEY;
-    case "codex":
-      return settings.providerSecretsSet.codex.CODEX_AUTH_JSON;
-  }
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
@@ -738,6 +727,8 @@ export function App() {
             options={
               selected.status === "idle" || selected.status === "running" ? selected.availableOptions : (options?.[selected.provider] ?? [])
             }
+            allModels={models ?? EMPTY_MODELS}
+            allOptions={options ?? EMPTY_OPTIONS}
             items={items}
             context={context}
             llmCalls={llmCalls}
@@ -994,6 +985,8 @@ function SessionView({
   settings,
   models,
   options,
+  allModels,
+  allOptions,
   items,
   context,
   llmCalls,
@@ -1023,6 +1016,9 @@ function SessionView({
   models: ModelOption[];
   /** Non-model options (Effort, Fast mode…): what this Session's Agent advertises, else the Provider cache. */
   options: AgentOption[];
+  /** Every Provider's catalogue, for a fork that runs another Agent. */
+  allModels: ProviderModels;
+  allOptions: ProviderOptions;
   items: ReturnType<typeof buildTranscript>;
   context: ContextState;
   llmCalls: LlmCall[];
@@ -1454,8 +1450,8 @@ function SessionView({
         <ForkDialog
           session={session}
           settings={settings}
-          models={models}
-          options={options}
+          models={{ ...allModels, [session.provider]: models }}
+          options={{ ...allOptions, [session.provider]: options }}
           snapshots={snapshots}
           saved={saved}
           initialSnapshotId={forkFrom}

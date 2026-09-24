@@ -168,7 +168,7 @@ export function SessionSettingsForm({
           Agent
           {(pending?.modelPending || pending?.optionsPending) && <span className="warn-sign">pending</span>}
         </h3>
-        {mode !== "create" && (
+        {live && (
           <p className="muted ss-fixed">
             Provider: {providerLabel} <span className="ss-lock">(fixed for the Session)</span>
           </p>

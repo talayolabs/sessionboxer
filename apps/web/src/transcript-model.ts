@@ -2,8 +2,10 @@ import {
   repoOriginLabel,
   type ContentBlock,
   type E2eRunSummary,
+  type ForkConversation,
   type LlmCall,
   type PromptAttachment,
+  type Provider,
   type SessionEvent,
   type SessionStatus,
   type Snapshot,
@@ -14,8 +16,17 @@ import {
 import { TurnAccumulator, foldCompaction, isCompactionUpdate, type Compaction, type TurnStats } from "./context-model";
 
 export type TranscriptItem =
-  | { kind: "user"; key: string; ts: string; text: string; attachments?: PromptAttachment[] }
-  | { kind: "agent"; key: string; ts: string; text: string; llmCall?: LlmCall }
+  | {
+      kind: "user";
+      key: string;
+      ts: string;
+      text: string;
+      attachments?: PromptAttachment[];
+      /** The fork's first message: the handoff the origin's Agent wrote, not the user's words. */
+      handoff?: boolean;
+    }
+  /** `handoff`: written in reply to the hidden handoff request (rendered without its tags). */
+  | { kind: "agent"; key: string; ts: string; text: string; llmCall?: LlmCall; handoff?: boolean }
   | { kind: "thought"; key: string; ts: string; text: string; llmCall?: LlmCall }
   | {
       kind: "tool";
@@ -49,13 +60,24 @@ export type TranscriptItem =
   | { kind: "error"; key: string; ts: string; message: string }
   | { kind: "status"; key: string; ts: string; status: SessionStatus; error?: string }
   | { kind: "snapshot"; key: string; snapshot: Snapshot }
-  | { kind: "forked"; key: string; fromSessionId: string; fromTitle: string; snapshotOrdinal: number; newConversation: boolean }
+  | {
+      kind: "forked";
+      key: string;
+      fromSessionId: string;
+      fromTitle: string;
+      snapshotOrdinal: number;
+      conversation: ForkConversation;
+      /** The origin's Agent, when this Session runs another one. */
+      fromProvider?: Provider;
+    }
   | { kind: "mcp_changed"; key: string; servers: string[] }
   | { kind: "model_changed"; key: string; model: string; name: string }
   | { kind: "option_changed"; key: string; option: string; value: string; valueName: string }
   | { kind: "repo_changed"; key: string; action: "added" | "removed"; name: string; origin: string }
   /** The Control Plane's hidden verification prompt: a marker, not the user's words. */
   | { kind: "e2e_prompt"; key: string }
+  /** The Control Plane's hidden request for a handoff (a fork is waiting for the Agent's reply). */
+  | { kind: "handoff_request"; key: string }
   | { kind: "e2e_run"; key: string; run: E2eRunSummary };
 
 function blockText(block: ContentBlock): string {
@@ -114,12 +136,13 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
     }
   };
 
+  let handoffTurn = false;
   const appendText = (kind: "agent" | "thought", key: string, ts: string, text: string) => {
     const last = items[items.length - 1];
     if (last && last.kind === kind && !last.llmCall) {
       last.text += text;
     } else {
-      items.push({ kind, key, ts, text });
+      items.push(kind === "agent" && handoffTurn ? { kind, key, ts, text, handoff: true } : { kind, key, ts, text });
     }
   };
 
@@ -130,8 +153,19 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
     switch (body.type) {
       case "user_prompt":
         markContinued(items);
+        handoffTurn = body.origin === "handoff_request";
         if (body.origin === "e2e") items.push({ kind: "e2e_prompt", key });
-        else items.push(body.attachments?.length ? { kind: "user", key, ts, text: body.text, attachments: body.attachments } : { kind: "user", key, ts, text: body.text });
+        else if (handoffTurn) items.push({ kind: "handoff_request", key });
+        else {
+          items.push({
+            kind: "user",
+            key,
+            ts,
+            text: body.text,
+            ...(body.attachments?.length ? { attachments: body.attachments } : {}),
+            ...(body.origin === "handoff" ? { handoff: true } : {}),
+          });
+        }
         {
           // Usage that landed between turns (a compaction's refresh) is the new baseline.
           const base = turn.finish(undefined);
@@ -166,7 +200,8 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
           fromSessionId: body.fromSessionId,
           fromTitle: body.fromTitle,
           snapshotOrdinal: body.snapshotOrdinal,
-          newConversation: body.conversation === "new",
+          conversation: body.conversation ?? "continue",
+          ...(body.fromProvider ? { fromProvider: body.fromProvider } : {}),
         });
         break;
       case "mcp_changed":

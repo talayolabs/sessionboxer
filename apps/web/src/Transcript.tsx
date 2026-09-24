@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { branchScope, type Branch, type E2eRunSummary, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
+import { branchScope, PROVIDER_LABELS, type Branch, type E2eRunSummary, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { UploadedAttachments } from "./Attachments";
 import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
 import { CopyableMessage } from "./CopyMessage";
@@ -416,18 +416,32 @@ function Item({
   }
   switch (item.kind) {
     case "user":
+      if (item.handoff) {
+        return (
+          <CopyableMessage className="msg-user msg-handoff" text={item.text} footer={<Timestamp ts={item.ts} />}>
+            <details className="handoff">
+              <summary title="Written by the origin Session's Agent when this fork was made; the first thing this Agent read">
+                Handoff from the origin&apos;s Agent
+              </summary>
+              <Markdown text={item.text} />
+            </details>
+          </CopyableMessage>
+        );
+      }
       return (
         <CopyableMessage className="msg-user" text={item.text} footer={<Timestamp ts={item.ts} />}>
           {item.text.trim() !== "" && <Markdown text={item.text} />}
           {item.attachments && <UploadedAttachments attachments={item.attachments} />}
         </CopyableMessage>
       );
-    case "agent":
+    case "agent": {
+      const text = item.handoff ? stripHandoffTags(item.text) : item.text;
       return (
-        <CopyableMessage className="msg-agent" text={item.text} footer={<Timestamp ts={item.ts} />}>
-          <Markdown text={item.text} attachments />
+        <CopyableMessage className="msg-agent" text={text} footer={<Timestamp ts={item.ts} />}>
+          <Markdown text={text} attachments />
         </CopyableMessage>
       );
+    }
     case "thought":
       return (
         <details className="thought">
@@ -474,10 +488,7 @@ function Item({
     case "forked":
       return (
         <div className="marker marker-forked">
-          Forked from <a href={`#/sessions/${item.fromSessionId}`}>{item.fromTitle}</a> at snapshot #{item.snapshotOrdinal}:{" "}
-          {item.newConversation
-            ? "same files and tools, new conversation; changes below stay in this Session."
-            : "same files, tools and conversation up to here; changes below stay in this Session."}
+          Forked from <a href={`#/sessions/${item.fromSessionId}`}>{item.fromTitle}</a> at snapshot #{item.snapshotOrdinal}: {forkedNote(item)}
         </div>
       );
     case "mcp_changed":
@@ -510,8 +521,26 @@ function Item({
           Verifying the turn end to end…
         </button>
       );
+    case "handoff_request":
+      return (
+        <div className="marker" title="The Control Plane asked the Agent to write down goal, state of the work, decisions, open items, files and how to run it; the reply below is the fork's first message.">
+          Writing a handoff for a fork…
+        </div>
+      );
     case "e2e_run":
       return <E2eMarker run={item.run} onOpen={() => onOpenE2e(item.run.runId)} />;
+  }
+}
+
+function forkedNote(item: Extract<TranscriptItem, { kind: "forked" }>): string {
+  const agent = item.fromProvider ? ` (${PROVIDER_LABELS[item.fromProvider]} there, another Agent here)` : "";
+  switch (item.conversation) {
+    case "continue":
+      return "same files, tools and conversation up to here; changes below stay in this Session.";
+    case "new":
+      return `same files and tools, new conversation${agent}; changes below stay in this Session.`;
+    case "handoff":
+      return `same files and tools, new conversation started from the handoff below${agent}; changes below stay in this Session.`;
   }
 }
 
@@ -533,6 +562,11 @@ function E2eMarker({ run, onOpen }: { run: E2eRunSummary; onOpen: () => void }) 
       {text}
     </button>
   );
+}
+
+/** The handoff request asks for `<handoff>…</handoff>`; the tags are for the Control Plane, not the reader. */
+function stripHandoffTags(text: string): string {
+  return text.replace(/^\s*<handoff>\s*/, "").replace(/\s*<\/handoff>\s*$/, "");
 }
 
 /** What the Agent produces within a turn; consecutive runs of these fold into one group. */

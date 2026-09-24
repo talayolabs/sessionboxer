@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
-import type {
-  AgentOption,
-  ForkConversation,
-  ForkSessionRequest,
-  ModelOption,
-  PublicSettings,
-  SavedMessage,
-  Session,
-  Snapshot,
+import {
+  PROVIDER_LABELS,
+  PROVIDERS,
+  type ForkConversation,
+  type ForkSessionRequest,
+  type Provider,
+  type ProviderModels,
+  type ProviderOptions,
+  type PublicSettings,
+  type SavedMessage,
+  type Session,
+  type Snapshot,
 } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
+import { providerTokenSet } from "./providers";
 import { SessionSettingsForm, draftFromSettings, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
 
 const PREVIEW_CHARS = 120;
@@ -19,13 +23,30 @@ function preview(text: string): string {
   return oneLine.length > PREVIEW_CHARS ? `${oneLine.slice(0, PREVIEW_CHARS)}\u2026` : oneLine;
 }
 
+/** Why the origin's Agent cannot write a handoff right now; `null` when it can. */
+function handoffBlocker(session: Session): string | null {
+  switch (session.status) {
+    case "idle":
+      return null;
+    case "running":
+      return "once the Agent has finished its turn";
+    case "stopped":
+      return "the Session is stopped: resume it first, its Agent has to write the handoff";
+    case "error":
+      return "the Session is in error: its Agent cannot write the handoff";
+    default:
+      return "once the Sandbox is up";
+  }
+}
+
 /**
- * "Fork from a snapshot": pick the Snapshot (fork point), whether the fork continues the
- * conversation or starts a new one on the same files, what the fork's first message is (one of
- * the queued messages at that point, the current queue, a new prompt, or nothing) and whether
- * the rest of the queue is copied over. The fork starts with the origin's settings; "Settings"
- * opens them for changes, including the creation-only ones (Docker, instructions, git
- * identity). The origin Session and its queue are never modified.
+ * "Fork from a snapshot": pick the Snapshot (fork point), the fork's Agent (the origin's or another
+ * one), what happens to the conversation (continued by the same Agent, started anew, or started
+ * from a handoff the origin's Agent writes now), what the fork's first message is (one of the
+ * queued messages at that point, the current queue, a new prompt, or nothing) and whether the
+ * rest of the queue is copied over. The fork starts with the origin's settings; "Settings" opens
+ * them for changes, including the creation-only ones (Docker, instructions, git identity). The
+ * origin Session and its queue are never modified (a handoff costs it one hidden turn).
  */
 export function ForkDialog({
   session,
@@ -42,8 +63,9 @@ export function ForkDialog({
 }: {
   session: Session;
   settings: PublicSettings;
-  models: ModelOption[];
-  options: AgentOption[];
+  /** Per Provider: what the fork's Agent can be asked for. */
+  models: ProviderModels;
+  options: ProviderOptions;
   snapshots: Snapshot[];
   /** The origin's current saved messages, offered next to the ones stored with the Snapshot. */
   saved: SavedMessage[];
@@ -55,6 +77,7 @@ export function ForkDialog({
   busy: boolean;
 }) {
   const [snapshotId, setSnapshotId] = useState(initialSnapshotId);
+  const [provider, setProvider] = useState<Provider>(session.provider);
   const [conversation, setConversation] = useState<ForkConversation>("continue");
   const [title, setTitle] = useState("");
   const [first, setFirst] = useState<"none" | "custom" | `q${number}`>("none");
@@ -85,16 +108,36 @@ export function ForkDialog({
 
   if (!snapshot) return null;
 
+  const sameAgent = provider === session.provider;
+  const originLabel = PROVIDER_LABELS[session.provider];
+  const forkLabel = PROVIDER_LABELS[provider];
+  const blocker = handoffBlocker(session);
+
+  // Another Agent cannot load this one's memory: a new conversation or a handoff.
+  const pickProvider = (p: Provider) => {
+    setProvider(p);
+    if (p !== session.provider && conversation === "continue") setConversation(blocker ? "new" : "handoff");
+    // Model and options belong to a Provider; the origin's come back with it, another starts from its defaults.
+    const base = draftFromSettings(session.settings);
+    setDraft((d) =>
+      p === session.provider
+        ? { ...d, model: base.model, options: base.options, inspectLlm: base.inspectLlm }
+        : { ...d, model: null, options: {}, inspectLlm: p === "claude-code" },
+    );
+  };
+
   const pickedIndex = first.startsWith("q") ? Number(first.slice(1)) : -1;
   const prompt = first === "custom" ? custom.trim() : pickedIndex >= 0 ? candidates[pickedIndex] : "";
   const others = candidates.filter((_, i) => i !== pickedIndex);
   const rest = copyRest ? others : [];
+  const defaultTitle = `${session.title} (${sameAgent ? "fork" : `${forkLabel}, fork`} ${snapshot.ordinal})`;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
       snapshotId: snapshot.id,
       conversation,
+      ...(sameAgent ? {} : { provider }),
       ...(title.trim() ? { title: title.trim() } : {}),
       settings: draftChanged ? draftToInput(draft) : {},
       ...(prompt ? { prompt } : {}),
@@ -107,8 +150,9 @@ export function ForkDialog({
       <form className="modal panel" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="fork-title">
         <h2 id="fork-title">Fork "{session.title}"</h2>
         <p className="muted">
-          A new Session with its own Sandbox started from the snapshot image: same files and installed tools, with or
-          without the conversation up to that point. The original Session, its Sandbox and its queue are left as they are.
+          A new Session with its own Sandbox started from the snapshot image: same files and installed tools, with the same
+          Agent or another one, with or without the conversation up to that point. The original Session, its Sandbox and its
+          queue are left as they are.
         </p>
         <label>
           Fork point
@@ -122,30 +166,73 @@ export function ForkDialog({
             ))}
           </select>
         </label>
+        <label>
+          Agent
+          <select value={provider} onChange={(e) => pickProvider(e.target.value as Provider)} disabled={busy}>
+            {PROVIDERS.map((p) => (
+              <option key={p} value={p}>
+                {PROVIDER_LABELS[p]}
+                {p === session.provider ? " (the origin's)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!providerTokenSet(settings, provider) && (
+          <p className="field-hint warn">No {forkLabel} token configured: add it in Global settings first, or pick an Agent you have a token for.</p>
+        )}
         <fieldset className="choice">
           <legend>Conversation</legend>
-          <label className="check">
-            <input type="radio" name="conversation" checked={conversation === "continue"} onChange={() => setConversation("continue")} />
-            <span className="choice-text">
-              Continue it <span className="muted">— the chat up to the snapshot is kept, the Agent remembers it</span>
+          <label className="check" title={sameAgent ? undefined : `${forkLabel} cannot load ${originLabel}'s memory; start a new conversation or hand off.`}>
+            <input
+              type="radio"
+              name="conversation"
+              checked={conversation === "continue"}
+              disabled={!sameAgent}
+              onChange={() => setConversation("continue")}
+            />
+            <span className={`choice-text${sameAgent ? "" : " muted"}`}>
+              Continue it{" "}
+              <span className="muted">
+                {sameAgent
+                  ? "— the chat up to the snapshot is kept, the Agent remembers it"
+                  : `— only for ${originLabel}: an Agent's memory cannot be loaded into another`}
+              </span>
             </span>
           </label>
           <label className="check">
             <input type="radio" name="conversation" checked={conversation === "new"} onChange={() => setConversation("new")} />
             <span className="choice-text">
-              Start a new one <span className="muted">— empty chat, the Agent starts fresh on the same files</span>
+              Start a new one <span className="muted">— empty chat, {forkLabel} starts fresh on the same files</span>
+            </span>
+          </label>
+          <label className="check" title={blocker ? `The handoff can be written ${blocker}.` : undefined}>
+            <input
+              type="radio"
+              name="conversation"
+              checked={conversation === "handoff"}
+              disabled={blocker !== null}
+              onChange={() => setConversation("handoff")}
+            />
+            <span className={`choice-text${blocker ? " muted" : ""}`}>
+              Hand off{" "}
+              <span className="muted">
+                — {originLabel} writes down goal, state of the work, decisions, open items, files and how to run it (a hidden turn in this
+                Session, from its whole memory); {sameAgent ? "a fresh " : ""}
+                {forkLabel} gets it as its first message
+                {blocker ? ` — ${blocker}` : ""}
+              </span>
             </span>
           </label>
         </fieldset>
         <label>
           Title (optional)
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${session.title} (fork ${snapshot.ordinal})`} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={defaultTitle} />
         </label>
         <fieldset className="choice">
-          <legend>First message in the fork</legend>
+          <legend>{conversation === "handoff" ? "Your message to add after the handoff" : "First message in the fork"}</legend>
           <label className="check">
             <input type="radio" name="first" checked={first === "none"} onChange={() => setFirst("none")} />
-            Nothing, just open the fork
+            {conversation === "handoff" ? `Nothing: ${forkLabel} reads the handoff and carries on with its open items` : "Nothing, just open the fork"}
           </label>
           {candidates.map((text, i) => (
             <label className="check" key={i} title={text}>
@@ -166,7 +253,7 @@ export function ForkDialog({
           <label className="check">
             <input type="checkbox" checked={copyRest} onChange={(e) => setCopyRest(e.target.checked)} />
             Copy the {pickedIndex >= 0 ? "other " : ""}
-            {others.length} queued message{others.length === 1 ? "" : "s"} to the fork's queue (sent after its first prompt)
+            {others.length} queued message{others.length === 1 ? "" : "s"} to the fork's queue (sent after its first message)
           </label>
         )}
         <details className="fork-settings" open={settingsOpen} onToggle={(e) => setSettingsOpen(e.currentTarget.open)}>
@@ -176,11 +263,11 @@ export function ForkDialog({
           {settingsOpen && (
             <SessionSettingsForm
               mode="fork"
-              provider={session.provider}
+              provider={provider}
               session={session}
               settings={settings}
-              models={models}
-              options={options}
+              models={models[provider]}
+              options={options[provider]}
               value={draft}
               onChange={(patch) => {
                 setDraft((d) => ({ ...d, ...patch }));
@@ -194,8 +281,8 @@ export function ForkDialog({
           <button type="button" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="primary" disabled={busy || (first === "custom" && !custom.trim())}>
-            {busy ? "Forking\u2026" : "Fork"}
+          <button type="submit" className="primary" disabled={busy || (first === "custom" && !custom.trim()) || (conversation === "handoff" && blocker !== null)}>
+            {busy ? "Forking\u2026" : conversation === "handoff" ? "Hand off and fork" : "Fork"}
           </button>
         </div>
       </form>

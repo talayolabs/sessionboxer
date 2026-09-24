@@ -272,7 +272,6 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
         type: "user_prompt",
         text: p.text,
         ...(p.attachments?.length ? { attachments: p.attachments } : {}),
-        ...(p.origin ? { origin: p.origin } : {}),
       });
       void agent.prompt(p.note ? `${p.note}\n\n${p.text}` : p.text, p.attachments ?? []);
       return { accepted: true };

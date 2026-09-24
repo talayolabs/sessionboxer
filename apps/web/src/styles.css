@@ -193,6 +193,10 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 /* WhatsApp-style time at the bubble's bottom-right. */
 .msg-time { display: block; text-align: right; margin: 4px -2px -5px 0; font-size: 11px; line-height: 1; color: var(--muted); cursor: default; white-space: nowrap; }
 .thought { color: var(--muted); font-size: 13px; }
+/* A fork's first message when it is a handoff: long, written by an Agent — folded until asked for. */
+.msg-handoff { max-width: 900px; }
+.handoff > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.handoff[open] > summary { margin-bottom: 6px; }
 .thought .md { padding: 6px 12px; }
 .marker { color: var(--muted); font-size: 12px; text-align: center; }
 .marker-error { color: var(--error); }
@@ -442,7 +446,9 @@ li.expanded .saved-text { white-space: normal; }
 .panel > .actions { position: sticky; bottom: 0; padding: 10px 0; margin-top: -10px; background: var(--bg); }
 .panel fieldset.choice { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
 .panel fieldset.choice legend { color: var(--muted); padding: 0 4px; }
-.choice-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.choice-text { min-width: 0; flex: 1; line-height: 1.35; }
+.panel label.check:has(.choice-text) { align-items: flex-start; }
+.panel label.check:has(.choice-text) input { margin-top: 3px; }
 .input-row { display: flex; gap: 8px; }
 .input-row input { flex: 1; min-width: 0; }
 .input-row button { flex: none; white-space: nowrap; }

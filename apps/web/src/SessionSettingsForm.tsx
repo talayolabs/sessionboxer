@@ -66,7 +66,7 @@ export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraf
   return {
     model: null,
     options: {},
-    inspectLlm: false,
+    inspectLlm: true,
     mcpEnabled: settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id),
     instructions: settings.instructions,
     autoSnapshot: null,

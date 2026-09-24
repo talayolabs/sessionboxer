@@ -465,7 +465,7 @@ function ScheduleForm({
               value={provider}
               onChange={(e) => {
                 setProvider(e.target.value as Provider);
-                setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: false }));
+                setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: true }));
               }}
             >
               {PROVIDERS.map((p) => (

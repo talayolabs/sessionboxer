@@ -797,7 +797,7 @@ export class SessionManager {
       settings: {
         model: input.model ?? null,
         options: input.options ?? {},
-        inspectLlm: req.provider === "claude-code" && (input.inspectLlm ?? false),
+        inspectLlm: req.provider === "claude-code" && (input.inspectLlm ?? true),
         mcpEnabled,
         instructions: (input.instructions ?? settings.instructions).trim(),
         autoSnapshot: input.autoSnapshot ?? null,

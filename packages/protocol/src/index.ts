@@ -476,7 +476,7 @@ export const SessionSettings = z.object({
   options: OptionValues.default({}),
   /**
    * Route the Agent's model API calls through the Sandbox's loopback inspector, which keeps the
-   * exact request/response bodies (Claude Code only; see `LlmCall`). Off by default.
+   * exact request/response bodies (Claude Code only; see `LlmCall`). On by default for new Sessions.
    */
   inspectLlm: z.boolean().default(false),
   /** Ids of the `Settings.mcpServers` entries enabled for this Session. */

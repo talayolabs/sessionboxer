@@ -1110,7 +1110,10 @@ function SessionView({
             </button>
           </div>
         )}
-        <span className="muted">{PROVIDER_LABELS[session.provider]}</span>
+        <span className="provider-badge" title={PROVIDER_LABELS[session.provider]}>
+          <ProviderIcon provider={session.provider} size={18} />
+          {mobile && <span className="muted">{PROVIDER_LABELS[session.provider]}</span>}
+        </span>
         {session.settings.sandbox.dockerMode !== "none" && (
           <span
             className={session.settings.sandbox.dockerMode === "privileged" ? "warn" : "muted"}

@@ -83,6 +83,8 @@ code { background: #0b0d11; padding: 1px 4px; border-radius: 4px; }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .session-provider { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
 .provider-icon { display: block; color: var(--text); opacity: 0.8; }
+.provider-badge { display: inline-flex; align-items: center; gap: 6px; cursor: help; }
+.provider-badge .provider-icon { opacity: 1; }
 li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 
 .chevron { flex: none; width: 14px; height: 14px; padding: 0; margin-left: -4px; display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer; }

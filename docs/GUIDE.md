@@ -160,7 +160,7 @@ Replies and your prompts render as Markdown. Fenced code with a language (```ts,
 
 Files the chat names are links into that editor: a project path in a reply, a prompt or a tool call (`src/App.tsx`, `/workspace/src/App.tsx:42`, `src/App.tsx:42:7`, `src/App.tsx#L42`) opens the file in the Code pane, at that line and column; the **Read** / **Edit** tool rows link the file they touched. Videos, images and PDFs keep their inline card instead. Bare filenames without a folder (`index.ts`) are left alone in prose unless they carry a `:line`, to avoid turning every mention into a link.
 
-**Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback.
+**Terminal** opens a shell in the project folder inside the box; open as many tabs as you want. Reloading the page keeps the terminals and their scrollback. Copy and paste work like in a desktop terminal: select text and press Ctrl+C (with a selection it copies; without one it interrupts, as usual), Ctrl+Shift+C or Ctrl+Insert; paste with Ctrl+V, Ctrl+Shift+V or Shift+Insert (⌘C / ⌘V on a Mac). Right-click for a menu with Copy, Paste, Select all and Clear — the desktop app has no browser menu, so this is the mouse route there too. Paste from the menu needs a secure page (`127.0.0.1` or https), which is where browsers allow reading the clipboard; the keyboard shortcuts work everywhere.
 
 ### How full is the context
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Terminal pane: copy and paste work — Ctrl+C with a selection, Ctrl+Shift+C or Ctrl+Insert copy; Ctrl+V, Ctrl+Shift+V or Shift+Insert paste (Ctrl+V used to send `^V` to the shell); right-click menu with Copy, Paste, Select all and Clear, also in the desktop app.
 - Scheduled tasks: a page in the sidebar to run a prompt on a cron schedule (with time zone, plain-words preview and next runs), into an existing Session or a new one from a template that stops when the turn ends; Run now, on/off, run history, skip or catch up runs missed while the Control Plane was off, push notification on failure (ADR-0047).
 - Codex as a third agent, on your ChatGPT subscription: `codex login` on your machine, paste `~/.codex/auth.json` in Settings; the file lives on tmpfs in the box and refreshed tokens are stored back. Needs an image rebuild (ADR-0046).
 - Verify each turn end to end (on by default; Settings, per-session ⚙ Settings, the Verification pane's switch, `sessionboxer new --no-e2e`): after each turn the agent plans 2–5 test cases from your prompt, runs them on the box's desktop while recording, fixes and reruns what fails, and posts the video; the **Verification** pane opens by itself and shows cases, timers and cycles live. Needs an image rebuild (ADR-0044).

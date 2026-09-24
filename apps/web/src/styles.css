@@ -520,6 +520,11 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .code-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .code-frame { flex: 1; width: 100%; height: 100%; border: 0; background: #1f1f1f; }
 .terminal-status { flex: none; display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+.terminal-body .terminal-menu { min-width: 220px; max-width: 220px; font-size: 13px; }
+.terminal-body .terminal-menu .menu-item:disabled { opacity: 0.45; }
+.menu-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }
+.menu-row kbd { font: inherit; font-size: 11px; color: var(--muted); }
+.terminal-note { position: absolute; left: 12px; bottom: 12px; z-index: 30; padding: 6px 10px; border-radius: 6px; background: var(--panel); border: 1px solid var(--border); font-size: 12px; }
 .dialog-banner { border: 1px solid var(--error); border-radius: 6px; font-size: 13px; }
 
 /* Where the Workspace came from (folder copy / git clone / fork), next to the Provider mark. */

@@ -344,6 +344,7 @@ export class Scheduler {
     for (const t of runs) {
       stopAfter ||= t.stopAfter;
       if (outcome === "end_turn") this.finish(t.runId, "succeeded", {});
+      else if (outcome === "usage_limit") this.finish(t.runId, "failed", { error: "The Provider's usage limit was hit; the Session offers Continue / Auto-continue." });
       else this.finish(t.runId, "failed", { error: outcome === "error" ? "The Agent reported an error." : `The turn ended with "${outcome}".` });
     }
     if (!stopAfter) return;

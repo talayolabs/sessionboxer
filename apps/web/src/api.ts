@@ -193,6 +193,9 @@ export const api = {
     request<{ ok: true }>(`/sessions/${id}/saved/${messageId}/send`, { method: "POST" }),
   setQueueRunning: (id: string, running: boolean) =>
     request<Session>(`/sessions/${id}/queue`, { method: "POST", body: JSON.stringify({ running }) }),
+  continueAfterLimit: (id: string) => request<Session>(`/sessions/${id}/usage/continue`, { method: "POST" }),
+  setAutoContinue: (id: string, enabled: boolean) =>
+    request<Session>(`/sessions/${id}/usage/auto-continue`, { method: "POST", body: JSON.stringify({ enabled }) }),
   snapshots: (id: string) => request<Snapshot[]>(`/sessions/${id}/snapshots`),
   createSnapshot: (id: string) => request<Snapshot>(`/sessions/${id}/snapshots`, { method: "POST" }),
   deleteSnapshot: (id: string, snapshotId: string) => request<void>(`/sessions/${id}/snapshots/${snapshotId}`, { method: "DELETE" }),

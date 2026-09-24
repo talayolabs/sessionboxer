@@ -63,6 +63,7 @@ interface SessionRow {
   available_options: string;
   inspect_llm_pending: number;
   active_branch_id: string;
+  usage: string;
   created_at: string;
   updated_at: string;
 }
@@ -179,6 +180,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   available_options TEXT NOT NULL DEFAULT '[]',
   inspect_llm_pending INTEGER NOT NULL DEFAULT 0,
   active_branch_id TEXT NOT NULL DEFAULT 'root',
+  usage TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -282,6 +284,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "available_options", ddl: "ALTER TABLE sessions ADD COLUMN available_options TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "sessions", column: "inspect_llm_pending", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "usage", ddl: "ALTER TABLE sessions ADD COLUMN usage TEXT NOT NULL DEFAULT '{}'" },
   { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
@@ -426,8 +429,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -441,7 +444,7 @@ export class Db {
         `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, error=@error,
            queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
            options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
-           active_branch_id=@active_branch_id, updated_at=@updated_at
+           active_branch_id=@active_branch_id, usage=@usage, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -872,6 +875,7 @@ export type SessionPatch = Partial<
     | "availableOptions"
     | "inspectLlmPending"
     | "activeBranchId"
+    | "usage"
   >
 >;
 
@@ -939,6 +943,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     snapshotCount: row.snapshot_count,
     branches,
     activeBranchId: row.active_branch_id,
+    usage: JSON.parse(row.usage),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -983,6 +988,7 @@ function sessionToRow(s: Session): SessionRow {
     available_options: JSON.stringify(s.availableOptions),
     inspect_llm_pending: s.inspectLlmPending ? 1 : 0,
     active_branch_id: s.activeBranchId,
+    usage: JSON.stringify(s.usage),
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };

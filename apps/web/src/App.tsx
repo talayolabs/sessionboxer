@@ -67,6 +67,7 @@ import { providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
 import { Icon, type IconName } from "./Icons";
 import { ContextGauge, ContextPane } from "./Context";
+import { NoEntrySign, UsageBars, UsageLimitBar } from "./Usage";
 import { deriveContext, type Compaction, type ContextState } from "./context-model";
 import { PrPane, PrsPane } from "./PullRequests";
 import { SavedMessages } from "./SavedMessages";
@@ -530,7 +531,13 @@ export function App() {
                 ) : (
                   <span className="chevron chevron-blank" />
                 )}
-                <span className={`dot dot-${s.status}`} title={statusTitle(s.status)} />
+                {s.usage.limit ? (
+                  <span className="usage-sign-small" title={`${PROVIDER_LABELS[s.provider]} usage limit reached: ${s.usage.limit.message}`} aria-label="usage limit reached">
+                    <NoEntrySign size={11} />
+                  </span>
+                ) : (
+                  <span className={`dot dot-${s.status}`} title={statusTitle(s.status)} />
+                )}
                 <span className="session-title">{s.title}</span>
                 <span className="session-provider">
                   {(prs[s.id] ?? []).some((p) => p.unread > 0) && (
@@ -669,7 +676,13 @@ export function App() {
               {"\u2630"}
             </button>
             <span className="topbar-title">{topTitle}</span>
-            {selected && route.view === "session" && <span className={`dot dot-${selected.status}`} title={statusTitle(selected.status)} />}
+            {selected && route.view === "session" && (selected.usage.limit ? (
+              <span className="usage-sign-small" title={`${PROVIDER_LABELS[selected.provider]} usage limit reached: ${selected.usage.limit.message}`} aria-label="usage limit reached">
+                <NoEntrySign size={11} />
+              </span>
+            ) : (
+              <span className={`dot dot-${selected.status}`} title={statusTitle(selected.status)} />
+            ))}
           </div>
         )}
         {error && (
@@ -1062,6 +1075,7 @@ function SessionView({
   const [syncOpen, setSyncOpen] = useState(false);
   const [reposOpen, setReposOpen] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
+  const [usageBusy, setUsageBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
   const [menuOpen, setMenuOpen] = useState(false);
   // What is on screen: on a phone the chat is a pane like the others; on a desktop it is always there.
@@ -1512,6 +1526,21 @@ function SessionView({
                   onMove={(m, position) => void run(() => api.updateSavedMessage(session.id, m.id, { position }))}
                   onQueueToggle={(running) => void run(() => api.setQueueRunning(session.id, running))}
                 />
+                <UsageLimitBar
+                  usage={session.usage}
+                  provider={session.provider}
+                  canContinue={session.status === "idle"}
+                  busy={usageBusy}
+                  onContinue={() => {
+                    setUsageBusy(true);
+                    void run(() => api.continueAfterLimit(session.id)).finally(() => setUsageBusy(false));
+                  }}
+                  onAutoContinue={(enabled) => {
+                    setUsageBusy(true);
+                    void run(() => api.setAutoContinue(session.id, enabled)).finally(() => setUsageBusy(false));
+                  }}
+                />
+                <UsageBars usage={session.usage} provider={session.provider} />
                 <ContextGauge context={context} active={pane === "context"} onOpen={() => togglePane("context")} />
               </>
             }

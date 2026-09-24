@@ -89,6 +89,11 @@ import {
   type UpdateSessionRequest,
   updateRequestSettings,
   type WorkspaceSource,
+  USAGE_AUTO_CONTINUE_INTERVAL_MS,
+  USAGE_CONTINUE_TEXT,
+  type UsageLimit,
+  classifyUsageLimit,
+  mergeUsageWindows,
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
@@ -119,13 +124,15 @@ import { PullRequests } from "./pull-requests.js";
 
 export { HttpError };
 
-/** How a turn ended: ACP's stop reason, or `error` for an `agent_error`. */
-export type TurnOutcome = StopReason | "error";
+/** How a turn ended: ACP's stop reason, `error` for an `agent_error`, `usage_limit` when the Provider refused for lack of credit. */
+export type TurnOutcome = StopReason | "error" | "usage_limit";
 
 const CANCEL_GRACE_MS = 8000;
 const DAEMON_WAIT_MS = 15_000;
 /** A one-shot ask spawns a fresh ACP session, which is slow on cold Providers. */
 const ASK_TIMEOUT_MS = 120_000;
+/** What Auto-continue asks the Provider to learn whether it answers again; the reply is discarded. */
+const USAGE_PROBE_TEXT = "Reply with the single word OK.";
 /** Rewinding the Agent may replay the whole transcript into a fresh session. */
 const BRANCH_TIMEOUT_MS = 300_000;
 /** Longest transcript handed to an Agent that cannot fork (the tail is kept). */
@@ -155,6 +162,8 @@ export class SessionManager {
   private readonly handoffs = new Map<string, { forkId: string; settle: (outcome: { text: string } | { error: string }) => void }>();
   /** Turns ended per Session, to notice a turn that was over before the prompt RPC even returned. */
   private readonly turnEnds = new Map<string, number>();
+  /** Auto-continue polls per Session blocked by a usage limit (ADR-0053). */
+  private readonly usageTimers = new Map<string, NodeJS.Timeout>();
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
   /** Per-Session chain so Snapshots of one Sandbox never overlap. */
   private readonly snapshotChains = new Map<string, Promise<unknown>>();
@@ -779,6 +788,7 @@ export class SessionManager {
         if (s.status !== "idle" && s.status !== "running") this.setStatus(s.id, "idle");
         await this.connect(s.id, s.containerId);
       }
+      this.scheduleAutoContinue(s.id);
     }
     this.prs.start();
   }
@@ -836,6 +846,7 @@ export class SessionManager {
       snapshotCount: 0,
       branches: [],
       activeBranchId: ROOT_BRANCH_ID,
+      usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
       createdAt: now,
       updatedAt: now,
     };
@@ -931,6 +942,7 @@ export class SessionManager {
       snapshotCount: 0,
       branches: [],
       activeBranchId: ROOT_BRANCH_ID,
+      usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
       createdAt: now,
       updatedAt: now,
     };
@@ -1174,7 +1186,126 @@ export class SessionManager {
     // A slash command answered locally ends its turn within the same batch of Daemon messages
     // as the RPC reply; the Daemon's own status notifications are authoritative then.
     if ((this.turnEnds.get(id) ?? 0) === endedBefore) this.setStatus(id, "running");
+    // Any prompt that the Daemon accepts is a fresh attempt: the limit is set again if it still holds.
+    const current = this.db.getSession(id);
+    if (current?.usage.limit) this.update(id, { usage: { ...current.usage, limit: null } });
     this.prs.onPrompt(id, req.text);
+  }
+
+  // --- Usage limits (ADR-0053) -------------------------------------------------
+
+  /**
+   * The Provider refused the turn for lack of usage credit: recorded on the Session with the
+   * prompt to send again, so the UI shows the ⛔ and Continue / Auto-continue. A hidden turn
+   * (verification, handoff request) keeps nothing to retry; a turn that had already done work
+   * is resumed with a nudge rather than its original prompt.
+   */
+  private recordUsageLimit(id: string, s: Session, hit: { message: string; resetsAt: string | null }, turn: SessionEvent[], hitAt: string): void {
+    const first = turn[0];
+    const prompt = first?.body.type === "user_prompt" ? first.body : null;
+    const worked = turn.some((e) => e.body.type === "update" && (e.body.update.sessionUpdate === "tool_call" || e.body.update.sessionUpdate === "tool_call_update"));
+    const retry: UsageLimit["retry"] =
+      !prompt || prompt.origin === "e2e" || prompt.origin === "handoff_request"
+        ? null
+        : worked
+          ? { text: USAGE_CONTINUE_TEXT }
+          : { text: prompt.text, ...(prompt.attachments?.length ? { attachments: prompt.attachments } : {}) };
+    const limit: UsageLimit = { message: hit.message.trim().slice(0, 500), resetsAt: hit.resetsAt, hitAt, retry };
+    this.log(`usage limit ${id}: ${limit.message} (resets ${limit.resetsAt ?? "unknown"}, retry ${retry ? "kept" : "none"})`);
+    this.update(id, { usage: { ...s.usage, limit } });
+    this.scheduleAutoContinue(id);
+  }
+
+  /** The turn that just ended hit the Provider's usage limit; its message and reset time when so. */
+  private usageLimitOf(s: Session, body: DaemonEvent["body"], turn: SessionEvent[]): { message: string; resetsAt: string | null } | null {
+    if (body.type === "agent_error") {
+      if (body.limit) return { message: body.message, resetsAt: body.limit.resetsAt };
+      const hit = classifyUsageLimit(s.provider, body.message);
+      return hit ? { message: body.message, resetsAt: hit.resetsAt } : null;
+    }
+    // Claude Code sometimes answers the refusal as a short message and ends the turn normally:
+    // a short text, the only thing the turn produced (a turn that ran tools was not refused).
+    if (body.type !== "turn_ended" || body.stopReason !== "end_turn") return null;
+    if (turn.some((e) => e.body.type === "update" && e.body.update.sessionUpdate === "tool_call")) return null;
+    const text = lastAgentText(turn)?.trim() ?? "";
+    if (text.length === 0 || text.length > 300) return null;
+    const hit = classifyUsageLimit(s.provider, text);
+    return hit ? { message: text, resetsAt: hit.resetsAt } : null;
+  }
+
+  /** Continue: sends the prompt the limit interrupted (or a nudge) now; the limit is set again if it still holds. */
+  async continueAfterLimit(id: string): Promise<Session> {
+    const s = this.get(id);
+    const limit = s.usage.limit;
+    if (!limit) throw new HttpError(409, "No usage limit is blocking this Session.");
+    this.clearAutoContinue(id);
+    this.update(id, { usage: { ...s.usage, limit: null } });
+    if (!limit.retry) return this.get(id);
+    try {
+      await this.prompt(id, limit.retry);
+    } catch (e) {
+      const current = this.db.getSession(id);
+      if (current) this.update(id, { usage: { ...current.usage, limit } });
+      this.scheduleAutoContinue(id);
+      throw e;
+    }
+    return this.get(id);
+  }
+
+  /** Auto-continue: while on and a limit blocks the Session, the Provider is probed every 10 s (after the reset, when known) and the turn continued once it answers. */
+  setAutoContinue(id: string, enabled: boolean): Session {
+    const s = this.get(id);
+    const next = s.usage.autoContinue === enabled ? s : this.update(id, { usage: { ...s.usage, autoContinue: enabled } });
+    this.scheduleAutoContinue(id);
+    return next;
+  }
+
+  private scheduleAutoContinue(id: string, delayMs = USAGE_AUTO_CONTINUE_INTERVAL_MS): void {
+    this.clearAutoContinue(id);
+    const s = this.db.getSession(id);
+    if (!s?.usage.autoContinue || !s.usage.limit || s.status === "stopped" || s.status === "error") return;
+    const timer = setTimeout(() => {
+      this.usageTimers.delete(id);
+      void this.autoContinueTick(id).catch((e: unknown) => {
+        this.log(`auto-continue ${id} failed: ${String(e)}`);
+        this.scheduleAutoContinue(id);
+      });
+    }, delayMs);
+    this.usageTimers.set(id, timer);
+  }
+
+  private clearAutoContinue(id: string): void {
+    const timer = this.usageTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.usageTimers.delete(id);
+  }
+
+  private async autoContinueTick(id: string): Promise<void> {
+    const s = this.db.getSession(id);
+    const limit = s?.usage.limit;
+    if (!s || !limit || !s.usage.autoContinue) return;
+    const busy = s.status !== "idle" || !this.clients.get(id)?.connected || this.handoffs.has(id) || this.db.activeE2eRun(id) !== null || this.repoWork.has(id);
+    const beforeReset = limit.resetsAt !== null && new Date(limit.resetsAt).getTime() > Date.now();
+    if (busy || beforeReset) {
+      this.scheduleAutoContinue(id);
+      return;
+    }
+    try {
+      const answer = await this.ask(id, USAGE_PROBE_TEXT);
+      // Claude Code may answer the refusal as text instead of failing.
+      if (classifyUsageLimit(s.provider, answer.text)) throw new Error(answer.text.trim().slice(0, 300));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const hit = classifyUsageLimit(s.provider, message);
+      this.log(`auto-continue ${id}: the Provider still refuses (${message.slice(0, 200)})`);
+      if (hit?.resetsAt && hit.resetsAt !== limit.resetsAt) {
+        const current = this.db.getSession(id);
+        if (current?.usage.limit) this.update(id, { usage: { ...current.usage, limit: { ...current.usage.limit, resetsAt: hit.resetsAt } } });
+      }
+      this.scheduleAutoContinue(id);
+      return;
+    }
+    if (this.db.getSession(id)?.usage.limit !== null) await this.continueAfterLimit(id);
   }
 
   /** Context-free question to the Session's Provider; nothing is recorded in the transcript. */
@@ -1367,7 +1498,7 @@ export class SessionManager {
   /** Sends the next queued message if the queue is playing and the Agent is idle and reachable. */
   private async pumpQueue(id: string): Promise<void> {
     const s = this.db.getSession(id);
-    if (!s?.queueRunning || s.status !== "idle") return;
+    if (!s?.queueRunning || s.status !== "idle" || s.usage.limit) return;
     const next = this.db.listSavedMessages(id)[0];
     if (!next) {
       this.update(id, { queueRunning: false });
@@ -1636,6 +1767,7 @@ export class SessionManager {
       if (s.status === "running") await this.cancelAndWait(id);
       this.e2e.abortActive(id, "The Sandbox was stopped during the verification.");
       this.settleHandoff(id, { error: "the origin Session was stopped while its Agent was writing it." });
+      this.clearAutoContinue(id);
       this.disconnect(id);
       await this.docker.stop(s.containerId);
       const stopped = this.setStatus(id, "stopped");
@@ -1679,6 +1811,7 @@ export class SessionManager {
     this.stopping.add(id);
     this.e2e.abortActive(id, "The Session was deleted during the verification.");
     this.settleHandoff(id, { error: "the origin Session was deleted while its Agent was writing it." });
+    this.clearAutoContinue(id);
     this.disconnect(id);
     this.pendingPrompts.delete(id);
     this.promptOrigins.delete(id);
@@ -2005,6 +2138,7 @@ export class SessionManager {
       .then(() => this.pushRecordingPrefs(id))
       .then(() => this.refreshRepoStates(id))
       .catch((e: unknown) => this.log(`mcp/model/options push ${id} failed: ${String(e)}`));
+    this.scheduleAutoContinue(id);
     const pending = this.pendingPrompts.get(id);
     if (pending && !status.turnActive) {
       this.pendingPrompts.delete(id);
@@ -2021,6 +2155,10 @@ export class SessionManager {
     if (status.turnActive && s.status !== "running") this.setStatus(id, "running");
     else if (!status.turnActive && s.status === "running") this.setStatus(id, "idle");
     if (status.mcpPending !== s.mcpPending) this.update(id, { mcpPending: status.mcpPending });
+    if (status.usage && status.usage.updatedAt !== s.usage.updatedAt) {
+      const current = this.get(id);
+      this.update(id, { usage: { ...current.usage, windows: mergeUsageWindows(current.usage.windows, status.usage.windows), updatedAt: status.usage.updatedAt } });
+    }
     if (status.llmInspectPending !== s.inspectLlmPending) this.update(id, { inspectLlmPending: status.llmInspectPending });
     if (status.models && this.db.setProviderModels(s.provider, status.models)) {
       this.broadcast({ type: "models", provider: s.provider, models: status.models });
@@ -2074,7 +2212,13 @@ export class SessionManager {
         else if (ev.body.stopReason !== "end_turn") this.settleHandoff(id, { error: `the turn ended early (${ev.body.stopReason}).` });
         else this.settleHandoff(id, { text: lastAgentMessage(turn) });
       }
-      if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
+      const limitHit = s ? this.usageLimitOf(s, ev.body, turn) : null;
+      if (s && limitHit) this.recordUsageLimit(id, s, limitHit, turn, stored.ts);
+      if (limitHit) {
+        // The queue stays as it is: nothing pumps while the limit holds, and it plays on after the turn continues.
+        if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
+        this.settled(id, "usage_limit");
+      } else if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
         void this.afterTurn(id, stored.seq, isHiddenTurn(turn) ? [] : turn).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
       } else {
         if (s?.queueRunning) {
@@ -2155,6 +2299,7 @@ export class SessionManager {
 
   async shutdown(): Promise<void> {
     this.prs.stop();
+    for (const id of this.usageTimers.keys()) this.clearAutoContinue(id);
     for (const id of this.clients.keys()) this.disconnect(id);
   }
 }

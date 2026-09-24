@@ -42,13 +42,19 @@ import {
   PtyInputParams,
   PtyOpenParams,
   PtyResizeParams,
+  claudeRejectedReset,
+  claudeUsageWindows,
+  classifyUsageLimit,
+  codexStatusWindows,
   instructionsDelivery,
   isJsonRpcRequest,
+  mergeUsageWindows,
   isJsonRpcResponse,
   parseJsonRpc,
   type DaemonEvent,
   type DaemonStatus,
   type JsonRpcId,
+  type UsageWindow,
 } from "@sessionboxer/protocol";
 import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
@@ -135,6 +141,31 @@ const instructions = env.SESSIONBOXER_INSTRUCTIONS ?? "";
  * Anthropic; the Daemon's own environment keeps that value, only the Agent process sees the loopback.
  */
 const llmUpstream = env.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_DEFAULT_BASE_URL;
+
+/**
+ * The Provider's usage meters (ADR-0053): Anthropic's `anthropic-ratelimit-unified-*` response
+ * headers seen by the inspector, Codex's `/status` after each turn. Devin reports none.
+ */
+let usage: DaemonStatus["usage"] = null;
+/** Anthropic's last refusal for lack of credit, to mark the Agent error that follows it. */
+let lastRejected: { resetsAt: string | null; at: number } | null = null;
+const REJECTED_TO_ERROR_MS = 60_000;
+
+function reportUsage(windows: UsageWindow[]): void {
+  if (windows.length === 0) return;
+  usage = { windows: mergeUsageWindows(usage?.windows ?? [], windows), updatedAt: new Date().toISOString() };
+  broadcastStatus();
+}
+
+/** The Agent's error as the event carries it, marked when it is the Provider refusing for lack of credit. */
+function agentError(message: string): DaemonEvent["body"] {
+  const hit = classifyUsageLimit(provider, message);
+  const rejected = agent.turnActive && lastRejected && Date.now() - lastRejected.at < REJECTED_TO_ERROR_MS ? lastRejected : null;
+  if (!hit && !rejected) return { type: "agent_error", message };
+  lastRejected = null;
+  return { type: "agent_error", message, limit: { resetsAt: rejected?.resetsAt ?? hit?.resetsAt ?? null } };
+}
+
 const llmInspector =
   provider === "claude-code"
     ? new LlmInspector({
@@ -143,6 +174,14 @@ const llmInspector =
         dir: `${tmpfsDir}/llm`,
         log,
         onCall: (call) => emit({ type: "llm_call", call }),
+        onResponse: (status, headers) => {
+          reportUsage(claudeUsageWindows(headers));
+          const rejected = claudeRejectedReset(status, headers);
+          if (rejected) {
+            lastRejected = { ...rejected, at: Date.now() };
+            log(`Anthropic refused a call for lack of usage credit (resets ${rejected.resetsAt ?? "unknown"})`);
+          }
+        },
       })
     : null;
 /**
@@ -193,6 +232,7 @@ const agent = new AgentManager(
     workspaceBriefing: () => repos.briefing(),
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
+    ...(provider === "codex" ? { usageCommand: "/status" } : {}),
     log,
   },
   {
@@ -201,17 +241,20 @@ const agent = new AgentManager(
       llmInspector?.flush();
       emit(usage ? { type: "turn_ended", stopReason, usage } : { type: "turn_ended", stopReason });
     },
-    onError: (message) => emit({ type: "agent_error", message }),
+    onError: (message) => emit(agentError(message)),
+    onUsageReport: (text) => reportUsage(codexStatusWindows(text)),
     onMcpChanged: (servers) => emit({ type: "mcp_changed", servers }),
     onModelChanged: (model) => emit({ type: "model_changed", model: model.value, name: model.name }),
     onOptionChanged: (option, choice) =>
       emit({ type: "option_changed", id: option.id, name: option.name, value: choice.value, valueName: choice.name }),
-    onStateChange: () => {
-      const params = status();
-      for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
-    },
+    onStateChange: () => broadcastStatus(),
   },
 );
+
+function broadcastStatus(): void {
+  const params = status();
+  for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
+}
 
 const workspaceFs = new WorkspaceFs(workspace);
 
@@ -248,6 +291,7 @@ function status(): DaemonStatus {
     optionsPending: agent.optionsPending,
     llmInspect: agent.startedAgentEnv.ANTHROPIC_BASE_URL === LLM_INSPECTOR_ENV.ANTHROPIC_BASE_URL,
     llmInspectPending: agent.agentEnvPendingChange,
+    usage,
   };
 }
 

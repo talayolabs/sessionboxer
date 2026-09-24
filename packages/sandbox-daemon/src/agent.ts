@@ -56,8 +56,17 @@ export interface AgentConfig {
   writeMcpConfig?: (servers: McpServerSpec[]) => void;
   /** Runs before every spawn with the model allowlist (Claude reads `availableModels` from its settings file). */
   writeModelAllowlist?: (models: string[]) => void;
+  /**
+   * A slash command the adapter answers locally with the Provider's usage meters (codex-acp's
+   * `/status`); run at the end of every turn, while the turn is still held, its text goes to
+   * `onUsageReport`.
+   */
+  usageCommand?: string;
   log: (msg: string) => void;
 }
+
+/** How long the usage command may take before the turn is reported ended without it. */
+const USAGE_COMMAND_TIMEOUT_MS = 8000;
 
 export interface AgentEvents {
   onUpdate: (update: SessionUpdate) => void;
@@ -69,6 +78,8 @@ export interface AgentEvents {
   onModelChanged: (model: ModelOption) => void;
   /** One of the Agent's other options now has another value. */
   onOptionChanged: (option: AgentOption, choice: OptionChoice) => void;
+  /** The text `usageCommand` answered with, after a turn. */
+  onUsageReport?: (text: string) => void;
   onStateChange: () => void;
 }
 
@@ -731,6 +742,7 @@ export class AgentManager {
         sessionId: this.acpSessionId,
         prompt: [{ type: "text", text: this.firstPromptText(built.text) }, ...built.blocks],
       });
+      await this.reportUsage();
       this.events.onTurnEnded(result.stopReason, turnUsage(result.usage));
     } catch (e) {
       this.cfg.log(`session/prompt on ${this.acpSessionId} failed: ${String(e)}`);
@@ -790,6 +802,14 @@ export class AgentManager {
     if (this.turnActive) throw new Error("a turn is already active");
     if (this.reportSink) throw new Error("a context report is already running");
     if (this.branching) throw new Error("the conversation is being branched; retry in a moment");
+    const text = await this.localCommand("/context");
+    // claude-agent-acp delivers the report twice (as command output and as the result).
+    const half = text.slice(0, Math.floor(text.length / 2)).trim();
+    return half.length > 0 && text.slice(half.length).trim() === half ? half : text;
+  }
+
+  /** A slash command the adapter answers by itself, its reply captured instead of emitted. */
+  private async localCommand(command: string): Promise<string> {
     await this.ensureStarted();
     if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
     const chunks: string[] = [];
@@ -799,15 +819,38 @@ export class AgentManager {
     try {
       const result = await this.conn.agent.request("session/prompt", {
         sessionId: this.acpSessionId,
-        prompt: [{ type: "text", text: "/context" }],
+        prompt: [{ type: "text", text: command }],
       });
       if (result.stopReason !== "end_turn") throw new Error(`agent stopped early (${result.stopReason})`);
-      // claude-agent-acp delivers the report twice (as command output and as the result).
-      const text = chunks.join("").trim();
-      const half = text.slice(0, Math.floor(text.length / 2)).trim();
-      return half.length > 0 && text.slice(half.length).trim() === half ? half : text;
+      return chunks.join("").trim();
     } finally {
       this.reportSink = null;
+    }
+  }
+
+  /** Runs `usageCommand` at the end of a turn (the turn is still held, so nothing else prompts meanwhile). */
+  private async reportUsage(): Promise<void> {
+    const command = this.cfg.usageCommand;
+    if (!command || !this.events.onUsageReport || !this.conn || !this.acpSessionId) return;
+    const conn = this.conn;
+    const sessionId = this.acpSessionId;
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      const text = await Promise.race([
+        this.localCommand(command),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            // Frees the session for the next prompt: the cancelled command resolves and releases the sink.
+            void conn.agent.notify("session/cancel", { sessionId }).catch(() => undefined);
+            reject(new Error("timed out"));
+          }, USAGE_COMMAND_TIMEOUT_MS);
+        }),
+      ]);
+      this.events.onUsageReport(text);
+    } catch (e) {
+      this.cfg.log(`${command} after the turn failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

@@ -122,6 +122,8 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .branch-node-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+.usage-sign-small { flex: none; width: 8px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; cursor: help; }
+.no-entry { flex: none; display: inline-block; vertical-align: -2px; }
 .dot-idle { background: var(--ok); }
 .dot-running { background: var(--accent); animation: pulse 1s infinite alternate; }
 .dot-creating { background: var(--warn); animation: pulse 1s infinite alternate; }
@@ -842,6 +844,23 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .ctx-rot-label { color: var(--error); font-weight: 600; text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; }
 .ctx-compactions { color: var(--muted); }
 .ctx-warn { color: var(--warn); }
+
+/* Provider usage: three bars in a row above the context gauge, figures on hover only (ADR-0053). */
+.usage-bars { display: flex; width: 100%; gap: 8px; padding: 2px 4px; box-sizing: border-box; }
+.usage-bars .usage-bar { flex: 1 1 0; width: auto; min-width: 0; }
+.usage-bar.blank { background: repeating-linear-gradient(-45deg, transparent 0 3px, color-mix(in srgb, var(--border) 60%, transparent) 3px 5px); border-style: dashed; }
+.usage-bar.full .ctx-fill { border-radius: 3px; }
+
+/* The Provider refused the last turn for lack of usage credit: ⛔, countdown, Continue, Auto-continue. */
+.usage-limit { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; padding: 5px 8px; font-size: 13px; border: 1px solid var(--error); border-radius: 8px; background: color-mix(in srgb, var(--error) 10%, var(--panel)); }
+.usage-sign { display: inline-flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; cursor: help; }
+.usage-limit-text { color: var(--text); }
+.usage-countdown { font-variant-numeric: tabular-nums; color: var(--error); font-weight: 600; }
+.usage-countdown.due { color: var(--warn); }
+.usage-limit-actions { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; }
+.usage-auto { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); white-space: nowrap; cursor: pointer; }
+.usage-auto input { margin: 0; }
+.usage-polling { color: var(--muted); }
 
 /* Turn divider stats and compaction marker. */
 .turn-stats { white-space: nowrap; color: var(--muted); opacity: 0.85; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

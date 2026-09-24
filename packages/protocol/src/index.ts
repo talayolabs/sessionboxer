@@ -580,6 +580,79 @@ export function applyNote(status: SessionStatus, how: "immediate" | "restart" | 
   return "Applies when the Session resumes.";
 }
 
+/** Where files attached to prompts land in the Workspace (`<UPLOADS_DIR>/<random>/<name>`). */
+export const UPLOADS_DIR = ".sessionboxer/uploads";
+
+/** A file the user attached to a prompt, uploaded into the Sandbox's Workspace. */
+export const PromptAttachment = z.object({
+  /** Workspace-relative path (`.sessionboxer/uploads/ab12cd34/photo.png`). */
+  path: z.string().min(1),
+  name: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  mimeType: z.string().min(1),
+});
+export type PromptAttachment = z.infer<typeof PromptAttachment>;
+
+export const MAX_PROMPT_ATTACHMENTS = 20;
+
+// ---------------------------------------------------------------------------
+// Provider usage limits (ADR-0053). The Daemon meters what the Provider tells it (Anthropic's
+// `anthropic-ratelimit-unified-*` response headers through the LLM inspector, Codex's `/status`)
+// and marks an Agent error that is the Provider refusing to work for lack of credit; the
+// Control Plane keeps both on the Session, re-sends the refused prompt on Continue, and polls
+// for the reset when Auto-continue is on. Devin reports no meters; only its refusals are marked.
+// ---------------------------------------------------------------------------
+
+/** One usage window a Provider meters (a rolling 5 hours, a week, a spend cap, …). */
+export const UsageWindow = z.object({
+  /** Stable id within the Provider (`five_hour`, `seven_day`, `seven_day_overage_included`, `codex_primary`, …). */
+  id: z.string(),
+  /** Short name for the bar ("Session", "This week", "Fable"). */
+  label: z.string(),
+  /** Share of the window used, 0..1 (a Provider may report past 1). */
+  used: z.number().min(0),
+  resetsAt: z.string().nullable().default(null),
+});
+export type UsageWindow = z.infer<typeof UsageWindow>;
+
+/** The Provider refused the last prompt for lack of usage credit. */
+export const UsageLimit = z.object({
+  /** The Provider's own words. */
+  message: z.string(),
+  /** When the credit is back, as far as the Provider said (headers or the message); `null` when it did not. */
+  resetsAt: z.string().nullable().default(null),
+  hitAt: z.string(),
+  /**
+   * What Continue sends again: the refused prompt itself, or a nudge to carry on when the Agent had
+   * already started on it. `null` when nothing is to be re-sent (a hidden verification or handoff
+   * request, which fail on their own).
+   */
+  retry: z
+    .object({ text: z.string(), attachments: z.array(PromptAttachment).max(MAX_PROMPT_ATTACHMENTS).optional() })
+    .nullable()
+    .default(null),
+});
+export type UsageLimit = z.infer<typeof UsageLimit>;
+
+export const SessionUsage = z.object({
+  /** The Provider's meters, last reported values (in bar order). */
+  windows: z.array(UsageWindow).default([]),
+  updatedAt: z.string().nullable().default(null),
+  limit: UsageLimit.nullable().default(null),
+  /** While a limit stands, the Control Plane probes the Provider every `USAGE_AUTO_CONTINUE_INTERVAL_MS` once the reset is due and continues by itself. */
+  autoContinue: z.boolean().default(false),
+});
+export type SessionUsage = z.infer<typeof SessionUsage>;
+
+export const USAGE_AUTO_CONTINUE_INTERVAL_MS = 10_000;
+
+/** `PUT /api/sessions/:id/usage/auto-continue`. */
+export const AutoContinueRequest = z.object({ enabled: z.boolean() });
+export type AutoContinueRequest = z.infer<typeof AutoContinueRequest>;
+
+/** What Continue sends when the Agent had already produced something before the refusal. */
+export const USAGE_CONTINUE_TEXT = "Continue where you left off.";
+
 export const Session = z.object({
   id: z.string(),
   title: z.string(),
@@ -617,6 +690,8 @@ export const Session = z.object({
   branches: z.array(Branch).default([]),
   /** Branch the transcript shows and prompts go to. */
   activeBranchId: z.string().default(ROOT_BRANCH_ID),
+  /** The Provider's usage meters and, when it refused to work for lack of credit, the standing limit. */
+  usage: SessionUsage.default({}),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -690,21 +765,6 @@ export function updateRequestSettings(req: UpdateSessionRequest): SessionSetting
     ...req.settings,
   };
 }
-
-/** Where files attached to prompts land in the Workspace (`<UPLOADS_DIR>/<random>/<name>`). */
-export const UPLOADS_DIR = ".sessionboxer/uploads";
-
-/** A file the user attached to a prompt, uploaded into the Sandbox's Workspace. */
-export const PromptAttachment = z.object({
-  /** Workspace-relative path (`.sessionboxer/uploads/ab12cd34/photo.png`). */
-  path: z.string().min(1),
-  name: z.string().min(1),
-  size: z.number().int().nonnegative(),
-  mimeType: z.string().min(1),
-});
-export type PromptAttachment = z.infer<typeof PromptAttachment>;
-
-export const MAX_PROMPT_ATTACHMENTS = 20;
 
 /** Text, attached files, or both; the Daemon adds the files' paths to the text it sends the Agent. */
 export const PromptRequest = z
@@ -1568,7 +1628,8 @@ export type SessionEventBody =
   | { type: "user_prompt"; text: string; attachments?: PromptAttachment[]; origin?: PromptOrigin }
   | { type: "update"; update: SessionUpdate }
   | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage }
-  | { type: "agent_error"; message: string }
+  /** `limit`: the Provider refused for lack of usage credit (the prompt can be sent again after the reset). */
+  | { type: "agent_error"; message: string; limit?: { resetsAt: string | null } }
   | { type: "status"; status: SessionStatus; error?: string }
   /** First event of a forked Session: everything before it was copied from the origin (nothing, with `conversation: "new"`). */
   | {
@@ -2583,6 +2644,8 @@ export const DaemonStatus = z.object({
   llmInspect: z.boolean().default(false),
   /** An `llm/inspect/set` is waiting for the current turn to end. */
   llmInspectPending: z.boolean().default(false),
+  /** The Provider's usage meters as last seen by the Daemon; `null` when it reported none yet. */
+  usage: z.object({ windows: z.array(UsageWindow), updatedAt: z.string() }).nullable().default(null),
 });
 export type DaemonStatus = z.infer<typeof DaemonStatus>;
 
@@ -2857,3 +2920,4 @@ export function parseJsonRpc(raw: string): JsonRpcMessage {
 }
 
 export * from "./themes.js";
+export * from "./usage.js";

@@ -4,7 +4,7 @@ import { createServer, request as httpRequest, type IncomingHttpHeaders, type In
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { rootCertificates } from "node:tls";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
-import type { LlmCall, LlmCallKind, LlmCallUsage, LlmRequestShape } from "@sessionboxer/protocol";
+import { usageHeadersOnly, type LlmCall, type LlmCallKind, type LlmCallUsage, type LlmRequestShape } from "@sessionboxer/protocol";
 
 /** Per-body copy cap (decoded bytes); what follows is forwarded but not kept. */
 const BODY_CAP = 4 * 1024 * 1024;
@@ -38,6 +38,8 @@ export interface LlmInspectorOptions {
   dir: string;
   log: (msg: string) => void;
   onCall: (call: LlmCall) => void;
+  /** Every upstream response's status and its usage-meter headers (`anthropic-ratelimit-unified-*`, `retry-after`); nothing else of the headers. */
+  onResponse?: (status: number | null, usageHeaders: Record<string, string>) => void;
 }
 
 /** Fields read from a Messages API request body for the summary; nothing else is parsed. */
@@ -375,6 +377,7 @@ export class LlmInspector {
         }
         res.writeHead(upstreamRes.statusCode ?? 502, outHeaders);
         if (call.streamed) res.flushHeaders();
+        this.opts.onResponse?.(call.status, usageHeadersOnly(upstreamRes.headers));
         upstreamRes.on("data", (chunk: Buffer) => {
           rawResponseChunks.push(chunk);
           res.write(chunk);

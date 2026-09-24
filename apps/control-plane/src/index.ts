@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
   AskRequest,
+  AutoContinueRequest,
   AttachPrRequest,
   AddRepoRequest,
   UpdateRepoRequest,
@@ -398,6 +399,13 @@ api.post("/sessions/:id/saved/:messageId/send", async (c) => {
 api.post("/sessions/:id/queue", async (c) => {
   const req = QueueRequest.parse(await c.req.json());
   return c.json(await sessions.setQueueRunning(c.req.param("id"), req.running));
+});
+
+// Usage limits (ADR-0053): continue the turn the Provider refused; poll for it every 10 s.
+api.post("/sessions/:id/usage/continue", async (c) => c.json(await sessions.continueAfterLimit(c.req.param("id"))));
+api.post("/sessions/:id/usage/auto-continue", async (c) => {
+  const req = AutoContinueRequest.parse(await c.req.json());
+  return c.json(sessions.setAutoContinue(c.req.param("id"), req.enabled));
 });
 
 // End-to-end verification runs of the Session (ADR-0044).

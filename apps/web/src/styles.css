@@ -215,6 +215,7 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .tool { border: 1px solid var(--border); border-radius: 8px; max-width: 900px; overflow: hidden; }
 .tool-header { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 0; background: var(--agent); }
 .tool-caret { color: var(--muted); width: 10px; }
+.tool-image { display: inline-flex; color: var(--muted); }
 .tool-kind { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .tool-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-file { color: var(--muted); }
@@ -227,7 +228,7 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .tool-in_progress .tool-status, .tool-pending .tool-status { color: var(--warn); }
 .tool-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .tool details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-.screenshot { display: block; max-width: 100%; border-top: 1px solid var(--border); }
+.screenshot { display: block; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; }
 
 /* Workspace files embedded in a message (video, image, PDF…) */
 .attachments { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }

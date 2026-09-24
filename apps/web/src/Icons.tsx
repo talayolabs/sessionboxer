@@ -14,7 +14,8 @@ export type IconName =
   | "settings"
   | "stop"
   | "resume"
-  | "delete";
+  | "delete"
+  | "image";
 
 /** Feather-style outline glyphs (24-unit grid, `currentColor` strokes). */
 const GLYPHS: Record<IconName, ReactNode> = {
@@ -80,6 +81,13 @@ const GLYPHS: Record<IconName, ReactNode> = {
   stop: <rect x="5" y="5" width="14" height="14" rx="2" />,
   resume: <path d="M6 4l14 8-14 8V4z" />,
   delete: <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />,
+  image: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 14 }: { name: IconName; size?: number }) {

@@ -7,6 +7,7 @@ import { formatDuration } from "./E2e";
 import { FileLink } from "./FileLink";
 import { knownFileRef, splitFileRefs, type FileRef } from "./file-links";
 import { formatMb, formatTime } from "./format";
+import { Icon } from "./Icons";
 import { callFacts } from "./LlmCallDialog";
 import { Markdown } from "./Markdown";
 import type { DividerRef } from "./BranchTree";
@@ -279,15 +280,20 @@ function ToolCall({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> })
     <div className={`tool tool-${item.status}`}>
       <button className="tool-header" onClick={() => setOpen(!open)}>
         <span className="tool-caret">{open ? "▾" : "▸"}</span>
+        {images.length > 0 && (
+          <span className="tool-image" title={images.length === 1 ? "1 screenshot inside" : `${images.length} screenshots inside`}>
+            <Icon name="image" />
+          </span>
+        )}
         <span className="tool-kind">{item.toolKind}</span>
         <ToolTitle item={item} />
         <span className="tool-status">{item.status}</span>
       </button>
-      {images.map((c, i) => (
-        <ToolContent key={i} content={c} />
-      ))}
       {open && (
         <div className="tool-body">
+          {images.map((c, i) => (
+            <ToolContent key={i} content={c} />
+          ))}
           {item.rawInput !== undefined && (
             <details open>
               <summary>input</summary>

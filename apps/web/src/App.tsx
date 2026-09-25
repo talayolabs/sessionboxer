@@ -773,6 +773,7 @@ export function App() {
           <SettingsView
             settings={settings}
             section={route.section}
+            onSection={(section) => setRoute({ view: "settings", section })}
             onStored={setSettings}
             onSaved={(s) => {
               setSettings(s);
@@ -2036,16 +2037,42 @@ const DOCKER_POOL_SUGGESTIONS = [
   { block: "100.64.0.0/16", why: "Carrier-grade NAT range, unused on most LANs; not if you run Tailscale or WARP (100.64–127.x)" },
 ];
 
+/** The sections of Global settings, in the order of the left-hand list; `id` is the `#/settings/<id>` route. */
+const GLOBAL_SETTINGS_SECTIONS = [
+  { id: "providers", label: "Provider logins" },
+  { id: "git", label: "Git accounts" },
+  { id: "models", label: "Models and instructions" },
+  { id: "mcp", label: "MCP servers" },
+  { id: "sandbox", label: "Sandbox resources" },
+  { id: "git-identity", label: "Git identity" },
+  { id: "snapshots", label: "Snapshots" },
+  { id: "verification", label: "Verification" },
+  { id: "recordings", label: "Narrated recordings" },
+  { id: "dictation", label: "Dictation" },
+  { id: "devices", label: "Devices and remote access" },
+  { id: "theme", label: "Color theme" },
+  { id: "claude-api", label: "Claude API" },
+  { id: "tls", label: "TLS certificates" },
+  { id: "github-app", label: "GitHub OAuth App" },
+] as const;
+type GlobalSettingsSection = (typeof GLOBAL_SETTINGS_SECTIONS)[number]["id"];
+
+function isGlobalSettingsSection(id: string | undefined): id is GlobalSettingsSection {
+  return GLOBAL_SETTINGS_SECTIONS.some((s) => s.id === id);
+}
+
 function SettingsView({
   settings,
   section,
+  onSection,
   onSaved,
   onStored,
   run,
 }: {
   settings: PublicSettings;
-  /** Fieldset to scroll to and focus (`#/settings/providers`), as the no-login banner links there. */
+  /** Section shown on the right (`#/settings/providers`), as the no-login banner links there. */
   section?: string;
+  onSection: (section: GlobalSettingsSection) => void;
   onSaved: (s: PublicSettings) => void;
   /** Settings the Control Plane stored on its own (connector logins), without the form being saved. */
   onStored: (s: PublicSettings) => void;
@@ -2094,13 +2121,8 @@ function SettingsView({
   const codexAuthSet = settings.providerSecretsSet.codex.CODEX_AUTH_JSON && !forgetCodexAuth;
   const cursorLoginSet = settings.providerSecretsSet.cursor.CURSOR_LOGIN && !forgetCursorLogin;
 
-  useEffect(() => {
-    if (!section) return;
-    const target = document.getElementById(`settings-${section}`);
-    if (!target) return;
-    target.scrollIntoView({ block: "start" });
-    target.querySelector<HTMLElement>("input, textarea")?.focus({ preventScroll: true });
-  }, [section]);
+  const active: GlobalSettingsSection = isGlobalSettingsSection(section) ? section : "providers";
+  const show = (id: GlobalSettingsSection) => active === id;
 
   const importCursorAuth = (file: File | undefined) => {
     if (!file) return;
@@ -2173,480 +2195,517 @@ function SettingsView({
   };
 
   return (
-    <form className="panel" onSubmit={submit}>
-      <h2>Global settings</h2>
-      <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Logins, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</p>
-      <fieldset className="choice" id="settings-providers">
-        <legend>Provider logins</legend>
-        <p className="muted">
-          A Session needs the login of its Provider; one is enough to start. Each is made with the Provider&apos;s own CLI on your machine, then pasted here.
-        </p>
-        <div className="guided-row">
-          <button type="button" onClick={() => setGuided(true)}>
-            Connect step by step…
-          </button>
-          <span className="muted">Install the CLI, log in, paste: the commands for your operating system (macOS, Windows or Linux).</span>
-        </div>
-        {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
-        <label>
-          Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
-          <input
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder={tokenSet ? "Leave empty to keep the current token" : "Paste the token"}
-          />
-        </label>
-        <p className="field-hint">
-          <span>Get one on the machine you run Claude Code on (a Claude subscription; the token is long-lived):</span>
-          <CopyCommand command="claude setup-token" />
-        </p>
-        <label>
-          Devin token {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
-          <input
-            type="password"
-            autoComplete="off"
-            value={devinToken}
-            onChange={(e) => setDevinToken(e.target.value)}
-            placeholder={devinTokenSet ? "Leave empty to keep the current token" : "Paste the token"}
-          />
-        </label>
-        <p className="field-hint">
-          <span>Log in with the Devin CLI, then copy the token out of the credentials file it writes (the Sandbox gets it as <code>WINDSURF_API_KEY</code>):</span>
-          <CopyCommand command="devin auth login" />
-          <CopyCommand command="cat ~/.local/share/devin/credentials.toml" />
-        </p>
-        <label>
-          <span className="label-row">
-            Codex: ChatGPT login (auth.json){" "}
-            {codexAuthSet ? (
-              <span className="ok">
-                (set{settings.codexLogin && !forgetCodexAuth ? `: ${describeCodexLogin(settings.codexLogin)}` : ""})
-              </span>
-            ) : (
-              <span className="warn">(not set)</span>
-            )}
-          </span>
-          <textarea
-            rows={3}
-            spellCheck={false}
-            autoComplete="off"
-            value={codexAuth}
-            onChange={(e) => {
-              setCodexAuth(e.target.value);
-              if (e.target.value.trim()) setForgetCodexAuth(false);
-            }}
-            placeholder={codexAuthSet ? "Leave empty to keep the current login" : "Paste the contents of ~/.codex/auth.json"}
-          />
-        </label>
-        <p className="field-hint">
-          <span>
-            Codex runs on your ChatGPT subscription, not on API credit. Log in on your own machine, then paste or import the file it writes; the Sandbox
-            keeps it in memory only and refreshed tokens flow back here.
-          </span>
-          <CopyCommand command="codex login" />
-          <CopyCommand command="cat ~/.codex/auth.json" />
-          <input
-            ref={codexFileRef}
-            type="file"
-            accept=".json,application/json"
-            hidden
-            onChange={(e) => {
-              importCodexAuth(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          <button type="button" onClick={() => codexFileRef.current?.click()}>
-            Import auth.json…
-          </button>
-          {settings.providerSecretsSet.codex.CODEX_AUTH_JSON && (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={forgetCodexAuth}
-                onChange={(e) => {
-                  setForgetCodexAuth(e.target.checked);
-                  if (e.target.checked) setCodexAuth("");
-                }}
-              />{" "}
-              Forget the stored login
-            </label>
-          )}
-        </p>
-        <label>
-          <span className="label-row">
-            Cursor: login (auth.json or API key){" "}
-            {cursorLoginSet ? (
-              <span className="ok">
-                (set{settings.cursorLogin && !forgetCursorLogin ? `: ${describeCursorLogin(settings.cursorLogin)}` : ""})
-              </span>
-            ) : (
-              <span className="warn">(not set)</span>
-            )}
-          </span>
-          <textarea
-            rows={3}
-            spellCheck={false}
-            autoComplete="off"
-            value={cursorLogin}
-            onChange={(e) => {
-              setCursorLogin(e.target.value);
-              if (e.target.value.trim()) setForgetCursorLogin(false);
-            }}
-            placeholder={cursorLoginSet ? "Leave empty to keep the current login" : "Paste the contents of Cursor's auth.json, or an API key"}
-          />
-        </label>
-        <p className="field-hint">
-          <span>
-            Cursor runs on your Cursor subscription. Log in with its CLI on your own machine and paste or import the file it writes (the Sandbox keeps it
-            in memory only; refreshed tokens flow back here), or paste an API key from cursor.com &rarr; Dashboard &rarr; Integrations.
-          </span>
-          <CopyCommand command="agent login" />
-          <CopyCommand command="cat ~/.config/cursor/auth.json" />
-          <input
-            ref={cursorFileRef}
-            type="file"
-            accept=".json,application/json"
-            hidden
-            onChange={(e) => {
-              importCursorAuth(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          <button type="button" onClick={() => cursorFileRef.current?.click()}>
-            Import auth.json…
-          </button>
-          {settings.providerSecretsSet.cursor.CURSOR_LOGIN && (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={forgetCursorLogin}
-                onChange={(e) => {
-                  setForgetCursorLogin(e.target.checked);
-                  if (e.target.checked) setCursorLogin("");
-                }}
-              />{" "}
-              Forget the stored login
-            </label>
-          )}
-        </p>
-      </fieldset>
-      <GitAccounts servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
-      <ThemeFieldset />
-      <fieldset className="choice">
-        <legend>Claude API</legend>
-        <label>
-          <span className="label-row">
-            Claude API base URL (ANTHROPIC_BASE_URL)
-            <span className="muted">
-              current: <code>{settings.claudeApi.effectiveBaseUrl}</code>{" "}
-              {settings.claudeApi.effectiveBaseUrlSource === "settings"
-                ? "(set here)"
-                : settings.claudeApi.effectiveBaseUrlSource === "env"
-                  ? "(from the Control Plane's environment)"
-                  : "(Anthropic's default)"}
-            </span>
-          </span>
-          <input
-            value={claudeBaseUrl}
-            onChange={(e) => setClaudeBaseUrl(e.target.value)}
-            placeholder={settings.claudeApi.effectiveBaseUrlSource === "env" ? settings.claudeApi.effectiveBaseUrl : ANTHROPIC_DEFAULT_BASE_URL}
-            spellCheck={false}
-          />
-        </label>
-        <p className="muted">
-          Where Claude Code in each Sandbox sends its model API calls: a company Claude proxy, for instance. Empty takes <code>ANTHROPIC_BASE_URL</code>{" "}
-          from the Control Plane&apos;s environment, else Anthropic. Applies to Sandboxes created afterwards. A Session with <em>Inspect LLM</em> on
-          puts its own loopback proxy in front of this URL; the Sandbox trusts the extra CA certificates below for it.
-        </p>
-        <div className="row">
-          <label>
-            <span className="label-row">
-              Proxy auth token (ANTHROPIC_AUTH_TOKEN) {claudeAuthTokenSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
-              {claudeAuthTokenSet && (
-                <button type="button" className="link" onClick={() => setForgetClaudeAuthToken(true)}>
-                  Forget
+    <form className="panel settings-view" onSubmit={submit}>
+      <h2 className="advanced-title">
+        <span>Global settings</span>
+        <span className="muted advanced-sub">defaults for every Session; Save applies all sections</span>
+      </h2>
+      <div className="split-settings">
+        <nav className="split-nav" aria-label="Settings sections">
+          {GLOBAL_SETTINGS_SECTIONS.map((s) => (
+            <button key={s.id} type="button" className={active === s.id ? "active" : ""} onClick={() => onSection(s.id)}>
+              {s.label}
+            </button>
+          ))}
+        </nav>
+        <div className="split-body">
+          {show("providers") && (
+            <fieldset className="choice" id="settings-providers">
+              <legend>Provider logins</legend>
+              <p className="muted">
+                A Session needs the login of its Provider; one is enough to start. Each is made with the Provider&apos;s own CLI on your machine, then pasted here.
+              </p>
+              <div className="guided-row">
+                <button type="button" onClick={() => setGuided(true)}>
+                  Connect step by step…
                 </button>
-              )}
-            </span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={claudeAuthToken}
-              onChange={(e) => setClaudeAuthToken(e.target.value)}
-              placeholder={claudeAuthTokenSet ? "Leave empty to keep the current token" : "Only if the proxy wants its own bearer token"}
-            />
-          </label>
-          <label>
-            <span className="label-row">
-              Proxy API key (ANTHROPIC_API_KEY) {claudeApiKeySet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
-              {claudeApiKeySet && (
-                <button type="button" className="link" onClick={() => setForgetClaudeApiKey(true)}>
-                  Forget
+                <span className="muted">Install the CLI, log in, paste: the commands for your operating system (macOS, Windows or Linux).</span>
+              </div>
+              {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
+              <label>
+                Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder={tokenSet ? "Leave empty to keep the current token" : "Paste the token"}
+                />
+              </label>
+              <p className="field-hint">
+                <span>Get one on the machine you run Claude Code on (a Claude subscription; the token is long-lived):</span>
+                <CopyCommand command="claude setup-token" />
+              </p>
+              <label>
+                Devin token {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={devinToken}
+                  onChange={(e) => setDevinToken(e.target.value)}
+                  placeholder={devinTokenSet ? "Leave empty to keep the current token" : "Paste the token"}
+                />
+              </label>
+              <p className="field-hint">
+                <span>Log in with the Devin CLI, then copy the token out of the credentials file it writes (the Sandbox gets it as <code>WINDSURF_API_KEY</code>):</span>
+                <CopyCommand command="devin auth login" />
+                <CopyCommand command="cat ~/.local/share/devin/credentials.toml" />
+              </p>
+              <label>
+                <span className="label-row">
+                  Codex: ChatGPT login (auth.json){" "}
+                  {codexAuthSet ? (
+                    <span className="ok">
+                      (set{settings.codexLogin && !forgetCodexAuth ? `: ${describeCodexLogin(settings.codexLogin)}` : ""})
+                    </span>
+                  ) : (
+                    <span className="warn">(not set)</span>
+                  )}
+                </span>
+                <textarea
+                  rows={3}
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={codexAuth}
+                  onChange={(e) => {
+                    setCodexAuth(e.target.value);
+                    if (e.target.value.trim()) setForgetCodexAuth(false);
+                  }}
+                  placeholder={codexAuthSet ? "Leave empty to keep the current login" : "Paste the contents of ~/.codex/auth.json"}
+                />
+              </label>
+              <p className="field-hint">
+                <span>
+                  Codex runs on your ChatGPT subscription, not on API credit. Log in on your own machine, then paste or import the file it writes; the Sandbox
+                  keeps it in memory only and refreshed tokens flow back here.
+                </span>
+                <CopyCommand command="codex login" />
+                <CopyCommand command="cat ~/.codex/auth.json" />
+                <input
+                  ref={codexFileRef}
+                  type="file"
+                  accept=".json,application/json"
+                  hidden
+                  onChange={(e) => {
+                    importCodexAuth(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button type="button" onClick={() => codexFileRef.current?.click()}>
+                  Import auth.json…
                 </button>
+                {settings.providerSecretsSet.codex.CODEX_AUTH_JSON && (
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={forgetCodexAuth}
+                      onChange={(e) => {
+                        setForgetCodexAuth(e.target.checked);
+                        if (e.target.checked) setCodexAuth("");
+                      }}
+                    />{" "}
+                    Forget the stored login
+                  </label>
+                )}
+              </p>
+              <label>
+                <span className="label-row">
+                  Cursor: login (auth.json or API key){" "}
+                  {cursorLoginSet ? (
+                    <span className="ok">
+                      (set{settings.cursorLogin && !forgetCursorLogin ? `: ${describeCursorLogin(settings.cursorLogin)}` : ""})
+                    </span>
+                  ) : (
+                    <span className="warn">(not set)</span>
+                  )}
+                </span>
+                <textarea
+                  rows={3}
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={cursorLogin}
+                  onChange={(e) => {
+                    setCursorLogin(e.target.value);
+                    if (e.target.value.trim()) setForgetCursorLogin(false);
+                  }}
+                  placeholder={cursorLoginSet ? "Leave empty to keep the current login" : "Paste the contents of Cursor's auth.json, or an API key"}
+                />
+              </label>
+              <p className="field-hint">
+                <span>
+                  Cursor runs on your Cursor subscription. Log in with its CLI on your own machine and paste or import the file it writes (the Sandbox keeps it
+                  in memory only; refreshed tokens flow back here), or paste an API key from cursor.com &rarr; Dashboard &rarr; Integrations.
+                </span>
+                <CopyCommand command="agent login" />
+                <CopyCommand command="cat ~/.config/cursor/auth.json" />
+                <input
+                  ref={cursorFileRef}
+                  type="file"
+                  accept=".json,application/json"
+                  hidden
+                  onChange={(e) => {
+                    importCursorAuth(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button type="button" onClick={() => cursorFileRef.current?.click()}>
+                  Import auth.json…
+                </button>
+                {settings.providerSecretsSet.cursor.CURSOR_LOGIN && (
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={forgetCursorLogin}
+                      onChange={(e) => {
+                        setForgetCursorLogin(e.target.checked);
+                        if (e.target.checked) setCursorLogin("");
+                      }}
+                    />{" "}
+                    Forget the stored login
+                  </label>
+                )}
+              </p>
+            </fieldset>
+          )}
+          {show("git") && <GitAccounts servers={mcpServers} onChange={setMcpServers} onStored={onStored} />}
+          {show("theme") && <ThemeFieldset />}
+          {show("claude-api") && (
+            <fieldset className="choice">
+              <legend>Claude API</legend>
+              <label>
+                <span className="label-row">
+                  Claude API base URL (ANTHROPIC_BASE_URL)
+                  <span className="muted">
+                    current: <code>{settings.claudeApi.effectiveBaseUrl}</code>{" "}
+                    {settings.claudeApi.effectiveBaseUrlSource === "settings"
+                      ? "(set here)"
+                      : settings.claudeApi.effectiveBaseUrlSource === "env"
+                        ? "(from the Control Plane's environment)"
+                        : "(Anthropic's default)"}
+                  </span>
+                </span>
+                <input
+                  value={claudeBaseUrl}
+                  onChange={(e) => setClaudeBaseUrl(e.target.value)}
+                  placeholder={settings.claudeApi.effectiveBaseUrlSource === "env" ? settings.claudeApi.effectiveBaseUrl : ANTHROPIC_DEFAULT_BASE_URL}
+                  spellCheck={false}
+                />
+              </label>
+              <p className="muted">
+                Where Claude Code in each Sandbox sends its model API calls: a company Claude proxy, for instance. Empty takes <code>ANTHROPIC_BASE_URL</code>{" "}
+                from the Control Plane&apos;s environment, else Anthropic. Applies to Sandboxes created afterwards. A Session with <em>Inspect LLM</em> on
+                puts its own loopback proxy in front of this URL; the Sandbox trusts the extra CA certificates below for it.
+              </p>
+              <div className="row">
+                <label>
+                  <span className="label-row">
+                    Proxy auth token (ANTHROPIC_AUTH_TOKEN) {claudeAuthTokenSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+                    {claudeAuthTokenSet && (
+                      <button type="button" className="link" onClick={() => setForgetClaudeAuthToken(true)}>
+                        Forget
+                      </button>
+                    )}
+                  </span>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={claudeAuthToken}
+                    onChange={(e) => setClaudeAuthToken(e.target.value)}
+                    placeholder={claudeAuthTokenSet ? "Leave empty to keep the current token" : "Only if the proxy wants its own bearer token"}
+                  />
+                </label>
+                <label>
+                  <span className="label-row">
+                    Proxy API key (ANTHROPIC_API_KEY) {claudeApiKeySet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+                    {claudeApiKeySet && (
+                      <button type="button" className="link" onClick={() => setForgetClaudeApiKey(true)}>
+                        Forget
+                      </button>
+                    )}
+                  </span>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={claudeApiKey}
+                    onChange={(e) => setClaudeApiKey(e.target.value)}
+                    placeholder={claudeApiKeySet ? "Leave empty to keep the current key" : "Only if the proxy wants an x-api-key"}
+                  />
+                </label>
+              </div>
+              <p className="muted">
+                Optional credentials for that URL, given to Claude Code alongside (or instead of) the OAuth token; never shown again, stripped from snapshots.
+              </p>
+            </fieldset>
+          )}
+          {show("models") && (
+            <fieldset className="choice">
+              <legend>Models and instructions</legend>
+              <label>
+                Claude model aliases (offered in the Model picker, comma-separated)
+                <input value={claudeModels} onChange={(e) => setClaudeModels(e.target.value)} placeholder={DEFAULT_CLAUDE_MODELS.join(", ")} />
+              </label>
+              <p className="muted">
+                Written to Claude&apos;s <code>availableModels</code> setting inside each Sandbox, so models your account has but the picker does not list by
+                default (e.g. <code>fable</code>) become selectable; leave empty for Claude&apos;s built-in list. Aliases only, no keys. Applies to new
+                Sessions and to idle running ones (their Agent restarts in place, keeping the conversation); Stop → Resume a Session if it does not pick it up.
+              </p>
+              <label>
+                <span className="label-row">
+                  Instructions for the Agent (default for new Sessions; each Session can change them at creation)
+                  {instructions !== DEFAULT_INSTRUCTIONS && (
+                    <button type="button" className="link" onClick={() => setInstructions(DEFAULT_INSTRUCTIONS)}>
+                      Reset to the shipped default
+                    </button>
+                  )}
+                </span>
+                <textarea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
+              </label>
+              <p className="muted">
+                Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
+                {deliveryNote("codex")} {deliveryNote("cursor")} Comes on top of
+                the Sandbox briefing (desktop, recordings, handing files to you) and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Applies to
+                Sessions created afterwards.
+              </p>
+            </fieldset>
+          )}
+          {show("git-identity") && (
+            <fieldset className="choice">
+              <legend>Git identity in Sandboxes</legend>
+              <label>
+                Git user.name
+                <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} placeholder={settings.hostGitIdentity.name} />
+              </label>
+              <label>
+                Git user.email
+                <input value={gitUserEmail} onChange={(e) => setGitUserEmail(e.target.value)} placeholder={settings.hostGitIdentity.email} />
+              </label>
+              <p className="muted">
+                Default author/committer for commits made in Sandboxes; blank takes this machine&apos;s git config
+                {settings.hostGitIdentity.name ? ` (${settings.hostGitIdentity.name}${settings.hostGitIdentity.email ? ` <${settings.hostGitIdentity.email}>` : ""})` : ""}.
+                Overridable per Session when creating it.
+              </p>
+            </fieldset>
+          )}
+          {show("sandbox") && (
+            <fieldset className="choice">
+              <legend>Sandbox resources</legend>
+              <div className="row">
+                <label>
+                  Sandbox CPUs
+                  <input type="number" min={0.5} step={0.5} value={cpus} onChange={(e) => setCpus(e.target.value)} />
+                </label>
+                <label>
+                  Sandbox memory (GB)
+                  <input type="number" min={1} step={1} value={memory} onChange={(e) => setMemory(e.target.value)} />
+                </label>
+              </div>
+              <label className="check">
+                <input type="checkbox" checked={docker} onChange={(e) => setDocker(e.target.checked)} />
+                Docker inside Sandboxes by default (per-Session override in New session)
+              </label>
+              <DockerModeNote settings={settings} enabled={docker} />
+              <label>
+                Addresses for Docker inside Sandboxes (empty = Docker's default, 172.17.0.0/16 and up)
+                <input
+                  value={dockerPool}
+                  autoComplete="off"
+                  spellCheck={false}
+                  pattern={DOCKER_ADDRESS_POOL_PATTERN.source}
+                  title="An IPv4 block like 192.168.240.0/20 (/8 to /24)"
+                  onChange={(e) => setDockerPool(e.target.value)}
+                  placeholder="Docker's default (172.17.0.0/16 and up)"
+                  list="docker-pool-suggestions"
+                />
+                <datalist id="docker-pool-suggestions">
+                  {DOCKER_POOL_SUGGESTIONS.map((s) => (
+                    <option key={s.block} value={s.block}>
+                      {s.why}
+                    </option>
+                  ))}
+                </datalist>
+              </label>
+              <p className="muted">
+                The dockerd inside a Docker-enabled Sandbox carves its own networks out of this block. Hosts of your company network or VPN that fall
+                in the block are unreachable from such a Sandbox (“No route to host”), so pick one nothing you need to reach lives in — the
+                default <code>{DEFAULT_DOCKER_ADDRESS_POOL}</code> keeps clear of home routers, Docker Desktop, WSL2, company 10.x networks and
+                Kubernetes; the field suggests alternatives. Applies to Sandboxes created afterwards.
+              </p>
+            </fieldset>
+          )}
+          {show("snapshots") && (
+            <fieldset className="choice">
+              <legend>Snapshots</legend>
+              <label className="check">
+                <input type="checkbox" checked={autoSnapshot} onChange={(e) => setAutoSnapshot(e.target.checked)} />
+                Snapshot the Sandbox after every completed turn (docker commit; each snapshot is a fork point). Default for new Sessions; each Session can override it from its size line in the sidebar.
+              </label>
+              <label>
+                Automatic snapshots to keep per Session (0 = all; manual snapshots and fork origins are always kept)
+                <input type="number" min={0} step={1} value={snapshotKeep} onChange={(e) => setSnapshotKeep(e.target.value)} />
+              </label>
+              <p className="muted">
+                A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
+                turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
+              </p>
+            </fieldset>
+          )}
+          {show("verification") && (
+            <fieldset className="choice">
+              <legend>Verification</legend>
+              <label className="check">
+                <input type="checkbox" checked={e2eVerify} onChange={(e) => setE2eVerify(e.target.checked)} />
+                Verify each turn end to end. Default for new Sessions; each Session can override it in its Session settings or from the Verification pane.
+              </label>
+              <p className="muted">
+                After a completed turn the Agent gets a hidden follow-up: it looks at what changed, plans 2–5 test cases (up to 10 for a very large
+                change), runs them on the Sandbox desktop while recording, fixes and reruns what fails (3 attempts per case), and posts the video. Turns that
+                only answer are recorded as skipped. It costs a second turn of model time after each of yours.
+              </p>
+            </fieldset>
+          )}
+          {show("recordings") && (
+            <fieldset className="choice">
+              <legend>Narrated recordings</legend>
+              <p className="muted">
+                The captions the Agent writes while recording the desktop can be spoken into the video (local text-to-speech in the Sandbox, no account).
+                It costs processing when the recording stops: roughly a third of the spoken time plus a re-encode.
+              </p>
+              <div className="row">
+                <label>
+                  Narrate recordings
+                  <select value={narrationMode} onChange={(e) => setNarrationMode(e.target.value as NarrationMode)}>
+                    <option value="ask">Ask when it takes longer than…</option>
+                    <option value="always">Always</option>
+                    <option value="never">Never</option>
+                  </select>
+                </label>
+                {narrationMode === "ask" && (
+                  <label>
+                    …seconds of extra processing (below that it is added without asking)
+                    <input type="number" min={0} step={1} value={narrationAskAbove} onChange={(e) => setNarrationAskAbove(e.target.value)} />
+                  </label>
+                )}
+              </div>
+            </fieldset>
+          )}
+          {show("dictation") && (
+            <fieldset className="choice">
+              <legend>Dictation</legend>
+              <p className="muted">
+                The microphone button in the composer records a clip in the browser and whisper.cpp transcribes it on this machine, offline: nothing leaves
+                it (phones paired through a tunnel send the clip here). whisper-cli and the model are downloaded once, on first use or with the button below.
+              </p>
+              <div className="row">
+                <label>
+                  Model
+                  <select value={speechModel} onChange={(e) => setSpeechModel(e.target.value as SpeechModel)}>
+                    {SPEECH_MODELS.map((m) => (
+                      <option key={m} value={m}>
+                        {SPEECH_MODEL_INFO[m].label} ({formatMb(SPEECH_MODEL_INFO[m].bytes)}) — {SPEECH_MODEL_INFO[m].note}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Language
+                  <select value={speechLanguage} onChange={(e) => setSpeechLanguage(e.target.value)}>
+                    <option value="auto">Detect (slower, one language per clip)</option>
+                    <option value="en">English</option>
+                    <option value="es">Spanish</option>
+                    <option value="pt">Portuguese</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="it">Italian</option>
+                    <option value="ca">Catalan</option>
+                    <option value="nl">Dutch</option>
+                    <option value="pl">Polish</option>
+                    <option value="ru">Russian</option>
+                    <option value="uk">Ukrainian</option>
+                    <option value="tr">Turkish</option>
+                    <option value="ja">Japanese</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ko">Korean</option>
+                    <option value="hi">Hindi</option>
+                    <option value="ar">Arabic</option>
+                  </select>
+                </label>
+              </div>
+              <SpeechAssets selected={speechModel} saved={settings.speech.model} />
+            </fieldset>
+          )}
+          {show("tls") && (
+            <fieldset className="choice">
+              <legend>TLS certificates in Sandboxes</legend>
+              <p className="muted">
+                Sandboxes trust the public CAs only. If this machine goes through a proxy that re-signs HTTPS (Cloudflare WARP, Zscaler, a corporate
+                gateway, mitmproxy…), the Agent and MCP servers inside see “self signed certificate in certificate chain” unless its CA is trusted there
+                too. Installed at Sandbox start: Stop → Resume running Sessions to apply.
+              </p>
+              <label className="check">
+                <input type="checkbox" checked={trustHostCaCerts} onChange={(e) => setTrustHostCaCerts(e.target.checked)} />
+                Trust the CA certificates this machine trusts beyond the public ones{" "}
+                {settings.hostCaCerts.length === 0 ? (
+                  <span className="muted">(none found in the system trust store)</span>
+                ) : (
+                  <span className="muted">
+                    ({settings.hostCaCerts.length} found: {settings.hostCaCerts.map((s) => s.replace(/^CN=/, "")).join(", ")})
+                  </span>
+                )}
+              </label>
+              <label>
+                Additional CA certificates (PEM; for CAs not installed on this machine)
+                <textarea
+                  className="pem"
+                  rows={4}
+                  spellCheck={false}
+                  value={extraCaCerts}
+                  onChange={(e) => setExtraCaCerts(e.target.value)}
+                  placeholder={"-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
+                />
+              </label>
+            </fieldset>
+          )}
+          {show("mcp") && <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />}
+          {show("devices") && <Devices remote={settings.remote} tunnels={settings.tunnels} onStored={onStored} run={run} />}
+          {show("github-app") && (
+            <fieldset className="choice">
+              <legend>Your own GitHub OAuth App (optional)</legend>
+              <p className="muted">
+                Only for the “Log in with the Sessionboxer OAuth App” option of Git accounts. The built-in app (client id{" "}
+                <code>{CONNECTORS.github.defaultClientId}</code>) needs nothing here and uses the device-code flow. To have GitHub's consent page name
+                you instead, register your own app at github.com → Settings → Developer settings with callback URL{" "}
+                <code>{settings.remote.publicUrl}/api/connectors/github/callback</code> and Device Flow enabled; with its client secret set, the
+                browser redirect flow is used.
+              </p>
+              <div className="row">
+                <label>
+                  Client ID (empty = built-in)
+                  <input value={githubClientId} autoComplete="off" onChange={(e) => setGithubClientId(e.target.value)} placeholder={CONNECTORS.github.defaultClientId} />
+                </label>
+                <label>
+                  Client secret (optional) {githubSecretSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={githubClientSecret}
+                    onChange={(e) => setGithubClientSecret(e.target.value)}
+                    placeholder={githubSecretSet ? "Leave empty to keep the current secret" : "Only for the redirect flow"}
+                  />
+                </label>
+              </div>
+              {settings.connectors.github.clientSecretSet && (
+                <label className="check">
+                  <input type="checkbox" checked={forgetGithubSecret} onChange={(e) => setForgetGithubSecret(e.target.checked)} />
+                  Forget the stored client secret on Save (back to the device-code flow)
+                </label>
               )}
-            </span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={claudeApiKey}
-              onChange={(e) => setClaudeApiKey(e.target.value)}
-              placeholder={claudeApiKeySet ? "Leave empty to keep the current key" : "Only if the proxy wants an x-api-key"}
-            />
-          </label>
-        </div>
-        <p className="muted">
-          Optional credentials for that URL, given to Claude Code alongside (or instead of) the OAuth token; never shown again, stripped from snapshots.
-        </p>
-      </fieldset>
-      <fieldset className="choice">
-        <legend>Models and instructions</legend>
-        <label>
-          Claude model aliases (offered in the Model picker, comma-separated)
-          <input value={claudeModels} onChange={(e) => setClaudeModels(e.target.value)} placeholder={DEFAULT_CLAUDE_MODELS.join(", ")} />
-        </label>
-        <p className="muted">
-          Written to Claude&apos;s <code>availableModels</code> setting inside each Sandbox, so models your account has but the picker does not list by
-          default (e.g. <code>fable</code>) become selectable; leave empty for Claude&apos;s built-in list. Aliases only, no keys. Applies to new
-          Sessions and to idle running ones (their Agent restarts in place, keeping the conversation); Stop → Resume a Session if it does not pick it up.
-        </p>
-        <label>
-          <span className="label-row">
-            Instructions for the Agent (default for new Sessions; each Session can change them at creation)
-            {instructions !== DEFAULT_INSTRUCTIONS && (
-              <button type="button" className="link" onClick={() => setInstructions(DEFAULT_INSTRUCTIONS)}>
-                Reset to the shipped default
-              </button>
-            )}
-          </span>
-          <textarea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
-        </label>
-        <p className="muted">
-          Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
-          {deliveryNote("codex")} {deliveryNote("cursor")} Comes on top of
-          the Sandbox briefing (desktop, recordings, handing files to you) and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Applies to
-          Sessions created afterwards.
-        </p>
-      </fieldset>
-      <fieldset className="choice">
-        <legend>Git identity in Sandboxes</legend>
-        <label>
-          Git user.name
-          <input value={gitUserName} onChange={(e) => setGitUserName(e.target.value)} placeholder={settings.hostGitIdentity.name} />
-        </label>
-        <label>
-          Git user.email
-          <input value={gitUserEmail} onChange={(e) => setGitUserEmail(e.target.value)} placeholder={settings.hostGitIdentity.email} />
-        </label>
-        <p className="muted">
-          Default author/committer for commits made in Sandboxes; blank takes this machine&apos;s git config
-          {settings.hostGitIdentity.name ? ` (${settings.hostGitIdentity.name}${settings.hostGitIdentity.email ? ` <${settings.hostGitIdentity.email}>` : ""})` : ""}.
-          Overridable per Session when creating it.
-        </p>
-      </fieldset>
-      <fieldset className="choice">
-        <legend>Sandbox resources</legend>
-        <div className="row">
-          <label>
-            Sandbox CPUs
-            <input type="number" min={0.5} step={0.5} value={cpus} onChange={(e) => setCpus(e.target.value)} />
-          </label>
-          <label>
-            Sandbox memory (GB)
-            <input type="number" min={1} step={1} value={memory} onChange={(e) => setMemory(e.target.value)} />
-          </label>
-        </div>
-        <label className="check">
-          <input type="checkbox" checked={docker} onChange={(e) => setDocker(e.target.checked)} />
-          Docker inside Sandboxes by default (per-Session override in New session)
-        </label>
-        <DockerModeNote settings={settings} enabled={docker} />
-        <label>
-          Addresses for Docker inside Sandboxes (empty = Docker's default, 172.17.0.0/16 and up)
-          <input
-            value={dockerPool}
-            autoComplete="off"
-            spellCheck={false}
-            pattern={DOCKER_ADDRESS_POOL_PATTERN.source}
-            title="An IPv4 block like 192.168.240.0/20 (/8 to /24)"
-            onChange={(e) => setDockerPool(e.target.value)}
-            placeholder="Docker's default (172.17.0.0/16 and up)"
-            list="docker-pool-suggestions"
-          />
-          <datalist id="docker-pool-suggestions">
-            {DOCKER_POOL_SUGGESTIONS.map((s) => (
-              <option key={s.block} value={s.block}>
-                {s.why}
-              </option>
-            ))}
-          </datalist>
-        </label>
-        <p className="muted">
-          The dockerd inside a Docker-enabled Sandbox carves its own networks out of this block. Hosts of your company network or VPN that fall
-          in the block are unreachable from such a Sandbox (“No route to host”), so pick one nothing you need to reach lives in — the
-          default <code>{DEFAULT_DOCKER_ADDRESS_POOL}</code> keeps clear of home routers, Docker Desktop, WSL2, company 10.x networks and
-          Kubernetes; the field suggests alternatives. Applies to Sandboxes created afterwards.
-        </p>
-      </fieldset>
-      <fieldset className="choice">
-        <legend>Snapshots</legend>
-        <label className="check">
-          <input type="checkbox" checked={autoSnapshot} onChange={(e) => setAutoSnapshot(e.target.checked)} />
-          Snapshot the Sandbox after every completed turn (docker commit; each snapshot is a fork point). Default for new Sessions; each Session can override it from its size line in the sidebar.
-        </label>
-        <label>
-          Automatic snapshots to keep per Session (0 = all; manual snapshots and fork origins are always kept)
-          <input type="number" min={0} step={1} value={snapshotKeep} onChange={(e) => setSnapshotKeep(e.target.value)} />
-        </label>
-        <p className="muted">
-          A snapshot pauses the Sandbox for a few seconds and stores only what changed since the previous image, so
-          turns that touch few files cost a few MB. Sizes in the sidebar are what Docker reports per layer.
-        </p>
-      </fieldset>
-      <fieldset className="choice">
-        <legend>Verification</legend>
-        <label className="check">
-          <input type="checkbox" checked={e2eVerify} onChange={(e) => setE2eVerify(e.target.checked)} />
-          Verify each turn end to end. Default for new Sessions; each Session can override it in its Session settings or from the Verification pane.
-        </label>
-        <p className="muted">
-          After a completed turn the Agent gets a hidden follow-up: it looks at what changed, plans 2–5 test cases (up to 10 for a very large
-          change), runs them on the Sandbox desktop while recording, fixes and reruns what fails (3 attempts per case), and posts the video. Turns that
-          only answer are recorded as skipped. It costs a second turn of model time after each of yours.
-        </p>
-      </fieldset>
-      <fieldset className="choice">
-        <legend>Narrated recordings</legend>
-        <p className="muted">
-          The captions the Agent writes while recording the desktop can be spoken into the video (local text-to-speech in the Sandbox, no account).
-          It costs processing when the recording stops: roughly a third of the spoken time plus a re-encode.
-        </p>
-        <div className="row">
-          <label>
-            Narrate recordings
-            <select value={narrationMode} onChange={(e) => setNarrationMode(e.target.value as NarrationMode)}>
-              <option value="ask">Ask when it takes longer than…</option>
-              <option value="always">Always</option>
-              <option value="never">Never</option>
-            </select>
-          </label>
-          {narrationMode === "ask" && (
-            <label>
-              …seconds of extra processing (below that it is added without asking)
-              <input type="number" min={0} step={1} value={narrationAskAbove} onChange={(e) => setNarrationAskAbove(e.target.value)} />
-            </label>
+            </fieldset>
           )}
         </div>
-      </fieldset>
-      <fieldset className="choice">
-        <legend>Dictation</legend>
-        <p className="muted">
-          The microphone button in the composer records a clip in the browser and whisper.cpp transcribes it on this machine, offline: nothing leaves
-          it (phones paired through a tunnel send the clip here). whisper-cli and the model are downloaded once, on first use or with the button below.
-        </p>
-        <div className="row">
-          <label>
-            Model
-            <select value={speechModel} onChange={(e) => setSpeechModel(e.target.value as SpeechModel)}>
-              {SPEECH_MODELS.map((m) => (
-                <option key={m} value={m}>
-                  {SPEECH_MODEL_INFO[m].label} ({formatMb(SPEECH_MODEL_INFO[m].bytes)}) — {SPEECH_MODEL_INFO[m].note}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Language
-            <select value={speechLanguage} onChange={(e) => setSpeechLanguage(e.target.value)}>
-              <option value="auto">Detect (slower, one language per clip)</option>
-              <option value="en">English</option>
-              <option value="es">Spanish</option>
-              <option value="pt">Portuguese</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="it">Italian</option>
-              <option value="ca">Catalan</option>
-              <option value="nl">Dutch</option>
-              <option value="pl">Polish</option>
-              <option value="ru">Russian</option>
-              <option value="uk">Ukrainian</option>
-              <option value="tr">Turkish</option>
-              <option value="ja">Japanese</option>
-              <option value="zh">Chinese</option>
-              <option value="ko">Korean</option>
-              <option value="hi">Hindi</option>
-              <option value="ar">Arabic</option>
-            </select>
-          </label>
-        </div>
-        <SpeechAssets selected={speechModel} saved={settings.speech.model} />
-      </fieldset>
-      <fieldset className="choice">
-        <legend>TLS certificates in Sandboxes</legend>
-        <p className="muted">
-          Sandboxes trust the public CAs only. If this machine goes through a proxy that re-signs HTTPS (Cloudflare WARP, Zscaler, a corporate
-          gateway, mitmproxy…), the Agent and MCP servers inside see “self signed certificate in certificate chain” unless its CA is trusted there
-          too. Installed at Sandbox start: Stop → Resume running Sessions to apply.
-        </p>
-        <label className="check">
-          <input type="checkbox" checked={trustHostCaCerts} onChange={(e) => setTrustHostCaCerts(e.target.checked)} />
-          Trust the CA certificates this machine trusts beyond the public ones{" "}
-          {settings.hostCaCerts.length === 0 ? (
-            <span className="muted">(none found in the system trust store)</span>
-          ) : (
-            <span className="muted">
-              ({settings.hostCaCerts.length} found: {settings.hostCaCerts.map((s) => s.replace(/^CN=/, "")).join(", ")})
-            </span>
-          )}
-        </label>
-        <label>
-          Additional CA certificates (PEM; for CAs not installed on this machine)
-          <textarea
-            className="pem"
-            rows={4}
-            spellCheck={false}
-            value={extraCaCerts}
-            onChange={(e) => setExtraCaCerts(e.target.value)}
-            placeholder={"-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
-          />
-        </label>
-      </fieldset>
-      <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
-      <Devices remote={settings.remote} tunnels={settings.tunnels} onStored={onStored} run={run} />
-      <fieldset className="choice">
-        <legend>Your own GitHub OAuth App (optional)</legend>
-        <p className="muted">
-          Only for the “Log in with the Sessionboxer OAuth App” option of Git accounts. The built-in app (client id{" "}
-          <code>{CONNECTORS.github.defaultClientId}</code>) needs nothing here and uses the device-code flow. To have GitHub's consent page name
-          you instead, register your own app at github.com → Settings → Developer settings with callback URL{" "}
-          <code>{settings.remote.publicUrl}/api/connectors/github/callback</code> and Device Flow enabled; with its client secret set, the
-          browser redirect flow is used.
-        </p>
-        <div className="row">
-          <label>
-            Client ID (empty = built-in)
-            <input value={githubClientId} autoComplete="off" onChange={(e) => setGithubClientId(e.target.value)} placeholder={CONNECTORS.github.defaultClientId} />
-          </label>
-          <label>
-            Client secret (optional) {githubSecretSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
-            <input
-              type="password"
-              autoComplete="off"
-              value={githubClientSecret}
-              onChange={(e) => setGithubClientSecret(e.target.value)}
-              placeholder={githubSecretSet ? "Leave empty to keep the current secret" : "Only for the redirect flow"}
-            />
-          </label>
-        </div>
-        {settings.connectors.github.clientSecretSet && (
-          <label className="check">
-            <input type="checkbox" checked={forgetGithubSecret} onChange={(e) => setForgetGithubSecret(e.target.checked)} />
-            Forget the stored client secret on Save (back to the device-code flow)
-          </label>
-        )}
-      </fieldset>
-      <div className="actions">
+      </div>
+      <div className="actions settings-actions">
+        <span className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Logins, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</span>
+        <span className="spacer" />
         <button type="submit">Save</button>
       </div>
     </form>

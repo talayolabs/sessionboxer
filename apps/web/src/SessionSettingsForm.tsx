@@ -248,7 +248,7 @@ export function SessionSettingsForm({
             )}
             <p className="muted ss-note">
               Fixed when the Session was created (on top of the Sandbox briefing). {deliveryNote(provider)} The default for new Sessions is in{" "}
-              <a href="#/settings">Global settings</a>.
+              <a href="#/settings/models">Global settings → Models and instructions</a>.
             </p>
           </>
         ) : (
@@ -288,7 +288,7 @@ export function SessionSettingsForm({
         <ul className="mcp-switches" aria-busy={disabled}>
           {settings.mcpServers.length === 0 && (
             <li className="empty">
-              No MCP servers registered. Add them in <a href="#/settings">Global settings</a>.
+              No MCP servers registered. Add them in <a href="#/settings/mcp">Global settings → MCP servers</a>.
             </li>
           )}
           {settings.mcpServers.map((s) => (
@@ -313,7 +313,7 @@ export function SessionSettingsForm({
           ))}
         </ul>
         {settings.mcpServers.length > 0 && (
-          <a className="muted ss-note" href="#/settings">
+          <a className="muted ss-note" href="#/settings/mcp">
             Manage servers in Global settings
           </a>
         )}

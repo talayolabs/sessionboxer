@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Global settings in the same split view as Advanced session settings: sections on the left, the chosen section on the right; `#/settings/<section>` deep links; one Save for all sections.
+
 ## 1.3.0 — 2026-09-25
 
 Install: `npx sessionboxer@1.3.0 serve`, `brew install talayolabs/tap/sessionboxer`, the installers on the

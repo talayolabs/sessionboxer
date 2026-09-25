@@ -123,6 +123,7 @@ import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-d
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
 import { PullRequests } from "./pull-requests.js";
+import { UsbDevices } from "./usb.js";
 
 export { HttpError };
 
@@ -180,6 +181,8 @@ export class SessionManager {
   readonly prs: PullRequests;
   /** End-to-end verification runs after completed turns (ADR-0044). */
   readonly e2e: E2eVerification;
+  /** USB devices of the host connected to Sandboxes, one Session per device (ADR-0055). */
+  readonly usb: UsbDevices;
   /** Told when a turn (verification included) is over and nothing follows it; see `onTurnSettled`. */
   private readonly settledListeners = new Set<(id: string, outcome: TurnOutcome) => void>();
 
@@ -219,6 +222,14 @@ export class SessionManager {
       log,
     });
     this.e2e.closeStale();
+    this.usb = new UsbDevices({
+      db,
+      docker,
+      update: (id, patch) => this.update(id, patch),
+      appendEvent: (id, body) => this.appendEvent(id, body),
+      note: (id, text) => this.note(id, text),
+      log,
+    });
   }
 
   subscribe(fn: (msg: SessionBroadcast) => void): () => void {
@@ -765,6 +776,7 @@ export class SessionManager {
   async boot(): Promise<void> {
     this.log(`sandbox reach: ${await this.docker.detectReach()}`);
     await this.docker.ensureNetwork();
+    this.usb.start();
     void this.docker.ensureImage().catch((e: unknown) => this.log(e instanceof Error ? e.message : String(e)));
     await this.docker.watchDeaths(
       (containerId, sessionId, exitCode) => {
@@ -849,6 +861,7 @@ export class SessionManager {
       branches: [],
       activeBranchId: ROOT_BRANCH_ID,
       usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
+      usb: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -945,6 +958,7 @@ export class SessionManager {
       branches: [],
       activeBranchId: ROOT_BRANCH_ID,
       usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
+      usb: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1824,6 +1838,7 @@ export class SessionManager {
     }
     const snapshots = this.db.listSnapshots(id);
     this.db.deleteSession(id);
+    await this.usb.forget(s);
     this.promptNotes.delete(id);
     await this.syncBaselines.removeAll(id);
     this.broadcast({ type: "session_deleted", id });

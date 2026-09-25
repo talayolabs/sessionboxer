@@ -280,6 +280,20 @@ There are two ways this can run, and Sessionboxer picks automatically:
 
 **Which addresses the Docker inside the box uses**: its daemon carves `docker0` and every `docker compose` network out of **Global settings → Sandbox resources → Addresses for Docker inside Sandboxes**, `192.168.240.0/20` by default — the top of 192.168.x, which home routers (192.168.0–2.x), Docker Desktop (192.168.65.x), company networks and Kubernetes (10.x), WSL2 and Docker itself (172.16–31.x), Tailscale and WARP (100.64–127.x) all stay clear of. Anything that lives inside that block is unreachable from the box (*No route to host*, because the box takes it for a neighbour on its own bridge), so if your network does use 192.168.240–255.x pick another block from the field's suggestions (`10.213.0.0/16`, `100.64.0.0/16`) or type your own; empty means Docker's own default, `172.17.0.0/16` and up, which hides company or VPN hosts in that range (a private Argo CD at `172.17.74.12`, say). Changes apply to sessions created afterwards (Stop → Resume keeps the old daemon's networks). See [Troubleshooting](#troubleshooting) for how to tell this apart from a certificate problem.
 
+### A USB device in the box (Android phone, board, dongle)
+
+Plug the device into the machine that runs Sessionboxer, then in the session's ▾ menu pick **Connect USB device…** and choose it from the list (hubs are not shown). The device's node, `/dev/bus/usb/BBB/DDD`, appears in that box — and only there: a device belongs to one session at a time, and connecting it to another session takes it away from the first (the list says which session has what; the sidebar shows a USB icon next to sessions that hold a device). The agent is told the path and that it is the only USB device it can reach. When the device re-enumerates — unplugged and plugged back, reset, an Android "Allow USB debugging" or USB-mode change — its number changes; the box follows within a couple of seconds and the agent is told the new path. Stop/Resume keeps the device; Delete releases it.
+
+Nothing that talks to USB devices is preinstalled in the box: the agent installs what it needs (`sudo apt-get install -y adb` for an Android phone, then `adb devices`; the phone's authorisation prompt is answered once per box, since the adb key lives in the box).
+
+Where it works:
+
+- **Linux, Docker Engine on the machine** (native, or `docker compose` with `/var/run/docker.sock`): out of the box.
+- **Windows, Docker Engine inside WSL2** (Sessionboxer running in the same WSL2 distro): install [usbipd-win](https://github.com/dorssel/usbipd-win) on Windows (`winget install usbipd`). The list then shows the Windows devices too, with their bus id; Connect attaches the device to WSL2 for you (`usbipd attach --wsl`) and keeps re-attaching it after resets. The first time a given device is used it has to be *shared* (`usbipd bind`), which needs an administrator: Sessionboxer asks Windows for the elevation prompt, or run `usbipd bind --busid <id>` once in an administrator terminal (it survives reboots). While attached, the device is invisible to Windows programs (`adb.exe` included); Disconnect gives it back.
+- **Docker Desktop (macOS, Windows), OrbStack, Colima**: not supported — those VMs have no USB passthrough. Use adb over Wi-Fi from the box instead (`adb pair` / `adb connect`), or the Wi-Fi/network protocol of whatever the device speaks.
+
+Sessions created before this version of Sessionboxer have no `/dev/bus/usb` in their box; Delete and recreate them (or fork from a snapshot) to use a device.
+
 ### MCP servers
 
 The agent always has the built-in `desktop` MCP server (screen, mouse, keyboard). You can give it more: register **MCP servers** once in Settings, then choose per session which ones are on.

@@ -89,6 +89,7 @@ import {
 } from "./SessionSettingsForm";
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
+import { UsbDialog } from "./UsbDialog";
 import { Schedules } from "./Schedules";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
@@ -573,6 +574,11 @@ export function App() {
                     </span>
                   )}
                   {s.queueRunning && <span title="Messages queued for the Agent">{"\u25b6"}</span>}
+                  {s.usb && (
+                    <span className={`session-usb${s.usb.node ? "" : " unplugged"}`} title={`USB device connected: ${s.usb.name}${s.usb.node ? ` (${s.usb.node})` : " (unplugged right now)"}`}>
+                      <Icon name="usb" size={12} />
+                    </span>
+                  )}
                   {s.settings.sandbox.dockerMode === "privileged" && (
                     <span className="docker-warn" title={PRIVILEGED_WARNING}>
                       <DockerIcon label={PRIVILEGED_WARNING} />
@@ -798,6 +804,7 @@ export function App() {
         {route.view === "session" && selected && (
           <SessionView
             session={selected}
+            sessions={sessions}
             settings={settings}
             models={models?.[selected.provider] ?? []}
             options={
@@ -1058,6 +1065,7 @@ function loadComposerHeight(): number | null {
 
 function SessionView({
   session,
+  sessions,
   settings,
   models,
   options,
@@ -1087,6 +1095,8 @@ function SessionView({
   sessionSchedules,
 }: {
   session: Session;
+  /** All Sessions, to name the one a USB device is taken from. */
+  sessions: Session[];
   /** `null` until loaded; the Session settings dialog needs it (MCP registry, global defaults). */
   settings: PublicSettings | null;
   models: ModelOption[];
@@ -1137,6 +1147,7 @@ function SessionView({
   const [inspectingCall, setInspectingCall] = useState<LlmCall | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [reposOpen, setReposOpen] = useState(false);
+  const [usbOpen, setUsbOpen] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [usageBusy, setUsageBusy] = useState(false);
   const [pane, setPane] = useState<Pane>(loadPane);
@@ -1283,6 +1294,16 @@ function SessionView({
           },
         ]
       : []),
+    {
+      key: "usb",
+      icon: "usb",
+      label: session.usb ? `USB: ${session.usb.name}` : "Connect USB device\u2026",
+      title: session.usb
+        ? `${session.usb.name} is ${session.usb.node ?? "unplugged"} in the Sandbox. Click to change or disconnect it.`
+        : "Give the Agent one USB device of this machine (its /dev/bus/usb node in the Sandbox; one Session per device)",
+      active: session.usb !== null,
+      onPick: () => setUsbOpen(true),
+    },
     {
       key: "settings",
       icon: "settings",
@@ -1523,6 +1544,7 @@ function SessionView({
       {inspectingCall && <LlmCallDialog session={session} call={inspectingCall} calls={llmCalls} onClose={() => setInspectingCall(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
       {reposOpen && <ReposDialog session={session} accounts={githubAccounts(settings)} onClose={() => setReposOpen(false)} />}
+      {usbOpen && <UsbDialog session={session} sessions={sessions} onClose={() => setUsbOpen(false)} />}
       {forkFrom && settings && (
         <ForkDialog
           session={session}

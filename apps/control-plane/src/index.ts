@@ -48,6 +48,7 @@ import {
   SpeechModel,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
+  UsbConnectRequest,
   UpdateSettingsRequest,
 } from "@sessionboxer/protocol";
 import {
@@ -515,6 +516,14 @@ api.post("/sessions/:id/fork", async (c) => {
   const req = ForkSessionRequest.parse(await c.req.json());
   return c.json(await sessions.fork(c.req.param("id"), req), 201);
 });
+
+// USB devices of the host (ADR-0055): one Session per device; connecting takes it from the Session that had it.
+api.get("/usb", async (c) => c.json(await sessions.usb.host()));
+api.post("/sessions/:id/usb", async (c) => {
+  const req = UsbConnectRequest.parse(await c.req.json());
+  return c.json(await sessions.usb.connect(c.req.param("id"), req.deviceId));
+});
+api.delete("/sessions/:id/usb", async (c) => c.json(await sessions.usb.disconnect(c.req.param("id"))));
 
 // Repositories of a running Session: add clones/copies into /workspace/<name> right away; remove
 // answers 409 with the Git state when the directory holds unpushed work (repeat with `force`).

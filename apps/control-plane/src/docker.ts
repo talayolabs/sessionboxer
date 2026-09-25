@@ -17,6 +17,33 @@ export const SYSBOX_RUNTIME = "sysbox-runc";
 const LOOPBACK = "127.0.0.1";
 
 /**
+ * USB devices (ADR-0055). Every Sandbox mounts its own named volume at `/dev/bus/usb` and
+ * gets the device-cgroup rule for USB character devices (major 189); the volume starts empty.
+ * "Connect USB device" has a short-lived helper container create the one device node in that
+ * volume (`mknod`, owned by the `agent` user), so the same mechanism works under runc and Sysbox
+ * (whose init cannot `mknod`) and the node survives Sandbox stop/start. `CAP_MKNOD` is dropped
+ * from the Sandbox so its root cannot forge nodes for the other USB devices the rule would let it open.
+ */
+const USB_MAJOR = 189;
+const USB_DIR = "/dev/bus/usb";
+export const USB_DEVICE_CGROUP_RULE = `c ${USB_MAJOR}:* rmw`;
+const USB_AGENT_UID = 1000;
+
+/** The `/dev/bus/usb/BBB/DDD` node of a USB device, as the kernel numbers it (`busnum`/`devnum` in sysfs). */
+export interface UsbNode {
+  bus: number;
+  dev: number;
+}
+
+export function usbNodePath(node: UsbNode): string {
+  return `${USB_DIR}/${String(node.bus).padStart(3, "0")}/${String(node.dev).padStart(3, "0")}`;
+}
+
+export function usbVolumeName(sessionId: string): string {
+  return `sbx-usb-${sessionId}`;
+}
+
+/**
  * The Sandbox Daemon, the protocol package and the VS Code extensions as they are in this
  * checkout, copied into every Sandbox before it starts so they always match the Control
  * Plane, also for Sandboxes created from an older image or resumed or forked from a snapshot
@@ -255,11 +282,75 @@ export class SandboxDocker {
             : {},
         PublishAllPorts: false,
         RestartPolicy: { Name: "no" },
+        Binds: [`${usbVolumeName(spec.sessionId)}:${USB_DIR}`],
+        DeviceCgroupRules: [USB_DEVICE_CGROUP_RULE],
+        // Sysbox and privileged Sandboxes keep Docker's capability set (Sysbox's init needs it; privileged has all of them anyway).
+        ...(spec.dockerMode === "none" ? { CapDrop: ["MKNOD"] } : {}),
         ...(spec.dockerMode === "sysbox" ? { Runtime: SYSBOX_RUNTIME } : {}),
         ...(spec.dockerMode === "privileged" ? { Privileged: true } : {}),
       },
     });
     return container.id;
+  }
+
+  /** Whether the Sandbox was created with the USB volume and device rule (Sandboxes predating ADR-0055 were not). */
+  async supportsUsb(containerId: string): Promise<boolean> {
+    const info = await this.docker.getContainer(containerId).inspect();
+    return (info.HostConfig.DeviceCgroupRules ?? []).includes(USB_DEVICE_CGROUP_RULE);
+  }
+
+  /**
+   * Makes `node` the only device node in the Session's `/dev/bus/usb` (none, with `null`),
+   * owned by the `agent` user so nothing else in the Sandbox can open it. Works whether the
+   * Sandbox runs or not: the volume is the Control Plane's, not the container's.
+   */
+  async setUsbNode(sessionId: string, node: UsbNode | null): Promise<void> {
+    const script = [
+      "set -e",
+      "find /usb -mindepth 1 -delete",
+      ...(node
+        ? [
+            `d=/usb/${String(node.bus).padStart(3, "0")}`,
+            `n=$d/${String(node.dev).padStart(3, "0")}`,
+            'mkdir -p "$d"',
+            `mknod "$n" c ${USB_MAJOR} ${(node.bus - 1) * 128 + node.dev - 1}`,
+            `chown ${USB_AGENT_UID}:${USB_AGENT_UID} "$n"`,
+            'chmod 600 "$n"',
+          ]
+        : []),
+    ].join("\n");
+    await this.runHelper(`sbx-usb-${sessionId.slice(0, 12)}-${Date.now().toString(36)}`, script, [`${usbVolumeName(sessionId)}:/usb`]);
+  }
+
+  async removeUsbVolume(sessionId: string): Promise<void> {
+    try {
+      await this.docker.getVolume(usbVolumeName(sessionId)).remove();
+    } catch (e) {
+      if (!isStatus(e, 404)) throw e;
+    }
+  }
+
+  /** Runs `script` as root in a throwaway container on the Sandbox image (no network) with `binds` mounted; throws with its output on failure. */
+  private async runHelper(name: string, script: string, binds: string[]): Promise<void> {
+    const container = await this.docker.createContainer({
+      name,
+      Image: SANDBOX_IMAGE,
+      Entrypoint: ["/bin/sh", "-c", script],
+      Cmd: [],
+      User: "0:0",
+      Labels: { "sessionboxer.helper": "usb" },
+      HostConfig: { Binds: binds, NetworkMode: "none", CapDrop: ["ALL"], CapAdd: ["MKNOD", "CHOWN", "FOWNER", "DAC_OVERRIDE"] },
+    });
+    try {
+      await container.start();
+      const { StatusCode } = (await container.wait()) as { StatusCode: number };
+      if (StatusCode !== 0) {
+        const logs = (await container.logs({ stdout: true, stderr: true })) as unknown as Buffer;
+        throw new Error(`USB helper exited ${StatusCode}: ${logs.toString("utf8").replace(/[^\x20-\x7e\n]/g, "").trim().slice(-500)}`);
+      }
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
+    }
   }
 
   /** Copies this checkout's Daemon build (and the other SANDBOX_SYNC parts) into the (stopped) Sandbox; returns what was skipped. */

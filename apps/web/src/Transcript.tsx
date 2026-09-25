@@ -515,6 +515,18 @@ function Item({
           Repository {item.action}: <code>/workspace/{item.name}</code> ({item.origin})
         </div>
       );
+    case "usb_changed":
+      return (
+        <div className="marker">
+          USB device {item.action}: {item.name}
+          {item.node && (
+            <>
+              {" as "}
+              <code>{item.node}</code>
+            </>
+          )}
+        </div>
+      );
     case "e2e_prompt":
       return (
         <button type="button" className="marker marker-e2e marker-button" title="The Control Plane asked the Agent to verify the turn above end to end. Click to open the Verification pane." onClick={() => onOpenE2e(null)}>

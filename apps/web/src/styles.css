@@ -104,6 +104,8 @@ code { background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
 .provider-badge { display: inline-flex; align-items: center; gap: 6px; cursor: help; }
 .provider-badge .provider-icon { opacity: 1; }
 .docker-warn { display: inline-flex; align-items: center; gap: 6px; color: var(--error); cursor: help; }
+.session-usb { display: inline-flex; align-items: center; color: var(--accent); cursor: help; }
+.session-usb.unplugged { color: var(--warn); }
 .docker-icon { display: block; }
 button .docker-warn { margin-left: 6px; vertical-align: -3px; }
 li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
@@ -645,6 +647,21 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .repo-name-cell { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .repo-origin { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repo-state { flex: 0 1 40%; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+
+/* USB devices dialog (ADR-0055) */
+.usb-dialog { max-height: 85vh; }
+.usb-dialog .dialog-banner:not(.banner-error) { border-color: var(--border); }
+.usb-current { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 6px; font-size: 13px; margin-bottom: 10px; }
+.usb-current > span { flex: 1; min-width: 0; }
+.usb-list { list-style: none; margin: 0 0 12px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); display: flex; flex-direction: column; gap: 2px; max-height: 45vh; overflow: auto; }
+.usb-list[aria-busy="true"] { opacity: 0.6; }
+.usb-list li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 5px; font-size: 13px; }
+.usb-list li:hover { background: var(--hover); }
+.usb-list li.empty { color: var(--muted); padding: 14px; }
+.usb-list li.usb-mine { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.usb-name-cell { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.usb-name-cell .muted { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usb-state { flex: 0 1 30%; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 .repo-add-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 @media (max-width: 720px) {
   .repo-row { grid-template-columns: 1fr 1fr; }

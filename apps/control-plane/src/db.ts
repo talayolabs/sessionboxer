@@ -10,6 +10,7 @@ import {
   Session,
   SessionRepo,
   SessionSettings,
+  SessionUsb,
   SnapshotReason,
   WORKSPACE_ROOT_REPO,
   WorkspaceSource,
@@ -64,6 +65,8 @@ interface SessionRow {
   inspect_llm_pending: number;
   active_branch_id: string;
   usage: string;
+  /** JSON `SessionUsb`, or NULL. */
+  usb: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -181,6 +184,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   inspect_llm_pending INTEGER NOT NULL DEFAULT 0,
   active_branch_id TEXT NOT NULL DEFAULT 'root',
   usage TEXT NOT NULL DEFAULT '{}',
+  usb TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -287,6 +291,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "usage", ddl: "ALTER TABLE sessions ADD COLUMN usage TEXT NOT NULL DEFAULT '{}'" },
   { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },
+  { table: "sessions", column: "usb", ddl: "ALTER TABLE sessions ADD COLUMN usb TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];
@@ -429,8 +434,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -444,7 +449,7 @@ export class Db {
         `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, error=@error,
            queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
            options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
-           active_branch_id=@active_branch_id, usage=@usage, updated_at=@updated_at
+           active_branch_id=@active_branch_id, usage=@usage, usb=@usb, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -876,6 +881,7 @@ export type SessionPatch = Partial<
     | "inspectLlmPending"
     | "activeBranchId"
     | "usage"
+    | "usb"
   >
 >;
 
@@ -944,6 +950,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     branches,
     activeBranchId: row.active_branch_id,
     usage: JSON.parse(row.usage),
+    usb: row.usb === null ? null : SessionUsb.parse(JSON.parse(row.usb)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -989,6 +996,7 @@ function sessionToRow(s: Session): SessionRow {
     inspect_llm_pending: s.inspectLlmPending ? 1 : 0,
     active_branch_id: s.activeBranchId,
     usage: JSON.stringify(s.usage),
+    usb: s.usb === null ? null : JSON.stringify(s.usb),
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };

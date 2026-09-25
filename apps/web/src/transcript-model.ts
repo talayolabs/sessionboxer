@@ -74,6 +74,7 @@ export type TranscriptItem =
   | { kind: "model_changed"; key: string; model: string; name: string }
   | { kind: "option_changed"; key: string; option: string; value: string; valueName: string }
   | { kind: "repo_changed"; key: string; action: "added" | "removed"; name: string; origin: string }
+  | { kind: "usb_changed"; key: string; action: "connected" | "disconnected"; name: string; node: string | null }
   /** The Control Plane's hidden verification prompt: a marker, not the user's words. */
   | { kind: "e2e_prompt"; key: string }
   /** The Control Plane's hidden request for a handoff (a fork is waiting for the Agent's reply). */
@@ -215,6 +216,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "repo_changed":
         items.push({ kind: "repo_changed", key, action: body.action, name: body.name, origin: repoOriginLabel(body.source) });
+        break;
+      case "usb_changed":
+        items.push({ kind: "usb_changed", key, action: body.action, name: body.name, node: body.node });
         break;
       case "e2e_run":
         items.push({ kind: "e2e_run", key, run: body.run });

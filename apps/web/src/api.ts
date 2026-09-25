@@ -64,6 +64,7 @@ import type {
   UpdatePrRequest,
   UpdateSavedMessageRequest,
   UpdateSessionRequest,
+  UsbHost,
   UiClientMessage,
   TunnelNameCheck,
   TunnelServerInfo,
@@ -233,6 +234,9 @@ export const api = {
   },
   syncPlan: (id: string, repoId?: string) => request<SyncPlan>(`/sessions/${id}/sync${repoId ? `?repoId=${encodeURIComponent(repoId)}` : ""}`),
   syncPull: (id: string, req: SyncRequest) => request<SyncResult>(`/sessions/${id}/sync`, { method: "POST", body: JSON.stringify(req) }),
+  usbHost: () => request<UsbHost>("/usb"),
+  usbConnect: (id: string, deviceId: string) => request<Session>(`/sessions/${id}/usb`, { method: "POST", body: JSON.stringify({ deviceId }) }),
+  usbDisconnect: (id: string) => request<Session>(`/sessions/${id}/usb`, { method: "DELETE" }),
   terminals: (id: string) => request<PtyListResult>(`/sessions/${id}/terminals`),
   openTerminal: (id: string, cols: number, rows: number) =>
     request<PtyInfo>(`/sessions/${id}/terminals`, { method: "POST", body: JSON.stringify({ cols, rows }) }),

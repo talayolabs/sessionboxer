@@ -179,11 +179,10 @@ function steps(provider: Provider, os: Os): Step[] {
         },
         {
           title: "Copy the login file it wrote and paste it below",
-          body:
-            os === "windows"
-              ? "The whole file (it is in Cursor's config folder under your user profile), or use Import below. An API key from cursor.com → Dashboard → Integrations works too."
-              : "The whole file, or use Import below. An API key from cursor.com → Dashboard → Integrations works too.",
-          commands: os === "windows" ? [] : ["cat ~/.config/cursor/auth.json"],
+          body: "The whole file, or use Import below. An API key from cursor.com → Dashboard → Integrations works too.",
+          commands: [
+            os === "windows" ? "Get-Content $env:APPDATA\\Cursor\\auth.json" : os === "mac" ? "cat ~/.cursor/auth.json" : "cat ~/.config/cursor/auth.json",
+          ],
         },
       ];
     case "devin":

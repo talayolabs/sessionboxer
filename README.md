@@ -30,7 +30,7 @@ docker compose up -d && docker compose logs control-plane        # with this rep
 
 Or a [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Linux, macOS and Windows (no Node needed).
 
-Then open the login link the server prints (`sessionboxer token`, or `docker compose exec control-plane sessionboxer token`, prints the access token for another browser), go to **Global settings** and paste your agent's login: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, `~/.config/cursor/auth.json` after `agent login` for Cursor, or the token from `devin auth login` for Devin. Click **+ New**, add a repository, type a prompt.
+Then open the login link the server prints (`sessionboxer token`, or `docker compose exec control-plane sessionboxer token`, prints the access token for another browser), click your agent's logo on the first screen and follow the three steps for your OS: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, `~/.config/cursor/auth.json` after `agent login` for Cursor, or the token from `devin auth login` for Devin. Type a prompt, add a repository if you like, **Start**.
 
 More ways to install, updating and troubleshooting: [user guide → Install](docs/GUIDE.md#install).
 

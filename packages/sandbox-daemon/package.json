@@ -1,6 +1,6 @@
 {
   "name": "@sessionboxer/sandbox-daemon",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "Runs inside every Sandbox: ACP client for the Agent, JSON-RPC over WebSocket for the Control Plane.",
@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
-    "@sessionboxer/protocol": "1.2.0",
+    "@sessionboxer/protocol": "1.3.0",
     "node-pty": "^1.1.0",
     "ws": "^8.18.0",
     "zod": "^3.25.0"

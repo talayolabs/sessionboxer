@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.0 — 2026-09-25
+
+Install: `npx sessionboxer@1.3.0 serve`, `brew install talayolabs/tap/sessionboxer`, the installers on the
+release, `docker compose up`, or `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`.
+
+- New first screen: a prompt box with the Provider, repositories and Start under it; the four Provider logos above it until one is connected. ([ccb681b](https://github.com/talayolabs/sessionboxer/commit/ccb681b))
+- Connect a Provider from the app: per-Provider dialog with the install, log-in and paste steps for your OS (macOS, Windows, Linux). ([ccb681b](https://github.com/talayolabs/sessionboxer/commit/ccb681b))
+- Session settings behind "Advanced…", sections on the left, controls on the right. ([ccb681b](https://github.com/talayolabs/sessionboxer/commit/ccb681b))
+- "To set up" checklist in the sidebar: Provider and Git account, each a two-click wizard; Git offers GitHub or Bitbucket. ([b0bd4cd](https://github.com/talayolabs/sessionboxer/commit/b0bd4cd))
+- Settings → Git accounts: GitHub with a personal access token (direct create link, exact permissions) next to the CLI and OAuth App logins. ([bf5c407](https://github.com/talayolabs/sessionboxer/commit/bf5c407))
+- Login page: "Where do I find the token?" per install method, for `docker compose up -d` and friends. ([bf5c407](https://github.com/talayolabs/sessionboxer/commit/bf5c407))
+- Pull request rows open the PR detail; the GitHub link stays a separate button. ([bf5c407](https://github.com/talayolabs/sessionboxer/commit/bf5c407))
+- `sessionboxer serve` without Docker: one readable message and exit instead of a stack trace; a banner with Retry when the Sandbox image cannot be pulled. ([5fee507](https://github.com/talayolabs/sessionboxer/commit/5fee507))
+- Install: Homebrew tap, `sessionboxer` on npm, the desktop app's Get Docker link per OS. ([085c511](https://github.com/talayolabs/sessionboxer/commit/085c511))
+
 ## 1.2.0 — 2026-09-25
 
 Install: `npx sessionboxer@1.2.0 serve`, the installers on the release, `docker compose up`, or

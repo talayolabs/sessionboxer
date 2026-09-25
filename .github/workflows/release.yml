@@ -296,13 +296,14 @@ jobs:
           VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -eu
-          for i in 1 2 3 4 5 6; do
+          # npm processes provenance publishes asynchronously; the version can take several minutes to appear.
+          for i in $(seq 1 40); do
             if [ "$(npm view "sessionboxer@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
               echo "sessionboxer@$VERSION is on the npm registry"; exit 0
             fi
-            sleep 10
+            sleep 15
           done
-          echo "::error::npm view sessionboxer@$VERSION does not return the version after publishing"; exit 1
+          echo "::error::npm view sessionboxer@$VERSION does not return the version 10 minutes after publishing"; exit 1
 
   github-release:
     needs: [package, manifests, desktop, npm-publish]

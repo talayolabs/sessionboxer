@@ -58,6 +58,8 @@ interface TokenResponse {
  * Bitbucket Data Center has no login an app could drive without an administrator (OAuth needs an
  * incoming application link), so its flow is an HTTP access token the user creates on the host's
  * token page and pastes once (`via: "token"`); it is verified and attributed before being kept.
+ * GitHub takes a pasted personal access token the same way: the one login that can be limited to
+ * a single organization (both OAuth logins see everything the account sees).
  */
 export class Connectors {
   private readonly flows = new Map<string, Flow>();
@@ -78,9 +80,7 @@ export class Connectors {
 
   /** Starts a login; creates the registry entry from the preset when `serverId` is unknown. */
   async start(kind: ConnectorKind, req: ConnectorStartRequest): Promise<ConnectorFlow> {
-    if ((kind === "bitbucket") !== (req.via === "token")) {
-      throw new HttpError(400, kind === "bitbucket" ? "Bitbucket logs in with an HTTP access token." : `GitHub has no "${req.via}" login.`);
-    }
+    if (kind === "bitbucket" && req.via !== "token") throw new HttpError(400, "Bitbucket logs in with an HTTP access token.");
     const server = this.ensureServer(kind, req);
     const { clientId, clientSecret } = this.credentials(kind);
     this.prune();
@@ -109,12 +109,17 @@ export class Connectors {
       flow = { ...base, mode: "device", url: null, userCode: null, verificationUri: null, expiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() };
       this.flows.set(flow.id, flow);
       try {
-        if (!req.host) throw new Error("Enter the Bitbucket host, e.g. bitbucket.example.com");
-        const host = normalizeBitbucketHost(req.host);
         const token = req.token?.trim() ?? "";
-        if (token === "") throw new Error("Paste the HTTP access token.");
-        const user = await verifyBitbucketToken(host, token);
-        this.finish(flow, { access_token: token }, user.name, host);
+        if (kind === "github") {
+          if (token === "") throw new Error("Paste the personal access token.");
+          await this.finishGithub(flow, { access_token: token });
+        } else {
+          if (!req.host) throw new Error("Enter the Bitbucket host, e.g. bitbucket.example.com");
+          const host = normalizeBitbucketHost(req.host);
+          if (token === "") throw new Error("Paste the HTTP access token.");
+          const user = await verifyBitbucketToken(host, token);
+          this.finish(flow, { access_token: token }, user.name, host);
+        }
       } catch (e) {
         fail(flow, e instanceof Error ? e.message : String(e));
       }
@@ -351,9 +356,18 @@ export class Connectors {
       headers: { authorization: `Bearer ${token.access_token}`, accept: "application/vnd.github+json", "user-agent": USER_AGENT },
     });
     // Installation/fine-grained tokens may not be allowed to call /user; gh already told us who they belong to.
-    if (!userRes.ok && knownAccount === undefined) throw new Error(`GitHub rejected the token (${userRes.status}).`);
+    if (!userRes.ok && knownAccount === undefined) {
+      throw new Error(
+        userRes.status === 401
+          ? "GitHub rejected the token (401): it is wrong, expired or revoked."
+          : `GitHub rejected the token (${userRes.status}).`,
+      );
+    }
     const user = userRes.ok ? ((await userRes.json()) as { login?: string }) : {};
-    this.finish(flow, { access_token: token.access_token, expires_in: token.expires_in }, user.login ?? knownAccount ?? "?", null);
+    // Personal access tokens carry their expiry in a response header ("2026-10-25 10:00:00 UTC").
+    const expiryHeader = Date.parse(userRes.headers.get("github-authentication-token-expiration")?.replace(" UTC", "Z").replace(" ", "T") ?? "");
+    const expiresIn = token.expires_in ?? (Number.isFinite(expiryHeader) ? Math.max(0, Math.round((expiryHeader - Date.now()) / 1000)) : undefined);
+    this.finish(flow, { access_token: token.access_token, expires_in: expiresIn }, user.login ?? knownAccount ?? "?", null);
   }
 
   /** Stores a verified token on the flow's entry and marks the flow done. */

@@ -210,9 +210,17 @@ export function PrsPane({
             {prs.map((pr) => {
               const note = syncNote(pr);
               return (
-                <tr key={pr.id} className={pr.unread > 0 ? "unread" : ""}>
+                <tr
+                  key={pr.id}
+                  className={pr.unread > 0 ? "unread prs-row" : "prs-row"}
+                  title="Open this PR's comments, reviews and checks here"
+                  onClick={(e) => {
+                    if (e.target instanceof Element && e.target.closest("a, button, input, label")) return;
+                    onOpen(pr.id);
+                  }}
+                >
                   <td className="prs-title">
-                    <button className="link" onClick={() => onOpen(pr.id)} title="Open this PR">
+                    <button className="link" onClick={() => onOpen(pr.id)} title="Open this PR here">
                       <strong>
                         {pr.owner}/{pr.repo}#{pr.number}
                       </strong>{" "}
@@ -265,7 +273,16 @@ export function PrsPane({
                     />
                   </td>
                   <td className="prs-actions">
-                    <a href={pr.url} target="_blank" rel="noreferrer" className="button small" title={`Open on ${PR_PROVIDER_LABEL[pr.provider]}${pr.provider === "bitbucket" ? ` (${pr.host})` : ""}`}>
+                    <button className="small primary" onClick={() => onOpen(pr.id)} title="Open this PR here: comments, reviews, checks">
+                      Details
+                    </button>
+                    <a
+                      href={pr.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="button small"
+                      title={`Open on ${PR_PROVIDER_LABEL[pr.provider]}${pr.provider === "bitbucket" ? ` (${pr.host})` : ""}, in a new tab (leaves Sessionboxer)`}
+                    >
                       {PR_PROVIDER_LABEL[pr.provider]} ↗
                     </a>
                     <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${PR_PROVIDER_LABEL[pr.provider]} now`}>

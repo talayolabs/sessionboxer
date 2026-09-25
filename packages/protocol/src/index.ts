@@ -1611,7 +1611,7 @@ export const ConnectorStartRequest = z.object({
   via: ConnectorVia.default("gh"),
   /** `gh-existing`: the `gh` account whose token to reuse. */
   account: z.string().nullable().default(null),
-  /** `token`: the Bitbucket host (`bitbucket.example.com` or its URL) and the pasted HTTP access token. */
+  /** `token`: the pasted token (GitHub personal access token, or Bitbucket HTTP access token with the host `bitbucket.example.com` or its URL). */
   host: z.string().max(500).nullable().default(null),
   token: z.string().max(4000).nullable().default(null),
 });

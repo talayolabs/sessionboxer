@@ -12,6 +12,8 @@ import { api } from "./api";
 import { ConnectorIcon } from "./ConnectorIcon";
 
 const POLL_MS = 2500;
+const GITHUB_FINE_GRAINED_URL = "https://github.com/settings/personal-access-tokens/new";
+const GITHUB_CLASSIC_URL = "https://github.com/settings/tokens/new?scopes=repo,workflow,read:org&description=Sessionboxer";
 
 /**
  * Logs a Connector entry in. A new entry is created on the Control Plane when the login
@@ -20,10 +22,10 @@ const POLL_MS = 2500;
  * app policies; `gh` gets downloaded if the machine has none), with a shortcut to reuse
  * an account `gh` is already logged in as, and the Sessionboxer OAuth App as fallback.
  * Device flow: show the code and a link; redirect flow: open the provider's page in a new
- * tab. Either way we poll the flow until `done` / `error`. Bitbucket (Data Center) has no
- * login an app can drive without its administrator, so its way is a guided token: open the
- * host's token page, paste the HTTP access token once; the Control Plane verifies it and
- * answers with the account, all in the start call.
+ * tab. Either way we poll the flow until `done` / `error`. A pasted token is the third way for
+ * GitHub (a personal access token: the only login that can be limited to one organization) and
+ * the only way for Bitbucket (Data Center has no login an app can drive without its
+ * administrator): the Control Plane verifies it and answers with the account in the start call.
  */
 export function ConnectorDialog({
   kind,
@@ -49,6 +51,7 @@ export function ConnectorDialog({
   const [gh, setGh] = useState<GhCliStatus | null>(null);
   const [host, setHost] = useState(() => server?.connector?.host ?? "");
   const [token, setToken] = useState("");
+  const [patOpen, setPatOpen] = useState(false);
   const onServerRef = useRef(onServer);
   onServerRef.current = onServer;
 
@@ -103,7 +106,7 @@ export function ConnectorDialog({
         name,
         via,
         account,
-        host: via === "token" ? hostName : null,
+        host: via === "token" && kind === "bitbucket" ? hostName : null,
         token: via === "token" ? token : null,
       });
       if (via === "token" && f.status === "done") setToken("");
@@ -130,9 +133,9 @@ export function ConnectorDialog({
 
   const viaGh = flow?.via === "gh";
   const canStart = (!flow || flow.status === "error") && busy === null && nameOk;
-  const title = server ? `Reconnect ${preset.label}` : kind === "bitbucket" ? "Add Bitbucket" : `Add ${preset.label} MCP`;
+  const title = server ? `Reconnect ${preset.label}` : `Connect ${preset.label}`;
   const tokenPage = hostOk ? `https://${hostName}/plugins/servlet/access-tokens/` : null;
-  const tokenReady = canStart && hostOk && token.trim() !== "";
+  const tokenReady = canStart && (kind === "github" || hostOk) && token.trim() !== "";
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal panel connector-dialog" role="dialog" aria-modal="true" aria-labelledby="connector-title">
@@ -224,9 +227,10 @@ export function ConnectorDialog({
             {kind === "github" && (
             <div className="connector-ways">
               <button type="button" className="primary connector-way" disabled={!canStart} onClick={() => void start("gh")}>
-                <span>{busy === "gh" ? (gh?.available ? "Starting GitHub CLI…" : "Downloading GitHub CLI…") : "Log in with GitHub"}</span>
+                <span>{busy === "gh" ? (gh?.available ? "Starting GitHub CLI…" : "Downloading GitHub CLI…") : "Log in with GitHub (GitHub CLI)"}</span>
                 <span className="muted">
-                  GitHub CLI's login: works with organizations that only allow GitHub's own apps.
+                  Sessionboxer gets what your account can see: every organization you belong to, no picking. Works with organizations that only
+                  allow GitHub's own apps.
                   {gh && !gh.available && " GitHub CLI is downloaded to ~/.sessionboxer on first use."}
                 </span>
               </button>
@@ -244,8 +248,65 @@ export function ConnectorDialog({
               ))}
               <button type="button" className="connector-way" disabled={!canStart} onClick={() => void start("app")}>
                 <span>{busy === "app" ? "Starting…" : "Log in with the Sessionboxer OAuth App"}</span>
-                <span className="muted">Organizations that restrict third-party OAuth Apps may hide their private repositories from it.</span>
+                <span className="muted">
+                  GitHub's consent page lists your organizations with Grant / Request (an organization admin approves requests; one already granted
+                  to the app stays granted). It names the app's owner as the requester. Organizations that restrict third-party OAuth Apps hide
+                  their private repositories from it.
+                </span>
               </button>
+              <button type="button" className="connector-way" disabled={!canStart} aria-expanded={patOpen} onClick={() => setPatOpen((o) => !o)}>
+                <span>Use a personal access token</span>
+                <span className="muted">
+                  The one login you can limit to one organization or a few repositories: create the token on GitHub, paste it here.
+                </span>
+              </button>
+              {patOpen && (
+                <div
+                  className="connector-token"
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" || e.target instanceof HTMLButtonElement) return;
+                    e.preventDefault();
+                    if (tokenReady) void start("token");
+                  }}
+                >
+                  <p className="muted">
+                    1.{" "}
+                    <a href={GITHUB_FINE_GRAINED_URL} target="_blank" rel="noopener noreferrer">
+                      Create a fine-grained token
+                    </a>
+                    : <em>Resource owner</em> = the organization (or you), <em>Repository access</em> = the repositories Sessions may touch,{" "}
+                    <em>Repository permissions</em>: <strong>Contents</strong>, <strong>Pull requests</strong>, <strong>Issues</strong> and{" "}
+                    <strong>Workflows</strong> read and write (Metadata read comes with them). Some organizations must approve fine-grained tokens
+                    first.
+                    <br />
+                    Or{" "}
+                    <a href={GITHUB_CLASSIC_URL} target="_blank" rel="noopener noreferrer">
+                      create a classic token
+                    </a>{" "}
+                    with <code>repo</code>, <code>workflow</code> and <code>read:org</code> (that link ticks them); a classic token sees every
+                    organization you belong to.
+                    <br />
+                    2. Paste it here; Sessionboxer checks it with GitHub and keeps it as a secret header, never shown again. Reconnect when it
+                    expires.
+                  </p>
+                  <label>
+                    Personal access token
+                    <input
+                      type="password"
+                      value={token}
+                      autoFocus
+                      autoComplete="off"
+                      placeholder="github_pat_… or ghp_…"
+                      onChange={(e) => setToken(e.target.value)}
+                    />
+                  </label>
+                  <div className="connector-ways">
+                    <button type="button" className="primary connector-way" disabled={!tokenReady} onClick={() => void start("token")}>
+                      <span>{busy === "token" ? "Checking with GitHub…" : server ? "Reconnect with this token" : "Connect with this token"}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             )}
           </>
@@ -299,7 +360,8 @@ export function ConnectorDialog({
           <p className="connector-done">
             Connected <code>{flow.server.name}</code> as <strong>@{flow.server.connector?.account}</strong>
             {flow.via === "token" && flow.server.connector?.host && <span className="muted"> on {flow.server.connector.host}</span>}
-            {flow.via !== "app" && flow.via !== "token" && <span className="muted"> via GitHub CLI</span>}.
+            {flow.via !== "app" && flow.via !== "token" && <span className="muted"> via GitHub CLI</span>}
+            {flow.via === "token" && flow.kind === "github" && <span className="muted"> with a personal access token</span>}.
             {flow.server.connector?.expiresAt && (
               <span className="muted"> The token expires {new Date(flow.server.connector.expiresAt).toLocaleString()}; reconnect then.</span>
             )}

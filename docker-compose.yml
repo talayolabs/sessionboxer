@@ -3,7 +3,8 @@
 #
 #   cp .env.example .env      # optional
 #   docker compose up -d
-#   docker compose logs -f control-plane   # prints the one-time login link
+#   docker compose logs control-plane      # `-d` hides the startup box: this shows the one-time login link
+#   docker compose exec control-plane sessionboxer token   # the access token for the login page
 #
 # The Docker socket makes this container root-equivalent on the host — the same power the
 # Control Plane has when it runs on the host directly, but keep it off machines you share.

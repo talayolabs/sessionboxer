@@ -73,6 +73,7 @@ function Login({ notice, onLoggedIn }: { notice: string | null; onLoggedIn: () =
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState(false);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,11 +115,65 @@ function Login({ notice, onLoggedIn }: { notice: string | null; onLoggedIn: () =
           </button>
         </div>
         <p className="muted small-text">
-          The token is printed when the Control Plane starts and by <code>sessionboxer token</code> on the machine running it. From a browser that is
-          already logged in, Global settings → Devices makes a one-time QR code that logs this one in without the token. This browser stays logged in until
-          the device is revoked there.
+          The token is in the Control Plane's startup log, next to a one-time login link.{" "}
+          <button type="button" className="link" onClick={() => setHelp(true)}>
+            Where do I find it?
+          </button>{" "}
+          From a browser that is already logged in, Global settings → Devices makes a QR code that logs this one in without the token. This browser
+          stays logged in until the device is revoked there.
         </p>
       </form>
+      {help && <TokenHelpDialog onClose={() => setHelp(false)} />}
+    </div>
+  );
+}
+
+/** How to get at the access token, per way of running the Control Plane; the login page cannot know which one this is. */
+function TokenHelpDialog({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal panel token-help" role="dialog" aria-modal="true" aria-labelledby="token-help-title">
+        <h2 id="token-help-title">Where is the access token?</h2>
+        <p className="muted">
+          When the Control Plane starts it prints a box with a <strong>one-time login link</strong> (open it in this browser and you are in, no token
+          needed) and how to get the token for other browsers. Pick how you run Sessionboxer:
+        </p>
+        <h3>Docker Compose</h3>
+        <p>
+          <code>docker compose up -d</code> hides that output. In the folder with <code>docker-compose.yml</code>:
+        </p>
+        <pre>
+          <code>{"docker compose logs control-plane        # startup box + login link\ndocker compose exec control-plane sessionboxer token"}</code>
+        </pre>
+        <p className="muted">The login link is one-use and expires; restart with <code>docker compose restart control-plane</code> to get a fresh one.</p>
+        <h3>
+          <code>sessionboxer serve</code> (install.sh, npm, npx)
+        </h3>
+        <p>The box is in the terminal where <code>serve</code> runs. In any other terminal on that machine:</p>
+        <pre>
+          <code>sessionboxer token</code>
+        </pre>
+        <h3>Desktop app</h3>
+        <p>
+          The app window is logged in by itself. For another browser or a phone, use Global settings → Devices in the app, or read{" "}
+          <code>~/.sessionboxer/config.json</code> (<code>accessToken</code>) on that machine.
+        </p>
+        <h3>Fixed token</h3>
+        <p>
+          If <code>SESSIONBOXER_ACCESS_TOKEN</code> is set in the environment or in <code>docker-compose.yml</code>, that value is the token.
+        </p>
+        <div className="actions">
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

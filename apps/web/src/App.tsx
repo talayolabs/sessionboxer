@@ -61,6 +61,7 @@ import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
 import { onServiceWorkerNavigate, registerServiceWorker } from "./push";
 import { CompactionDialog } from "./CompactionDialog";
 import { LlmCallDialog } from "./LlmCallDialog";
+import { GitAccounts } from "./GitAccounts";
 import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
@@ -2216,6 +2217,7 @@ function SettingsView({
           )}
         </p>
       </fieldset>
+      <GitAccounts servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
       <ThemeFieldset />
       <fieldset className="choice">
         <legend>Claude API</legend>
@@ -2498,12 +2500,13 @@ function SettingsView({
       <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
       <Devices remote={settings.remote} tunnels={settings.tunnels} onStored={onStored} run={run} />
       <fieldset className="choice">
-        <legend>GitHub login (OAuth App)</legend>
+        <legend>Your own GitHub OAuth App (optional)</legend>
         <p className="muted">
-          “Add GitHub” above logs in through a GitHub OAuth App. The built-in one (client id <code>{CONNECTORS.github.defaultClientId}</code>) needs
-          nothing here and uses the device-code flow. To use your own app instead, register one at github.com → Settings → Developer settings with
-          callback URL <code>{settings.remote.publicUrl}/api/connectors/github/callback</code> and Device Flow enabled; with its client secret set,
-          the browser redirect flow is used.
+          Only for the “Log in with the Sessionboxer OAuth App” option of Git accounts. The built-in app (client id{" "}
+          <code>{CONNECTORS.github.defaultClientId}</code>) needs nothing here and uses the device-code flow. To have GitHub's consent page name
+          you instead, register your own app at github.com → Settings → Developer settings with callback URL{" "}
+          <code>{settings.remote.publicUrl}/api/connectors/github/callback</code> and Device Flow enabled; with its client secret set, the
+          browser redirect flow is used.
         </p>
         <div className="row">
           <label>

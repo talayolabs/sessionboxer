@@ -35,7 +35,7 @@ export function planClone(url: string, credentials: BoxCredential[], account: st
       if (ssh) {
         throw new Error(
           `${url} is an SSH URL and the Sandbox has no SSH keys. Enable a GitHub entry for this Session ` +
-            "(Settings → MCP servers → Add GitHub) to clone it as that account, or use the HTTPS URL of a public repository.",
+            "(Settings → Git accounts → Connect GitHub) to clone it as that account, or use the HTTPS URL of a public repository.",
         );
       }
       return { url, env, account: null };
@@ -57,7 +57,7 @@ export function planClone(url: string, credentials: BoxCredential[], account: st
     throw new Error(
       `${url} is an SSH URL and the Sandbox has no SSH keys. ` +
         (bitbucket
-          ? `If ${bitbucket.host} is a Bitbucket (Data Center), enable an entry for it for this Session (Settings → MCP servers → Add Bitbucket) to clone as that account; otherwise use the HTTPS URL.`
+          ? `If ${bitbucket.host} is a Bitbucket (Data Center), enable an entry for it for this Session (Settings → Git accounts → Connect Bitbucket) to clone as that account; otherwise use the HTTPS URL.`
           : "Use an HTTPS URL instead."),
     );
   }
@@ -73,11 +73,11 @@ export function isGitHubUrl(url: string): boolean {
 export function cloneFailureHint(url: string, plan: ClonePlan): string {
   if (plan.account !== null) return "";
   if (GITHUB_HTTPS.test(url)) {
-    return " If the repository is private, enable a GitHub entry for this Session (Settings → MCP servers → Add GitHub) so the Sandbox clones it as your account.";
+    return " If the repository is private, enable a GitHub entry for this Session (Settings → Git accounts → Connect GitHub) so the Sandbox clones it as your account.";
   }
   const bitbucket = parseBitbucketRemote(url);
   if (bitbucket) {
-    return ` If the repository is private, enable a Bitbucket entry for ${bitbucket.host} for this Session (Settings → MCP servers → Add Bitbucket) so the Sandbox clones it as your account.`;
+    return ` If the repository is private, enable a Bitbucket entry for ${bitbucket.host} for this Session (Settings → Git accounts → Connect Bitbucket) so the Sandbox clones it as your account.`;
   }
   return "";
 }

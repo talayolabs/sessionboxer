@@ -24,12 +24,12 @@ You need Docker ([how to install it](https://sessionboxer.talayolabs.com/#docker
 ```sh
 curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh   # picks npm or Docker Compose
 npx sessionboxer serve                                            # Node 22+
-docker compose up -d                                              # with this repo's docker-compose.yml
+docker compose up -d && docker compose logs control-plane        # with this repo's docker-compose.yml; the logs have the login link
 ```
 
 Or a [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Linux, macOS and Windows (no Node needed).
 
-Then open the login link the server prints, go to **Global settings** and paste your agent's login: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, `~/.config/cursor/auth.json` after `agent login` for Cursor, or the token from `devin auth login` for Devin. Click **+ New**, add a repository, type a prompt.
+Then open the login link the server prints (`sessionboxer token`, or `docker compose exec control-plane sessionboxer token`, prints the access token for another browser), go to **Global settings** and paste your agent's login: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, `~/.config/cursor/auth.json` after `agent login` for Cursor, or the token from `devin auth login` for Devin. Click **+ New**, add a repository, type a prompt.
 
 More ways to install, updating and troubleshooting: [user guide → Install](docs/GUIDE.md#install).
 

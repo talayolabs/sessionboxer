@@ -1,7 +1,5 @@
 import { useState } from "react";
 import {
-  CONNECTOR_KINDS,
-  CONNECTORS,
   connectorHasMcp,
   MCP_TRANSPORTS,
   type ConnectorKind,
@@ -138,22 +136,9 @@ export function McpServersEditor({
         <button type="button" onClick={() => setImporting(true)} title='Paste a {"mcpServers": {...}} block (Claude Desktop, Cursor, VS Code style)'>
           Import JSON…
         </button>
-        {CONNECTOR_KINDS.map((kind) => (
-          <button
-            key={kind}
-            type="button"
-            className="connector-button"
-            title={
-              kind === "github"
-                ? "Add GitHub's MCP server and log in with OAuth (no tokens to paste)"
-                : "Log Sessions in to a self-hosted Bitbucket (Data Center) for git push and pull requests"
-            }
-            onClick={() => setConnecting({ kind, server: null })}
-          >
-            <ConnectorIcon kind={kind} /> Add {CONNECTORS[kind].label}
-          </button>
-        ))}
-        <span className="muted mcp-hint">Default column = on for new Sessions. Saved with the form below.</span>
+        <span className="muted mcp-hint">
+          Default column = on for new Sessions. Saved with the form below. GitHub and Bitbucket entries come from <em>Git accounts</em> above.
+        </span>
       </div>
       {connectorError && (
         <div className="banner banner-error" role="alert">

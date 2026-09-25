@@ -164,7 +164,7 @@ export function PrsPane({
       <nav className="pr-crumbs" aria-label="Pull requests">
         <span aria-current="page">Pull requests{prs.length > 0 && <span className="muted"> ({prs.length})</span>}</span>
       </nav>
-      <div className="prs-toolbar">
+      <div className="pane-toolbar prs-toolbar">
         <input
           placeholder="PR URL (GitHub or Bitbucket Data Center), owner/repo#123, or #123"
           value={ref}
@@ -239,14 +239,14 @@ export function PrsPane({
                     </div>
                   </td>
                   <td>
-                    <span className={`pr-state pr-state-${pr.state}`}>{STATE_LABEL[pr.state]}</span>
+                    <span className={`pill pr-state-${pr.state}`}>{STATE_LABEL[pr.state]}</span>
                     {pr.autoMerge && pr.state !== "closed" && (
                       <div className={`small-text ${mergeNote(pr).level}`} title={mergeNote(pr).text}>
                         auto-merge
                       </div>
                     )}
                   </td>
-                  <td>{pr.reviewDecision ? <span className={`pr-decision pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span> : <span className="muted">—</span>}</td>
+                  <td>{pr.reviewDecision ? <span className={`pill pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span> : <span className="muted">—</span>}</td>
                   <td>{pr.unread > 0 ? <span className="count">{pr.unread}</span> : <span className="muted">0</span>}</td>
                   <td>{pr.openThreads > 0 ? pr.openThreads : <span className="muted">0</span>}</td>
                   <td className="nowrap small-text">
@@ -432,11 +432,11 @@ export function PrPane({
             {pr.title}
           </a>
           <div className="muted small-text">
-            <span className={`pr-state pr-state-${pr.state}`}>{STATE_LABEL[pr.state]}</span>
+            <span className={`pill pr-state-${pr.state}`}>{STATE_LABEL[pr.state]}</span>
             {pr.reviewDecision && (
               <>
                 {" · "}
-                <span className={`pr-decision pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span>
+                <span className={`pill pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span>
               </>
             )}
             {pr.headRef && (
@@ -639,7 +639,7 @@ export function PrPane({
                     <input type="checkbox" checked={selected.has(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} />
                   </td>
                   <td className="nowrap">
-                    <span className={`pr-kind pr-kind-${it.kind}`}>{KIND_LABEL[it.kind]}</span>
+                    <span className={`pill pr-kind-${it.kind}`}>{KIND_LABEL[it.kind]}</span>
                     {it.reviewState && it.kind === "review" && <div className={`small-text pr-review-${it.reviewState.toLowerCase()}`}>{it.reviewState.toLowerCase().replace("_", " ")}</div>}
                     {it.inReplyTo !== null && <div className="muted small-text">reply</div>}
                   </td>

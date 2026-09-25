@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { WORKSPACE_ROOT_REPO, type Session, type SessionRepo, type SyncEntry, type SyncPlan, type SyncResult } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { formatBytes } from "./format";
+import { Modal } from "./ui";
 
 const ACTION_MARK: Record<SyncEntry["action"], [mark: string, title: string]> = {
   add: ["+", "New in the box"],
@@ -51,14 +52,6 @@ export function SyncDialog({ session, onClose }: { session: Session; onClose: ()
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, busy]);
-
   const folder = repo?.source.path ?? "";
   const boxDir = repo && repo.name !== WORKSPACE_ROOT_REPO ? `/workspace/${repo.name}` : "/workspace";
   const conflicts = plan?.entries.filter((e) => e.conflict && e.blocked === null) ?? [];
@@ -85,124 +78,121 @@ export function SyncDialog({ session, onClose }: { session: Session; onClose: ()
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
-      <div className="modal panel sync-dialog" role="dialog" aria-modal="true" aria-labelledby="sync-title">
-        <h2 id="sync-title">Pull changes to my folder</h2>
-        {copied.length > 1 && (
-          <label>
-            Repository
-            <select value={repo?.id ?? ""} disabled={busy !== null} onChange={(e) => setRepoId(e.target.value)}>
-              {copied.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} ← {r.source.path}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <p className="muted">
-          Copies what changed in <code>{boxDir}</code> in the box into <code title={folder}>{folder}</code>. Files ignored by git
-          (node_modules, build output) and <code>.git</code> itself stay in the box; changes you made only on your machine
-          are kept.
-        </p>
-        {error && (
-          <div className="banner banner-error dialog-banner" role="alert" onClick={() => setError(null)} title="Dismiss">
-            {error}
-          </div>
-        )}
-        {result && (
-          <div className="banner banner-ok dialog-banner" role="status">
-            Pulled {result.added + result.updated + result.deleted} change{result.added + result.updated + result.deleted === 1 ? "" : "s"}
-            {result.added + result.updated + result.deleted > 0 && (
-              <>
-                {" ("}
-                {[
-                  result.added && `${result.added} new`,
-                  result.updated && `${result.updated} changed`,
-                  result.deleted && `${result.deleted} deleted`,
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-                , {formatBytes(result.bytes)})
-              </>
-            )}
-            {result.skipped > 0 && `; ${result.skipped} file${result.skipped === 1 ? "" : "s"} left alone`}.
-          </div>
-        )}
-        {plan && !plan.threeWay && plan.entries.length > 0 && (
-          <p className="muted warn">
-            No record of what was copied into this box (older Session), so changes you made on your machine since then
-            cannot be told apart: new and changed files will overwrite yours; deletions are listed as conflicts.
-          </p>
-        )}
-        <ul className="sync-list" aria-busy={busy === "plan"}>
-          {!plan && !error && <li className="empty">Comparing the box with your folder\u2026</li>}
-          {plan?.entries.length === 0 && <li className="empty">Your folder already matches the box.</li>}
-          {plan?.entries.map((e) => (
-            <li key={e.path} className={e.blocked !== null || (e.conflict && !overwrite) ? "skipped" : undefined}>
-              <span className={`sync-mark sync-${e.action}`} title={ACTION_MARK[e.action][1]}>
-                {ACTION_MARK[e.action][0]}
-              </span>
-              <span className="sync-path" title={e.path}>
-                {e.path}
-              </span>
-              {e.blocked !== null && (
-                <span className="warn" title={e.blocked}>
-                  not pulled: {e.blocked}
-                </span>
-              )}
-              {e.conflict && e.blocked === null && (
-                <span
-                  className="warn"
-                  title={
-                    e.action === "delete"
-                      ? plan.threeWay
-                        ? "Changed on your machine since the copy; deleting would lose that"
-                        : "Only on your machine; cannot tell whether the box deleted it or you added it"
-                      : "Changed on your machine too; pulling would overwrite your version"
-                  }
-                >
-                  {"\u26a0"} {overwrite ? "will overwrite yours" : "kept yours"}
-                </span>
-              )}
-              {e.action !== "delete" && <span className="muted sync-size">{formatBytes(e.size)}</span>}
-            </li>
-          ))}
-        </ul>
-        {plan && (
-          <p className="muted">
-            {plan.unchanged} unchanged
-            {plan.localOnly > 0 && ` \u00b7 ${plan.localOnly} changed only on your machine (kept)`}
-            {plan.entries.length > 0 && ` \u00b7 to pull: ${summary(applying) || "nothing"}`}
-            {" \u00b7 compared "}
-            {new Date(plan.computedAt).toLocaleTimeString()}
-          </p>
-        )}
-        {conflicts.length > 0 && (
-          <label className="check">
-            <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} disabled={busy !== null} />
-            Also overwrite the {conflicts.length} file{conflicts.length === 1 ? "" : "s"} changed on my machine with the box's version
-          </label>
-        )}
-        <div className="actions">
-          <button type="button" disabled={busy !== null} onClick={() => void refresh()} title="Compare again">
-            {busy === "plan" ? "Comparing\u2026" : "Refresh"}
-          </button>
-          <span className="spacer" />
-          <button type="button" disabled={busy !== null} onClick={onClose}>
-            Close
-          </button>
-          <button
-            type="button"
-            className="primary"
-            disabled={busy !== null || applying.length === 0}
-            onClick={() => void pull()}
-            title={applying.length === 0 ? "Nothing to pull" : `Write ${applying.length} change${applying.length === 1 ? "" : "s"} (${formatBytes(bytes)}) into ${folder}`}
-          >
-            {busy === "pull" ? "Pulling\u2026" : `Pull ${applying.length > 0 ? `${applying.length} change${applying.length === 1 ? "" : "s"}` : "changes"}`}
-          </button>
+    <Modal className="sync-dialog" title="Pull changes to my folder" dismissible={!busy} onClose={onClose}>
+      {copied.length > 1 && (
+        <label>
+          Repository
+          <select value={repo?.id ?? ""} disabled={busy !== null} onChange={(e) => setRepoId(e.target.value)}>
+            {copied.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} ← {r.source.path}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <p className="muted">
+        Copies what changed in <code>{boxDir}</code> in the box into <code title={folder}>{folder}</code>. Files ignored by git
+        (node_modules, build output) and <code>.git</code> itself stay in the box; changes you made only on your machine
+        are kept.
+      </p>
+      {error && (
+        <div className="banner banner-error dialog-banner" role="alert" onClick={() => setError(null)} title="Dismiss">
+          {error}
         </div>
+      )}
+      {result && (
+        <div className="banner banner-ok dialog-banner" role="status">
+          Pulled {result.added + result.updated + result.deleted} change{result.added + result.updated + result.deleted === 1 ? "" : "s"}
+          {result.added + result.updated + result.deleted > 0 && (
+            <>
+              {" ("}
+              {[
+                result.added && `${result.added} new`,
+                result.updated && `${result.updated} changed`,
+                result.deleted && `${result.deleted} deleted`,
+              ]
+                .filter(Boolean)
+                .join(", ")}
+              , {formatBytes(result.bytes)})
+            </>
+          )}
+          {result.skipped > 0 && `; ${result.skipped} file${result.skipped === 1 ? "" : "s"} left alone`}.
+        </div>
+      )}
+      {plan && !plan.threeWay && plan.entries.length > 0 && (
+        <p className="muted warn">
+          No record of what was copied into this box (older Session), so changes you made on your machine since then
+          cannot be told apart: new and changed files will overwrite yours; deletions are listed as conflicts.
+        </p>
+      )}
+      <ul className="list-box sync-list" aria-busy={busy === "plan"}>
+        {!plan && !error && <li className="empty">Comparing the box with your folder\u2026</li>}
+        {plan?.entries.length === 0 && <li className="empty">Your folder already matches the box.</li>}
+        {plan?.entries.map((e) => (
+          <li key={e.path} className={e.blocked !== null || (e.conflict && !overwrite) ? "skipped" : undefined}>
+            <span className={`sync-mark sync-${e.action}`} title={ACTION_MARK[e.action][1]}>
+              {ACTION_MARK[e.action][0]}
+            </span>
+            <span className="sync-path" title={e.path}>
+              {e.path}
+            </span>
+            {e.blocked !== null && (
+              <span className="warn" title={e.blocked}>
+                not pulled: {e.blocked}
+              </span>
+            )}
+            {e.conflict && e.blocked === null && (
+              <span
+                className="warn"
+                title={
+                  e.action === "delete"
+                    ? plan.threeWay
+                      ? "Changed on your machine since the copy; deleting would lose that"
+                      : "Only on your machine; cannot tell whether the box deleted it or you added it"
+                    : "Changed on your machine too; pulling would overwrite your version"
+                }
+              >
+                {"\u26a0"} {overwrite ? "will overwrite yours" : "kept yours"}
+              </span>
+            )}
+            {e.action !== "delete" && <span className="muted sync-size">{formatBytes(e.size)}</span>}
+          </li>
+        ))}
+      </ul>
+      {plan && (
+        <p className="muted">
+          {plan.unchanged} unchanged
+          {plan.localOnly > 0 && ` \u00b7 ${plan.localOnly} changed only on your machine (kept)`}
+          {plan.entries.length > 0 && ` \u00b7 to pull: ${summary(applying) || "nothing"}`}
+          {" \u00b7 compared "}
+          {new Date(plan.computedAt).toLocaleTimeString()}
+        </p>
+      )}
+      {conflicts.length > 0 && (
+        <label className="check">
+          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} disabled={busy !== null} />
+          Also overwrite the {conflicts.length} file{conflicts.length === 1 ? "" : "s"} changed on my machine with the box's version
+        </label>
+      )}
+      <div className="actions">
+        <button type="button" disabled={busy !== null} onClick={() => void refresh()} title="Compare again">
+          {busy === "plan" ? "Comparing\u2026" : "Refresh"}
+        </button>
+        <span className="spacer" />
+        <button type="button" disabled={busy !== null} onClick={onClose}>
+          Close
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={busy !== null || applying.length === 0}
+          onClick={() => void pull()}
+          title={applying.length === 0 ? "Nothing to pull" : `Write ${applying.length} change${applying.length === 1 ? "" : "s"} (${formatBytes(bytes)}) into ${folder}`}
+        >
+          {busy === "pull" ? "Pulling\u2026" : `Pull ${applying.length > 0 ? `${applying.length} change${applying.length === 1 ? "" : "s"}` : "changes"}`}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

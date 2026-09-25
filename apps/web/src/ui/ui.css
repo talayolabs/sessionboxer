@@ -1,0 +1,139 @@
+/*
+ * The design system's components (ADR-0056): the classes every feature composes. Behaviour-heavy ones
+ * (menu, dialog, tooltip, popover, tabs) are rendered by the wrappers in this folder around Radix
+ * Primitives, which put the surfaces in a portal at the end of <body> and drive them with data-/aria-
+ * attributes: the styles below select those, never a JS-toggled class.
+ */
+
+/* ---- Panes: a column beside the chat (Desktop, Code, Terminal, PRs, Verification, Scheduled, Context) ---- */
+.pane { display: flex; flex-direction: column; flex: 0 0 var(--pane-width, 50%); min-width: 0; border-left: 1px solid var(--border); background: var(--sunken); }
+.pane-toolbar { flex: none; display: flex; gap: 8px; align-items: center; min-height: 36px; padding: 5px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--fs-md); }
+.pane > .banner { flex: none; display: flex; gap: 10px; align-items: center; font-size: var(--fs-md); }
+.pane-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); padding: 20px; text-align: center; }
+
+/* ---- Panel: a settings form; labels stack their caption over the field ---- */
+.panel { padding: 20px; max-width: 640px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.panel label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); }
+.panel .row { display: flex; gap: 14px; }
+.panel .row label { flex: 1; }
+.panel label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); min-width: 0; }
+.panel label.check input { width: auto; margin: 0; flex: none; }
+.panel .banner { border: 1px solid var(--border); border-radius: var(--radius); cursor: default; line-height: 1.4; }
+.panel fieldset.choice { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.panel fieldset.choice legend { color: var(--muted); padding: 0 4px; }
+.choice-text { min-width: 0; flex: 1; line-height: 1.35; }
+.panel label.check:has(.choice-text) { align-items: flex-start; }
+.panel label.check:has(.choice-text) input { margin-top: 3px; }
+.actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+.actions .spacer { flex: 1; }
+/* Save stays reachable: Settings is long enough that it would otherwise sit far below the fold. */
+.panel > .actions { position: sticky; bottom: 0; padding: 10px 0; margin-top: -10px; background: var(--bg); }
+.actions-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.input-row { display: flex; gap: 8px; }
+.input-row input { flex: 1; min-width: 0; }
+.input-row button { flex: none; white-space: nowrap; }
+.label-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.label-row button.link { font-size: var(--fs-sm); white-space: nowrap; }
+.field-hint { margin: -4px 0 4px; font-size: var(--fs-sm); color: var(--muted); display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.field-hint.warn { color: var(--warn); }
+/* Small caps caption over a group of fields or a column. */
+.section-title, .ss-section h3, .cd-col h3, .ctx-section h3, .llm-columns h3, .llm-diff h4, .setup-todo-head, .settings-view .split-body > fieldset.choice > legend {
+  margin: 0; font-size: var(--fs-sm); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+}
+
+/* ---- List box: rows in a sunken frame (snapshots, folders, repositories, MCP servers, sync plan) ---- */
+.list-box { list-style: none; margin: 0; padding: 4px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); min-height: 60px; display: flex; flex-direction: column; gap: 2px; }
+.list-box[aria-busy="true"] { opacity: 0.6; }
+.list-box li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; font-size: var(--fs-md); }
+.list-box li:hover { background: var(--hover); }
+.list-box li.empty { color: var(--muted); padding: 8px 10px; text-align: left; }
+
+/* ---- Toggle switch (a checkbox drawn as a slider; label.check.switch) ---- */
+.switch { flex-wrap: wrap; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .slider { position: relative; flex: none; width: 34px; height: 18px; border-radius: 9px; background: var(--border); transition: background 0.15s; }
+.switch .slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text); transition: transform 0.15s; }
+.switch input:checked + .slider { background: var(--accent); }
+.switch input:checked + .slider::after { transform: translateX(16px); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch-hint { flex-basis: 100%; padding-left: 42px; font-size: var(--fs-sm); }
+
+/* ---- Status marks: dot, pill, count ---- */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+.dot-idle { background: var(--ok); }
+.dot-running { background: var(--accent); animation: pulse 1s infinite alternate; }
+.dot-creating { background: var(--warn); animation: pulse 1s infinite alternate; }
+.dot-stopped { background: var(--muted); }
+.dot-error { background: var(--error); }
+@keyframes pulse { from { opacity: 0.4; } to { opacity: 1; } }
+.pill { display: inline-block; padding: 0 7px; border-radius: var(--radius-pill); font-size: var(--fs-xs); line-height: 18px; border: 1px solid var(--border); white-space: nowrap; }
+.badge { padding: 2px 8px; border-radius: var(--radius-pill); font-size: var(--fs-sm); border: 1px solid var(--border); }
+.badge-idle { color: var(--ok); }
+.badge-running { color: var(--accent); }
+.badge-creating { color: var(--warn); }
+.badge-error { color: var(--error); }
+.count { display: inline-block; min-width: 16px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: var(--fs-xs); font-weight: 600; line-height: 16px; text-align: center; margin-left: 5px; }
+.count.live { background: var(--warn); min-width: 0; padding: 0 4px; animation: e2e-pulse 1.2s ease-in-out infinite; }
+@keyframes e2e-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ---- Banners (a line across a pane or a form) and toasts (bottom-right, hand-written) ---- */
+.banner { padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.banner-error { background: color-mix(in srgb, var(--error) 22%, var(--bg)); color: color-mix(in srgb, var(--error) 60%, var(--text)); }
+.banner-warn { background: color-mix(in srgb, var(--warn) 22%, var(--bg)); color: color-mix(in srgb, var(--warn) 60%, var(--text)); }
+.banner-ok { background: color-mix(in srgb, var(--ok) 18%, var(--bg)); color: color-mix(in srgb, var(--ok) 60%, var(--text)); border-color: color-mix(in srgb, var(--ok) 55%, var(--bg)); cursor: default; }
+.dialog-banner { border: 1px solid var(--error); border-radius: var(--radius); font-size: var(--fs-md); }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: var(--z-zen); max-width: 380px; }
+.toast { position: relative; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--radius-md); padding: 10px 28px 10px 12px; box-shadow: var(--shadow-float); font-size: var(--fs-md); display: flex; flex-direction: column; gap: 4px; }
+.toast-title { font-weight: 600; }
+.toast-line { text-align: left; line-height: 1.35; }
+.toast-close { position: absolute; top: 4px; right: 4px; background: none; border: 0; color: var(--muted); padding: 2px 6px; font-size: var(--fs-base); }
+.toast-close:hover { color: var(--text); }
+
+/* ---- Floating surfaces (Radix portals): menu, popover, tooltip ---- */
+.menu, .popover { z-index: var(--z-popover); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-float); }
+.menu { min-width: 200px; max-width: min(420px, calc(100vw - 32px)); display: flex; flex-direction: column; padding: 4px; }
+.menu-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 7px 10px; background: none; border: 0; border-radius: var(--radius); text-align: left; color: var(--text); font: inherit; cursor: pointer; outline: none; user-select: none; }
+.menu-item[data-highlighted] { background: var(--bg); }
+.menu-item[data-disabled] { opacity: 0.45; cursor: default; }
+.menu-item.danger[data-highlighted] { color: var(--error); }
+.menu-title { font-weight: 600; }
+.menu-detail { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-detail code { font-size: var(--fs-xs); }
+.menu-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }
+.menu-row kbd { font: inherit; font-size: var(--fs-xs); color: var(--muted); }
+.popover { display: flex; flex-direction: column; gap: 8px; padding: 10px; font-size: var(--fs-md); max-width: calc(100vw - 20px); }
+.popover-header { display: flex; align-items: center; gap: 8px; }
+.tooltip { z-index: var(--z-popover); max-width: 320px; padding: 4px 8px; font-size: var(--fs-sm); line-height: 1.4; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow-wrap: anywhere; }
+
+/* ---- Modal dialog: a panel over a backdrop; feature classes set its width ---- */
+.modal-backdrop { position: fixed; inset: 0; z-index: var(--z-modal); background: var(--backdrop); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); width: 100%; max-width: 640px; max-height: 100%; overflow-x: hidden; box-shadow: var(--shadow-modal); outline: none; }
+.modal-title { display: flex; align-items: baseline; gap: 10px; margin: 0; }
+.modal-title.large { font-size: var(--fs-title); }
+.modal-title .link { font-size: var(--fs-base); font-weight: normal; }
+@media (max-width: 800px) { .modal-backdrop { padding: 12px; } }
+
+/* ---- Tabs: the selected one is aria-selected (Radix Tabs and the hand-written pane switcher alike) ---- */
+.tabs { display: contents; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.segmented button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 0; padding: 6px 12px; }
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button[aria-selected="true"] { background: var(--user); color: var(--text); }
+.segmented.small button { padding: 4px 12px; font-size: var(--fs-md); color: var(--muted); }
+.segmented.small button[aria-selected="true"] { color: var(--text); }
+.segmented button:focus-visible { outline-offset: -2px; }
+/* Loose tabs in a toolbar (terminals). */
+.tab-strip { display: flex; gap: 6px; align-items: center; }
+.tab-strip button { padding: 3px 10px; font-size: var(--fs-sm); background: transparent; border: 1px solid var(--border); }
+.tab-strip button[aria-selected="true"] { background: var(--user); color: var(--text); border-color: var(--user); }
+/* Section list beside its section (settings): vertical on a desktop, a wrapped row on a phone. */
+.split-settings { display: flex; flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.split-nav { flex: none; width: 200px; display: flex; flex-direction: column; padding: 8px; gap: 2px; background: var(--bg); border-right: 1px solid var(--border); overflow-y: auto; }
+.split-nav button { text-align: left; border: 0; background: transparent; color: var(--muted); padding: 7px 10px; border-radius: var(--radius); }
+.split-nav button:hover { background: var(--hover); color: var(--text); }
+.split-nav button[aria-selected="true"] { background: var(--selected); color: var(--text); }
+.split-body { flex: 1; min-width: 0; overflow-y: auto; padding: 12px; }
+@media (max-width: 800px) {
+  .split-settings { flex-direction: column; }
+  .split-nav { width: auto; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
+}

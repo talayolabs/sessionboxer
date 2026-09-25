@@ -11,6 +11,7 @@ import { api } from "./api";
 import { ConnectorDialog } from "./ConnectorDialog";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { TRANSPORT_LABELS, importMcpJson, joinArgs, newMcpServer, splitArgs, summarize } from "./mcp";
+import { Modal } from "./ui";
 
 /**
  * The global MCP registry inside Settings: one card per server (collapsed summary or
@@ -324,49 +325,46 @@ function ImportDialog({ onClose, onImport }: { onClose: () => void; onImport: (s
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal panel" role="dialog" aria-modal="true" aria-labelledby="mcp-import-title">
-        <h2 id="mcp-import-title">Import MCP servers from JSON</h2>
-        <p className="muted">
-          Paste the <code>{'{"mcpServers": {...}}'}</code> block from Claude Desktop, Cursor or a server's README. Env vars and headers whose
-          names look like tokens are marked secret.
-        </p>
-        <textarea
-          rows={12}
-          autoFocus
-          value={text}
-          spellCheck={false}
-          onChange={(e) => {
-            setText(e.target.value);
-            setError(null);
-          }}
-          placeholder={'{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-github"],\n      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "..." }\n    }\n  }\n}'}
-        />
-        {error && (
-          <div className="banner banner-error dialog-banner" role="alert">
-            {error}
-          </div>
-        )}
-        <div className="actions">
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="primary"
-            disabled={!text.trim()}
-            onClick={() => {
-              try {
-                onImport(importMcpJson(text));
-              } catch (e) {
-                setError(e instanceof Error ? e.message : String(e));
-              }
-            }}
-          >
-            Import
-          </button>
+    <Modal title="Import MCP servers from JSON" onClose={onClose}>
+      <p className="muted">
+        Paste the <code>{'{"mcpServers": {...}}'}</code> block from Claude Desktop, Cursor or a server's README. Env vars and headers whose
+        names look like tokens are marked secret.
+      </p>
+      <textarea
+        rows={12}
+        autoFocus
+        value={text}
+        spellCheck={false}
+        onChange={(e) => {
+          setText(e.target.value);
+          setError(null);
+        }}
+        placeholder={'{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-github"],\n      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "..." }\n    }\n  }\n}'}
+      />
+      {error && (
+        <div className="banner banner-error dialog-banner" role="alert">
+          {error}
         </div>
+      )}
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={!text.trim()}
+          onClick={() => {
+            try {
+              onImport(importMcpJson(text));
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            }
+          }}
+        >
+          Import
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

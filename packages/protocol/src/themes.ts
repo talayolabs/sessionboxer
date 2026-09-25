@@ -7,7 +7,7 @@ import { z } from "zod";
 // One palette per theme drives the UI's CSS variables (`themeCssVariables`), the `--vscode-*`
 // aliases layered on top of them (`vscodeCssVariables`) and the VS Code color theme the Sandbox
 // image ships (`vscodeTheme`), so the editor in the Code pane is drawn in the very same values as
-// the UI around it (ADR-0048, ADR-0055).
+// the UI around it (ADR-0048, ADR-0056).
 
 export const THEME_IDS = [
   "sessionboxer-dark",

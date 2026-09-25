@@ -4,9 +4,10 @@ import { api } from "./api";
 import { formatTokens } from "./context-model";
 import { formatTime } from "./format";
 import { LLM_KIND_LABELS, diffRequests, formatBytes, parseJson, previousCall, requestTree, responseTree, type DiffSection, type TreeNode } from "./llm-model";
+import { Modal, Tab, TabList, TabPanel, Tabs } from "./ui";
 
 type Load = { state: "loading" } | { state: "loaded"; body: LlmCallBody } | { state: "failed"; error: string };
-type Tab = "request" | "response" | "tree" | "diff";
+type LlmTab = "request" | "response" | "tree" | "diff";
 
 /** Above this many characters the body is shown cut until asked for, so the dialog stays responsive. */
 const SHOW_CAP = 400_000;
@@ -186,7 +187,7 @@ export function LlmCallDialog({
   calls: LlmCall[];
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("request");
+  const [tab, setTab] = useState<LlmTab>("request");
   const live = session.status === "idle" || session.status === "running";
   const load = useBody(session.id, call.id, live);
   const [withBodies, setWithBodies] = useState<Set<string> | null>(null);
@@ -211,14 +212,6 @@ export function LlmCallDialog({
   const prev = useMemo(() => (withBodies ? previousCall(calls, call, withBodies) : null), [calls, call, withBodies]);
   const prevLoad = useBody(session.id, tab === "diff" && prev ? prev.id : null, live);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const body = load.state === "loaded" ? load.body : null;
   const requestJson = useMemo(() => (body ? parseJson(body.request) : undefined), [body]);
   const tree = useMemo(() => (body ? { request: requestTree(requestJson), response: responseTree(body.response) } : null), [body, requestJson]);
@@ -230,20 +223,25 @@ export function LlmCallDialog({
   const responseName = body?.response !== null && body?.response !== undefined && /^event:/m.test(body.response) ? `${base}-response.sse.txt` : `${base}-response.json`;
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal panel llm-dialog" role="dialog" aria-modal="true" aria-labelledby="llm-title">
-        <h2 id="llm-title">
+    <Modal
+      className="llm-dialog"
+      title={
+        <>
           LLM call #{call.ordinal} <span className="muted">{formatTime(call.startedAt)}</span>
-        </h2>
-        <p className="muted small-text">{callFacts(call).join(" \u00b7 ")}</p>
-        <div className="segmented llm-tabs" role="tablist">
+        </>
+      }
+      onClose={onClose}
+    >
+      <p className="muted small-text">{callFacts(call).join(" \u00b7 ")}</p>
+      <Tabs className="tabs" value={tab} onValueChange={setTab}>
+        <TabList className="segmented llm-tabs" aria-label="Part of the call">
           {(["request", "response", "tree", "diff"] as const).map((t) => (
-            <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
+            <Tab key={t} value={t}>
               {t === "request" ? `Request (${formatBytes(call.requestBytes)})` : t === "response" ? `Response (${formatBytes(call.responseBytes)})` : t === "tree" ? "Tree" : "Diff"}
-            </button>
+            </Tab>
           ))}
-        </div>
-        <div className="llm-content">
+        </TabList>
+        <TabPanel value={tab} className="llm-content">
           {load.state === "loading" && <p className="llm-status">Reading the bodies from the Sandbox\u2026</p>}
           {load.state === "failed" && <p className="llm-status llm-status-error">{load.error}</p>}
           {body && tab === "request" && <Body text={body.request} bytes={call.requestBytes} truncated={call.requestTruncated} name={`${base}-request.json`} />}
@@ -280,18 +278,18 @@ export function LlmCallDialog({
               )}
             </>
           )}
-        </div>
-        <p className="muted small-text llm-note">
-          Captured where Claude Code hands the request to the Sandbox&apos;s loopback inspector, before it reaches{" "}
-          <code>{session.provider === "claude-code" ? "the configured ANTHROPIC_BASE_URL" : "the provider"}</code>. Headers (and so credentials) are never
-          recorded; a company proxy that rewrites bodies does so after this point.
-        </p>
-        <div className="actions">
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
+        </TabPanel>
+      </Tabs>
+      <p className="muted small-text llm-note">
+        Captured where Claude Code hands the request to the Sandbox&apos;s loopback inspector, before it reaches{" "}
+        <code>{session.provider === "claude-code" ? "the configured ANTHROPIC_BASE_URL" : "the provider"}</code>. Headers (and so credentials) are never
+        recorded; a company proxy that rewrites bodies does so after this point.
+      </p>
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

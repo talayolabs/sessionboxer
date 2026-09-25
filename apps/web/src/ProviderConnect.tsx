@@ -9,6 +9,7 @@ import { api } from "./api";
 import { CopyCommand } from "./CopyCommand";
 import { ProviderIcon } from "./ProviderIcon";
 import { providerTokenSet } from "./providers";
+import { Modal, Tab, TabList, TabPanel, Tabs } from "./ui";
 
 export type Os = "mac" | "windows" | "linux";
 
@@ -29,35 +30,6 @@ export function detectOs(settings: PublicSettings): Os {
     : settings.hostPlatform === "win32"
       ? "windows"
       : "linux";
-}
-
-export function OsTabs({
-  value,
-  onChange,
-}: {
-  value: Os;
-  onChange: (os: Os) => void;
-}) {
-  return (
-    <div
-      className="os-tabs"
-      role="tablist"
-      aria-label="Operating system of your machine"
-    >
-      {(["mac", "windows", "linux"] as const).map((os) => (
-        <button
-          key={os}
-          type="button"
-          role="tab"
-          aria-selected={value === os}
-          className={value === os ? "active" : ""}
-          onClick={() => onChange(os)}
-        >
-          {OS_LABELS[os]}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 const PROVIDER_BLURB: Record<Provider, string> = {
@@ -327,17 +299,11 @@ export function ProviderConnectDialog({
   const field = provider ? credentialField(provider) : null;
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div
-        className="modal panel provider-connect"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="provider-connect-title"
-      >
-        <h2 id="provider-connect-title" className="provider-connect-title">
+    <Modal
+      className="provider-connect"
+      titleClassName="large"
+      title={
+        <>
           {provider && (
             <button
               type="button"
@@ -357,125 +323,137 @@ export function ProviderConnectDialog({
           <button type="button" className="link" onClick={onClose}>
             Close
           </button>
-        </h2>
-        {!provider && (
-          <>
-            <p className="muted">
-              A Session runs one of these Agents with your own subscription;
-              connect the one you have (one is enough). Each login is made with
-              the Provider&apos;s CLI on your machine, then pasted here; the
-              steps are shown for your operating system.
-            </p>
-            <ProviderLogos settings={settings} onPick={pick} />
-          </>
-        )}
-        {provider && field && (
-          <>
-            <div className="provider-connect-head">
-              <ProviderIcon provider={provider} size={28} />
-              <span className="muted">{PROVIDER_BLURB[provider]}.</span>
-              {connected && <span className="ok">Connected</span>}
-            </div>
+        </>
+      }
+      onClose={onClose}
+    >
+      {!provider && (
+        <>
+          <p className="muted">
+            A Session runs one of these Agents with your own subscription;
+            connect the one you have (one is enough). Each login is made with
+            the Provider&apos;s CLI on your machine, then pasted here; the
+            steps are shown for your operating system.
+          </p>
+          <ProviderLogos settings={settings} onPick={pick} />
+        </>
+      )}
+      {provider && field && (
+        <>
+          <div className="provider-connect-head">
+            <ProviderIcon provider={provider} size={28} />
+            <span className="muted">{PROVIDER_BLURB[provider]}.</span>
+            {connected && <span className="ok">Connected</span>}
+          </div>
+          <Tabs className="tabs" value={os} onValueChange={setOs}>
             <div className="os-row">
               <span className="muted">Commands for</span>
-              <OsTabs value={os} onChange={setOs} />
+              <TabList className="segmented small" aria-label="Operating system of your machine">
+                {(["mac", "windows", "linux"] as const).map((o) => (
+                  <Tab key={o} value={o}>
+                    {OS_LABELS[o]}
+                  </Tab>
+                ))}
+              </TabList>
               <span className="muted">
                 (where you run the CLI, not the Sessionboxer server)
               </span>
             </div>
-            <ol className="connect-steps">
-              {steps(provider, os).map((step, i) => (
-                <li key={i}>
-                  <strong>{step.title}</strong>
-                  {step.body && <p className="muted">{step.body}</p>}
-                  {step.commands.map((c) => (
-                    <CopyCommand key={c} command={c} />
-                  ))}
-                </li>
-              ))}
-            </ol>
-            <label>
-              {field.label}{" "}
-              {connected && <span className="ok">(set; paste to replace)</span>}
-              {field.multiline ? (
-                <textarea
-                  rows={3}
-                  spellCheck={false}
-                  autoComplete="off"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder={field.placeholder}
-                />
-              ) : (
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                  placeholder={field.placeholder}
-                />
-              )}
-            </label>
-            {field.file && (
+            <TabPanel value={os} asChild>
+              <ol className="connect-steps">
+                {steps(provider, os).map((step, i) => (
+                  <li key={i}>
+                    <strong>{step.title}</strong>
+                    {step.body && <p className="muted">{step.body}</p>}
+                    {step.commands.map((c) => (
+                      <CopyCommand key={c} command={c} />
+                    ))}
+                  </li>
+                ))}
+              </ol>
+            </TabPanel>
+          </Tabs>
+          <label>
+            {field.label}{" "}
+            {connected && <span className="ok">(set; paste to replace)</span>}
+            {field.multiline ? (
+              <textarea
+                rows={3}
+                spellCheck={false}
+                autoComplete="off"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder={field.placeholder}
+              />
+            ) : (
               <input
-                ref={fileRef}
-                type="file"
-                accept=".json,application/json"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (f) void f.text().then(setValue);
+                type="password"
+                autoComplete="off"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void save();
+                  }
                 }}
+                placeholder={field.placeholder}
               />
             )}
-            {error && <p className="error">{error}</p>}
-            {saved && !error && (
-              <p className="ok">
-                Saved. Sessions can use {PROVIDER_LABELS[provider]} now.
-              </p>
-            )}
-            <div className="actions">
-              <a
-                className="muted"
-                href="#/settings/providers"
-                onClick={onClose}
-              >
-                More options in Global settings
-              </a>
-              <span className="spacer" />
-              {field.file && (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  Import auth.json…
-                </button>
-              )}
+          </label>
+          {field.file && (
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void f.text().then(setValue);
+              }}
+            />
+          )}
+          {error && <p className="error">{error}</p>}
+          {saved && !error && (
+            <p className="ok">
+              Saved. Sessions can use {PROVIDER_LABELS[provider]} now.
+            </p>
+          )}
+          <div className="actions">
+            <a
+              className="muted"
+              href="#/settings/providers"
+              onClick={onClose}
+            >
+              More options in Global settings
+            </a>
+            <span className="spacer" />
+            {field.file && (
               <button
                 type="button"
-                className="primary"
-                disabled={busy || !value.trim()}
-                onClick={() => void save()}
+                disabled={busy}
+                onClick={() => fileRef.current?.click()}
               >
-                {busy ? "Saving…" : "Save"}
+                Import auth.json…
               </button>
-              {saved && (
-                <button type="button" onClick={onClose}>
-                  Done
-                </button>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+            )}
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || !value.trim()}
+              onClick={() => void save()}
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+            {saved && (
+              <button type="button" onClick={onClose}>
+                Done
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

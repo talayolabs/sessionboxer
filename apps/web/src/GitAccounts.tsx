@@ -9,6 +9,7 @@ import {
 import { api } from "./api";
 import { ConnectorDialog } from "./ConnectorDialog";
 import { ConnectorIcon } from "./ConnectorIcon";
+import { Modal } from "./ui";
 
 /**
  * "Git accounts" in Settings: the entry point for connecting GitHub and Bitbucket, one row
@@ -184,43 +185,39 @@ export function GitConnectDialog({
     );
   }
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div
-        className="modal panel git-connect"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="git-connect-title"
-      >
-        <h2 id="git-connect-title" className="provider-connect-title">
+    <Modal
+      className="git-connect"
+      titleClassName="large"
+      title={
+        <>
           <span>Connect a Git account</span>
           <span className="spacer" />
           <button type="button" className="link" onClick={onClose}>
             Close
           </button>
-        </h2>
-        <p className="muted">
-          The account Sessions clone private repositories with, push as, and
-          open pull requests from. Public repositories need none. Optional now:
-          Global settings → Git accounts has this too.
-        </p>
-        <div className="provider-logos git-logos">
-          {CONNECTOR_KINDS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              className="provider-logo"
-              onClick={() => setKind(k)}
-            >
-              <ConnectorIcon kind={k} size={40} />
-              <span className="provider-logo-name">{CONNECTORS[k].label}</span>
-              <span className="provider-logo-state muted">{GIT_BLURB[k]}</span>
-            </button>
-          ))}
-        </div>
+        </>
+      }
+      onClose={onClose}
+    >
+      <p className="muted">
+        The account Sessions clone private repositories with, push as, and
+        open pull requests from. Public repositories need none. Optional now:
+        Global settings → Git accounts has this too.
+      </p>
+      <div className="provider-logos git-logos">
+        {CONNECTOR_KINDS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            className="provider-logo"
+            onClick={() => setKind(k)}
+          >
+            <ConnectorIcon kind={k} size={40} />
+            <span className="provider-logo-name">{CONNECTORS[k].label}</span>
+            <span className="provider-logo-state muted">{GIT_BLURB[k]}</span>
+          </button>
+        ))}
       </div>
-    </div>
+    </Modal>
   );
 }

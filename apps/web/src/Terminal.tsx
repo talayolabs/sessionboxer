@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { currentTheme, useTheme, xtermTheme } from "./theme";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { PtyInfo, Session, TerminalClientMessage, TerminalServerMessage } from "@sessionboxer/protocol";
 import { api, terminalSocketUrl } from "./api";
+import { ContextMenu, ContextMenuItem, Tab, TabList, TabPanel, Tabs } from "./ui";
 import "@xterm/xterm/css/xterm.css";
 
 const DEFAULT_COLS = 80;
@@ -74,9 +75,6 @@ function copyPasteKeys(term: XTerm, e: KeyboardEvent): boolean {
   return false;
 }
 
-type MenuState = { x: number; y: number } | null;
-const MENU_WIDTH = 220;
-const MENU_HEIGHT = 150;
 
 /** Shells inside the Sandbox's Workspace, one xterm.js tab per Daemon PTY. */
 export function TerminalPane({ session }: { session: Session }) {
@@ -141,18 +139,15 @@ export function TerminalPane({ session }: { session: Session }) {
   const activeTerminal = terminals.find((t) => t.id === active) ?? null;
 
   return (
-    <div className="terminal">
-      <div className="terminal-toolbar">
-        {terminals.map((t, i) => (
-          <button
-            key={t.id}
-            className={`tab${t.id === active ? " active" : ""}`}
-            onClick={() => setActive(t.id)}
-            title={t.id}
-          >
-            Terminal {i + 1}
-          </button>
-        ))}
+    <Tabs className="pane" value={active ?? ""} onValueChange={setActive}>
+      <div className="pane-toolbar">
+        <TabList className="tab-strip" aria-label="Terminals">
+          {terminals.map((t, i) => (
+            <Tab key={t.id} value={t.id} title={t.id}>
+              Terminal {i + 1}
+            </Tab>
+          ))}
+        </TabList>
         <button className="small" onClick={() => void open()} disabled={!live || busy} title="New terminal">
           +
         </button>
@@ -168,14 +163,17 @@ export function TerminalPane({ session }: { session: Session }) {
           {error}
         </div>
       )}
-      <div className="terminal-body">
-        {!live && <div className="desktop-overlay">Sandbox is {session.status}; terminals are available while it runs.</div>}
-        {live && !activeTerminal && !error && <div className="desktop-overlay muted">{busy ? "Opening terminal…" : "No terminal open."}</div>}
-        {live && activeTerminal && (
+      {live && activeTerminal ? (
+        <TabPanel value={activeTerminal.id} className="terminal-body">
           <TerminalView key={activeTerminal.id} sessionId={session.id} pty={activeTerminal} onClose={() => void close(activeTerminal.id)} />
-        )}
-      </div>
-    </div>
+        </TabPanel>
+      ) : (
+        <div className="terminal-body">
+          {!live && <div className="pane-overlay">Sandbox is {session.status}; terminals are available while it runs.</div>}
+          {live && !error && <div className="pane-overlay muted">{busy ? "Opening terminal…" : "No terminal open."}</div>}
+        </div>
+      )}
+    </Tabs>
   );
 }
 
@@ -185,7 +183,7 @@ function TerminalView({ sessionId, pty, onClose }: { sessionId: string; pty: Pty
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const [state, setState] = useState<ViewState>({ kind: "connecting" });
-  const [menu, setMenu] = useState<MenuState>(null);
+  const [hasSelection, setHasSelection] = useState(false);
   const [menuNote, setMenuNote] = useState<string | null>(null);
   const theme = useTheme();
 
@@ -194,19 +192,6 @@ function TerminalView({ sessionId, pty, onClose }: { sessionId: string; pty: Pty
     if (term) term.options.theme = xtermTheme(theme);
   }, [theme]);
 
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", close, true);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", close, true);
-      window.removeEventListener("blur", close);
-    };
-  }, [menu]);
-
   const note = (text: string) => {
     setMenuNote(text);
     setTimeout(() => setMenuNote((n) => (n === text ? null : n)), 3000);
@@ -214,7 +199,6 @@ function TerminalView({ sessionId, pty, onClose }: { sessionId: string; pty: Pty
 
   const copySelection = async () => {
     const term = termRef.current;
-    setMenu(null);
     if (!term?.hasSelection()) return;
     const text = term.getSelection();
     term.focus();
@@ -224,7 +208,6 @@ function TerminalView({ sessionId, pty, onClose }: { sessionId: string; pty: Pty
 
   const pasteClipboard = async () => {
     const term = termRef.current;
-    setMenu(null);
     if (!term) return;
     term.focus();
     const text = await readClipboard();
@@ -308,66 +291,45 @@ function TerminalView({ sessionId, pty, onClose }: { sessionId: string; pty: Pty
     };
   }, [sessionId, pty.id]);
 
-  const onContextMenu = (e: MouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const bounds = e.currentTarget.getBoundingClientRect();
-    setMenu({
-      x: Math.max(0, Math.min(e.clientX - bounds.left, bounds.width - MENU_WIDTH)),
-      y: Math.max(0, Math.min(e.clientY - bounds.top, bounds.height - MENU_HEIGHT)),
-    });
-  };
-
-  const hasSelection = menu !== null && (termRef.current?.hasSelection() ?? false);
-
   return (
     <>
-      <div className="terminal-screen" ref={hostRef} onContextMenu={onContextMenu} />
-      {menu && (
-        <div className="menu terminal-menu" style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-          <button className="menu-item" role="menuitem" disabled={!hasSelection} onClick={() => void copySelection()}>
-            <span className="menu-row">
-              Copy <kbd>{IS_MAC ? "⌘C" : "Ctrl+Shift+C"}</kbd>
-            </span>
-          </button>
-          <button className="menu-item" role="menuitem" onClick={() => void pasteClipboard()}>
-            <span className="menu-row">
-              Paste <kbd>{MOD}+V</kbd>
-            </span>
-          </button>
-          <button
-            className="menu-item"
-            role="menuitem"
-            onClick={() => {
-              setMenu(null);
-              termRef.current?.selectAll();
-            }}
-          >
-            <span className="menu-row">Select all</span>
-          </button>
-          <button
-            className="menu-item"
-            role="menuitem"
-            onClick={() => {
-              setMenu(null);
-              termRef.current?.clear();
-              termRef.current?.focus();
-            }}
-          >
-            <span className="menu-row">Clear</span>
-          </button>
-        </div>
-      )}
+      <ContextMenu
+        className="terminal-menu"
+        trigger={<div className="terminal-screen" ref={hostRef} />}
+        onOpenChange={(open) => open && setHasSelection(termRef.current?.hasSelection() ?? false)}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          termRef.current?.focus();
+        }}
+      >
+        <ContextMenuItem disabled={!hasSelection} onSelect={() => void copySelection()}>
+          <span className="menu-row">
+            Copy <kbd>{IS_MAC ? "⌘C" : "Ctrl+Shift+C"}</kbd>
+          </span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => void pasteClipboard()}>
+          <span className="menu-row">
+            Paste <kbd>{MOD}+V</kbd>
+          </span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => termRef.current?.selectAll()}>
+          <span className="menu-row">Select all</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => termRef.current?.clear()}>
+          <span className="menu-row">Clear</span>
+        </ContextMenuItem>
+      </ContextMenu>
       {menuNote && <div className="terminal-note">{menuNote}</div>}
-      {state.kind === "connecting" && <div className="terminal-status muted">Connecting…</div>}
+      {state.kind === "connecting" && <div className="pane-toolbar terminal-status muted">Connecting…</div>}
       {state.kind === "exited" && (
-        <div className="terminal-status">
+        <div className="pane-toolbar terminal-status">
           Shell exited with code {state.exitCode}.
           <button className="small" onClick={onClose}>
             Close
           </button>
         </div>
       )}
-      {state.kind === "closed" && <div className="terminal-status warn">Disconnected: {state.reason}</div>}
+      {state.kind === "closed" && <div className="pane-toolbar terminal-status warn">Disconnected: {state.reason}</div>}
     </>
   );
 }

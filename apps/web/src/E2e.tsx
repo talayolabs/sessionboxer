@@ -104,7 +104,7 @@ export function E2ePane({
         : "Verify the work so far end to end (whatever the switch says)";
   return (
     <div className="pane e2e-pane">
-      <div className="e2e-toolbar">
+      <div className="pane-toolbar e2e-toolbar">
         <label className="e2e-switch" title={`Verify each turn end to end: ${override === null ? `Global settings default (${globalEnabled ? "on" : "off"})` : "set for this Session"}`}>
           <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked === globalEnabled ? null : e.target.checked)} />
           Verify each turn

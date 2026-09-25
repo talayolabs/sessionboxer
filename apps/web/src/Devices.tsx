@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import qrcode from "qrcode-generator";
 import {
   DEFAULT_TUNNEL_SERVER,
@@ -19,6 +19,7 @@ import {
 } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { disablePush, enablePush, pushState, pushSupport } from "./push";
+import { Menu, MenuItem } from "./ui";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -135,54 +136,24 @@ function Transport({
   );
 }
 
-/** A small menu under its button: the choices of a click, closed by a choice, a click elsewhere or Escape. */
-function Menu({ label, disabled, items }: { label: string; disabled?: boolean; items: { key: string; title: string; detail: ReactNode; onPick: () => void }[] }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setOpen(false);
-      trigger.current?.focus();
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+/** The choices of a click, under its button; each with a title and a line of detail. */
+function ChoiceMenu({ label, disabled, items }: { label: string; disabled?: boolean; items: { key: string; title: string; detail: ReactNode; onPick: () => void }[] }) {
   return (
-    <div className="menu-anchor" ref={ref}>
-      <button type="button" ref={trigger} disabled={disabled} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {label} ▾
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          {items.map((it) => (
-            <button
-              key={it.key}
-              type="button"
-              role="menuitem"
-              className="menu-item"
-              onClick={() => {
-                setOpen(false);
-                trigger.current?.focus();
-                it.onPick();
-              }}
-            >
-              <span className="menu-title">{it.title}</span>
-              <span className="muted small-text menu-detail">{it.detail}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <Menu
+      className="devices-menu"
+      trigger={
+        <button type="button" disabled={disabled}>
+          {label} ▾
+        </button>
+      }
+    >
+      {items.map((it) => (
+        <MenuItem key={it.key} onSelect={it.onPick}>
+          <span className="menu-title">{it.title}</span>
+          <span className="muted small-text menu-detail">{it.detail}</span>
+        </MenuItem>
+      ))}
+    </Menu>
   );
 }
 
@@ -430,7 +401,7 @@ export function Devices({
       <div className="row devices-pair">
         <div className="devices-pair-text">
           <div className="actions-left">
-            <Menu
+            <ChoiceMenu
               disabled={pairBusy !== null}
               label={pairBusy !== null ? `Starting ${TRANSPORT_LABEL[pairBusy]}\u2026` : link ? "New pairing code" : "Pair another device"}
               items={(["local", "cloudflare", "sessionboxer", "ssh"] as const).map((t) => ({

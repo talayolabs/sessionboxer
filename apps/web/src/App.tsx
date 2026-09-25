@@ -91,6 +91,7 @@ import { SnapshotsDialog } from "./SnapshotsDialog";
 import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
 import { UsbDialog } from "./UsbDialog";
 import { Schedules } from "./Schedules";
+import { cx, Menu, MenuItem, Tab, TabList, TabPanel, Tabs, Tip } from "./ui";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
@@ -989,68 +990,60 @@ type SessionMenuItem = {
   onPick: () => void;
 };
 
+/**
+ * One tab of the header's pane switcher. Hand-written rather than ui/Tabs: a click on the active one hides
+ * the pane, which a one-of-N tab list cannot express.
+ */
+function PaneTab({ icon, active, tip, className, onClick, children }: { icon: IconName; active: boolean; tip: string; className?: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <Tip text={tip}>
+      <button role="tab" aria-selected={active} className={cx(active && "active", className)} onClick={onClick}>
+        <Icon name={icon} />
+        {children}
+      </button>
+    </Tip>
+  );
+}
+
 /** The Session's secondary actions: a "…" dropdown on a desktop, plain buttons inside the phone's action sheet. */
 function SessionMenu({ items, mobile, pending }: { items: SessionMenuItem[]; mobile: boolean; pending: boolean }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setOpen(false);
-      trigger.current?.focus();
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  const buttons = items.map((it) => (
-    <button
-      key={it.key}
-      type="button"
-      role={mobile ? undefined : "menuitem"}
-      className={`${mobile ? "" : "menu-item session-menu-item"}${it.danger ? " danger" : ""}${it.active ? " active" : ""}${it.pending ? " pending" : ""}`}
-      disabled={it.disabled}
-      title={it.title}
-      onClick={() => {
-        setOpen(false);
-        it.onPick();
-      }}
-    >
+  const content = (it: SessionMenuItem) => (
+    <>
       <Icon name={it.icon} />
       {it.label}
       {it.count !== undefined && it.count > 0 && <span className="count">{it.count}</span>}
       {it.pending && <span className="warn-sign">pending</span>}
-    </button>
-  ));
-  if (mobile) return <>{buttons}</>;
+    </>
+  );
+  const itemClass = (it: SessionMenuItem) => cx(it.danger && "danger", it.active && "active", it.pending && "pending");
+  if (mobile) {
+    return (
+      <>
+        {items.map((it) => (
+          <button key={it.key} type="button" className={itemClass(it)} disabled={it.disabled} title={it.title} onClick={it.onPick}>
+            {content(it)}
+          </button>
+        ))}
+      </>
+    );
+  }
   return (
-    <div className="menu-anchor session-menu" ref={ref}>
-      <button
-        type="button"
-        ref={trigger}
-        className={`more-menu${pending ? " pending" : ""}`}
-        aria-label="More"
-        title={pending ? "More (a settings change applies when the current turn ends)" : "Terminal, Context, Snapshot, Fork, Session settings, Stop, Delete"}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        {"\u22ef"}
-      </button>
-      {open && (
-        <div className="menu session-menu-list" role="menu">
-          {buttons}
-        </div>
-      )}
-    </div>
+    <Menu
+      align="end"
+      trigger={
+        <Tip text={pending ? "More (a settings change applies when the current turn ends)" : "Terminal, Context, Snapshot, Fork, Session settings, Stop, Delete"}>
+          <button type="button" className={cx("more-menu", pending && "pending")} aria-label="More">
+            {"\u22ef"}
+          </button>
+        </Tip>
+      }
+    >
+      {items.map((it) => (
+        <MenuItem key={it.key} className={cx("session-menu-item", itemClass(it))} disabled={it.disabled} title={it.title} onSelect={it.onPick}>
+          {content(it)}
+        </MenuItem>
+      ))}
+    </Menu>
   );
 }
 
@@ -1419,9 +1412,11 @@ function SessionView({
         {session.repos.length > 0 ? (
           <>
             <RepoChips session={session} onClick={() => setReposOpen(true)} />
-            <button className="icon-button" title="Add repository…" aria-label="Add repository…" onClick={() => setReposOpen(true)}>
-              +
-            </button>
+            <Tip text="Add repository…">
+              <button className="icon-button" aria-label="Add repository…" onClick={() => setReposOpen(true)}>
+                +
+              </button>
+            </Tip>
           </>
         ) : (
           <>
@@ -1458,23 +1453,14 @@ function SessionView({
         <div className="header-tabs">
         <div className="segmented" role="tablist" aria-label="Side pane">
           {PANES.map((p) => (
-            <button
-              key={p.id}
-              role="tab"
-              aria-selected={pane === p.id}
-              className={pane === p.id ? "active" : ""}
-              title={`${p.hint}. Click to ${pane === p.id ? "hide" : "show"} it.`}
-              onClick={() => togglePane(p.id)}
-            >
-              <Icon name={p.id} />
+            <PaneTab key={p.id} icon={p.id} active={pane === p.id} tip={`${p.hint}. Click to ${pane === p.id ? "hide" : "show"} it.`} onClick={() => togglePane(p.id)}>
               {p.label}
-            </button>
+            </PaneTab>
           ))}
-          <button
-            role="tab"
-            aria-selected={pane === "prs" || openPr !== null}
-            className={pane === "prs" || openPr ? "active" : ""}
-            title={
+          <PaneTab
+            icon="prs"
+            active={pane === "prs" || openPr !== null}
+            tip={
               openPr
                 ? "Back to the list of pull requests"
                 : pane === "prs"
@@ -1483,34 +1469,32 @@ function SessionView({
             }
             onClick={() => (openPr ? setPane("prs") : togglePane("prs"))}
           >
-            <Icon name="prs" />
             PRs{prUnread > 0 && <span className="count">{prUnread}</span>}
-          </button>
-          <button
-            role="tab"
-            aria-selected={pane === "e2e"}
-            className={`${pane === "e2e" ? "active" : ""}${e2eLive ? " e2e-tab-live" : ""}`}
-            title={pane === "e2e" ? "Hide the verification runs" : `End-to-end verification of the Agent's turns${e2eLive ? " (running now)" : e2eEnabled ? "" : " (off for this Session)"}`}
+          </PaneTab>
+          <PaneTab
+            icon="verification"
+            active={pane === "e2e"}
+            className={e2eLive ? "e2e-tab-live" : undefined}
+            tip={pane === "e2e" ? "Hide the verification runs" : `End-to-end verification of the Agent's turns${e2eLive ? " (running now)" : e2eEnabled ? "" : " (off for this Session)"}`}
             onClick={() => togglePane("e2e")}
           >
-            <Icon name="verification" />
             Verification{e2eLive && <span className="count live">●</span>}
-          </button>
-          <button
-            role="tab"
-            aria-selected={pane === "schedules"}
-            className={pane === "schedules" ? "active" : ""}
-            title={pane === "schedules" ? "Hide the scheduled prompts" : `${SCHEDULES_HINT}${sessionSchedules > 0 ? ` (${sessionSchedules})` : ""}`}
+          </PaneTab>
+          <PaneTab
+            icon="scheduled"
+            active={pane === "schedules"}
+            tip={pane === "schedules" ? "Hide the scheduled prompts" : `${SCHEDULES_HINT}${sessionSchedules > 0 ? ` (${sessionSchedules})` : ""}`}
             onClick={() => togglePane("schedules")}
           >
-            <Icon name="scheduled" />
             Scheduled{sessionSchedules > 0 && <span className="count">{sessionSchedules}</span>}
-          </button>
+          </PaneTab>
         </div>
         {(session.status === "stopped" || session.status === "error") && (
-          <button title="Start the Sandbox again; the Agent picks up its conversation" onClick={() => void run(() => api.resume(session.id))}>
-            <Icon name="resume" /> Resume
-          </button>
+          <Tip text="Start the Sandbox again; the Agent picks up its conversation">
+            <button onClick={() => void run(() => api.resume(session.id))}>
+              <Icon name="resume" /> Resume
+            </button>
+          </Tip>
         )}
         <SessionMenu mobile={mobile} pending={settingsPending} items={menuItems} />
         </div>
@@ -1678,7 +1662,7 @@ function SessionView({
         {shown === "terminal" && <TerminalPane session={session} />}
         {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
         {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
-        {shown === "schedules" && <div className="schedules-pane">{schedulesPane}</div>}
+        {shown === "schedules" && <div className="pane schedules-pane">{schedulesPane}</div>}
         {shown === "e2e" && (
           <E2ePane
             session={session}
@@ -2222,15 +2206,15 @@ function SettingsView({
         <span>Global settings</span>
         <span className="muted advanced-sub">defaults for every Session; Save applies all sections</span>
       </h2>
-      <div className="split-settings">
-        <nav className="split-nav" aria-label="Settings sections">
+      <Tabs className="split-settings" orientation="vertical" value={active} onValueChange={onSection}>
+        <TabList className="split-nav" aria-label="Settings sections">
           {GLOBAL_SETTINGS_SECTIONS.map((s) => (
-            <button key={s.id} type="button" className={active === s.id ? "active" : ""} onClick={() => onSection(s.id)}>
+            <Tab key={s.id} value={s.id}>
               {s.label}
-            </button>
+            </Tab>
           ))}
-        </nav>
-        <div className="split-body">
+        </TabList>
+        <TabPanel value={active} className="split-body">
           {show("providers") && (
             <fieldset className="choice" id="settings-providers">
               <legend>Provider logins</legend>
@@ -2723,8 +2707,8 @@ function SettingsView({
               )}
             </fieldset>
           )}
-        </div>
-      </div>
+        </TabPanel>
+      </Tabs>
       <div className="actions settings-actions">
         <span className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Logins, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</span>
         <span className="spacer" />

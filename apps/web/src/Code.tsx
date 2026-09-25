@@ -120,8 +120,8 @@ export function CodePane({ session, target = null }: { session: Session; target?
   const url = codeUrl(session.id);
 
   return (
-    <div className="code">
-      <div className="terminal-toolbar">
+    <div className="pane">
+      <div className="pane-toolbar">
         <span className="muted" title="Running inside the Sandbox, not on your machine">
           Remote VS Code{status?.version ? ` ${status.version}` : ""}
         </span>
@@ -146,8 +146,8 @@ export function CodePane({ session, target = null }: { session: Session; target?
         </div>
       )}
       <div className="code-body">
-        {!live && <div className="desktop-overlay">Sandbox is {session.status}; VS Code is available while it runs.</div>}
-        {live && !running && !error && <div className="desktop-overlay muted">Starting VS Code in the Sandbox…</div>}
+        {!live && <div className="pane-overlay">Sandbox is {session.status}; VS Code is available while it runs.</div>}
+        {live && !running && !error && <div className="pane-overlay muted">Starting VS Code in the Sandbox…</div>}
         {running && (
           <iframe
             key={generation}

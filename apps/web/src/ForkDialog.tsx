@@ -15,6 +15,7 @@ import {
 import { formatMb, formatTime } from "./format";
 import { providerCredentialNoun, providerTokenSet } from "./providers";
 import { SessionSettingsForm, draftFromSettings, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
+import { Modal } from "./ui";
 
 const PREVIEW_CHARS = 120;
 
@@ -98,14 +99,6 @@ export function ForkDialog({
     if (first.startsWith("q") && Number(first.slice(1)) >= candidates.length) setFirst("none");
   }, [first, candidates.length]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   if (!snapshot) return null;
 
   const sameAgent = provider === session.provider;
@@ -146,149 +139,146 @@ export function ForkDialog({
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form className="modal panel" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="fork-title">
-        <h2 id="fork-title">Fork "{session.title}"</h2>
-        <p className="muted">
-          A new Session with its own Sandbox started from the snapshot image: same files and installed tools, with the same
-          Agent or another one, with or without the conversation up to that point. The original Session, its Sandbox and its
-          queue are left as they are.
-        </p>
-        <label>
-          Fork point
-          <select value={snapshot.id} onChange={(e) => setSnapshotId(e.target.value)}>
-            {[...snapshots].reverse().map((s) => (
-              <option key={s.id} value={s.id}>
-                #{s.ordinal}
-                {s.reason === "manual" ? " (manual)" : ""} {"\u00b7"} {formatTime(s.createdAt)} {"\u00b7"} {formatMb(s.sizeBytes)}
-                {s.queuedMessages.length > 0 ? ` \u00b7 ${s.queuedMessages.length} queued` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Agent
-          <select value={provider} onChange={(e) => pickProvider(e.target.value as Provider)} disabled={busy}>
-            {PROVIDERS.map((p) => (
-              <option key={p} value={p}>
-                {PROVIDER_LABELS[p]}
-                {p === session.provider ? " (the origin's)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        {!providerTokenSet(settings, provider) && (
-          <p className="field-hint warn">
-            No {forkLabel} {providerCredentialNoun(provider)} configured: add it in <a href="#/settings/providers">Global settings → Provider logins</a> first, or
-            pick an Agent you are logged in to.
-          </p>
-        )}
-        <fieldset className="choice">
-          <legend>Conversation</legend>
-          <label className="check" title={sameAgent ? undefined : `${forkLabel} cannot load ${originLabel}'s memory; start a new conversation or hand off.`}>
-            <input
-              type="radio"
-              name="conversation"
-              checked={conversation === "continue"}
-              disabled={!sameAgent}
-              onChange={() => setConversation("continue")}
-            />
-            <span className={`choice-text${sameAgent ? "" : " muted"}`}>
-              Continue it{" "}
-              <span className="muted">
-                {sameAgent
-                  ? "— the chat up to the snapshot is kept, the Agent remembers it"
-                  : `— only for ${originLabel}: an Agent's memory cannot be loaded into another`}
-              </span>
-            </span>
-          </label>
-          <label className="check">
-            <input type="radio" name="conversation" checked={conversation === "new"} onChange={() => setConversation("new")} />
-            <span className="choice-text">
-              Start a new one <span className="muted">— empty chat, {forkLabel} starts fresh on the same files</span>
-            </span>
-          </label>
-          <label className="check" title={blocker ? `The handoff can be written ${blocker}.` : undefined}>
-            <input
-              type="radio"
-              name="conversation"
-              checked={conversation === "handoff"}
-              disabled={blocker !== null}
-              onChange={() => setConversation("handoff")}
-            />
-            <span className={`choice-text${blocker ? " muted" : ""}`}>
-              Hand off{" "}
-              <span className="muted">
-                — {originLabel} writes down goal, state of the work, decisions, open items, files and how to run it (a hidden turn in this
-                Session, from its whole memory); {sameAgent ? "a fresh " : ""}
-                {forkLabel} gets it as its first message
-                {blocker ? ` — ${blocker}` : ""}
-              </span>
-            </span>
-          </label>
-        </fieldset>
-        <label>
-          Title (optional)
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={defaultTitle} />
-        </label>
-        <fieldset className="choice">
-          <legend>{conversation === "handoff" ? "Your message to add after the handoff" : "First message in the fork"}</legend>
-          <label className="check">
-            <input type="radio" name="first" checked={first === "none"} onChange={() => setFirst("none")} />
-            {conversation === "handoff" ? `Nothing: ${forkLabel} reads the handoff and carries on with its open items` : "Nothing, just open the fork"}
-          </label>
-          {candidates.map((text, i) => (
-            <label className="check" key={i} title={text}>
-              <input type="radio" name="first" checked={first === `q${i}`} onChange={() => setFirst(`q${i}`)} />
-              <span className="choice-text">
-                <span className="muted">{i < snapshotCount ? "queued at the snapshot: " : "queued now: "}</span>
-                {preview(text)}
-              </span>
-            </label>
+    <Modal title={`Fork "${session.title}"`} onClose={onClose} onSubmit={submit}>
+      <p className="muted">
+        A new Session with its own Sandbox started from the snapshot image: same files and installed tools, with the same
+        Agent or another one, with or without the conversation up to that point. The original Session, its Sandbox and its
+        queue are left as they are.
+      </p>
+      <label>
+        Fork point
+        <select value={snapshot.id} onChange={(e) => setSnapshotId(e.target.value)}>
+          {[...snapshots].reverse().map((s) => (
+            <option key={s.id} value={s.id}>
+              #{s.ordinal}
+              {s.reason === "manual" ? " (manual)" : ""} {"\u00b7"} {formatTime(s.createdAt)} {"\u00b7"} {formatMb(s.sizeBytes)}
+              {s.queuedMessages.length > 0 ? ` \u00b7 ${s.queuedMessages.length} queued` : ""}
+            </option>
           ))}
-          <label className="check">
-            <input type="radio" name="first" checked={first === "custom"} onChange={() => setFirst("custom")} />
-            A new message
+        </select>
+      </label>
+      <label>
+        Agent
+        <select value={provider} onChange={(e) => pickProvider(e.target.value as Provider)} disabled={busy}>
+          {PROVIDERS.map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_LABELS[p]}
+              {p === session.provider ? " (the origin's)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!providerTokenSet(settings, provider) && (
+        <p className="field-hint warn">
+          No {forkLabel} {providerCredentialNoun(provider)} configured: add it in <a href="#/settings/providers">Global settings → Provider logins</a> first, or
+          pick an Agent you are logged in to.
+        </p>
+      )}
+      <fieldset className="choice">
+        <legend>Conversation</legend>
+        <label className="check" title={sameAgent ? undefined : `${forkLabel} cannot load ${originLabel}'s memory; start a new conversation or hand off.`}>
+          <input
+            type="radio"
+            name="conversation"
+            checked={conversation === "continue"}
+            disabled={!sameAgent}
+            onChange={() => setConversation("continue")}
+          />
+          <span className={`choice-text${sameAgent ? "" : " muted"}`}>
+            Continue it{" "}
+            <span className="muted">
+              {sameAgent
+                ? "— the chat up to the snapshot is kept, the Agent remembers it"
+                : `— only for ${originLabel}: an Agent's memory cannot be loaded into another`}
+            </span>
+          </span>
+        </label>
+        <label className="check">
+          <input type="radio" name="conversation" checked={conversation === "new"} onChange={() => setConversation("new")} />
+          <span className="choice-text">
+            Start a new one <span className="muted">— empty chat, {forkLabel} starts fresh on the same files</span>
+          </span>
+        </label>
+        <label className="check" title={blocker ? `The handoff can be written ${blocker}.` : undefined}>
+          <input
+            type="radio"
+            name="conversation"
+            checked={conversation === "handoff"}
+            disabled={blocker !== null}
+            onChange={() => setConversation("handoff")}
+          />
+          <span className={`choice-text${blocker ? " muted" : ""}`}>
+            Hand off{" "}
+            <span className="muted">
+              — {originLabel} writes down goal, state of the work, decisions, open items, files and how to run it (a hidden turn in this
+              Session, from its whole memory); {sameAgent ? "a fresh " : ""}
+              {forkLabel} gets it as its first message
+              {blocker ? ` — ${blocker}` : ""}
+            </span>
+          </span>
+        </label>
+      </fieldset>
+      <label>
+        Title (optional)
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={defaultTitle} />
+      </label>
+      <fieldset className="choice">
+        <legend>{conversation === "handoff" ? "Your message to add after the handoff" : "First message in the fork"}</legend>
+        <label className="check">
+          <input type="radio" name="first" checked={first === "none"} onChange={() => setFirst("none")} />
+          {conversation === "handoff" ? `Nothing: ${forkLabel} reads the handoff and carries on with its open items` : "Nothing, just open the fork"}
+        </label>
+        {candidates.map((text, i) => (
+          <label className="check" key={i} title={text}>
+            <input type="radio" name="first" checked={first === `q${i}`} onChange={() => setFirst(`q${i}`)} />
+            <span className="choice-text">
+              <span className="muted">{i < snapshotCount ? "queued at the snapshot: " : "queued now: "}</span>
+              {preview(text)}
+            </span>
           </label>
-          {first === "custom" && <textarea rows={4} autoFocus value={custom} onChange={(e) => setCustom(e.target.value)} />}
-        </fieldset>
-        {others.length > 0 && (
-          <label className="check">
-            <input type="checkbox" checked={copyRest} onChange={(e) => setCopyRest(e.target.checked)} />
-            Copy the {pickedIndex >= 0 ? "other " : ""}
-            {others.length} queued message{others.length === 1 ? "" : "s"} to the fork's queue (sent after its first message)
-          </label>
+        ))}
+        <label className="check">
+          <input type="radio" name="first" checked={first === "custom"} onChange={() => setFirst("custom")} />
+          A new message
+        </label>
+        {first === "custom" && <textarea rows={4} autoFocus value={custom} onChange={(e) => setCustom(e.target.value)} />}
+      </fieldset>
+      {others.length > 0 && (
+        <label className="check">
+          <input type="checkbox" checked={copyRest} onChange={(e) => setCopyRest(e.target.checked)} />
+          Copy the {pickedIndex >= 0 ? "other " : ""}
+          {others.length} queued message{others.length === 1 ? "" : "s"} to the fork's queue (sent after its first message)
+        </label>
+      )}
+      <details className="fork-settings" open={settingsOpen} onToggle={(e) => setSettingsOpen(e.currentTarget.open)}>
+        <summary>
+          Settings of the fork{draftChanged ? " (changed)" : " (same as the origin)"}
+        </summary>
+        {settingsOpen && (
+          <SessionSettingsForm
+            mode="fork"
+            provider={provider}
+            session={session}
+            settings={settings}
+            models={models[provider]}
+            options={options[provider]}
+            value={draft}
+            onChange={(patch) => {
+              setDraft((d) => ({ ...d, ...patch }));
+              setDraftChanged(true);
+            }}
+            disabled={busy}
+          />
         )}
-        <details className="fork-settings" open={settingsOpen} onToggle={(e) => setSettingsOpen(e.currentTarget.open)}>
-          <summary>
-            Settings of the fork{draftChanged ? " (changed)" : " (same as the origin)"}
-          </summary>
-          {settingsOpen && (
-            <SessionSettingsForm
-              mode="fork"
-              provider={provider}
-              session={session}
-              settings={settings}
-              models={models[provider]}
-              options={options[provider]}
-              value={draft}
-              onChange={(patch) => {
-                setDraft((d) => ({ ...d, ...patch }));
-                setDraftChanged(true);
-              }}
-              disabled={busy}
-            />
-          )}
-        </details>
-        <div className="actions">
-          <button type="button" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="submit" className="primary" disabled={busy || (first === "custom" && !custom.trim()) || (conversation === "handoff" && blocker !== null)}>
-            {busy ? "Forking\u2026" : conversation === "handoff" ? "Hand off and fork" : "Fork"}
-          </button>
-        </div>
-      </form>
-    </div>
+      </details>
+      <div className="actions">
+        <button type="button" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button type="submit" className="primary" disabled={busy || (first === "custom" && !custom.trim()) || (conversation === "handoff" && blocker !== null)}>
+          {busy ? "Forking\u2026" : conversation === "handoff" ? "Hand off and fork" : "Fork"}
+        </button>
+      </div>
+    </Modal>
   );
 }

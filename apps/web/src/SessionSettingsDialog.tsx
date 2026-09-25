@@ -1,6 +1,6 @@
-import { useEffect } from "react";
 import type { AgentOption, ModelOption, PublicSettings, Session, SessionSettingsPatch } from "@sessionboxer/protocol";
 import { SessionSettingsForm, draftFromSettings, type SessionSettingsDraft } from "./SessionSettingsForm";
+import { Modal } from "./ui";
 
 /** The live form's edits as a `PATCH /api/sessions/:id` body; creation-only fields never reach here (the form shows them read-only). */
 function toPatch(patch: Partial<SessionSettingsDraft>): SessionSettingsPatch {
@@ -45,42 +45,31 @@ export function SessionSettingsDialog({
   onFork: (() => void) | null;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal panel session-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="session-settings-title">
-        <h2 id="session-settings-title">Session settings</h2>
-        <p className="muted">
-          Settings of "{session.title}"; changes save as you make them. Global defaults live in <a href="#/settings">Global settings</a>.
-        </p>
-        <SessionSettingsForm
-          mode="live"
-          provider={session.provider}
-          session={session}
-          settings={settings}
-          models={models}
-          options={options}
-          value={draftFromSettings(session.settings)}
-          onChange={(patch) => {
-            const body = toPatch(patch);
-            if (Object.keys(body).length > 0) onPatch(body);
-          }}
-          disabled={busy}
-          onFork={onFork ?? undefined}
-        />
-        <div className="actions">
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
+    <Modal className="session-settings-dialog" title="Session settings" onClose={onClose}>
+      <p className="muted">
+        Settings of "{session.title}"; changes save as you make them. Global defaults live in <a href="#/settings">Global settings</a>.
+      </p>
+      <SessionSettingsForm
+        mode="live"
+        provider={session.provider}
+        session={session}
+        settings={settings}
+        models={models}
+        options={options}
+        value={draftFromSettings(session.settings)}
+        onChange={(patch) => {
+          const body = toPatch(patch);
+          if (Object.keys(body).length > 0) onPatch(body);
+        }}
+        disabled={busy}
+        onFork={onFork ?? undefined}
+      />
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

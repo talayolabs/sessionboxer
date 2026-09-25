@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   REPO_NAME_PATTERN,
   WORKSPACE_ROOT_REPO,
@@ -14,6 +14,7 @@ import {
 import { api } from "./api";
 import { FolderDialog } from "./FolderDialog";
 import { SourceIcon } from "./SourceIcon";
+import { Modal } from "./ui";
 
 /** One row of the repository editor before it is turned into a `RepoSpec`. */
 export interface RepoDraft {
@@ -320,14 +321,6 @@ export function ReposDialog({ session, accounts, onClose }: { session: Session; 
     }
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && busy === null) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, busy]);
-
   const isLive = session.status === "idle" || session.status === "running";
   const legacyRoot = session.repos.some((r) => r.name === WORKSPACE_ROOT_REPO);
   const draft = adding[0];
@@ -367,109 +360,106 @@ export function ReposDialog({ session, accounts, onClose }: { session: Session; 
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && busy === null && onClose()}>
-      <div className="modal panel repos-dialog" role="dialog" aria-modal="true" aria-labelledby="repos-title">
-        <h2 id="repos-title">Repositories of "{session.title}"</h2>
+    <Modal className="repos-dialog" title={`Repositories of "${session.title}"`} dismissible={busy === null} onClose={onClose}>
+      <p className="muted">
+        Each repository is a directory under <code>/workspace</code> in the Sandbox; the Agent finds the list in{" "}
+        <code>/workspace/.sessionboxer/repos.json</code> and is told when it changes. Git state is read when the Sandbox connects
+        and after every turn.
+      </p>
+      {error && (
+        <div className="banner banner-error dialog-banner" role="alert" onClick={() => setError(null)} title="Dismiss">
+          {error}
+        </div>
+      )}
+      <ul className="list-box repo-list" aria-busy={busy !== null}>
+        {session.repos.length === 0 && <li className="empty">No repositories: the Workspace is empty.</li>}
+        {session.repos.map((r) => {
+          const mark = repoStatusMark(r);
+          const state = repoStateLabel(r);
+          return (
+            <li key={r.id} className={`repo-${r.status}`}>
+              <SourceIcon source={r.source} size={14} />
+              <span className="repo-name-cell">
+                <strong>{r.name === WORKSPACE_ROOT_REPO ? "/workspace" : r.name}</strong>
+                <span className="muted repo-origin" title={r.source.type === "copy" ? r.source.path : r.source.url}>
+                  {r.source.type === "git" ? "clone of" : "copy of"} {repoOriginLabel(r.source)}
+                </span>
+              </span>
+              <span className={`repo-state ${mark.className}`} title={mark.title}>
+                {r.status === "pending" ? "cloning / copying\u2026" : r.status === "error" ? (r.error ?? "failed") : (state ?? "ready")}
+              </span>
+              {r.source.type === "git" && (accounts.length > 0 || r.account) && (
+                <select
+                  aria-label={`GitHub account for ${r.name}`}
+                  className="repo-account"
+                  title="GitHub login git push and gh act as inside this repository"
+                  value={r.account ?? NO_ACCOUNT}
+                  disabled={busy !== null}
+                  onChange={(e) => void rebind(r, e.target.value === NO_ACCOUNT ? null : e.target.value)}
+                >
+                  {(r.account && !accounts.includes(r.account) ? [...accounts, r.account] : accounts).map((a) => (
+                    <option key={a} value={a}>
+                      @{a}
+                    </option>
+                  ))}
+                  <option value={NO_ACCOUNT}>Active login (no binding)</option>
+                </select>
+              )}
+              {r.name !== WORKSPACE_ROOT_REPO && (
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busy !== null || (r.status !== "error" && !isLive)}
+                  title={r.status !== "error" && !isLive ? "Removing needs a running Sandbox (Resume first)" : `Delete /workspace/${r.name} from the Sandbox`}
+                  onClick={() => void remove(r)}
+                >
+                  {busy === r.id ? "Removing\u2026" : "Remove"}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {legacyRoot ? (
         <p className="muted">
-          Each repository is a directory under <code>/workspace</code> in the Sandbox; the Agent finds the list in{" "}
-          <code>/workspace/.sessionboxer/repos.json</code> and is told when it changes. Git state is read when the Sandbox connects
-          and after every turn.
+          This Session's repository is <code>/workspace</code> itself (started before repositories had their own directories), so
+          others cannot be added next to it; start a new Session to work with several.
         </p>
-        {error && (
-          <div className="banner banner-error dialog-banner" role="alert" onClick={() => setError(null)} title="Dismiss">
-            {error}
-          </div>
-        )}
-        <ul className="repo-list" aria-busy={busy !== null}>
-          {session.repos.length === 0 && <li className="empty">No repositories: the Workspace is empty.</li>}
-          {session.repos.map((r) => {
-            const mark = repoStatusMark(r);
-            const state = repoStateLabel(r);
-            return (
-              <li key={r.id} className={`repo-${r.status}`}>
-                <SourceIcon source={r.source} size={14} />
-                <span className="repo-name-cell">
-                  <strong>{r.name === WORKSPACE_ROOT_REPO ? "/workspace" : r.name}</strong>
-                  <span className="muted repo-origin" title={r.source.type === "copy" ? r.source.path : r.source.url}>
-                    {r.source.type === "git" ? "clone of" : "copy of"} {repoOriginLabel(r.source)}
-                  </span>
-                </span>
-                <span className={`repo-state ${mark.className}`} title={mark.title}>
-                  {r.status === "pending" ? "cloning / copying\u2026" : r.status === "error" ? (r.error ?? "failed") : (state ?? "ready")}
-                </span>
-                {r.source.type === "git" && (accounts.length > 0 || r.account) && (
-                  <select
-                    aria-label={`GitHub account for ${r.name}`}
-                    className="repo-account"
-                    title="GitHub login git push and gh act as inside this repository"
-                    value={r.account ?? NO_ACCOUNT}
-                    disabled={busy !== null}
-                    onChange={(e) => void rebind(r, e.target.value === NO_ACCOUNT ? null : e.target.value)}
-                  >
-                    {(r.account && !accounts.includes(r.account) ? [...accounts, r.account] : accounts).map((a) => (
-                      <option key={a} value={a}>
-                        @{a}
-                      </option>
-                    ))}
-                    <option value={NO_ACCOUNT}>Active login (no binding)</option>
-                  </select>
-                )}
-                {r.name !== WORKSPACE_ROOT_REPO && (
-                  <button
-                    type="button"
-                    className="danger"
-                    disabled={busy !== null || (r.status !== "error" && !isLive)}
-                    title={r.status !== "error" && !isLive ? "Removing needs a running Sandbox (Resume first)" : `Delete /workspace/${r.name} from the Sandbox`}
-                    onClick={() => void remove(r)}
-                  >
-                    {busy === r.id ? "Removing\u2026" : "Remove"}
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-        {legacyRoot ? (
-          <p className="muted">
-            This Session's repository is <code>/workspace</code> itself (started before repositories had their own directories), so
-            others cannot be added next to it; start a new Session to work with several.
-          </p>
-        ) : adding.length === 0 ? (
-          <div className="row repo-add">
-            <button type="button" disabled={!isLive || busy !== null} title={isLive ? undefined : "Adding needs a running Sandbox (Resume first)"} onClick={() => setAdding([newRepoDraft("git")])}>
-              + Git repository
-            </button>
-            <button type="button" disabled={!isLive || busy !== null} title={isLive ? undefined : "Adding needs a running Sandbox (Resume first)"} onClick={() => setAdding([newRepoDraft("copy")])}>
-              + Host folder
-            </button>
-          </div>
-        ) : (
-          <form
-            className="repo-add-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void add();
-            }}
-          >
-            <RepoEditor drafts={adding} onChange={setAdding} disabled={busy !== null} compact accounts={accounts} />
-            {addError && adding.length > 0 && draftName(adding[0]!) !== "" && <p className="warn">{addError}</p>}
-            <div className="actions">
-              <button type="button" disabled={busy !== null} onClick={() => setAdding([])}>
-                Cancel
-              </button>
-              <button type="submit" className="primary" disabled={busy !== null || !spec || addError !== null}>
-                {busy === "add" ? "Adding\u2026" : `Add to /workspace/${draft ? draftName(draft) || "\u2026" : ""}`}
-              </button>
-            </div>
-          </form>
-        )}
-        <div className="actions">
-          <span className="spacer" />
-          <button type="button" disabled={busy !== null} onClick={onClose}>
-            Close
+      ) : adding.length === 0 ? (
+        <div className="row repo-add">
+          <button type="button" disabled={!isLive || busy !== null} title={isLive ? undefined : "Adding needs a running Sandbox (Resume first)"} onClick={() => setAdding([newRepoDraft("git")])}>
+            + Git repository
+          </button>
+          <button type="button" disabled={!isLive || busy !== null} title={isLive ? undefined : "Adding needs a running Sandbox (Resume first)"} onClick={() => setAdding([newRepoDraft("copy")])}>
+            + Host folder
           </button>
         </div>
+      ) : (
+        <form
+          className="repo-add-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void add();
+          }}
+        >
+          <RepoEditor drafts={adding} onChange={setAdding} disabled={busy !== null} compact accounts={accounts} />
+          {addError && adding.length > 0 && draftName(adding[0]!) !== "" && <p className="warn">{addError}</p>}
+          <div className="actions">
+            <button type="button" disabled={busy !== null} onClick={() => setAdding([])}>
+              Cancel
+            </button>
+            <button type="submit" className="primary" disabled={busy !== null || !spec || addError !== null}>
+              {busy === "add" ? "Adding\u2026" : `Add to /workspace/${draft ? draftName(draft) || "\u2026" : ""}`}
+            </button>
+          </div>
+        </form>
+      )}
+      <div className="actions">
+        <span className="spacer" />
+        <button type="button" disabled={busy !== null} onClick={onClose}>
+          Close
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

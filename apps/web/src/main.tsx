@@ -3,14 +3,20 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { AuthGate } from "./Auth";
 import { initTheme } from "./theme";
+import { TooltipProvider } from "./ui";
+import "./styles/tokens.css";
+import "./styles/base.css";
+import "./ui/ui.css";
 import "./styles.css";
 
 initTheme();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <AuthGate>
-      <App />
-    </AuthGate>
+    <TooltipProvider>
+      <AuthGate>
+        <App />
+      </AuthGate>
+    </TooltipProvider>
   </StrictMode>,
 );

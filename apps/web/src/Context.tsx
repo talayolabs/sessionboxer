@@ -206,7 +206,7 @@ function Requests({ session, calls, onInspect }: { session: Session; calls: LlmC
             {calls.map((c) => (
               <tr key={c.id} className={c.error ? "llm-row-error" : ""}>
                 <td>
-                  <button type="button" className="link-btn" onClick={() => onInspect(c)} title="Show the exact request and response">
+                  <button type="button" className="link" onClick={() => onInspect(c)} title="Show the exact request and response">
                     LLM #{c.ordinal}
                   </button>
                 </td>
@@ -255,7 +255,7 @@ export function ContextPane({
   const provider = PROVIDER_LABELS[session.provider];
   return (
     <div className="pane prs-pane ctx-pane">
-      <div className="prs-toolbar">
+      <div className="pane-toolbar prs-toolbar">
         <strong>Context</strong>
         <span className="muted small-text">
           {breakdown ? `breakdown by ${provider} ${context.breakdownTs ? formatTime(context.breakdownTs) : ""}` : `live usage from ${provider}; no breakdown taken yet`}

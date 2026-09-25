@@ -4,6 +4,7 @@ import RFB, { type ClipboardEventDetail } from "@novnc/novnc";
 import type { Session } from "@sessionboxer/protocol";
 import { DESKTOP_HEIGHT, DESKTOP_WIDTH } from "@sessionboxer/protocol";
 import { DesktopKeyboard } from "./DesktopKeyboard";
+import { Popover } from "./ui";
 
 type ConnState = "connecting" | "connected" | "disconnected";
 
@@ -146,8 +147,8 @@ export function Desktop({ session }: { session: Session }) {
   }, [kbOpen, state]);
 
   return (
-    <section className="desktop">
-      <div className="desktop-toolbar">
+    <section className="pane desktop">
+      <div className="pane-toolbar desktop-toolbar">
         <span className="muted">
           Desktop {DESKTOP_WIDTH}x{DESKTOP_HEIGHT}
         </span>
@@ -184,22 +185,18 @@ export function Desktop({ session }: { session: Session }) {
           </button>
         )}
         {live && state === "connected" && (
-          <button className={clipOpen ? "active" : ""} onClick={() => setClipOpen((o) => !o)} title="Text clipboard shared with the box">
-            Clipboard
-          </button>
-        )}
-      </div>
-      <div className="desktop-body">
-        <div
-          className="desktop-screen"
-          ref={screen}
-          onKeyDownCapture={onKeyDownCapture}
-          onPointerDownCapture={() => viewOnly && note("View only: press Take control to use the box's mouse and keyboard")}
-        />
-        {!live && <div className="desktop-overlay">Sandbox is {session.status}; the Desktop is available while it runs.</div>}
-        {clipOpen && live && (
-          <div className="clip-panel">
-            <div className="clip-panel-header">
+          <Popover
+            className="clip-panel"
+            stayOpen
+            open={clipOpen}
+            onOpenChange={setClipOpen}
+            trigger={
+              <button className={clipOpen ? "active" : ""} aria-pressed={clipOpen} title="Text clipboard shared with the box">
+                Clipboard
+              </button>
+            }
+          >
+            <div className="popover-header">
               <span>Box clipboard</span>
               <span className="spacer" />
               <button className="small" onClick={() => setClipOpen(false)} aria-label="Close clipboard panel">
@@ -235,8 +232,17 @@ export function Desktop({ session }: { session: Session }) {
             <div className="muted clip-hint">
               Ctrl+C / Ctrl+V work directly in the Desktop while you have control. Text only (Latin-1; other characters become ?).
             </div>
-          </div>
+          </Popover>
         )}
+      </div>
+      <div className="desktop-body">
+        <div
+          className="desktop-screen"
+          ref={screen}
+          onKeyDownCapture={onKeyDownCapture}
+          onPointerDownCapture={() => viewOnly && note("View only: press Take control to use the box's mouse and keyboard")}
+        />
+        {!live && <div className="pane-overlay">Sandbox is {session.status}; the Desktop is available while it runs.</div>}
       </div>
       {kbOpen && live && state === "connected" && <DesktopKeyboard rfb={getRfb} disabled={viewOnly} onClose={() => setKbOpen(false)} />}
     </section>

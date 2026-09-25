@@ -264,6 +264,7 @@ export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclud
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
     dockerModeAvailable,
+    hostPlatform: process.platform,
     hostCaCerts: hostExtraCaCerts().map((c) => c.subject),
     hostGitIdentity: hostGitIdentity(),
     remote: remoteAccess(tunnels),
@@ -536,13 +537,13 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
 export function providerSetupHint(provider: Provider): string {
   switch (provider) {
     case "claude-code":
-      return "No Claude token configured. Run `claude setup-token` and paste it in Settings.";
+      return "No Claude Code token configured. Run `claude setup-token` on your machine and paste it in Global settings → Provider logins.";
     case "devin":
-      return "No Devin token configured. Run `devin auth login` and paste the token from ~/.local/share/devin/credentials.toml in Settings.";
+      return "No Devin token configured. Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml in Global settings → Provider logins.";
     case "codex":
-      return "No Codex login configured. Run `codex login` (ChatGPT account) and paste ~/.codex/auth.json in Settings.";
+      return "No Codex login configured. Run `codex login` (ChatGPT account) and paste ~/.codex/auth.json in Global settings → Provider logins.";
     case "cursor":
-      return "No Cursor login configured. Paste a Cursor API key, or run `agent login` and paste Cursor's auth.json, in Settings.";
+      return "No Cursor login configured. Paste a Cursor API key, or run `agent login` and paste Cursor's auth.json, in Global settings → Provider logins.";
   }
 }
 

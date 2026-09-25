@@ -13,7 +13,7 @@ import {
   type Snapshot,
 } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
-import { providerTokenSet } from "./providers";
+import { providerCredentialNoun, providerTokenSet } from "./providers";
 import { SessionSettingsForm, draftFromSettings, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
 
 const PREVIEW_CHARS = 120;
@@ -178,7 +178,10 @@ export function ForkDialog({
           </select>
         </label>
         {!providerTokenSet(settings, provider) && (
-          <p className="field-hint warn">No {forkLabel} token configured: add it in Global settings first, or pick an Agent you have a token for.</p>
+          <p className="field-hint warn">
+            No {forkLabel} {providerCredentialNoun(provider)} configured: add it in <a href="#/settings/providers">Global settings → Provider logins</a> first, or
+            pick an Agent you are logged in to.
+          </p>
         )}
         <fieldset className="choice">
           <legend>Conversation</legend>

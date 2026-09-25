@@ -8,7 +8,7 @@
 #        macOS:   MAC_CSC_LINK (base64 .p12), MAC_CSC_KEY_PASSWORD,
 #                 APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID (notarization)
 #        Windows: WIN_CSC_LINK (base64 .pfx), WIN_CSC_KEY_PASSWORD
-#   5. npm publish sessionboxer@<version>  — only when the NPM_TOKEN repository secret exists
+#   5. npm publish sessionboxer@<version>  — fails (without blocking the release) when the NPM_TOKEN secret is missing
 #   6. GitHub Release with the CHANGELOG section for the version, the tarball and the installers
 # The tag must match package.json's version. Images are pushed by digest per architecture and
 # joined into one manifest list afterwards; nothing is published if a build step fails.
@@ -263,6 +263,9 @@ jobs:
   npm-publish:
     needs: [package, manifests]
     runs-on: ubuntu-24.04
+    # Fails (visibly) when the NPM_TOKEN secret is missing; the GitHub Release is still cut and its notes
+    # then point at the tarball instead of `npx sessionboxer@<version>`.
+    continue-on-error: true
     permissions:
       contents: read
       id-token: write
@@ -275,16 +278,29 @@ jobs:
         with:
           name: npm-package
           path: build
-      - name: npm publish (skipped without the NPM_TOKEN secret)
+      - name: npm publish (needs the NPM_TOKEN secret)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -eu
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::notice::NPM_TOKEN is not set; publish build/sessionboxer-*.tgz by hand with 'npm publish --access public'"
-            exit 0
+            echo "::error title=sessionboxer@$VERSION was not published to npm::the NPM_TOKEN repository secret is not set (Settings → Secrets and variables → Actions). Add an npm automation token as NPM_TOKEN and re-run this job, or publish by hand: npm publish build/sessionboxer-$VERSION.tgz --access public"
+            exit 1
           fi
           npm publish build/sessionboxer-*.tgz --access public --provenance
+      - name: Verify the package is on the registry
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -eu
+          for i in 1 2 3 4 5 6; do
+            if [ "$(npm view "sessionboxer@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+              echo "sessionboxer@$VERSION is on the npm registry"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::npm view sessionboxer@$VERSION does not return the version after publishing"; exit 1
 
   github-release:
     needs: [package, manifests, desktop, npm-publish]
@@ -293,6 +309,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: npm-package
@@ -317,13 +336,21 @@ jobs:
           if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
             echo "CHANGELOG.md has no '## $version' section" >&2; exit 1
           fi
+          tarball="https://github.com/${{ github.repository }}/releases/download/v$version/sessionboxer-$version.tgz"
+          if [ "$(npm view "sessionboxer@$version" version 2>/dev/null)" = "$version" ]; then
+            npm_line="npm: \`npx sessionboxer@$version serve\`, or \`npm i -g sessionboxer@$version\` then \`sessionboxer serve\`."
+          else
+            npm_line="npm: this version is not on the npm registry; install the tarball below instead: \`npm i -g $tarball\` then \`sessionboxer serve\` (Node 22+ and Docker)."
+          fi
           {
             cat "$RUNNER_TEMP/notes.md"
             echo
             echo "Images: \`$SANDBOX_IMAGE:$version\`, \`$CONTROL_PLANE_IMAGE:$version\` (linux/amd64, linux/arm64)."
-            echo "npm: \`npx sessionboxer@$version serve\`. Full instructions: https://github.com/${{ github.repository }}#install"
+            echo "$npm_line Full instructions: https://github.com/${{ github.repository }}#install"
             echo
-            echo "Desktop app (needs Docker, not Node): the \`Sessionboxer-$version-*\` files below — Linux AppImage/deb (x64, arm64), macOS dmg/zip (arm64 Apple silicon, x64 Intel), Windows installer/zip (x64); \`SHA256SUMS\` alongside. While the builds are unsigned (no signing certificate configured): on macOS run \`xattr -dr com.apple.quarantine /Applications/Sessionboxer.app\` after dragging it to Applications, on Windows choose *More info → Run anyway* in SmartScreen."
+            echo "Desktop app (needs Docker, not Node): the \`Sessionboxer-$version-*\` files below — Linux AppImage/deb (x64, arm64), macOS dmg/zip (\`mac-arm64\` for Apple silicon, \`mac-x64\` for Intel), Windows installer/zip (x64); \`SHA256SUMS\` alongside."
+            echo
+            echo "The builds are not code-signed yet, so macOS says the dmg *is damaged and can't be opened*. Before opening it, clear the quarantine flag on the download: \`xattr -d com.apple.quarantine ~/Downloads/Sessionboxer-$version-mac-*.dmg\`, then open the dmg and drag Sessionboxer to Applications. If the app itself is still refused, \`xattr -dr com.apple.quarantine /Applications/Sessionboxer.app\` or right-click → Open. On Windows choose *More info → Run anyway* in SmartScreen."
           } > "$RUNNER_TEMP/release.md"
       - name: Create the GitHub Release
         env:

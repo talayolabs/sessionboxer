@@ -1141,6 +1141,20 @@ export type SpeechSettings = z.infer<typeof SpeechSettings>;
 export const SpeechAssetState = z.enum(["ready", "missing", "downloading", "error"]);
 export type SpeechAssetState = z.infer<typeof SpeechAssetState>;
 
+/**
+ * `GET /api/sandbox-image`: whether the Sandbox image is on this machine. The first Session waits
+ * on a multi-GB pull, so the UI shows where it stands instead of a silent "Creating…".
+ */
+export const SandboxImageStatus = z.object({
+  image: z.string(),
+  state: z.enum(["checking", "pulling", "ready", "error"]),
+  /** Bytes so far and in total across the layers Docker has announced (0 until known). */
+  received: z.number(),
+  total: z.number(),
+  error: z.string().nullable(),
+});
+export type SandboxImageStatus = z.infer<typeof SandboxImageStatus>;
+
 /** `GET /api/speech`: whether transcription can run right now and what it is waiting for. */
 export const SpeechStatus = z.object({
   engine: z.object({
@@ -1538,6 +1552,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   }),
   /** Mode a Docker-enabled Session created now would get, given the host's runtimes. */
   dockerModeAvailable: DockerMode.exclude(["none"]),
+  /** OS the Control Plane runs on (Node's `process.platform`): Sysbox exists on Linux only, so the UI words Docker warnings accordingly. */
+  hostPlatform: z.string(),
   /** Subjects of the non-public CA certificates found in this machine's trust store. */
   hostCaCerts: z.array(z.string()),
   /** `user.name` / `user.email` of the host's own git config, the fallback when the Settings identity is blank. */

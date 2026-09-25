@@ -52,6 +52,7 @@ import type {
   Session,
   SessionBroadcast,
   SessionEvent,
+  SandboxImageStatus,
   Snapshot,
   SpeechModel,
   SpeechStatus,
@@ -112,6 +113,8 @@ export const api = {
   options: () => request<ProviderOptions>("/options"),
   updateSettings: (update: UpdateSettingsRequest) =>
     request<PublicSettings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
+  sandboxImage: () => request<SandboxImageStatus>("/sandbox-image"),
+  sandboxImagePull: () => request<SandboxImageStatus>("/sandbox-image/pull", { method: "POST" }),
   speechStatus: () => request<SpeechStatus>("/speech"),
   speechPrepare: () => request<SpeechStatus>("/speech/prepare", { method: "POST" }),
   speechDeleteModel: (model: SpeechModel) => request<void>(`/speech/models/${model}`, { method: "DELETE" }),

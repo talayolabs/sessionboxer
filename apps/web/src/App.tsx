@@ -41,6 +41,7 @@ import {
   type SessionStatus,
   type Snapshot,
   type SpeechModel,
+  type SandboxImageStatus,
   type SpeechStatus,
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
@@ -64,7 +65,7 @@ import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
-import { providerTokenSet } from "./providers";
+import { providerCredentialNoun, providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
 import { Icon, type IconName } from "./Icons";
 import { ContextGauge, ContextPane } from "./Context";
@@ -131,13 +132,14 @@ function describeCursorLogin(login: CursorLogin): string {
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
-type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings" } | { view: "schedules" };
+type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings"; section?: string } | { view: "schedules" };
 
 // Routes live in the URL hash so a reload (or a shared link) lands on the same Session.
 function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, "");
   if (path === "new") return { view: "new" };
-  if (path === "settings") return { view: "settings" };
+  const settings = /^settings(?:\/([a-z-]+))?$/.exec(path);
+  if (settings) return settings[1] ? { view: "settings", section: settings[1] } : { view: "settings" };
   if (path === "schedules") return { view: "schedules" };
   const m = /^sessions\/([^/]+)(?:\/(prs)|\/pr\/([^/]+))?$/.exec(path);
   if (!m) return { view: "session", id: null };
@@ -147,7 +149,7 @@ function parseRoute(hash: string): Route {
 
 function routeToHash(route: Route): string {
   if (route.view === "new") return "#/new";
-  if (route.view === "settings") return "#/settings";
+  if (route.view === "settings") return route.section ? `#/settings/${route.section}` : "#/settings";
   if (route.view === "schedules") return "#/schedules";
   return route.id ? `#/sessions/${route.id}` : "#/";
 }
@@ -469,9 +471,11 @@ export function App() {
   const anyTokenSet = settings ? PROVIDERS.some((p) => providerTokenSet(settings, p)) : true;
   const dockerWarning =
     settings && settings.dockerInSandbox && settings.dockerModeAvailable === "privileged"
-      ? "Sysbox runtime not installed: Docker-enabled Sandboxes run with --privileged, so the Agent can escape to your host"
+      ? settings.hostPlatform === "linux"
+        ? "Sysbox runtime not installed: Docker-enabled Sandboxes run with --privileged, so the Agent can escape to your host"
+        : "Docker-enabled Sandboxes run with --privileged: the Agent can escape to Docker's Linux VM"
       : null;
-  const settingsWarning = !anyTokenSet ? "No Provider token configured" : dockerWarning;
+  const settingsWarning = !anyTokenSet ? "No Provider login configured" : dockerWarning;
 
   const topTitle =
     route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
@@ -697,9 +701,11 @@ export function App() {
             {error}
           </div>
         )}
-        {!anyTokenSet && route.view !== "settings" && (
-          <div className="banner banner-warn" onClick={() => setRoute({ view: "settings" })}>
-            No Provider token configured. Open Global settings and add a Claude Code or Devin token, or a Codex or Cursor login.
+        <SandboxImageBanner />
+        {!anyTokenSet && route.view !== "settings" && route.view !== "new" && (
+          <div className="banner banner-warn" onClick={() => setRoute({ view: "settings", section: "providers" })}>
+            No Provider login configured yet: Sessions need a Claude Code or Devin token, or a Codex or Cursor login. Add one in Global settings → Provider
+            logins.
           </div>
         )}
         {route.view === "new" && settings && (
@@ -715,6 +721,7 @@ export function App() {
         {route.view === "settings" && settings && (
           <SettingsView
             settings={settings}
+            section={route.section}
             onStored={setSettings}
             onSaved={(s) => {
               setSettings(s);
@@ -1659,6 +1666,48 @@ function SessionView({
   );
 }
 
+/**
+ * The Sandbox image download, while it runs or after it failed: the first Session cannot start
+ * before it is here, which took minutes of an unexplained "Creating…" otherwise.
+ */
+function SandboxImageBanner() {
+  const [status, setStatus] = useState<SandboxImageStatus | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const settled = status?.state === "ready";
+  useEffect(() => {
+    if (settled) return;
+    let cancelled = false;
+    const poll = () => api.sandboxImage().then((s) => !cancelled && setStatus(s), () => undefined);
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [settled]);
+  if (!status || status.state === "ready" || status.state === "checking") return null;
+  if (status.state === "pulling") {
+    const progress = status.total > 0 ? ` ${formatMb(status.received)} of ${formatMb(status.total)}` : "";
+    return (
+      <div className="banner banner-warn">
+        Downloading the Sandbox image <code>{status.image}</code>{progress}. Happens once per version (a few GB); Sessions start once it is here.
+      </div>
+    );
+  }
+  const retry = () => {
+    setRetrying(true);
+    api.sandboxImagePull().then(setStatus, () => undefined).finally(() => setRetrying(false));
+  };
+  return (
+    <div className="banner banner-error">
+      The Sandbox image could not be downloaded: {status.error}{" "}
+      <button type="button" className="link" onClick={retry} disabled={retrying}>
+        {retrying ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  );
+}
+
 function gitIdentityNote(session: Session): string {
   const { name, email } = session.settings.sandbox.gitIdentity;
   if (!name && !email) return "";
@@ -1685,6 +1734,7 @@ function NewSession({
   const [repos, setRepos] = useState<RepoDraft[]>([]);
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const repoSpecs = draftsToSpecs(repos);
@@ -1729,8 +1779,8 @@ function NewSession({
       </label>
       {!providerTokenSet(settings, provider) && (
         <p className="field-hint warn">
-          No {PROVIDER_LABELS[provider]} token configured: this Session would start without one. Add it in Global settings, or pick a provider you have a token
-          for.
+          No {PROVIDER_LABELS[provider]} {providerCredentialNoun(provider)} configured, so this Session could not start. Add it in{" "}
+          <a href="#/settings/providers">Global settings → Provider logins</a>, or pick a Provider you are logged in to.
         </p>
       )}
       <fieldset className="choice">
@@ -1743,24 +1793,34 @@ function NewSession({
           </p>
         )}
       </fieldset>
-      <SessionSettingsForm
-        mode="create"
-        provider={provider}
-        settings={settings}
-        models={models[provider]}
-        options={options[provider]}
-        value={draft}
-        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-        disabled={busy}
-      />
+      <label>
+        First prompt (optional, sent once the Sandbox is ready)
+        <textarea
+          rows={4}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="e.g. Read the README, run the tests and fix the one that fails; open a PR when they pass."
+        />
+      </label>
       <label>
         Title (optional, defaults to the first prompt)
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
       </label>
-      <label>
-        First prompt (optional, sent once the Sandbox is ready)
-        <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-      </label>
+      <details className="fork-settings" open={moreOpen} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
+        <summary>More settings (model, Sandbox resources, Docker, MCP servers, instructions; the Global settings defaults otherwise)</summary>
+        {moreOpen && (
+          <SessionSettingsForm
+            mode="create"
+            provider={provider}
+            settings={settings}
+            models={models[provider]}
+            options={options[provider]}
+            value={draft}
+            onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+            disabled={busy}
+          />
+        )}
+      </details>
       <div className="actions">
         <button type="button" onClick={onCancel} disabled={busy}>
           Cancel
@@ -1867,11 +1927,14 @@ const DOCKER_POOL_SUGGESTIONS = [
 
 function SettingsView({
   settings,
+  section,
   onSaved,
   onStored,
   run,
 }: {
   settings: PublicSettings;
+  /** Fieldset to scroll to and focus (`#/settings/providers`), as the no-login banner links there. */
+  section?: string;
   onSaved: (s: PublicSettings) => void;
   /** Settings the Control Plane stored on its own (connector logins), without the form being saved. */
   onStored: (s: PublicSettings) => void;
@@ -1918,6 +1981,14 @@ function SettingsView({
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
   const codexAuthSet = settings.providerSecretsSet.codex.CODEX_AUTH_JSON && !forgetCodexAuth;
   const cursorLoginSet = settings.providerSecretsSet.cursor.CURSOR_LOGIN && !forgetCursorLogin;
+
+  useEffect(() => {
+    if (!section) return;
+    const target = document.getElementById(`settings-${section}`);
+    if (!target) return;
+    target.scrollIntoView({ block: "start" });
+    target.querySelector<HTMLElement>("input, textarea")?.focus({ preventScroll: true });
+  }, [section]);
 
   const importCursorAuth = (file: File | undefined) => {
     if (!file) return;
@@ -1992,10 +2063,15 @@ function SettingsView({
   return (
     <form className="panel" onSubmit={submit}>
       <h2>Global settings</h2>
-      <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Tokens, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</p>
-      <ThemeFieldset />
-      <fieldset className="choice">
-        <legend>Provider tokens</legend>
+      <p className="muted">Stored in ~/.sessionboxer/config.json (mode 0600). Logins, resources and Docker apply to Sandboxes created afterwards; snapshot settings apply immediately.</p>
+      <fieldset className="choice" id="settings-providers">
+        <legend>Provider logins</legend>
+        <p className="muted">
+          A Session needs the login of its Provider; one is enough to start. Each is made with the Provider&apos;s own CLI on your machine, then pasted here.
+          If the CLI is not installed yet: Claude Code <code>npm i -g @anthropic-ai/claude-code</code>, Devin{" "}
+          <code>curl -fsSL https://static.devin.ai/cli/setup.sh | bash</code>, Codex <code>npm i -g @openai/codex</code>, Cursor{" "}
+          <code>curl https://cursor.com/install -fsS | bash</code>.
+        </p>
         <label>
           Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
           <input
@@ -2007,11 +2083,11 @@ function SettingsView({
           />
         </label>
         <p className="field-hint">
-          <span>Get one on the machine you run Claude Code on:</span>
+          <span>Get one on the machine you run Claude Code on (a Claude subscription; the token is long-lived):</span>
           <CopyCommand command="claude setup-token" />
         </p>
         <label>
-          Devin token (WINDSURF_API_KEY) {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
+          Devin token {devinTokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
           <input
             type="password"
             autoComplete="off"
@@ -2021,7 +2097,7 @@ function SettingsView({
           />
         </label>
         <p className="field-hint">
-          <span>Log in, then copy the token out of the credentials file it writes:</span>
+          <span>Log in with the Devin CLI, then copy the token out of the credentials file it writes (the Sandbox gets it as <code>WINDSURF_API_KEY</code>):</span>
           <CopyCommand command="devin auth login" />
           <CopyCommand command="cat ~/.local/share/devin/credentials.toml" />
         </p>
@@ -2140,6 +2216,7 @@ function SettingsView({
           )}
         </p>
       </fieldset>
+      <ThemeFieldset />
       <fieldset className="choice">
         <legend>Claude API</legend>
         <label>

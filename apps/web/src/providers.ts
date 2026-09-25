@@ -13,3 +13,8 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.cursor.CURSOR_LOGIN;
   }
 }
+
+/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex and Cursor a login. */
+export function providerCredentialNoun(provider: Provider): "token" | "login" {
+  return provider === "claude-code" || provider === "devin" ? "token" : "login";
+}

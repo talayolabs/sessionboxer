@@ -14,7 +14,7 @@ import {
   type MenuItemConstructorOptions,
   type Rectangle,
 } from "electron";
-import { findDockerEngine } from "./docker.js";
+import { dockerSocketCandidates, findDockerEngine } from "./docker.js";
 import { Server, SERVER_URL, healthy, logFile, loginUrl } from "./server.js";
 
 const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
@@ -23,7 +23,8 @@ const ICON = fileURLToPath(new URL("../icons/icon.png", import.meta.url));
 const PARTITION = "persist:sessionboxer";
 /** What the web UI may ask the window for; everything else (geolocation, camera, USB…) is refused. */
 const PERMISSIONS = new Set(["notifications", "media", "clipboard-read", "clipboard-sanitized-write", "fullscreen", "pointerLock"]);
-const DOCKER_DOCS = "https://docs.docker.com/get-started/get-docker/";
+/** Install Docker for macOS, Windows and Linux, with the engine to pick on each. */
+const DOCKER_DOCS = "https://sessionboxer.talayolabs.com/#docker";
 const AUTOSTART_FILE = path.join(app.getPath("appData"), "autostart", "sessionboxer.desktop");
 
 type Prefs = { bounds?: Rectangle; trayHintShown?: boolean };
@@ -196,16 +197,21 @@ function createTray(): Tray {
 
 /** Asks for Docker until an engine appears (or the user quits); the Control Plane cannot boot without one. */
 async function requireDocker(): Promise<{ DOCKER_HOST?: string } | null> {
-  for (;;) {
+  const install =
+    process.platform === "darwin"
+      ? "Install OrbStack or Docker Desktop for Mac, open it once and wait until it says it is running, then Try again."
+      : process.platform === "win32"
+        ? "Install Docker Desktop with the WSL 2 engine and start it, then Try again."
+        : "Install Docker Engine (https://get.docker.com), make sure your user can run `docker`, then Try again.";
+  for (let attempt = 0; ; attempt++) {
     const engine = findDockerEngine();
     if (engine) return engine.env;
+    const looked = `Looked at DOCKER_HOST (unset) and ${dockerSocketCandidates().join(", ")}.`;
     const { response } = await dialog.showMessageBox({
       type: "warning",
       title: "Docker is required",
-      message: "Sessionboxer runs each Session in a Docker container, and no Docker engine was found on this machine.",
-      detail:
-        "Install and start Docker Desktop, OrbStack (macOS), Docker Engine (Linux) or another engine, then try again. " +
-        "Sessionboxer looks at DOCKER_HOST, /var/run/docker.sock and the Docker Desktop, OrbStack, Colima, Rancher Desktop and Podman sockets.",
+      message: attempt === 0 ? "Sessionboxer runs each Session in a Docker container, and no Docker engine was found on this machine." : "Still no Docker engine on this machine.",
+      detail: `${install}\n\n${looked}`,
       buttons: ["Get Docker", "Try again", "Quit"],
       defaultId: 1,
       cancelId: 2,

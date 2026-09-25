@@ -32,6 +32,15 @@ export function DockerModeNote({ settings, enabled }: { settings: PublicSettings
   if (settings.dockerModeAvailable === "sysbox") {
     return <p className="muted">Sysbox runtime detected: Docker-enabled Sandboxes get a private, unprivileged Docker daemon.</p>;
   }
+  if (settings.hostPlatform !== "linux") {
+    // Sysbox is a Linux runtime: on macOS and Windows the Sandboxes live in Docker's own Linux VM, so there is nothing to install here.
+    return (
+      <p className="muted">
+        Docker-enabled Sandboxes run with <code>--privileged</code>: the Agent can escape to Docker&apos;s Linux VM (which has the folders you shared
+        with Docker), so only run code you trust. Isolated nested Docker (Sysbox) is available on Linux hosts only.
+      </p>
+    );
+  }
   return (
     <div className="banner banner-warn" role="alert">
       <strong>Sysbox runtime not installed on this host.</strong>{" "}

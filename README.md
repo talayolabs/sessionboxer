@@ -19,7 +19,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a Li
 
 ## Install
 
-You need Docker. Pick one:
+You need Docker ([how to install it](https://sessionboxer.talayolabs.com/#docker) on macOS, Windows or Linux). Pick one:
 
 ```sh
 curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh   # picks npm or Docker Compose

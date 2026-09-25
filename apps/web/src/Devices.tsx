@@ -354,7 +354,15 @@ export function Devices({
   const link = pairing && left > 0 && origin ? pairLink(origin, pairing) : null;
   const viaStatus = via === "local" ? null : statuses[via];
   const menuDetail = (t: PairingTransport): ReactNode => {
-    if (t === "local") return <code>{remote.publicUrl}</code>;
+    if (t === "local") {
+      return loopback(remote.publicUrl) ? (
+        <>
+          <code>{remote.publicUrl}</code> — only this machine can open it; a phone needs one of the tunnels
+        </>
+      ) : (
+        <code>{remote.publicUrl}</code>
+      );
+    }
     const s = statuses[t];
     if (s.state === "up" && s.url) return <code>{s.url}</code>;
     if (!tunnels[t].enabled) return t === "ssh" && ssh.host.trim() === "" ? "off — fill in the server below first" : "off — starts when chosen";
@@ -454,8 +462,8 @@ export function Devices({
                       <>
                         {" "}
                         <span className="warn">
-                          — only this machine can open that address. Set <code>SESSIONBOXER_PUBLIC_URL</code> to the address the phone uses, or pair
-                          through a tunnel.
+                          — only this machine can open that address, a phone cannot. Pair through a tunnel instead, or start the Control Plane so the
+                          LAN can reach it: <code>SESSIONBOXER_HOST=0.0.0.0 SESSIONBOXER_PUBLIC_URL=http://&lt;this machine&apos;s LAN IP&gt;:4000 sessionboxer serve</code>.
                         </span>
                       </>
                     )}

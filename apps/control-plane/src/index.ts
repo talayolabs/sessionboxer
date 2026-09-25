@@ -85,6 +85,7 @@ import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
+import { findDockerEngine, noDockerAdvice } from "./docker-engine.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
 import { banner, log } from "./log.js";
 import { PushNotifier } from "./push.js";
@@ -106,8 +107,30 @@ let settings = ensureTunnelSecret(ensureVapidKeys(ensureAccessToken(loadSettings
   if (added > 0) log(`trusting ${added} CA certificate${added === 1 ? "" : "s"} from this machine beyond the public ones`);
   if (added < 0) log(`Node ${process.version} cannot add this machine's CAs to its TLS clients; use NODE_EXTRA_CA_CERTS or Node >= 22.20`);
 }
+// Docker is checked before anything else is set up, so a missing or stopped engine ends in one
+// readable message instead of a dockerode stack trace from the first API call.
+const engine = findDockerEngine();
+if (!engine) {
+  banner(noDockerAdvice());
+  process.exit(1);
+}
+if (engine.dockerHost) process.env.DOCKER_HOST = engine.dockerHost;
 const db = new Db(DB_FILE);
 const docker = new SandboxDocker();
+try {
+  await docker.docker.ping();
+  log(`docker engine: ${engine.where}`);
+} catch (e) {
+  banner([
+    `Docker at ${engine.where} is not answering: ${e instanceof Error ? e.message : String(e)}`,
+    "",
+    process.platform === "darwin"
+      ? "Open OrbStack or Docker Desktop and wait until it says it is running, then run this command again."
+      : "Is the Docker daemon running, and can this user use it? (sudo usermod -aG docker $USER, then log out and in)",
+    "Another engine? DOCKER_HOST=unix:///path/to/docker.sock sessionboxer serve",
+  ]);
+  process.exit(1);
+}
 const push = new PushNotifier(
   db.connection,
   () => {
@@ -266,6 +289,13 @@ api.put("/settings", async (c) => {
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
   return c.json(await publicSettings());
+});
+
+api.get("/sandbox-image", (c) => c.json(docker.imageStatus()));
+// Retries a pull that failed (a network drop, a registry outage); a no-op while one runs or once the image is here.
+api.post("/sandbox-image/pull", (c) => {
+  void docker.ensureImage().catch((e: unknown) => log(e instanceof Error ? e.message : String(e)));
+  return c.json(docker.imageStatus());
 });
 
 /** Speech to text: the browser posts a 16 kHz mono WAV clip, whisper.cpp on this machine answers with the text. */

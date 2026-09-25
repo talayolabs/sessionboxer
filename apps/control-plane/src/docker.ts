@@ -5,7 +5,7 @@ import { PassThrough, Readable } from "node:stream";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { pack as packStream } from "tar-stream";
-import { DAEMON_PORT, NOVNC_PORT, VSCODE_THEMES_EXTENSION, vscodeThemeExtensionFiles, type DockerMode } from "@sessionboxer/protocol";
+import { DAEMON_PORT, NOVNC_PORT, VSCODE_THEMES_EXTENSION, vscodeThemeExtensionFiles, type DockerMode, type SandboxImageStatus } from "@sessionboxer/protocol";
 import { SANDBOX_CA_FILE } from "./ca-certs.js";
 import { ROOT_DIR, SANDBOX_HOST_ALIAS, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 import { log } from "./log.js";
@@ -152,17 +152,26 @@ export class SandboxDocker {
   }
 
   private pulling: Promise<void> | null = null;
+  private image: SandboxImageStatus = { image: SANDBOX_IMAGE, state: "checking", received: 0, total: 0, error: null };
+
+  /** Where the Sandbox image stands (`GET /api/sandbox-image`). */
+  imageStatus(): SandboxImageStatus {
+    return this.image;
+  }
 
   /** The Sandbox image is present, pulling it once when it is not (a pull in flight is awaited). */
   async ensureImage(): Promise<void> {
     try {
       await this.docker.getImage(SANDBOX_IMAGE).inspect();
+      this.image = { ...this.image, state: "ready", error: null };
       return;
     } catch {
       /* not local */
     }
     if (!SANDBOX_IMAGE.includes("/") || SANDBOX_IMAGE.endsWith(":dev")) {
-      throw new Error(`sandbox image ${SANDBOX_IMAGE} not found; run \`npm run build:image\``);
+      const error = `sandbox image ${SANDBOX_IMAGE} not found; run \`npm run build:image\``;
+      this.image = { ...this.image, state: "error", error };
+      throw new Error(error);
     }
     this.pulling ??= this.pull().finally(() => {
       this.pulling = null;
@@ -172,35 +181,43 @@ export class SandboxDocker {
 
   private async pull(): Promise<void> {
     log(`pulling ${SANDBOX_IMAGE} (a few GB; once per version, or \`npm run build:image\` builds it here)`);
+    this.image = { image: SANDBOX_IMAGE, state: "pulling", received: 0, total: 0, error: null };
+    const fail = (message: string): Error => {
+      const error = `cannot pull ${SANDBOX_IMAGE}: ${message}`;
+      this.image = { ...this.image, state: "error", error };
+      return new Error(error);
+    };
     const started = Date.now();
     let stream: NodeJS.ReadableStream;
     try {
       stream = (await this.docker.pull(SANDBOX_IMAGE)) as NodeJS.ReadableStream;
     } catch (e) {
-      throw new Error(`cannot pull ${SANDBOX_IMAGE}: ${e instanceof Error ? e.message : String(e)}`);
+      throw fail(e instanceof Error ? e.message : String(e));
     }
     const layers = new Map<string, { current: number; total: number }>();
     let lastReport = 0;
     await new Promise<void>((resolve, reject) => {
       this.docker.modem.followProgress(
         stream,
-        (err) => (err ? reject(new Error(`cannot pull ${SANDBOX_IMAGE}: ${err.message}`)) : resolve()),
+        (err) => (err ? reject(fail(err.message)) : resolve()),
         (event: { id?: string; status?: string; progressDetail?: { current?: number; total?: number } }) => {
           if (event.id && event.progressDetail?.total) {
             layers.set(event.id, { current: event.progressDetail.current ?? 0, total: event.progressDetail.total });
           }
-          if (Date.now() - lastReport < 15_000) return;
-          lastReport = Date.now();
           let current = 0;
           let total = 0;
           for (const l of layers.values()) {
             current += Math.min(l.current, l.total);
             total += l.total;
           }
+          this.image = { ...this.image, received: current, total };
+          if (Date.now() - lastReport < 15_000) return;
+          lastReport = Date.now();
           if (total > 0) log(`pulling ${SANDBOX_IMAGE}: ${(current / 1024 / 1024).toFixed(0)} / ${(total / 1024 / 1024).toFixed(0)} MB`);
         },
       );
     });
+    this.image = { image: SANDBOX_IMAGE, state: "ready", received: 0, total: 0, error: null };
     log(`pulled ${SANDBOX_IMAGE} in ${Math.round((Date.now() - started) / 1000)} s`);
   }
 

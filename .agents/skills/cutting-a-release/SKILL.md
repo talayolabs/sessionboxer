@@ -110,13 +110,16 @@ the site (step 6), then come back. When it is done, verify:
 ```sh
 gh release view v<version> --json url,assets --jq '.url, (.assets[] | .name)'
 # expect: deb/AppImage ×2 archs, mac dmg/zip ×2, win exe/zip, sessionboxer-<version>.tgz, SHA256SUMS
-npm view sessionboxer version    # fails while nobody publishes to npm — see below
+npm view sessionboxer version    # must print <version>
 ```
 
-`npm-publish` reports success even when it skips: it only publishes when the
-`NPM_TOKEN` repository secret exists. It has never existed so far; say so in
-the report ("npm publish skipped, no NPM_TOKEN") and offer to ask for a token,
-do not request one unprompted.
+`npm-publish` is `continue-on-error`, so a red job does not fail the run: check
+it. It publishes through npm trusted publishing (this workflow is the package's
+trusted publisher on npmjs.com, OIDC, no secret) or the `NPM_TOKEN` secret if
+set. If neither is configured yet, say so in the report ("npm publish failed:
+no trusted publisher / NPM_TOKEN") and point at npmjs.com → sessionboxer →
+Settings → Trusted Publisher (GitHub Actions, `talayolabs/sessionboxer`,
+`release.yml`, allow `npm publish`); do not ask for a token unprompted.
 
 If a job fails: `gh run view --log-failed`, fix on `main`, then move the tag
 (`git tag -fa v<version> && git push -f origin v<version>`) only if nothing was

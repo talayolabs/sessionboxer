@@ -8,7 +8,8 @@
 #        macOS:   MAC_CSC_LINK (base64 .p12), MAC_CSC_KEY_PASSWORD,
 #                 APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID (notarization)
 #        Windows: WIN_CSC_LINK (base64 .pfx), WIN_CSC_KEY_PASSWORD
-#   5. npm publish sessionboxer@<version>  — fails (without blocking the release) when the NPM_TOKEN secret is missing
+#   5. npm publish sessionboxer@<version>  — via npm trusted publishing (OIDC: this workflow is registered as the
+#      package's trusted publisher on npmjs.com, no secret) or the NPM_TOKEN secret; fails without blocking the release
 #   6. GitHub Release with the CHANGELOG section for the version, the tarball and the installers
 # The tag must match package.json's version. Images are pushed by digest per architecture and
 # joined into one manifest list afterwards; nothing is published if a build step fails.
@@ -263,8 +264,8 @@ jobs:
   npm-publish:
     needs: [package, manifests]
     runs-on: ubuntu-24.04
-    # Fails (visibly) when the NPM_TOKEN secret is missing; the GitHub Release is still cut and its notes
-    # then point at the tarball instead of `npx sessionboxer@<version>`.
+    # Fails (visibly) when neither the trusted publisher nor the NPM_TOKEN secret is set up; the GitHub Release
+    # is still cut and its notes then point at the tarball instead of `npx sessionboxer@<version>`.
     continue-on-error: true
     permissions:
       contents: read
@@ -278,17 +279,18 @@ jobs:
         with:
           name: npm-package
           path: build
-      - name: npm publish (needs the NPM_TOKEN secret)
+      - name: npm publish (trusted publisher, or the NPM_TOKEN secret)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -eu
+          npm install -g npm@latest   # trusted publishing needs npm 11.5.1+; Node 22 ships an older one
+          if npm publish build/sessionboxer-*.tgz --access public --provenance; then exit 0; fi
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=sessionboxer@$VERSION was not published to npm::the NPM_TOKEN repository secret is not set (Settings → Secrets and variables → Actions). Add an npm automation token as NPM_TOKEN and re-run this job, or publish by hand: npm publish build/sessionboxer-$VERSION.tgz --access public"
-            exit 1
+            echo "::error title=sessionboxer@$VERSION was not published to npm::no npm credentials. On npmjs.com → sessionboxer → Settings → Trusted Publisher add GitHub Actions with repository talayolabs/sessionboxer and workflow release.yml (allow npm publish); or set the NPM_TOKEN repository secret. Then re-run this job, or publish by hand: npm publish build/sessionboxer-$VERSION.tgz --access public"
           fi
-          npm publish build/sessionboxer-*.tgz --access public --provenance
+          exit 1
       - name: Verify the package is on the registry
         env:
           VERSION: ${{ needs.package.outputs.version }}

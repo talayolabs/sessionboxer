@@ -19,6 +19,7 @@ import {
   type AgentOption,
   type Branch,
   type CodexLogin,
+  type CursorLogin,
   type E2eRun,
   type LlmCall,
   type ModelOption,
@@ -121,6 +122,12 @@ function describeCodexLogin(login: CodexLogin): string {
   if (login.plan) parts.push(`${login.plan} plan`);
   if (login.lastRefresh) parts.push(`refreshed ${new Date(login.lastRefresh).toLocaleString()}`);
   return parts.join(", ");
+}
+
+/** One line about the stored Cursor login (ADR-0054), from its metadata only. */
+function describeCursorLogin(login: CursorLogin): string {
+  if (login.kind === "api-key") return "API key";
+  return login.expiresAt ? `auth.json, token valid until ${new Date(login.expiresAt).toLocaleString()}` : "auth.json";
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
@@ -692,7 +699,7 @@ export function App() {
         )}
         {!anyTokenSet && route.view !== "settings" && (
           <div className="banner banner-warn" onClick={() => setRoute({ view: "settings" })}>
-            No Provider token configured. Open Global settings and add a Claude Code or Devin token, or a Codex login.
+            No Provider token configured. Open Global settings and add a Claude Code or Devin token, or a Codex or Cursor login.
           </div>
         )}
         {route.view === "new" && settings && (
@@ -1875,6 +1882,9 @@ function SettingsView({
   const [codexAuth, setCodexAuth] = useState("");
   const [forgetCodexAuth, setForgetCodexAuth] = useState(false);
   const codexFileRef = useRef<HTMLInputElement>(null);
+  const [cursorLogin, setCursorLogin] = useState("");
+  const [forgetCursorLogin, setForgetCursorLogin] = useState(false);
+  const cursorFileRef = useRef<HTMLInputElement>(null);
   const [claudeBaseUrl, setClaudeBaseUrl] = useState(settings.claudeApi.baseUrl);
   const [claudeAuthToken, setClaudeAuthToken] = useState("");
   const [claudeApiKey, setClaudeApiKey] = useState("");
@@ -1907,6 +1917,15 @@ function SettingsView({
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
   const codexAuthSet = settings.providerSecretsSet.codex.CODEX_AUTH_JSON && !forgetCodexAuth;
+  const cursorLoginSet = settings.providerSecretsSet.cursor.CURSOR_LOGIN && !forgetCursorLogin;
+
+  const importCursorAuth = (file: File | undefined) => {
+    if (!file) return;
+    void file.text().then((text) => {
+      setCursorLogin(text);
+      setForgetCursorLogin(false);
+    });
+  };
 
   const importCodexAuth = (file: File | undefined) => {
     if (!file) return;
@@ -1946,6 +1965,7 @@ function SettingsView({
           ...(token.trim() ? { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: token.trim() } } : {}),
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
           ...(codexAuth.trim() ? { codex: { CODEX_AUTH_JSON: codexAuth.trim() } } : forgetCodexAuth ? { codex: { CODEX_AUTH_JSON: "" } } : {}),
+          ...(cursorLogin.trim() ? { cursor: { CURSOR_LOGIN: cursorLogin.trim() } } : forgetCursorLogin ? { cursor: { CURSOR_LOGIN: "" } } : {}),
         },
         claudeApi: {
           baseUrl: claudeBaseUrl.trim(),
@@ -1957,6 +1977,8 @@ function SettingsView({
       setDevinToken("");
       setCodexAuth("");
       setForgetCodexAuth(false);
+      setCursorLogin("");
+      setForgetCursorLogin(false);
       setClaudeAuthToken("");
       setClaudeApiKey("");
       setForgetClaudeAuthToken(false);
@@ -2060,6 +2082,63 @@ function SettingsView({
             </label>
           )}
         </p>
+        <label>
+          <span className="label-row">
+            Cursor: login (auth.json or API key){" "}
+            {cursorLoginSet ? (
+              <span className="ok">
+                (set{settings.cursorLogin && !forgetCursorLogin ? `: ${describeCursorLogin(settings.cursorLogin)}` : ""})
+              </span>
+            ) : (
+              <span className="warn">(not set)</span>
+            )}
+          </span>
+          <textarea
+            rows={3}
+            spellCheck={false}
+            autoComplete="off"
+            value={cursorLogin}
+            onChange={(e) => {
+              setCursorLogin(e.target.value);
+              if (e.target.value.trim()) setForgetCursorLogin(false);
+            }}
+            placeholder={cursorLoginSet ? "Leave empty to keep the current login" : "Paste the contents of Cursor's auth.json, or an API key"}
+          />
+        </label>
+        <p className="field-hint">
+          <span>
+            Cursor runs on your Cursor subscription. Log in with its CLI on your own machine and paste or import the file it writes (the Sandbox keeps it
+            in memory only; refreshed tokens flow back here), or paste an API key from cursor.com &rarr; Dashboard &rarr; Integrations.
+          </span>
+          <CopyCommand command="agent login" />
+          <CopyCommand command="cat ~/.config/cursor/auth.json" />
+          <input
+            ref={cursorFileRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(e) => {
+              importCursorAuth(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <button type="button" onClick={() => cursorFileRef.current?.click()}>
+            Import auth.json…
+          </button>
+          {settings.providerSecretsSet.cursor.CURSOR_LOGIN && (
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={forgetCursorLogin}
+                onChange={(e) => {
+                  setForgetCursorLogin(e.target.checked);
+                  if (e.target.checked) setCursorLogin("");
+                }}
+              />{" "}
+              Forget the stored login
+            </label>
+          )}
+        </p>
       </fieldset>
       <fieldset className="choice">
         <legend>Claude API</legend>
@@ -2151,7 +2230,7 @@ function SettingsView({
         </label>
         <p className="muted">
           Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
-          {deliveryNote("codex")} Comes on top of
+          {deliveryNote("codex")} {deliveryNote("cursor")} Comes on top of
           the Sandbox briefing (desktop, recordings, handing files to you) and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Applies to
           Sessions created afterwards.
         </p>

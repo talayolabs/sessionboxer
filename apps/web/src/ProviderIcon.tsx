@@ -37,6 +37,16 @@ const DEVIN_HEXES = [hexagon(12 - HEX_DX, 12 - HEX_DY, HEX_R), hexagon(12 + HEX_
 /** Six rounded arcs around the centre, each turned 60 degrees further: OpenAI's knot, loosely. */
 const CODEX_ARC = "M 12 3.4 C 15.2 3.4 17.4 5.6 17.4 8.4 L 17.4 12";
 const CODEX_TURNS = [0, 60, 120, 180, 240, 300];
+/** Cursor's mark is an isometric cube: a hexagon whose three visible faces meet at the centre, each shaded differently. */
+const CURSOR_HEX = [0, 60, 120, 180, 240, 300].map((deg) => {
+  const a = (Math.PI / 180) * (deg - 90);
+  return `${(12 + 9 * Math.cos(a)).toFixed(2)},${(12 + 9 * Math.sin(a)).toFixed(2)}`;
+});
+const CURSOR_FACES: { corners: [number, number, number]; opacity: number }[] = [
+  { corners: [0, 1, 2], opacity: 0.45 },
+  { corners: [2, 3, 4], opacity: 0.7 },
+  { corners: [4, 5, 0], opacity: 1 },
+];
 
 export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size?: number }) {
   const label = PROVIDER_LABELS[provider];
@@ -73,6 +83,18 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
               <path key={deg} d={CODEX_ARC} transform={`rotate(${deg} 12 12)`} />
             ))}
           </g>
+        </svg>
+      );
+    case "cursor":
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <g fill="currentColor">
+            {CURSOR_FACES.map(({ corners, opacity }) => (
+              <polygon key={opacity} points={`${corners.map((i) => CURSOR_HEX[i]).join(" ")} 12,12`} opacity={opacity} />
+            ))}
+          </g>
+          <polygon points={CURSOR_HEX.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
         </svg>
       );
   }

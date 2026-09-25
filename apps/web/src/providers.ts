@@ -9,5 +9,7 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.devin.WINDSURF_API_KEY;
     case "codex":
       return settings.providerSecretsSet.codex.CODEX_AUTH_JSON;
+    case "cursor":
+      return settings.providerSecretsSet.cursor.CURSOR_LOGIN;
   }
 }

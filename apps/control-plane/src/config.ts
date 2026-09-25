@@ -9,6 +9,7 @@ import {
   ANTHROPIC_DEFAULT_BASE_URL,
   type BoxCredential,
   type CodexLogin,
+  type CursorLogin,
   CONNECTORS,
   connectorHasMcp,
   MCP_RESERVED_NAMES,
@@ -221,9 +222,16 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
         ...current.providerSecrets.codex,
         ...stripUndefined(providerSecrets.codex ?? {}),
       },
+      cursor: {
+        ...current.providerSecrets.cursor,
+        ...stripUndefined(providerSecrets.cursor ?? {}),
+      },
     };
     if (providerSecrets.codex?.CODEX_AUTH_JSON !== undefined) {
       next.providerSecrets.codex.CODEX_AUTH_JSON = normalizeCodexAuthJson(providerSecrets.codex.CODEX_AUTH_JSON);
+    }
+    if (providerSecrets.cursor?.CURSOR_LOGIN !== undefined) {
+      next.providerSecrets.cursor.CURSOR_LOGIN = normalizeCursorLogin(providerSecrets.cursor.CURSOR_LOGIN);
     }
   }
   return Settings.parse(next);
@@ -248,8 +256,10 @@ export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclud
       "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings) !== "" },
       devin: { WINDSURF_API_KEY: devinToken(settings) !== "" },
       codex: { CODEX_AUTH_JSON: codexAuthJson(settings) !== "" },
+      cursor: { CURSOR_LOGIN: cursorLogin(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
+    cursorLogin: describeCursorLogin(cursorLogin(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -380,6 +390,78 @@ export function codexAuthNewer(candidate: string, current: string): boolean {
   return Date.parse(a.lastRefresh) >= Date.parse(b.lastRefresh);
 }
 
+/**
+ * The Cursor login (ADR-0054): a Cursor API key (`CURSOR_API_KEY` in this process's environment
+ * overrides it) or the whole `auth.json` an `agent login` wrote. Like Codex's, an `auth.json` has
+ * no environment override: the CLI rotates its tokens and the refreshed file is written back here.
+ */
+export function cursorLogin(settings: Settings): string {
+  return process.env.CURSOR_API_KEY?.trim() || settings.providerSecrets.cursor.CURSOR_LOGIN;
+}
+
+/** The parts of Cursor's `auth.json` Sessionboxer looks at (the rest is passed through untouched). */
+const CursorAuthFile = z.object({
+  accessToken: z.string().nullable().optional(),
+  refreshToken: z.string().nullable().optional(),
+  apiKey: z.string().nullable().optional(),
+});
+
+/** Accepts an API key or the JSON object `agent login` writes; `""` forgets it. Returns JSON compacted. */
+export function normalizeCursorLogin(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed === "") return "";
+  if (!trimmed.startsWith("{")) {
+    if (!/^[\w.-]+$/.test(trimmed)) throw new HttpError(400, "The Cursor login must be an API key (cursor.com → Dashboard → Integrations) or the JSON in Cursor's auth.json.");
+    return trimmed;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new HttpError(400, "The Cursor login must be the JSON in Cursor's auth.json, as written by `agent login`.");
+  }
+  const file = CursorAuthFile.safeParse(parsed);
+  if (!file.success || typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new HttpError(400, "The Cursor login must be the JSON object in Cursor's auth.json.");
+  }
+  if (!file.data.accessToken && !file.data.apiKey) {
+    throw new HttpError(400, "This auth.json holds no Cursor login; run `agent login` and copy the file again.");
+  }
+  return JSON.stringify(parsed);
+}
+
+/** What the stored login is, for Settings; nothing is verified. `null` for an empty or unusable string. */
+export function describeCursorLogin(login: string): CursorLogin | null {
+  if (login.trim() === "") return null;
+  if (!login.trimStart().startsWith("{")) return { kind: "api-key", expiresAt: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(login);
+  } catch {
+    return null;
+  }
+  const file = CursorAuthFile.safeParse(parsed);
+  if (!file.success) return null;
+  if (!file.data.accessToken) return file.data.apiKey ? { kind: "api-key", expiresAt: null } : null;
+  const exp = jwtClaims(file.data.accessToken)?.exp;
+  return { kind: "auth-json", expiresAt: typeof exp === "number" ? new Date(exp * 1000).toISOString() : null };
+}
+
+/**
+ * Which of two Cursor `auth.json` is the newer one: the CLI issues a fresh access token when it
+ * refreshes. `true` when `candidate` should replace `current` (a different file whose token is
+ * not older); an API key in `current` is never replaced.
+ */
+export function cursorAuthNewer(candidate: string, current: string): boolean {
+  const a = describeCursorLogin(candidate);
+  if (a?.kind !== "auth-json") return false;
+  if (JSON.stringify(JSON.parse(candidate)) === current) return false;
+  const b = describeCursorLogin(current);
+  if (b?.kind === "api-key") return false;
+  if (!b?.expiresAt || !a.expiresAt) return true;
+  return Date.parse(a.expiresAt) >= Date.parse(b.expiresAt);
+}
+
 /** `ANTHROPIC_AUTH_TOKEN` for Claude Sandboxes (a company proxy's bearer credential); env override like the tokens. */
 export function claudeAuthToken(settings: Settings): string {
   return process.env.ANTHROPIC_AUTH_TOKEN || settings.claudeApi.authToken;
@@ -404,8 +486,9 @@ export function claudeBaseUrl(settings: Settings): { url: string; source: Claude
 export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   "claude-code": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
   devin: ["WINDSURF_API_KEY"],
-  // Codex's login never travels as environment: the Daemon gets it over RPC and keeps it on tmpfs.
+  // Codex's and Cursor's logins never travel as environment: the Daemon gets them over RPC and keeps them on tmpfs.
   codex: [],
+  cursor: [],
 };
 
 /** The Provider has a credential to run with (`providerSetupHint` says what is missing otherwise). */
@@ -417,6 +500,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return devinToken(settings) !== "";
     case "codex":
       return codexAuthJson(settings) !== "";
+    case "cursor":
+      return cursorLogin(settings) !== "";
   }
 }
 
@@ -443,6 +528,7 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "devin":
       return { WINDSURF_API_KEY: devinToken(settings) };
     case "codex":
+    case "cursor":
       return {};
   }
 }
@@ -455,6 +541,8 @@ export function providerSetupHint(provider: Provider): string {
       return "No Devin token configured. Run `devin auth login` and paste the token from ~/.local/share/devin/credentials.toml in Settings.";
     case "codex":
       return "No Codex login configured. Run `codex login` (ChatGPT account) and paste ~/.codex/auth.json in Settings.";
+    case "cursor":
+      return "No Cursor login configured. Paste a Cursor API key, or run `agent login` and paste Cursor's auth.json, in Settings.";
   }
 }
 

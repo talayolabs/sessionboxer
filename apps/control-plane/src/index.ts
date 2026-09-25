@@ -67,6 +67,8 @@ import {
   applySettingsUpdate,
   codexAuthJson,
   codexAuthNewer,
+  cursorAuthNewer,
+  cursorLogin,
   ensureAccessToken,
   ensureTunnelSecret,
   ensureVapidKeys,
@@ -128,6 +130,19 @@ sessions.codexAuthRefreshed = (sessionId, authJson) => {
   saveSettings(settings);
   log(`codex login refreshed by session ${sessionId}; stored`);
   void sessions.pushCodexAuthToAll();
+};
+// The Cursor CLI refreshes the tokens of an auth.json the same way (an API key login is left alone).
+sessions.cursorAuthRefreshed = (sessionId, authJson) => {
+  if (!cursorAuthNewer(authJson, cursorLogin(settings))) return;
+  try {
+    settings = applySettingsUpdate(settings, { providerSecrets: { cursor: { CURSOR_LOGIN: authJson } } });
+  } catch (e) {
+    log(`cursor auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  saveSettings(settings);
+  log(`cursor login refreshed by session ${sessionId}; stored`);
+  void sessions.pushCursorAuthToAll();
 };
 const scheduler = new Scheduler({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
 const tunnels = new Tunnels(
@@ -247,6 +262,7 @@ api.put("/settings", async (c) => {
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   if (update.providerSecrets?.codex?.CODEX_AUTH_JSON !== undefined) void sessions.pushCodexAuthToAll();
+  if (update.providerSecrets?.cursor?.CURSOR_LOGIN !== undefined) void sessions.pushCursorAuthToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
   return c.json(await publicSettings());

@@ -16,6 +16,7 @@ import {
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
   type DaemonCodexAuthParams,
+  type DaemonCursorAuthParams,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -99,6 +100,7 @@ import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
   PROVIDER_ENV_KEYS,
   codexAuthJson,
+  cursorLogin,
   defaultMcpEnabled,
   knownMcpIds,
   providerEnv,
@@ -2026,6 +2028,30 @@ export class SessionManager {
   /** A Codex Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
   codexAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
 
+  /**
+   * Hands the stored Cursor login to a Cursor Session's Daemon (ADR-0054): an `auth.json` goes on
+   * tmpfs where the CLI reads it, an API key into the Agent's environment. Before the MCP set at
+   * connect time; again whenever the stored login changes.
+   */
+  async pushCursorAuth(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "cursor" || !client?.connected) return;
+    const params: DaemonCursorAuthParams = { login: cursorLogin(this.settings()) };
+    await client.request(DAEMON_METHODS.cursorAuthSet, params);
+  }
+
+  /** The stored Cursor login changed (Settings, or a Sandbox refreshed it): every live Cursor Session gets it. */
+  async pushCursorAuthToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.provider !== "cursor" || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushCursorAuth(s.id).catch((e: unknown) => this.log(`cursor auth push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
+  /** A Cursor Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
+  cursorAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
+
   /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
   async pushRecordingPrefs(id: string): Promise<void> {
     const client = this.clients.get(id);
@@ -2106,6 +2132,7 @@ export class SessionManager {
         for (const sink of this.sinksOf(id, ptyId)) sink.exit(exitCode);
       },
       onCodexAuthChanged: (authJson) => this.codexAuthRefreshed(id, authJson),
+      onCursorAuthChanged: (authJson) => this.cursorAuthRefreshed(id, authJson),
       onDisconnected: () => {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");
@@ -2132,6 +2159,7 @@ export class SessionManager {
       .then(() => this.pushLlmInspect(id))
       .then(() => this.pushRepos(id))
       .then(() => this.pushCodexAuth(id))
+      .then(() => this.pushCursorAuth(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))
       .then(() => this.pushOptions(id))

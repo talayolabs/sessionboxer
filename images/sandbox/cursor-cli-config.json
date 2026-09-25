@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "approvalMode": "allowlist",
+  "sandbox": { "mode": "disabled" },
+  "notifications": false,
+  "hints": false,
+  "attribution": { "attributeCommitsToAgent": false, "attributePRsToAgent": false }
+}

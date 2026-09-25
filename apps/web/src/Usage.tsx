@@ -18,6 +18,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   "claude-code": "Claude has not reported its usage yet: it comes with the first call of a turn (Inspect LLM must be on).",
   codex: "Codex has not reported its usage yet: it comes after the first turn.",
   devin: "Devin does not report its usage windows (ACUs) to Sessionboxer.",
+  cursor: "Cursor does not report its usage to Sessionboxer; see cursor.com → Dashboard → Usage.",
 };
 
 /** The current time, ticking every second while `live`. */

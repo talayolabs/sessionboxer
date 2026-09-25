@@ -19,6 +19,7 @@ import {
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
   DaemonCodexAuthParams,
+  DaemonCursorAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -59,7 +60,8 @@ import {
 import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
 import { CodeServer } from "./code-server.js";
-import { CodexAuth } from "./codex-auth.js";
+import { AuthFile } from "./auth-file.js";
+import { registerCursorExtensions } from "./cursor-ext.js";
 import { readCompactionDetails } from "./compactions.js";
 import { E2eBridge } from "./e2e-bridge.js";
 import { GhApi } from "./gh-api.js";
@@ -109,6 +111,9 @@ const ACP_COMMANDS: Record<Provider, string[]> = {
   "claude-code": ["claude-agent-acp"],
   devin: ["devin", "acp"],
   codex: ["codex-acp"],
+  // Auto-update off (the image pins the version); --force runs commands without asking and
+  // --approve-mcps/--trust skip the MCP and workspace prompts nobody would answer (ADR-0054).
+  cursor: ["cursor-agent", "--disable-auto-update", "--force", "--approve-mcps", "--trust", "acp"],
 };
 const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
@@ -127,10 +132,33 @@ const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/
 const codexHome = env.CODEX_HOME ?? `${home}/.codex`;
 const codexAuth =
   provider === "codex"
-    ? new CodexAuth(codexHome, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.codexAuthChanged, { authJson }))
+    ? new AuthFile("codex", `${codexHome}/auth.json`, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.codexAuthChanged, { authJson }))
     : null;
 /** The Sandbox is the isolation: Codex runs without approvals or its own sandbox, like the other Providers. */
 const CODEX_AGENT_ENV = { CODEX_HOME: codexHome, INITIAL_AGENT_MODE: "agent-full-access" };
+/**
+ * Cursor's login (ADR-0054): the `auth.json` its CLI writes with `agent login`, on tmpfs at the
+ * path Cursor reads it from, or an API key handed over in the process environment. Cursor reads
+ * the file once at start, so the Agent restarts in place when the login arrives or changes.
+ */
+const cursorAuth =
+  provider === "cursor"
+    ? new AuthFile("cursor", `${env.XDG_CONFIG_HOME ?? `${home}/.config`}/cursor/auth.json`, tmpfsDir, log, (authJson) =>
+        notify(DAEMON_METHODS.cursorAuthChanged, { authJson }),
+      )
+    : null;
+
+function setCursorLogin(login: string): boolean {
+  if (!cursorAuth) throw new Error("this Sandbox does not run Cursor");
+  if (login.trimStart().startsWith("{")) {
+    cursorAuth.set(login);
+    return agent.setAgentEnv({ SESSIONBOXER_CURSOR_LOGIN: "auth-json" });
+  }
+  cursorAuth.set("");
+  if (login === "") return agent.setAgentEnv({});
+  log("cursor login is an API key; handed to the Agent process as CURSOR_API_KEY");
+  return agent.setAgentEnv({ CURSOR_API_KEY: login });
+}
 
 /** The Session's standing instructions, set by the Control Plane on the container. */
 const instructions = env.SESSIONBOXER_INSTRUCTIONS ?? "";
@@ -233,6 +261,7 @@ const agent = new AgentManager(
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),
+    ...(provider === "cursor" ? { extensions: (app) => registerCursorExtensions(app, log), fullAccessModeIds: ["agent"] } : {}),
     log,
   },
   {
@@ -337,6 +366,8 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       codexAuth.set(DaemonCodexAuthParams.parse(params).authJson);
       return {};
     }
+    case DAEMON_METHODS.cursorAuthSet:
+      return { applied: setCursorLogin(DaemonCursorAuthParams.parse(params).login) };
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

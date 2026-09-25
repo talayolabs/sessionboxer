@@ -125,6 +125,14 @@ const CODEX_LIMIT = [
   /out of credits/i,
   /insufficient[_ ]quota/i,
 ];
+const CURSOR_LIMIT = [
+  /hit your (?:usage |spend(?:ing)? )?limit/i,
+  /reached your (?:usage |monthly |request |spend(?:ing)? )?limit/i,
+  /usage[_ ]limit/i,
+  /exceeded your (?:usage|quota|budget|spend(?:ing)? limit)/i,
+  /out of (?:fast )?requests/i,
+  /quota[_ ]exceeded/i,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -132,8 +140,8 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex", message: string, now: Date = new Date()): UsageLimitHit | null {
-  const patterns = provider === "claude-code" ? CLAUDE_LIMIT : provider === "codex" ? CODEX_LIMIT : DEVIN_LIMIT;
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor", message: string, now: Date = new Date()): UsageLimitHit | null {
+  const patterns = provider === "claude-code" ? CLAUDE_LIMIT : provider === "codex" ? CODEX_LIMIT : provider === "cursor" ? CURSOR_LIMIT : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

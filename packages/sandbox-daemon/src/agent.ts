@@ -5,6 +5,7 @@ import { Readable, Writable } from "node:stream";
 import {
   client,
   ndJsonStream,
+  type ClientApp,
   type ClientConnection,
   type InitializeRequest,
   type NewSessionRequest,
@@ -62,6 +63,10 @@ export interface AgentConfig {
    * `onUsageReport`.
    */
   usageCommand?: string;
+  /** Registers the Provider's ACP extension methods (Cursor's ask/plan calls) on the client before it connects. */
+  extensions?: (app: ClientApp) => void;
+  /** Mode ids that mean "auto-approve every tool call" for this adapter, when not among the usual ones. */
+  fullAccessModeIds?: string[];
   log: (msg: string) => void;
 }
 
@@ -587,7 +592,9 @@ export class AgentManager {
       Writable.toWeb(child.stdin),
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     );
-    const app = client(CLIENT_INFO)
+    const base = client(CLIENT_INFO);
+    this.cfg.extensions?.(base);
+    const app = base
       .onRequest("session/request_permission", (ctx) => {
         const { options } = ctx.params;
         const allow =
@@ -718,7 +725,8 @@ export class AgentManager {
     sessionId: string,
     modes: SessionModeState | null | undefined,
   ): Promise<void> {
-    const bypass = modes?.availableModes.find((m) => BYPASS_MODE_IDS.includes(m.id));
+    const ids = this.cfg.fullAccessModeIds ?? BYPASS_MODE_IDS;
+    const bypass = modes?.availableModes.find((m) => ids.includes(m.id));
     if (!modes || !bypass || modes.currentModeId === bypass.id) return;
     await conn.agent.request("session/set_mode", { sessionId, modeId: bypass.id });
     this.cfg.log(`switched to mode ${bypass.id}`);

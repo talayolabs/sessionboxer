@@ -1,6 +1,6 @@
 # Sessionboxer Sandbox image: one container per Session, with an X11 Desktop
 # (Xvfb + xfce4 + x11vnc + noVNC), the Provider ACP adapters (Claude Code,
-# Devin CLI), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
+# Devin, Codex, Cursor), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
 #   npm run build:image        (scripts/build-image.mjs)
 # which is `docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .` plus the
 # `extra-ca` build secret: the CA certificates this machine trusts beyond the public ones
@@ -166,6 +166,27 @@ RUN export HOME=/home/agent PATH="/home/agent/.local/bin:$PATH" \
     && devin --version
 USER root
 
+# Cursor CLI (`cursor-agent acp` is spawned by the Sandbox Daemon; `agent` in the terminal, ADR-0054):
+# the package Cursor's own installer unpacks, with the Node it bundles (its native modules are
+# built for that Node). The two `*-sea` binaries are the code-signed re-exec the CLI uses on macOS
+# only; leaving them out saves 270 MB. Auto-update is off (the Daemon passes --disable-auto-update)
+# and the install dir is root-owned, so a Sandbox runs the version the image was built with.
+ARG CURSOR_CLI_VERSION=2026.09.23-86fc751
+RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "unsupported arch $arch" >&2; exit 1 ;; esac \
+    && mkdir -p /opt/cursor-agent \
+    && for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/cursor-agent.tar.gz \
+           "https://downloads.cursor.com/lab/${CURSOR_CLI_VERSION}/linux/${arch}/agent-cli-package.tar.gz" && break; \
+         [ "$i" = 5 ] && exit 1; sleep 5; \
+       done \
+    && tar -xzf /tmp/cursor-agent.tar.gz -C /opt/cursor-agent --strip-components=1 \
+         --exclude='*/cursor-agent-sea' --exclude='*/cursor-agent-worker-sea' \
+    && rm /tmp/cursor-agent.tar.gz \
+    && ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/cursor-agent \
+    && ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/agent \
+    && test ! -e /opt/cursor-agent/cursor-agent-sea \
+    && HOME=/tmp cursor-agent --version && rm -rf /tmp/.cursor /tmp/.cache /tmp/.config
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -234,7 +255,10 @@ COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.confi
 # is installed once as ~/.claude/CLAUDE.md: Claude Code reads it natively and
 # Devin CLI loads it as an always-on rule too (`devin rules list`). Codex reads
 # its global instructions from ~/.codex/AGENTS.md and skills from ~/.agents/skills.
+# Cursor reads AGENTS.md from the workspace and every directory above it, so the
+# briefing sits at /AGENTS.md: above /workspace and every repository, inside none.
 COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
+COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.cursor/cli-config.json
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -243,6 +267,7 @@ COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
 RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent/.agents/skills && chown -Rh agent:agent /home/agent/.agents
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
+COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 
 # The compiled Sessionboxer code (stage 1): the layers that change with every release, last.
 COPY --from=build --chmod=0755 /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist

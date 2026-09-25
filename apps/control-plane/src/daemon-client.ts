@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import {
   DAEMON_METHODS,
   DaemonCodexAuthParams,
+  DaemonCursorAuthChangedParams,
   DaemonStatus,
   PtyExitParams,
   PtyOutputParams,
@@ -20,6 +21,8 @@ export interface DaemonClientHandlers {
   onPtyExit: (ptyId: string, exitCode: number) => void;
   /** Codex rewrote its `auth.json` (refreshed tokens); the whole file. */
   onCodexAuthChanged: (authJson: string) => void;
+  /** The Cursor CLI rewrote its `auth.json` (refreshed tokens); the whole file. */
+  onCursorAuthChanged: (authJson: string) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
   /** A request from the Daemon (the Agent's `e2e_*` tools); the result or thrown error is answered back. */
@@ -131,6 +134,8 @@ export class DaemonClient {
         this.handlers.onPtyExit(p.id, p.exitCode);
       } else if (msg.method === DAEMON_METHODS.codexAuthChanged) {
         this.handlers.onCodexAuthChanged(DaemonCodexAuthParams.parse(msg.params).authJson);
+      } else if (msg.method === DAEMON_METHODS.cursorAuthChanged) {
+        this.handlers.onCursorAuthChanged(DaemonCursorAuthChangedParams.parse(msg.params).authJson);
       }
     }
   }

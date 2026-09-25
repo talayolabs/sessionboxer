@@ -12,7 +12,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -20,6 +20,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   "claude-code": "Claude Code",
   devin: "Devin",
   codex: "Codex",
+  cursor: "Cursor",
 };
 
 /**
@@ -36,6 +37,17 @@ export const CodexLogin = z.object({
   apiKey: z.boolean(),
 });
 export type CodexLogin = z.infer<typeof CodexLogin>;
+
+/**
+ * What the stored Cursor login (ADR-0054) is: the `auth.json` an `agent login` wrote (a Cursor
+ * subscription, refreshed by the CLI) or an API key from the Cursor dashboard.
+ */
+export const CursorLogin = z.object({
+  kind: z.enum(["auth-json", "api-key"]),
+  /** When the login's access token expires (JWT `exp`), ISO 8601; `null` for API keys or when unreadable. */
+  expiresAt: z.string().nullable(),
+});
+export type CursorLogin = z.infer<typeof CursorLogin>;
 
 /**
  * How a Sandbox gets its own Docker daemon: `sysbox` runs it under the Sysbox
@@ -1477,6 +1489,8 @@ export const Settings = z.object({
       devin: z.object({ WINDSURF_API_KEY: z.string().default("") }).default({}),
       /** The whole `~/.codex/auth.json` of a `codex login` (ChatGPT subscription); Codex's refreshes flow back here. */
       codex: z.object({ CODEX_AUTH_JSON: z.string().default("") }).default({}),
+      /** Either the whole `auth.json` of an `agent login` (Cursor subscription) or a Cursor API key (ADR-0054). */
+      cursor: z.object({ CURSOR_LOGIN: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -1513,9 +1527,12 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
     devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
     codex: z.object({ CODEX_AUTH_JSON: z.boolean() }),
+    cursor: z.object({ CURSOR_LOGIN: z.boolean() }),
   }),
   /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
   codexLogin: CodexLogin.nullable(),
+  /** What the stored Cursor login is; `null` when none is stored. */
+  cursorLogin: CursorLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -1541,6 +1558,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connector
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string() }).partial(),
       devin: z.object({ WINDSURF_API_KEY: z.string() }).partial(),
       codex: z.object({ CODEX_AUTH_JSON: z.string() }).partial(),
+      cursor: z.object({ CURSOR_LOGIN: z.string() }).partial(),
     })
     .partial()
     .optional(),
@@ -2528,6 +2546,8 @@ export const DAEMON_METHODS = {
   mcpSet: "_sessionboxer/mcp/set",
   codexAuthSet: "_sessionboxer/codex/auth/set",
   codexAuthChanged: "_sessionboxer/codex/auth/changed",
+  cursorAuthSet: "_sessionboxer/cursor/auth/set",
+  cursorAuthChanged: "_sessionboxer/cursor/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -2693,6 +2713,22 @@ export const DaemonCodexAuthParams = z.object({
   authJson: z.string(),
 });
 export type DaemonCodexAuthParams = z.infer<typeof DaemonCodexAuthParams>;
+
+/**
+ * The Cursor login for the Sandbox (ADR-0054): an `auth.json` goes on tmpfs behind
+ * `~/.config/cursor/auth.json`, an API key becomes the Agent's `CURSOR_API_KEY`. Sent before
+ * the MCP set and again whenever the stored login changes. When the CLI refreshes the tokens
+ * of an `auth.json`, the rewritten file comes back as the `cursorAuthChanged` notification.
+ */
+export const DaemonCursorAuthParams = z.object({
+  login: z.string(),
+});
+export type DaemonCursorAuthParams = z.infer<typeof DaemonCursorAuthParams>;
+
+export const DaemonCursorAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonCursorAuthChangedParams = z.infer<typeof DaemonCursorAuthChangedParams>;
 
 /**
  * Switches the Agent's model (ACP `session/set_config_option` on the `model` option). Applied right

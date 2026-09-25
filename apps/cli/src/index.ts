@@ -66,7 +66,7 @@ Options for new:
       --option <id=val>  Other Agent option (repeatable), e.g. --option effort=high --option fast=on
       --instructions <text|@file>
                          Standing instructions for the Agent (system prompt for Claude, first-prompt
-                         prefix for Devin); "" for none. Default: the Settings text
+                         prefix for the others); "" for none. Default: the Settings text
       --git-name <name>, --git-email <email>
                          Git author/committer for commits made in the Sandbox. Default: the
                          Settings identity, else this machine's git config

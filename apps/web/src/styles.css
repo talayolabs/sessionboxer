@@ -1215,3 +1215,7 @@ code.token { font-size: 12px; word-break: break-all; user-select: all; backgroun
   .advanced-dialog { height: auto; max-height: 90vh; }
 }
 .provider-connect > .actions { position: static; margin-top: 0; padding: 0; background: transparent; align-items: center; }
+.git-connect { max-width: 560px; gap: 12px; }
+.git-connect .muted { margin: 0; line-height: 1.5; }
+.git-logos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.git-logos .provider-logo-state { text-align: center; line-height: 1.35; }

@@ -61,14 +61,13 @@ import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
 import { onServiceWorkerNavigate, registerServiceWorker } from "./push";
 import { CompactionDialog } from "./CompactionDialog";
 import { LlmCallDialog } from "./LlmCallDialog";
-import { GitAccounts } from "./GitAccounts";
+import { GitAccounts, GitConnectDialog } from "./GitAccounts";
 import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
 import { ProviderConnectDialog, ProviderLogos } from "./ProviderConnect";
 import { AdvancedSettingsDialog } from "./AdvancedSettingsDialog";
-import { ConnectorDialog } from "./ConnectorDialog";
 import { providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
 import { Icon, type IconName } from "./Icons";
@@ -486,7 +485,6 @@ export function App() {
   const gitConnected = (settings?.mcpServers ?? []).some((s) => s.connector !== null);
   const [gitLater, setGitLater] = useState(() => localStorage.getItem("sessionboxer.setup.gitLater") === "1");
   const showSetup = settings !== null && (!anyTokenSet || (!gitConnected && !gitLater));
-  const connectorNames = (settings?.mcpServers ?? []).map((s) => s.name);
 
   const topTitle =
     route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
@@ -631,8 +629,8 @@ export function App() {
               <button type="button" className={`setup-item${gitConnected ? " done" : ""}`} onClick={() => setGitConnect(true)}>
                 <span className="setup-check" aria-hidden="true">{gitConnected ? "\u2713" : ""}</span>
                 <span className="setup-text">
-                  Connect GitHub
-                  <span className="muted">{gitConnected ? "done" : "to push and open pull requests"}</span>
+                  Connect a Git account
+                  <span className="muted">{gitConnected ? "done" : "GitHub or Bitbucket, to push and open PRs"}</span>
                 </span>
                 {!gitConnected && (
                   <span
@@ -673,15 +671,7 @@ export function App() {
       {providerConnect && settings && (
         <ProviderConnectDialog settings={settings} initial={providerConnect.provider} onClose={() => setProviderConnect(null)} onStored={setSettings} />
       )}
-      {gitConnect && settings && (
-        <ConnectorDialog
-          kind="github"
-          server={null}
-          takenNames={connectorNames}
-          onClose={() => setGitConnect(false)}
-          onServer={() => void run(async () => setSettings(await api.settings()))}
-        />
-      )}
+      {gitConnect && settings && <GitConnectDialog servers={settings.mcpServers} initial={null} onClose={() => setGitConnect(false)} onStored={setSettings} />}
       {snapshotsSession && (
         <SnapshotsDialog
           session={snapshotsSession}
@@ -1921,7 +1911,7 @@ function NewSession({
                 <p className="muted">
                   Public repositories clone as they are. Private ones, pushing and pull requests need a Git account:{" "}
                   <button type="button" className="link" onClick={onConnectGit}>
-                    Connect GitHub…
+                    Connect GitHub or Bitbucket…
                   </button>
                 </p>
               )}

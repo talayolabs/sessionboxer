@@ -48,7 +48,7 @@ sessionboxer service install           # prints the login link; then status | st
 **Docker Compose** — the home server, VPS, Raspberry Pi or Coolify case; only Docker is needed.
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/talayolabs/sessionboxer/v1.1.0/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/talayolabs/sessionboxer/v1.2.0/docker-compose.yml
 docker compose up -d                   # http://127.0.0.1:4000; `docker compose logs -f` for the login link
 ```
 
@@ -195,7 +195,7 @@ Click the gauge, or **Context** in the header's ⋯ menu, for the **Context pane
 
 Subscriptions meter what the agent may use — Claude in a rolling 5-hour "session" window, a weekly one and, for some models, an extra weekly one; Codex in a 5-hour and a weekly window. **Three bars in a row above the context gauge** show them, green when empty towards red when used up, without figures: hover one for *Session usage: 11% used · resets in 3 h 48 min* with the exact reset date. For Claude Code the figures come with the model calls the agent makes (so **Inspect LLM** must be on, which it is by default) and refresh with the first call of each turn; for Codex they are read after each turn; Devin does not report its ACUs to Sessionboxer and Cursor does not report its usage either (see cursor.com → Dashboard → Usage), and a bar with nothing to show is hatched and says why on hover.
 
-When the agent refuses a turn because a window is used up (*You've hit your session limit · resets 2pm (UTC)*, Codex's *usage limit*, Devin's *Quota exhausted*), the session is not in error — a **red bar with a no-entry sign** appears above the usage bars, the session list shows the sign in place of the status dot, and the bar counts down the time left to the reset as `days hours:minutes:seconds` (hover for the reset date and what the agent said). The prompt that was refused is kept: **Continue** sends it again (or, if the agent had already started working, asks it to continue where it left off) — hover to see what it will send. Tick **Auto-continue** to have Sessionboxer do that for you: once the announced reset is due it asks the agent a one-line question every 10 seconds and, the moment the agent answers again, continues the interrupted turn; the queue plays on afterwards. The poll waits while the agent is busy or the box is stopped and stops when you untick it, continue by hand, or delete the session.
+When the agent refuses a turn because a window is used up (*You've hit your session limit · resets 2pm (UTC)*, Codex's *usage limit*, Cursor's *usage limit*, Devin's *Quota exhausted*), the session is not in error — a **red bar with a no-entry sign** appears above the usage bars, the session list shows the sign in place of the status dot, and the bar counts down the time left to the reset as `days hours:minutes:seconds` (hover for the reset date and what the agent said). The prompt that was refused is kept: **Continue** sends it again (or, if the agent had already started working, asks it to continue where it left off) — hover to see what it will send. Tick **Auto-continue** to have Sessionboxer do that for you: once the announced reset is due it asks the agent a one-line question every 10 seconds and, the moment the agent answers again, continues the interrupted turn; the queue plays on afterwards. The poll waits while the agent is busy or the box is stopped and stops when you untick it, continue by hand, or delete the session.
 
 ### See exactly what goes to the model
 

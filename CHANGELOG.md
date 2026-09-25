@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-09-25
 
-- Cursor as a fourth agent, on your Cursor subscription (`agent login` file or API key). The Sandbox image changed. ([164c955](https://github.com/talayolabs/sessionboxer/commit/164c955))
+Install: `npx sessionboxer@1.2.0 serve`, the installers on the release, `docker compose up`, or
+`curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox image changed:
+Stop → Resume existing sessions.
+
+- Cursor as a fourth agent, on your Cursor subscription (`agent login` file or API key). ([164c955](https://github.com/talayolabs/sessionboxer/commit/164c955))
 
 ## 1.1.0 — 2026-09-24
 

@@ -32,7 +32,14 @@ Pick one. All of them download the Sandbox image `ghcr.io/talayolabs/sessionboxe
 curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh
 ```
 
-**npm** — the laptop case. Needs Node 22+ and Docker.
+**Homebrew** (macOS, Linux) — the laptop case without thinking about Node: the tap installs the release with Homebrew's Node. Needs Docker.
+
+```sh
+brew install talayolabs/tap/sessionboxer
+sessionboxer serve
+```
+
+**npm** — the laptop case with your own Node 22+. Needs Docker.
 
 ```sh
 npx sessionboxer serve                 # or: npm i -g sessionboxer && sessionboxer serve
@@ -41,7 +48,7 @@ npx sessionboxer serve                 # or: npm i -g sessionboxer && sessionbox
 Rather than keeping that terminal open, install it as a background service of your user account — started now and at every login, restarted if it dies, same `~/.sessionboxer`: a launchd agent on macOS, a systemd user unit on Linux (`loginctl enable-linger` keeps it up after you log out of a headless machine). `SESSIONBOXER_*` and `DOCKER_HOST` set in the shell that runs `install` are baked into the service.
 
 ```sh
-npm i -g sessionboxer                  # not npx: the service points at the installed files
+npm i -g sessionboxer                  # not npx: the service points at the installed files (the Homebrew install works too)
 sessionboxer service install           # prints the login link; then status | stop | start | restart | log | uninstall
 ```
 

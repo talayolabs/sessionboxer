@@ -23,6 +23,7 @@ You need Docker ([how to install it](https://sessionboxer.talayolabs.com/#docker
 
 ```sh
 curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh   # picks npm or Docker Compose
+brew install talayolabs/tap/sessionboxer && sessionboxer serve   # macOS, Linux
 npx sessionboxer serve                                            # Node 22+
 docker compose up -d && docker compose logs control-plane        # with this repo's docker-compose.yml; the logs have the login link
 ```

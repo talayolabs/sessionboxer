@@ -136,7 +136,9 @@ Update, in this order:
    `npm run pages` must still map every section (`pages/guide.mjs`); add a new
    chapter there if a new `##` section appeared.
 2. **Version refs**: `public/install.sh` `FALLBACK_VERSION`, the compose URL in
-   `index.html` (`#way-compose`). `rg -n '<old>' index.html public pages`.
+   `index.html` (`#way-compose`) and the desktop download links (`#downloads`,
+   `releases/download/v<version>/Sessionboxer-<version>-…`).
+   `rg -n '<old>' index.html public pages`.
 3. **Features**: every changelog line that a visitor would care about needs a
    place — a card in the `#features` grid, a bullet on an existing card, or a
    page in `pages/features.mjs` (which also renders `/features/<slug>/` and the
@@ -170,10 +172,20 @@ git push origin main
 curl -fsSL https://sessionboxer.talayolabs.com/install.sh | grep FALLBACK_VERSION=   # after Coolify deploys, ~1 min
 ```
 
+## 6b. The Homebrew tap
+
+Once the GitHub Release has `sessionboxer-<version>.tgz`, in
+`talayolabs/homebrew-tap` (checked out as `../homebrew-tap`, `git pull` first)
+edit `Formula/sessionboxer.rb`: `url` to the new tarball and `sha256` to
+`shasum -a 256` of the downloaded file (the Release's `SHA256SUMS` has it too).
+Then `brew style Formula/sessionboxer.rb`, `brew install --build-from-source
+talayolabs/tap/sessionboxer`, `brew test sessionboxer`, `brew audit --strict
+--online talayolabs/tap/sessionboxer`, commit to `main`, push.
+
 ## 7. Report
 
 One message when the tag is pushed (release running, site commit link), one
 when the workflow is done: release URL, the image tags
 (`ghcr.io/talayolabs/sessionboxer:<version>`, `sessionboxer-sandbox:<version>`),
-the site URL, and caveats (npm skipped; anything in the release that was not
+the site URL, the tap commit, and caveats (npm skipped; anything in the release that was not
 verified live). No feature recap — the changelog is the recap.

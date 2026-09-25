@@ -286,9 +286,9 @@ jobs:
         run: |
           set -eu
           npm install -g npm@latest   # trusted publishing needs npm 11.5.1+; Node 22 ships an older one
-          if npm publish build/sessionboxer-*.tgz --access public --provenance; then exit 0; fi
+          if npm publish ./build/sessionboxer-*.tgz --access public --provenance; then exit 0; fi
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=sessionboxer@$VERSION was not published to npm::no npm credentials. On npmjs.com → sessionboxer → Settings → Trusted Publisher add GitHub Actions with repository talayolabs/sessionboxer and workflow release.yml (allow npm publish); or set the NPM_TOKEN repository secret. Then re-run this job, or publish by hand: npm publish build/sessionboxer-$VERSION.tgz --access public"
+            echo "::error title=sessionboxer@$VERSION was not published to npm::no npm credentials. On npmjs.com → sessionboxer → Settings → Trusted Publisher add GitHub Actions with repository talayolabs/sessionboxer and workflow release.yml (allow npm publish); or set the NPM_TOKEN repository secret. Then re-run this job, or publish by hand: npm publish ./build/sessionboxer-$VERSION.tgz --access public"
           fi
           exit 1
       - name: Verify the package is on the registry

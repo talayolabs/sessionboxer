@@ -4,9 +4,10 @@ import { z } from "zod";
 // Color themes (web UI + the VS Code in the Sandbox)
 // ---------------------------------------------------------------------------
 //
-// One palette per theme drives both the UI's CSS variables (`themeCssVariables`) and the
-// VS Code color theme the Sandbox image ships (`vscodeTheme`), so the editor in the Code pane
-// is drawn in the very same values as the UI around it (ADR-0048).
+// One palette per theme drives the UI's CSS variables (`themeCssVariables`), the `--vscode-*`
+// aliases layered on top of them (`vscodeCssVariables`) and the VS Code color theme the Sandbox
+// image ships (`vscodeTheme`), so the editor in the Code pane is drawn in the very same values as
+// the UI around it (ADR-0048, ADR-0055).
 
 export const THEME_IDS = [
   "sessionboxer-dark",
@@ -468,7 +469,7 @@ export function vscodeThemeExtensionFiles(): Record<string, string> {
   return files;
 }
 
-/** The CSS custom properties (without `--`) the web UI is drawn with. */
+/** The semantic CSS custom properties (without `--`) the web UI is drawn with; the design system's color tokens. */
 export function themeCssVariables(theme: Theme): Record<string, string> {
   const c = theme.colors;
   const s = theme.syntax;
@@ -549,14 +550,23 @@ export function themeAnsi(theme: Theme): {
 }
 
 /**
- * A VS Code color theme (the JSON a theme extension contributes) drawn from the palette:
- * the workbench in the UI's panel/sunken/border colors, tokens in the seven syntax roles.
+ * The `--vscode-*` custom properties (without `--`) VS Code itself exposes to its webviews, computed
+ * from the same palette: `editor.background` → `vscode-editor-background`. An additive alias layer
+ * over `themeCssVariables` for CSS written against VS Code's token names; the app's own styles use
+ * the semantic names.
  */
-export function vscodeTheme(theme: Theme): Record<string, unknown> {
+export function vscodeCssVariables(theme: Theme): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(vscodeColors(theme))) out[`vscode-${key.replace(/\./g, "-")}`] = value;
+  return out;
+}
+
+/** The workbench `colors` of the VS Code theme: the UI's panel/sunken/border colors under VS Code's names. */
+export function vscodeColors(theme: Theme): Record<string, string> {
   const c = theme.colors;
   const s = theme.syntax;
   const ansi = themeAnsi(theme);
-  const colors: Record<string, string> = {
+  return {
     focusBorder: c.accent,
     foreground: c.text,
     descriptionForeground: c.muted,
@@ -859,6 +869,16 @@ export function vscodeTheme(theme: Theme): Record<string, unknown> {
     "symbolIcon.interfaceForeground": s.tag,
     "symbolIcon.typeParameterForeground": s.tag,
   };
+}
+
+/**
+ * A VS Code color theme (the JSON a theme extension contributes) drawn from the palette:
+ * the workbench in the UI's panel/sunken/border colors, tokens in the seven syntax roles.
+ */
+export function vscodeTheme(theme: Theme): Record<string, unknown> {
+  const c = theme.colors;
+  const s = theme.syntax;
+  const colors = vscodeColors(theme);
 
   const tokenColors = [
     { scope: ["comment", "punctuation.definition.comment", "string.comment"], settings: { foreground: s.comment, fontStyle: "italic" } },

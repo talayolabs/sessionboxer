@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DEFAULT_THEME_PREFERENCE, THEMES, ThemePreference, themeAnsi, themeCssVariables, type Theme } from "@sessionboxer/protocol";
+import { DEFAULT_THEME_PREFERENCE, THEMES, ThemePreference, themeAnsi, themeCssVariables, vscodeCssVariables, type Theme } from "@sessionboxer/protocol";
 
 // The color theme is a preference of this browser (localStorage), applied as CSS custom
 // properties on <html> before React renders (main.tsx) and again whenever it changes; the
@@ -34,7 +34,9 @@ export function currentTheme(): Theme {
 function apply(theme: Theme) {
   current = theme;
   const root = document.documentElement;
-  for (const [name, value] of Object.entries(themeCssVariables(theme))) root.style.setProperty(`--${name}`, value);
+  for (const vars of [themeCssVariables(theme), vscodeCssVariables(theme)]) {
+    for (const [name, value] of Object.entries(vars)) root.style.setProperty(`--${name}`, value);
+  }
   root.style.colorScheme = theme.kind;
   root.dataset.theme = theme.id;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.colors.bg);

@@ -66,7 +66,10 @@ import { McpServersEditor } from "./McpServersEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
-import { providerCredentialNoun, providerTokenSet } from "./providers";
+import { ProviderConnectDialog, ProviderLogos } from "./ProviderConnect";
+import { AdvancedSettingsDialog } from "./AdvancedSettingsDialog";
+import { ConnectorDialog } from "./ConnectorDialog";
+import { providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
 import { Icon, type IconName } from "./Icons";
 import { ContextGauge, ContextPane } from "./Context";
@@ -193,6 +196,9 @@ export function App() {
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [models, setModels] = useState<ProviderModels | null>(null);
   const [options, setOptions] = useState<ProviderOptions | null>(null);
+  // The set-up dialogs (Provider logins, GitHub), reachable from the first screen, the sidebar checklist and the banner.
+  const [providerConnect, setProviderConnect] = useState<{ provider: Provider | null } | null>(null);
+  const [gitConnect, setGitConnect] = useState(false);
   // Pull Requests attached per Session (all Sessions, for the sidebar badges) and the rows of the ones opened.
   const [prs, setPrs] = useState<Record<string, PullRequest[]>>({});
   const [prItems, setPrItems] = useState<Record<string, PrItem[]>>({});
@@ -477,6 +483,10 @@ export function App() {
         : "Docker-enabled Sandboxes run with --privileged: the Agent can escape to Docker's Linux VM"
       : null;
   const settingsWarning = !anyTokenSet ? "No Provider login configured" : dockerWarning;
+  const gitConnected = (settings?.mcpServers ?? []).some((s) => s.connector !== null);
+  const [gitLater, setGitLater] = useState(() => localStorage.getItem("sessionboxer.setup.gitLater") === "1");
+  const showSetup = settings !== null && (!anyTokenSet || (!gitConnected && !gitLater));
+  const connectorNames = (settings?.mcpServers ?? []).map((s) => s.name);
 
   const topTitle =
     route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
@@ -605,6 +615,42 @@ export function App() {
           {sessions.length === 0 && <li className="empty">No sessions yet</li>}
         </ul>
         <div className="sidebar-footer">
+          {showSetup && (
+            <div className="setup-todo" aria-label="Set-up checklist">
+              <div className="setup-todo-head">
+                <span>To set up</span>
+                <span className="muted">{(anyTokenSet ? 1 : 0) + (gitConnected ? 1 : 0)}/2</span>
+              </div>
+              <button type="button" className={`setup-item${anyTokenSet ? " done" : ""}`} onClick={() => setProviderConnect({ provider: null })}>
+                <span className="setup-check" aria-hidden="true">{anyTokenSet ? "\u2713" : ""}</span>
+                <span className="setup-text">
+                  Connect a Provider
+                  <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor or Devin"}</span>
+                </span>
+              </button>
+              <button type="button" className={`setup-item${gitConnected ? " done" : ""}`} onClick={() => setGitConnect(true)}>
+                <span className="setup-check" aria-hidden="true">{gitConnected ? "\u2713" : ""}</span>
+                <span className="setup-text">
+                  Connect GitHub
+                  <span className="muted">{gitConnected ? "done" : "to push and open pull requests"}</span>
+                </span>
+                {!gitConnected && (
+                  <span
+                    role="button"
+                    className="setup-later"
+                    title="Hide this item; Global settings → Git accounts has it too"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      localStorage.setItem("sessionboxer.setup.gitLater", "1");
+                      setGitLater(true);
+                    }}
+                  >
+                    later
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
           <button onClick={() => setRoute({ view: "schedules" })} title={schedules.some((s) => s.lastStatus === "failed") ? "A scheduled task failed" : undefined}>
             Scheduled tasks
             {schedules.some((s) => s.lastStatus === "failed") && <span className="warn-sign" aria-label="A scheduled task failed">⚠</span>}
@@ -624,6 +670,18 @@ export function App() {
         </div>
       </aside>
 
+      {providerConnect && settings && (
+        <ProviderConnectDialog settings={settings} initial={providerConnect.provider} onClose={() => setProviderConnect(null)} onStored={setSettings} />
+      )}
+      {gitConnect && settings && (
+        <ConnectorDialog
+          kind="github"
+          server={null}
+          takenNames={connectorNames}
+          onClose={() => setGitConnect(false)}
+          onServer={() => void run(async () => setSettings(await api.settings()))}
+        />
+      )}
       {snapshotsSession && (
         <SnapshotsDialog
           session={snapshotsSession}
@@ -703,19 +761,21 @@ export function App() {
           </div>
         )}
         <SandboxImageBanner />
-        {!anyTokenSet && route.view !== "settings" && route.view !== "new" && (
-          <div className="banner banner-warn" onClick={() => setRoute({ view: "settings", section: "providers" })}>
-            No Provider login configured yet: Sessions need a Claude Code or Devin token, or a Codex or Cursor login. Add one in Global settings → Provider
-            logins.
+        {!anyTokenSet && route.view !== "settings" && route.view !== "new" && !(route.view === "session" && !selected) && (
+          <div className="banner banner-warn" onClick={() => setProviderConnect({ provider: null })}>
+            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor or Devin login. Click to connect one.
           </div>
         )}
-        {route.view === "new" && settings && (
+        {(route.view === "new" || (route.view === "session" && !selected)) && settings && (
           <NewSession
+            key={route.view}
             settings={settings}
             models={models ?? EMPTY_MODELS}
             options={options ?? EMPTY_OPTIONS}
+            firstTime={sessions.length === 0}
             onCreated={(s) => setRoute({ view: "session", id: s.id })}
-            onCancel={() => setRoute({ view: "session", id: null })}
+            onConnectProvider={(provider) => setProviderConnect({ provider })}
+            onConnectGit={() => setGitConnect(true)}
             run={run}
           />
         )}
@@ -743,9 +803,6 @@ export function App() {
             loadRuns={loadScheduleRuns}
             run={run}
           />
-        )}
-        {route.view === "session" && !selected && (
-          <div className="placeholder">Select a session or create a new one.</div>
         )}
         {route.view === "session" && selected && (
           <SessionView
@@ -1715,35 +1772,58 @@ function gitIdentityNote(session: Session): string {
   return `\nGit commits as ${name}${email ? ` <${email}>` : ""}`;
 }
 
+/**
+ * The first screen and the "+ New" screen (A+B of the hallway feedback): a prompt box in the middle
+ * with the Provider, the repositories and the advanced settings under it, and the four Provider
+ * logos above it until one is connected. Nothing here is a long form.
+ */
 function NewSession({
   settings,
   models,
   options,
+  firstTime,
   onCreated,
-  onCancel,
+  onConnectProvider,
+  onConnectGit,
   run,
 }: {
   settings: PublicSettings;
   models: ProviderModels;
   options: ProviderOptions;
+  /** No Session exists yet: a welcome heading instead of "New session". */
+  firstTime: boolean;
   onCreated: (s: Session) => void;
-  onCancel: () => void;
+  onConnectProvider: (provider: Provider | null) => void;
+  onConnectGit: () => void;
   run: Runner;
 }) {
-  const [provider, setProvider] = useState<Provider>("claude-code");
+  const connectedProviders = PROVIDERS.filter((p) => providerTokenSet(settings, p));
+  const [provider, setProvider] = useState<Provider>(() => connectedProviders[0] ?? "claude-code");
   const [draft, setDraft] = useState<SessionSettingsDraft>(() => draftFromDefaults(settings));
   const [repos, setRepos] = useState<RepoDraft[]>([]);
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [reposOpen, setReposOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const pickedRef = useRef(false);
+
+  // A login stored from the connect dialog while this screen is open becomes the selection (unless one was picked by hand).
+  useEffect(() => {
+    if (pickedRef.current || providerTokenSet(settings, provider)) return;
+    const first = PROVIDERS.find((p) => providerTokenSet(settings, p));
+    if (first) setProvider(first);
+  }, [settings, provider]);
 
   const repoSpecs = draftsToSpecs(repos);
   const repoError = draftsError(repos);
+  const providerReady = providerTokenSet(settings, provider);
+  const accounts = githubAccounts(settings);
+  const repoCount = repos.filter((d) => (d.type === "git" ? d.url.trim() : d.path.trim()) !== "").length;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (repoError) return;
+    if (repoError || !providerReady) return;
     setBusy(true);
     void run(async () => {
       const s = await api.createSession({
@@ -1759,80 +1839,120 @@ function NewSession({
   };
 
   return (
-    <>
-    <form className="panel" onSubmit={submit}>
-      <h2>New session</h2>
-      <label>
-        Provider
-        <select
-          value={provider}
-          onChange={(e) => {
-            setProvider(e.target.value as Provider);
-            setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: true }));
-          }}
-        >
-          {PROVIDERS.map((p) => (
-            <option key={p} value={p}>
-              {PROVIDER_LABELS[p]}
-            </option>
-          ))}
-        </select>
-      </label>
-      {!providerTokenSet(settings, provider) && (
-        <p className="field-hint warn">
-          No {PROVIDER_LABELS[provider]} {providerCredentialNoun(provider)} configured, so this Session could not start. Add it in{" "}
-          <a href="#/settings/providers">Global settings → Provider logins</a>, or pick a Provider you are logged in to.
-        </p>
-      )}
-      <fieldset className="choice">
-        <legend>Repositories (each goes to <code>/workspace/&lt;name&gt;</code> in the Sandbox; more can be added or removed later)</legend>
-        <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} accounts={githubAccounts(settings)} />
-        {repos.some((d) => d.type === "copy") && (
-          <p className="muted">
-            A host folder is copied (tracked + untracked-but-not-ignored files and <code>.git</code>); changes can be pulled back into it from the Session
-            header.
-          </p>
+    <div className="start">
+      <div className="start-inner">
+        <h2 className="start-title">{firstTime ? "What should the Agent work on?" : "New session"}</h2>
+        {connectedProviders.length === 0 && (
+          <div className="start-connect">
+            <p className="muted">
+              First, connect the Agent you have a subscription for (one is enough). Click a logo for the three commands to run on your machine.
+            </p>
+            <ProviderLogos settings={settings} onPick={onConnectProvider} />
+          </div>
         )}
-      </fieldset>
-      <label>
-        First prompt (optional, sent once the Sandbox is ready)
-        <textarea
-          rows={4}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="e.g. Read the README, run the tests and fix the one that fails; open a PR when they pass."
-        />
-      </label>
-      <label>
-        Title (optional, defaults to the first prompt)
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
-      </label>
-      <details className="fork-settings" open={moreOpen} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
-        <summary>More settings (model, Sandbox resources, Docker, MCP servers, instructions; the Global settings defaults otherwise)</summary>
-        {moreOpen && (
-          <SessionSettingsForm
-            mode="create"
-            provider={provider}
-            settings={settings}
-            models={models[provider]}
-            options={options[provider]}
-            value={draft}
-            onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+        <form className={`start-box${busy ? " busy" : ""}`} onSubmit={submit}>
+          <textarea
+            className="start-prompt"
+            rows={4}
+            value={prompt}
+            autoFocus={!mobileQuery()}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
+              }
+            }}
+            placeholder="e.g. Read the README, run the tests and fix the one that fails; open a PR when they pass. (Optional: an empty Session waits for you in the chat.)"
             disabled={busy}
           />
-        )}
-      </details>
-      <div className="actions">
-        <button type="button" onClick={onCancel} disabled={busy}>
-          Cancel
-        </button>
-        <button type="submit" disabled={busy || repoError !== null}>
-          {busy ? "Creating…" : "Create"}
-        </button>
+          <div className="start-tools">
+            <label className="start-provider" title="Which Agent runs this Session">
+              <ProviderIcon provider={provider} size={16} />
+              <select
+                value={provider}
+                disabled={busy}
+                onChange={(e) => {
+                  pickedRef.current = true;
+                  setProvider(e.target.value as Provider);
+                  setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: true }));
+                }}
+              >
+                {PROVIDERS.map((p) => (
+                  <option key={p} value={p}>
+                    {PROVIDER_LABELS[p]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!providerReady && (
+              <button type="button" className="small warn-btn" disabled={busy} onClick={() => onConnectProvider(provider)} title={`No ${PROVIDER_LABELS[provider]} login yet`}>
+                Connect…
+              </button>
+            )}
+            <button
+              type="button"
+              className={`small${reposOpen ? " active" : ""}`}
+              disabled={busy}
+              aria-expanded={reposOpen}
+              onClick={() => setReposOpen((v) => !v)}
+              title="Git repositories to clone (or host folders to copy) into the Sandbox; more can be added later"
+            >
+              <Icon name="code" /> {repoCount > 0 ? `${repoCount} repositor${repoCount === 1 ? "y" : "ies"}` : "Repository"}
+            </button>
+            <button type="button" className="small" disabled={busy} onClick={() => setAdvancedOpen(true)} title="Model, instructions, MCP servers, snapshots, Sandbox resources, title">
+              Advanced…
+            </button>
+            <span className="spacer" />
+            <button type="submit" className="primary" disabled={busy || repoError !== null || !providerReady} title={providerReady ? "Ctrl/⌘+Enter" : `Connect ${PROVIDER_LABELS[provider]} first`}>
+              {busy ? "Starting…" : "Start"}
+            </button>
+          </div>
+          {reposOpen && (
+            <div className="start-repos">
+              <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} accounts={accounts} />
+              {repos.some((d) => d.type === "copy") && (
+                <p className="muted">
+                  A host folder is copied (tracked + untracked-but-not-ignored files and <code>.git</code>); changes can be pulled back into it from the
+                  Session header.
+                </p>
+              )}
+              {accounts.length === 0 && (
+                <p className="muted">
+                  Public repositories clone as they are. Private ones, pushing and pull requests need a Git account:{" "}
+                  <button type="button" className="link" onClick={onConnectGit}>
+                    Connect GitHub…
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
+        </form>
+        {repoError && <p className="field-hint warn">{repoError}</p>}
+        <p className="muted start-foot">
+          Each Session gets its own Sandbox (a Docker container with a desktop, a terminal and your repositories) that the Agent works in; you watch and
+          steer from the chat.
+        </p>
       </div>
-    </form>
-    </>
+      {advancedOpen && (
+        <AdvancedSettingsDialog
+          provider={provider}
+          settings={settings}
+          models={models[provider]}
+          options={options[provider]}
+          value={draft}
+          title={title}
+          onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+          onTitle={setTitle}
+          onClose={() => setAdvancedOpen(false)}
+        />
+      )}
+    </div>
   );
+}
+
+function mobileQuery(): boolean {
+  return typeof matchMedia === "function" && matchMedia(MOBILE_QUERY).matches;
 }
 
 function parseAliasList(text: string): string[] {
@@ -1978,6 +2098,7 @@ function SettingsView({
   const [githubClientSecret, setGithubClientSecret] = useState("");
   const [forgetGithubSecret, setForgetGithubSecret] = useState(false);
   const githubSecretSet = settings.connectors.github.clientSecretSet && !forgetGithubSecret;
+  const [guided, setGuided] = useState(false);
   const tokenSet = settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN;
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
   const codexAuthSet = settings.providerSecretsSet.codex.CODEX_AUTH_JSON && !forgetCodexAuth;
@@ -2069,10 +2190,14 @@ function SettingsView({
         <legend>Provider logins</legend>
         <p className="muted">
           A Session needs the login of its Provider; one is enough to start. Each is made with the Provider&apos;s own CLI on your machine, then pasted here.
-          If the CLI is not installed yet: Claude Code <code>npm i -g @anthropic-ai/claude-code</code>, Devin{" "}
-          <code>curl -fsSL https://static.devin.ai/cli/setup.sh | bash</code>, Codex <code>npm i -g @openai/codex</code>, Cursor{" "}
-          <code>curl https://cursor.com/install -fsS | bash</code>.
         </p>
+        <div className="guided-row">
+          <button type="button" onClick={() => setGuided(true)}>
+            Connect step by step…
+          </button>
+          <span className="muted">Install the CLI, log in, paste: the commands for your operating system (macOS, Windows or Linux).</span>
+        </div>
+        {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
         <label>
           Claude Code OAuth token {tokenSet ? <span className="ok">(set)</span> : <span className="warn">(not set)</span>}
           <input

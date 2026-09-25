@@ -130,6 +130,21 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
 
 export type SessionSettingsMode = "create" | "fork" | "live";
 
+export type SessionSettingsSection = "agent" | "instructions" | "mcp" | "inspect" | "snapshots" | "verification" | "sandbox";
+
+/** The sections of the form in display order, for a split view's navigation. */
+export function sessionSettingsSections(provider: Provider): Array<{ id: SessionSettingsSection; label: string }> {
+  return [
+    { id: "agent", label: "Agent" },
+    { id: "instructions", label: "Instructions" },
+    { id: "mcp", label: "MCP servers & connectors" },
+    ...(provider === "claude-code" ? [{ id: "inspect" as const, label: "Inspect LLM" }] : []),
+    { id: "snapshots", label: "Snapshots" },
+    { id: "verification", label: "Verification" },
+    { id: "sandbox", label: "Sandbox" },
+  ];
+}
+
 /**
  * The one place a Session is configured: the New Session form (`create`, prefilled from the global
  * Settings), the Fork dialog (`fork`, prefilled from the origin) and the Session settings dialog
@@ -146,6 +161,7 @@ export function SessionSettingsForm({
   onChange,
   disabled = false,
   onFork,
+  only,
 }: {
   mode: SessionSettingsMode;
   provider: Provider;
@@ -159,7 +175,10 @@ export function SessionSettingsForm({
   disabled?: boolean;
   /** `live`: opens the Fork dialog, the way to change the creation-only values. */
   onFork?: () => void;
+  /** Render this one section (a split view shows one at a time); all of them otherwise. */
+  only?: SessionSettingsSection;
 }) {
+  const show = (section: SessionSettingsSection) => only === undefined || only === section;
   const live = mode === "live";
   const status = session?.status ?? "idle";
   const frozen = live;
@@ -172,6 +191,7 @@ export function SessionSettingsForm({
 
   return (
     <div className="ss-form">
+      {show("agent") && (
       <section className="ss-section">
         <h3>
           Agent
@@ -214,7 +234,9 @@ export function SessionSettingsForm({
         )}
         {live && <p className="muted ss-note">{applyNote(status, "immediate")} Also in the composer footer.</p>}
       </section>
+      )}
 
+      {show("instructions") && (
       <section className="ss-section">
         <h3>Instructions</h3>
         {frozen ? (
@@ -246,7 +268,9 @@ export function SessionSettingsForm({
           </>
         )}
       </section>
+      )}
 
+      {show("mcp") && (
       <section className="ss-section">
         <h3>
           MCP servers &amp; connectors
@@ -294,8 +318,9 @@ export function SessionSettingsForm({
           </a>
         )}
       </section>
+      )}
 
-      {canInspect && (
+      {canInspect && show("inspect") && (
         <section className="ss-section">
           <h3>
             Inspect LLM
@@ -313,6 +338,7 @@ export function SessionSettingsForm({
         </section>
       )}
 
+      {show("snapshots") && (
       <section className="ss-section">
         <h3>Snapshots</h3>
         <label>
@@ -338,7 +364,9 @@ export function SessionSettingsForm({
         />
         <p className="muted ss-note">Older automatic snapshots are dropped (never one a fork was started from); 0 keeps them all.</p>
       </section>
+      )}
 
+      {show("verification") && (
       <section className="ss-section">
         <h3>Verification</h3>
         <label>
@@ -358,7 +386,9 @@ export function SessionSettingsForm({
           and reruns what fails, and hands the video to the chat. Answer-only turns are skipped. Watch it in the Verification pane.
         </p>
       </section>
+      )}
 
+      {show("sandbox") && (
       <section className="ss-section">
         <h3>Sandbox</h3>
         {frozen ? (
@@ -438,6 +468,7 @@ export function SessionSettingsForm({
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }

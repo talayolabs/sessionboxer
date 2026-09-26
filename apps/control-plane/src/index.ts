@@ -92,7 +92,8 @@ import { HostDirError, listHostDir } from "./host-dir.js";
 import { banner, log } from "./log.js";
 import { PushNotifier } from "./push.js";
 import { Scheduler } from "./scheduler.js";
-import { HttpError, SessionManager } from "./sessions.js";
+import { HttpError, MACOS_AVAILABILITY, SessionManager } from "./sessions.js";
+import { WindowsVms } from "./windows.js";
 import { deleteModel, Speech } from "./speech.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
 import { checkTunnelName, tunnelName, tunnelServerInfo } from "./tunnel-frp.js";
@@ -141,7 +142,17 @@ const push = new PushNotifier(
   },
   log,
 );
-const sessions = new SessionManager(db, docker, () => settings, log, (msg) => push.send(msg));
+const windows = new WindowsVms(
+  docker.docker,
+  () => settings,
+  (next) => {
+    settings = next;
+    saveSettings(settings);
+  },
+  () => db.listSessions().filter((s) => s.settings.sandbox.environment === "qemu-windows").length,
+  (status) => sessions.notify({ type: "windows_base", status }),
+);
+const sessions = new SessionManager(db, docker, windows, () => settings, log, (msg) => push.send(msg));
 // Codex rotates its ChatGPT tokens inside the Sandbox; the rewritten auth.json replaces the stored one
 // (unless it is older than what another Sandbox already sent) and reaches the other Codex Sessions.
 sessions.codexAuthRefreshed = (sessionId, authJson) => {
@@ -181,7 +192,12 @@ const tunnels = new Tunnels(
   log,
 );
 const auth = new Auth(db.connection, () => accessToken(settings), TRUST_PROXY, new URL(PUBLIC_URL).host, log, () => tunnels.hosts());
-const publicSettings = async () => toPublicSettings(settings, await sessions.dockerModeAvailable(), tunnels.statuses());
+const publicSettings = async () =>
+  toPublicSettings(settings, await sessions.dockerModeAvailable(), tunnels.statuses(), {
+    "docker-linux": { available: true, reason: null },
+    "qemu-windows": await windows.availability(),
+    "qemu-macos": MACOS_AVAILABILITY,
+  });
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -292,6 +308,12 @@ api.put("/settings", async (c) => {
   if (update.tunnels) await tunnels.apply(settings.tunnels);
   return c.json(await publicSettings());
 });
+
+/** The shared Windows base disk (ADR-0057): its state, and installing / cancelling / deleting it. */
+api.get("/windows", (c) => c.json(windows.status()));
+api.post("/windows/install", async (c) => c.json(await windows.install()));
+api.post("/windows/cancel", async (c) => c.json(await windows.cancelInstall()));
+api.delete("/windows", async (c) => c.json(await windows.removeBase()));
 
 api.get("/sandbox-image", (c) => c.json(docker.imageStatus()));
 // Retries a pull that failed (a network drop, a registry outage); a no-op while one runs or once the image is here.
@@ -730,6 +752,7 @@ if (existsSync(webDist)) {
   app.get("*", serveStatic({ root: webDist, path: "index.html" }));
 }
 
+await windows.init().catch((e: unknown) => log(`windows: ${e instanceof Error ? e.message : String(e)}`));
 await sessions.boot();
 scheduler.start();
 if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {

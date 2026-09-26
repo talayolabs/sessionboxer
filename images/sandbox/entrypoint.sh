@@ -51,6 +51,14 @@ websockify --web /usr/share/novnc "0.0.0.0:${SESSIONBOXER_NOVNC_PORT}" \
 
 log "desktop ready"
 
+# A `qemu-windows` Session (ADR-0057): the Windows VM runs in a sidecar container;
+# its desktop is shown full screen on this display over RDP, reconnecting for as
+# long as the Sandbox lives (the VM takes a minute to boot, and reboots on its own).
+if [[ -n "${SESSIONBOXER_WINDOWS_HOST:-}" ]]; then
+  log "windows desktop: rdp to ${SESSIONBOXER_WINDOWS_HOST}:${SESSIONBOXER_WINDOWS_RDP_PORT:-3389}"
+  sessionboxer-windows-desktop >"$LOG_DIR/windows-desktop.log" 2>&1 &
+fi
+
 # SESSIONBOXER_DOCKER is `sysbox` or `privileged` (ADR-0008); either way the
 # Sandbox gets a private dockerd, whose state survives Stop/Resume.
 if [[ -n "${SESSIONBOXER_DOCKER:-}" ]]; then

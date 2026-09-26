@@ -7,6 +7,7 @@ import {
   DEFAULT_INSTRUCTIONS,
   DOCKER_ADDRESS_POOL_PATTERN,
   DOCKER_MODE_LABELS,
+  ENVIRONMENT_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
   ROOT_BRANCH_ID,
@@ -42,6 +43,10 @@ import {
   type Snapshot,
   type SpeechModel,
   type SandboxImageStatus,
+  type WindowsBaseStatus,
+  WINDOWS_VERSIONS,
+  WINDOWS_GUEST_USER,
+  WINDOWS_NO_SNAPSHOT,
   type SpeechStatus,
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
@@ -206,6 +211,7 @@ export function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [snapshotting, setSnapshotting] = useState<Set<string>>(() => new Set());
   const [settings, setSettings] = useState<PublicSettings | null>(null);
+  const [windowsBase, setWindowsBase] = useState<WindowsBaseStatus | null>(null);
   const [models, setModels] = useState<ProviderModels | null>(null);
   const [options, setOptions] = useState<ProviderOptions | null>(null);
   // The set-up dialogs (Provider logins, GitHub), reachable from the first screen, the sidebar checklist and the banner.
@@ -296,6 +302,7 @@ export function App() {
   useEffect(() => {
     void reloadSessions();
     void run(async () => setSettings(await api.settings()));
+    void api.windowsBase().then(setWindowsBase, () => undefined);
     void run(async () => setModels(await api.models()));
     void run(async () => setOptions(await api.options()));
     void run(async () => setSchedules(await api.schedules()));
@@ -459,6 +466,11 @@ export function App() {
           case "remote":
             setSettings((prev) => (prev ? { ...prev, remote: msg.remote } : prev));
             break;
+          case "windows_base":
+            setWindowsBase(msg.status);
+            // Whether `qemu-windows` can be picked follows the base disk's state.
+            void api.settings().then(setSettings, () => undefined);
+            break;
         }
       },
       () => {
@@ -597,6 +609,11 @@ export function App() {
                   {s.settings.sandbox.dockerMode === "privileged" && (
                     <span className="docker-warn" title={PRIVILEGED_WARNING}>
                       <DockerIcon label={PRIVILEGED_WARNING} />
+                    </span>
+                  )}
+                  {s.settings.sandbox.environment === "qemu-windows" && (
+                    <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: a Windows VM next to the Sandbox`}>
+                      <Icon name="windows" size={12} />
                     </span>
                   )}
                   <SessionSourceIcon session={s} />
@@ -800,6 +817,8 @@ export function App() {
               setSettings(s);
               setRoute({ view: "session", id: null });
             }}
+            windowsBase={windowsBase}
+            onWindowsBase={setWindowsBase}
             run={run}
           />
         )}
@@ -1248,6 +1267,7 @@ function SessionView({
 
   const copiedRepos = session.repos.filter((r) => r.source.type === "copy");
   const isLive = session.status === "idle" || session.status === "running";
+  const windows = session.settings.sandbox.environment === "qemu-windows";
   const latestSnapshot = snapshots[snapshots.length - 1];
   const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
   const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending;
@@ -1273,16 +1293,16 @@ function SessionView({
       key: "snapshot",
       icon: "snapshot",
       label: snapshotting ? "Snapshotting\u2026" : "Snapshot",
-      title: isLive ? "docker commit the Sandbox now (a fork point)" : "Snapshots need a running Sandbox",
-      disabled: !isLive || snapshotting,
+      title: windows ? WINDOWS_NO_SNAPSHOT : isLive ? "docker commit the Sandbox now (a fork point)" : "Snapshots need a running Sandbox",
+      disabled: windows || !isLive || snapshotting,
       onPick: () => void run(() => api.createSnapshot(session.id)),
     },
     {
       key: "fork",
       icon: "fork",
       label: "Fork\u2026",
-      title: latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first",
-      disabled: !latestSnapshot,
+      title: windows ? WINDOWS_NO_SNAPSHOT : latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first",
+      disabled: windows || !latestSnapshot,
       onPick: () => latestSnapshot && setForkFrom(latestSnapshot.id),
     },
     ...(copiedRepos.length > 0
@@ -1421,6 +1441,12 @@ function SessionView({
           <span className="docker-warn" title={PRIVILEGED_WARNING}>
             <DockerIcon size={18} label={PRIVILEGED_WARNING} />
             {mobile && <span className="warn">{DOCKER_MODE_LABELS.privileged}</span>}
+          </span>
+        )}
+        {session.settings.sandbox.environment === "qemu-windows" && (
+          <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: the Desktop shows a Windows VM over RDP; \`win <command>\` runs PowerShell in it`}>
+            <Icon name="windows" size={16} />
+            {mobile && <span className="muted">{ENVIRONMENT_LABELS["qemu-windows"]}</span>}
           </span>
         )}
         {session.repos.length > 0 ? (
@@ -2050,6 +2076,89 @@ function SpeechAssets({ selected, saved }: { selected: SpeechModel; saved: Speec
   );
 }
 
+/** The shared Windows base disk (ADR-0057): its state and the Install / Cancel / Delete buttons. */
+function WindowsBase({
+  settings,
+  status,
+  onStatus,
+  dirty,
+}: {
+  settings: PublicSettings;
+  status: WindowsBaseStatus | null;
+  onStatus: (status: WindowsBaseStatus) => void;
+  /** Edition or disk size changed in the form but not saved yet: installing now would use the saved ones. */
+  dirty: boolean;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const availability = settings.environments["qemu-windows"];
+  const act = async (call: () => Promise<WindowsBaseStatus>) => {
+    setWorking(true);
+    setError(null);
+    try {
+      onStatus(await call());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWorking(false);
+      setConfirmDelete(false);
+    }
+  };
+  if (!status) return <p className="muted">Checking the base disk…</p>;
+  const edition = WINDOWS_VERSIONS.find((v) => v.code === status.version)?.label ?? status.version;
+  const started = status.startedAt ? new Date(status.startedAt) : null;
+  const line =
+    status.state === "ready"
+      ? `Base disk ready: ${edition} (${formatMb(status.sizeBytes)} MB on disk)${status.sessions > 0 ? `, ${status.sessions} Session${status.sessions === 1 ? "" : "s"} built on it` : ""}.`
+      : status.state === "installing"
+        ? `Installing ${edition}${started ? `, started ${started.toLocaleTimeString()}` : ""}… Windows downloads and installs itself; this takes 20–40 minutes.`
+        : status.state === "error"
+          ? `Installing ${edition ?? "the base"} failed: ${status.error ?? "unknown error"}`
+          : "No base disk yet: no Windows Session can be created until it is installed.";
+  return (
+    <div className="windows-base">
+      <p className={status.state === "error" ? "error" : "muted"}>{line}</p>
+      {!availability.available && availability.reason && status.state !== "installing" && (
+        <p className="muted">QEMU · Windows cannot be picked yet: {availability.reason}</p>
+      )}
+      {(status.state === "installing" || status.state === "error") && status.log.length > 0 && (
+        <pre className="windows-base-log">{status.log.join("\n")}</pre>
+      )}
+      <div className="row">
+        {(status.state === "missing" || status.state === "error") && (
+          <button type="button" className="small" disabled={working || dirty} title={dirty ? "Save the settings first" : undefined} onClick={() => void act(api.windowsInstall)}>
+            {status.state === "error" ? "Install again" : "Install the base disk"}
+          </button>
+        )}
+        {status.state === "installing" && (
+          <button type="button" className="small" disabled={working} onClick={() => void act(api.windowsCancel)}>
+            Cancel the install
+          </button>
+        )}
+        {(status.state === "ready" || status.state === "error") &&
+          (confirmDelete ? (
+            <>
+              <span className="muted">Delete the base disk{status.sessions > 0 ? " (not while Sessions are built on it)" : ""}?</span>
+              <button type="button" className="small danger" disabled={working || status.sessions > 0} onClick={() => void act(api.windowsRemove)}>
+                Delete
+              </button>
+              <button type="button" className="small" onClick={() => setConfirmDelete(false)}>
+                Keep
+              </button>
+            </>
+          ) : (
+            <button type="button" className="small" disabled={working} onClick={() => setConfirmDelete(true)}>
+              Delete the base disk
+            </button>
+          ))}
+        {dirty && <span className="muted">Save to apply the edition / disk size before installing.</span>}
+      </div>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
 /** Blocks rarely used by home routers (192.168.0–1.x), office LANs (10.0–10.10.x), WSL2 (172.16–31.x) or Kubernetes (10.96/10.244). */
 const DOCKER_POOL_SUGGESTIONS = [
   { block: DEFAULT_DOCKER_ADDRESS_POOL, why: "Default — top of 192.168.x: clear of home routers (192.168.0–1.x) and Docker Desktop (192.168.65.x)" },
@@ -2064,6 +2173,7 @@ const GLOBAL_SETTINGS_SECTIONS = [
   { id: "models", label: "Models and instructions" },
   { id: "mcp", label: "MCP servers" },
   { id: "sandbox", label: "Sandbox resources" },
+  { id: "windows", label: "Windows VMs" },
   { id: "git-identity", label: "Git identity" },
   { id: "snapshots", label: "Snapshots" },
   { id: "verification", label: "Verification" },
@@ -2087,6 +2197,8 @@ function SettingsView({
   onSection,
   onSaved,
   onStored,
+  windowsBase,
+  onWindowsBase,
   run,
 }: {
   settings: PublicSettings;
@@ -2096,6 +2208,9 @@ function SettingsView({
   onSaved: (s: PublicSettings) => void;
   /** Settings the Control Plane stored on its own (connector logins), without the form being saved. */
   onStored: (s: PublicSettings) => void;
+  /** The shared Windows base disk (ADR-0057), kept current by the `windows_base` broadcast. */
+  windowsBase: WindowsBaseStatus | null;
+  onWindowsBase: (status: WindowsBaseStatus) => void;
   run: Runner;
 }) {
   const [token, setToken] = useState("");
@@ -2119,6 +2234,10 @@ function SettingsView({
   const [memory, setMemory] = useState(String(settings.sandboxMemoryGb));
   const [docker, setDocker] = useState(settings.dockerInSandbox);
   const [dockerPool, setDockerPool] = useState(settings.sandboxDockerAddressPool);
+  const [windowsVersion, setWindowsVersion] = useState(settings.windows.version);
+  const [windowsRam, setWindowsRam] = useState(String(settings.windows.ramGb));
+  const [windowsCpus, setWindowsCpus] = useState(String(settings.windows.cpus));
+  const [windowsDisk, setWindowsDisk] = useState(String(settings.windows.diskGb));
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [e2eVerify, setE2eVerify] = useState(settings.e2eVerify);
@@ -2170,6 +2289,12 @@ function SettingsView({
         sandboxMemoryGb: Number(memory),
         dockerInSandbox: docker,
         sandboxDockerAddressPool: dockerPool.trim(),
+        windows: {
+          version: windowsVersion,
+          ramGb: Math.max(1, Number(windowsRam) || settings.windows.ramGb),
+          cpus: Math.max(1, Math.floor(Number(windowsCpus) || settings.windows.cpus)),
+          diskGb: Math.max(16, Math.floor(Number(windowsDisk) || settings.windows.diskGb)),
+        },
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         e2eVerify,
@@ -2550,6 +2675,54 @@ function SettingsView({
                 default <code>{DEFAULT_DOCKER_ADDRESS_POOL}</code> keeps clear of home routers, Docker Desktop, WSL2, company 10.x networks and
                 Kubernetes; the field suggests alternatives. Applies to Sandboxes created afterwards.
               </p>
+            </fieldset>
+          )}
+          {show("windows") && (
+            <fieldset className="choice">
+              <legend>Windows VMs</legend>
+              <p className="muted">
+                A <strong>QEMU · Windows</strong> Session runs a Windows VM (QEMU/KVM) next to its Linux Sandbox: the Desktop shows Windows over RDP,
+                the Agent drives it with the same screenshot, mouse and keyboard tools, and <code>win &lt;command&gt;</code> runs PowerShell in it over SSH
+                as <code>{WINDOWS_GUEST_USER}</code>. Every VM starts from one shared base disk, installed here once from Microsoft&apos;s installation media
+                (unattended, 20–40 minutes; a licence is yours to bring). Needs a Linux host with <code>/dev/kvm</code>; Docker Desktop on macOS or
+                Windows cannot run it.
+              </p>
+              <div className="row">
+                <label>
+                  Edition of the base disk
+                  <select value={windowsVersion} onChange={(e) => setWindowsVersion(e.target.value)}>
+                    {WINDOWS_VERSIONS.map((v) => (
+                      <option key={v.code} value={v.code}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Base disk size (GB)
+                  <input type="number" min={16} step={1} value={windowsDisk} onChange={(e) => setWindowsDisk(e.target.value)} />
+                </label>
+              </div>
+              <div className="row">
+                <label>
+                  VM memory (GB)
+                  <input type="number" min={1} step={1} value={windowsRam} onChange={(e) => setWindowsRam(e.target.value)} />
+                </label>
+                <label>
+                  VM CPUs
+                  <input type="number" min={1} step={1} value={windowsCpus} onChange={(e) => setWindowsCpus(e.target.value)} />
+                </label>
+              </div>
+              <p className="muted">
+                Memory and CPUs are on top of the Session&apos;s Sandbox and apply to VMs started afterwards; edition and disk size are those of the base,
+                so changing them means deleting and installing the base again. Save first, then install.
+              </p>
+              <WindowsBase
+                settings={settings}
+                status={windowsBase}
+                onStatus={onWindowsBase}
+                dirty={windowsVersion !== settings.windows.version || Number(windowsDisk) !== settings.windows.diskGb}
+              />
             </fieldset>
           )}
           {show("snapshots") && (

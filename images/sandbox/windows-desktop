@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Shows the Windows VM of a `qemu-windows` Session (ADR-0057) full screen on this
+# Sandbox's X display over RDP, for as long as the Sandbox lives: waits for the VM's
+# RDP port (a minute after a start), connects, and connects again whenever the
+# connection ends (the VM rebooted, the network blinked). A message on the desktop
+# says what is going on while there is no Windows to show.
+set -uo pipefail
+
+: "${DISPLAY:=:1}"
+: "${SESSIONBOXER_WINDOWS_HOST:?SESSIONBOXER_WINDOWS_HOST is not set: not a Windows Session}"
+: "${SESSIONBOXER_WINDOWS_RDP_PORT:=3389}"
+: "${SESSIONBOXER_WINDOWS_USER:=agent}"
+: "${SESSIONBOXER_WINDOWS_PASSWORD:?SESSIONBOXER_WINDOWS_PASSWORD is not set}"
+: "${SESSIONBOXER_DISPLAY_WIDTH:=1024}"
+: "${SESSIONBOXER_DISPLAY_HEIGHT:=768}"
+
+host="$SESSIONBOXER_WINDOWS_HOST"
+port="$SESSIONBOXER_WINDOWS_RDP_PORT"
+log() { printf '[windows-desktop] %s\n' "$*" >&2; }
+
+notice_pid=""
+notice() {
+  [[ -n "$notice_pid" ]] && kill "$notice_pid" 2>/dev/null
+  xmessage -center -buttons "" -title "Windows" "$1" &
+  notice_pid=$!
+}
+clear_notice() {
+  [[ -n "$notice_pid" ]] && kill "$notice_pid" 2>/dev/null
+  notice_pid=""
+}
+
+port_open() { (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; }
+
+first=1
+while :; do
+  if ! port_open; then
+    if [[ $first -eq 1 ]]; then
+      notice "Waiting for the Windows VM to boot ($host)…"
+    else
+      notice "The Windows VM is restarting; connecting again when it is back…"
+    fi
+    until port_open; do sleep 3; done
+  fi
+  log "connecting to $host:$port as $SESSIONBOXER_WINDOWS_USER"
+  clear_notice
+  # /f: the whole display, no decorations, no floatbar (off by default) so the screenshots show
+  # Windows alone. /cert:ignore: the VM's RDP certificate is self-signed and changes with the disk.
+  # The whole command line goes through an environment variable (/args-from) so the password is
+  # not in the process list.
+  SBX_RDP_ARGS=$(printf '%s\n' "/v:$host:$port" "/u:$SESSIONBOXER_WINDOWS_USER" "/p:$SESSIONBOXER_WINDOWS_PASSWORD" \
+    /f -decorations "/size:${SESSIONBOXER_DISPLAY_WIDTH}x${SESSIONBOXER_DISPLAY_HEIGHT}" \
+    /cert:ignore /bpp:32 /network:auto +clipboard /gfx /timeout:20000 /log-level:ERROR)
+  SBX_RDP_ARGS="$SBX_RDP_ARGS" xfreerdp3 /args-from:env:SBX_RDP_ARGS 2> >(grep -v -e Kerberos -e 'fuse: device' >&2)
+  rc=$?
+  log "rdp session ended (exit $rc)"
+  first=0
+  sleep 3
+done

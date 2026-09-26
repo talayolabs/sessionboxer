@@ -586,11 +586,12 @@ export class SandboxDocker {
   }
 
   /**
-   * Emits container ids whose Sandbox died on its own (not via a stop we requested).
+   * Emits container ids (and names) of Session-labelled containers — Sandboxes and their Windows
+   * VMs — that died on their own (not via a stop we requested).
    * The Docker event stream is re-opened if it ends or fails (e.g. a daemon restart).
    */
   async watchDeaths(
-    onDie: (containerId: string, sessionId: string, exitCode: string) => void,
+    onDie: (containerId: string, sessionId: string, exitCode: string, name: string) => void,
     onLost: (error: string) => void,
   ): Promise<void> {
     const stream = await this.docker.getEvents({
@@ -619,7 +620,7 @@ export class SandboxDocker {
             Actor: { ID: string; Attributes: Record<string, string> };
           };
           const sessionId = ev.Actor.Attributes[LABEL_SESSION];
-          if (sessionId) onDie(ev.Actor.ID, sessionId, ev.Actor.Attributes.exitCode ?? "?");
+          if (sessionId) onDie(ev.Actor.ID, sessionId, ev.Actor.Attributes.exitCode ?? "?", ev.Actor.Attributes.name ?? "");
         } catch {
           // ignore partial lines
         }

@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   DOCKER_MODE_LABELS,
+  ENVIRONMENTS,
+  ENVIRONMENT_LABELS,
   PROVIDER_LABELS,
+  type Environment,
   applyNote,
   instructionsDelivery,
   type AgentOption,
@@ -63,6 +66,8 @@ export interface SessionSettingsDraft {
   snapshotKeep: number | null;
   /** Verify each turn end to end (ADR-0044); `null` follows Settings. */
   e2eVerify: boolean | null;
+  /** Where the desktop runs (ADR-0057); fixed once the Session exists, a fork keeps the origin's. */
+  environment: Environment;
   docker: boolean;
   cpus: number | null;
   memoryGb: number | null;
@@ -81,6 +86,7 @@ export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraf
     autoSnapshot: null,
     snapshotKeep: null,
     e2eVerify: null,
+    environment: "docker-linux",
     docker: settings.dockerInSandbox,
     cpus: null,
     memoryGb: null,
@@ -100,6 +106,7 @@ export function draftFromSettings(s: SessionSettings): SessionSettingsDraft {
     autoSnapshot: s.autoSnapshot,
     snapshotKeep: s.snapshotKeep,
     e2eVerify: s.e2eVerify,
+    environment: s.sandbox.environment,
     docker: s.sandbox.dockerMode !== "none",
     cpus: s.sandbox.cpus,
     memoryGb: s.sandbox.memoryGb,
@@ -120,6 +127,7 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
     snapshotKeep: d.snapshotKeep,
     e2eVerify: d.e2eVerify,
     sandbox: {
+      environment: d.environment,
       docker: d.docker,
       cpus: d.cpus,
       memoryGb: d.memoryGb,
@@ -188,6 +196,10 @@ export function SessionSettingsForm({
   const enabledMcp = new Set(value.mcpEnabled);
   const providerLabel = PROVIDER_LABELS[provider];
   const dockerMode = session?.settings.sandbox.dockerMode ?? (value.docker ? settings.dockerModeAvailable : "none");
+  const environment = session?.settings.sandbox.environment ?? value.environment;
+  const windows = environment === "qemu-windows";
+  // A fork keeps the origin's Environment: its snapshot is a disk of that kind.
+  const environmentFixed = frozen || mode === "fork";
 
   return (
     <div className="ss-form">
@@ -391,7 +403,33 @@ export function SessionSettingsForm({
       {show("sandbox") && (
       <section className="ss-section">
         <h3>Sandbox</h3>
-        {frozen ? (
+        {environmentFixed ? (
+          <p className="muted ss-fixed">
+            Environment: {ENVIRONMENT_LABELS[environment]} <span className="ss-lock">(fixed for the Session{mode === "fork" ? " and its forks" : ""})</span>
+          </p>
+        ) : (
+          <>
+            <label>
+              Environment
+              <select value={value.environment} disabled={disabled} onChange={(e) => onChange({ environment: e.target.value as Environment })}>
+                {ENVIRONMENTS.map((env) => (
+                  <option key={env} value={env} disabled={!settings.environments[env].available}>
+                    {ENVIRONMENT_LABELS[env]}
+                    {settings.environments[env].available ? "" : " — not available"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <EnvironmentNote settings={settings} environment={value.environment} />
+          </>
+        )}
+        {windows ? (
+          <p className="muted ss-note">
+            The Agent, its shell, git and the editor run on a Linux Sandbox next to the Windows VM; the Desktop shows Windows over RDP and{" "}
+            <code>win &lt;command&gt;</code> runs PowerShell in it. Docker inside the Sandbox, snapshots, forks and rebuilds are not available
+            for Windows Sessions yet.
+          </p>
+        ) : frozen ? (
           <p className="muted ss-fixed">
             Docker inside the Sandbox: {dockerMode === "none" ? "off" : DOCKER_MODE_LABELS[dockerMode]}{" "}
             <span className="ss-lock">(fixed for the Session)</span>
@@ -459,7 +497,7 @@ export function SessionSettingsForm({
             </p>
           </>
         )}
-        {live && onFork && (
+        {live && onFork && !windows && (
           <div className="ss-fork">
             <button type="button" onClick={onFork} disabled={disabled}>
               Fork with different settings…
@@ -471,6 +509,33 @@ export function SessionSettingsForm({
       )}
     </div>
   );
+}
+
+/** Why an Environment cannot be picked on this host, or what picking it means (ADR-0057). */
+function EnvironmentNote({ settings, environment }: { settings: PublicSettings; environment: Environment }) {
+  const availability = settings.environments[environment];
+  if (!availability.available) {
+    return (
+      <p className="muted ss-note">
+        {ENVIRONMENT_LABELS[environment]} is not available: {availability.reason ?? "not on this host"}
+        {environment === "qemu-windows" ? (
+          <>
+            {" "}
+            See <a href="#/settings/windows">Settings › Windows</a>.
+          </>
+        ) : null}
+      </p>
+    );
+  }
+  if (environment === "qemu-windows") {
+    return (
+      <p className="muted ss-note">
+        A Windows {settings.windows.version} VM (QEMU/KVM, {settings.windows.ramGb} GB RAM, {settings.windows.cpus} vCPUs, its own disk from the
+        shared base) starts next to the Linux Sandbox; the Desktop shows it over RDP.
+      </p>
+    );
+  }
+  return null;
 }
 
 /** Optional number: empty means "the Settings default". Commits on blur/Enter so a live dialog does not save every keystroke. */

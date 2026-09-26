@@ -542,6 +542,7 @@ function draftFromInput(input: SessionSettingsInput, settings: PublicSettings): 
     autoSnapshot: input.autoSnapshot === undefined ? base.autoSnapshot : input.autoSnapshot,
     snapshotKeep: input.snapshotKeep === undefined ? base.snapshotKeep : input.snapshotKeep,
     e2eVerify: input.e2eVerify === undefined ? base.e2eVerify : input.e2eVerify,
+    environment: input.sandbox?.environment ?? base.environment,
     docker: input.sandbox?.docker ?? base.docker,
     cpus: input.sandbox?.cpus === undefined ? base.cpus : input.sandbox.cpus,
     memoryGb: input.sandbox?.memoryGb === undefined ? base.memoryGb : input.sandbox.memoryGb,

@@ -50,6 +50,7 @@ More ways to install, updating and troubleshooting: [user guide → Install](doc
 - **Dictation.** Talk instead of typing; whisper.cpp transcribes on your machine, offline.
 - **From your phone.** Pair a device with a QR code over a tunnel; push notifications when the agent is done.
 - **Stop and resume.** A stopped box uses nothing and comes back where it was.
+- **A Windows desktop when you need one.** Pick *QEMU · Windows* as the session's environment (Linux hosts with KVM): a Windows VM boots next to the box, and the desktop the agent sees and drives is Windows; `win <command>` runs PowerShell in it.
 - **Docker inside the box**, behind a corporate proxy, several GitHub accounts, Bitbucket Data Center.
 
 Every feature in detail: [user guide](docs/GUIDE.md).

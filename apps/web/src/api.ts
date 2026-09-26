@@ -69,6 +69,7 @@ import type {
   TunnelNameCheck,
   TunnelServerInfo,
   UpdateSettingsRequest,
+  WindowsBaseStatus,
 } from "@sessionboxer/protocol";
 
 /** Fired on `window` when the Control Plane answers 401 to anything but a login attempt: the device cookie is gone or revoked. */
@@ -116,6 +117,11 @@ export const api = {
     request<PublicSettings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
   sandboxImage: () => request<SandboxImageStatus>("/sandbox-image"),
   sandboxImagePull: () => request<SandboxImageStatus>("/sandbox-image/pull", { method: "POST" }),
+  /** The shared Windows base disk of `qemu-windows` Sessions (ADR-0057). */
+  windowsBase: () => request<WindowsBaseStatus>("/windows"),
+  windowsInstall: () => request<WindowsBaseStatus>("/windows/install", { method: "POST" }),
+  windowsCancel: () => request<WindowsBaseStatus>("/windows/cancel", { method: "POST" }),
+  windowsRemove: () => request<WindowsBaseStatus>("/windows", { method: "DELETE" }),
   speechStatus: () => request<SpeechStatus>("/speech"),
   speechPrepare: () => request<SpeechStatus>("/speech/prepare", { method: "POST" }),
   speechDeleteModel: (model: SpeechModel) => request<void>(`/speech/models/${model}`, { method: "DELETE" }),

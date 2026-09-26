@@ -64,6 +64,33 @@ export const DOCKER_MODE_LABELS: Record<DockerMode, string> = {
   privileged: "Docker (privileged)",
 };
 
+/**
+ * Where a Session's desktop runs (ADR-0057). `docker-linux` is the Sandbox container's own XFCE
+ * desktop; `qemu-windows` adds a Windows VM (QEMU/KVM in a sidecar container) whose desktop fills
+ * the Sandbox's screen over RDP, so the Agent, its tools and the repositories stay on the Linux
+ * side; `qemu-macos` is reserved for a Mac host (Apple allows macOS guests on Apple hardware only).
+ */
+export const ENVIRONMENTS = ["docker-linux", "qemu-windows", "qemu-macos"] as const;
+export const Environment = z.enum(ENVIRONMENTS);
+export type Environment = z.infer<typeof Environment>;
+
+export const ENVIRONMENT_LABELS: Record<Environment, string> = {
+  "docker-linux": "Docker · Linux",
+  "qemu-windows": "QEMU · Windows",
+  "qemu-macos": "QEMU · macOS",
+};
+
+/** Why Snapshot / Fork / Rebuild are refused for `qemu-windows` Sessions (ADR-0057). */
+export const WINDOWS_NO_SNAPSHOT =
+  "Snapshots, forks and rebuilds are not available for Windows Sessions yet: the VM disk is outside the Sandbox's image.";
+
+/** Whether an Environment can be picked on this host, and if not, why (one sentence for the UI). */
+export const EnvironmentAvailability = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
+});
+export type EnvironmentAvailability = z.infer<typeof EnvironmentAvailability>;
+
 export const WorkspaceSource = z.discriminatedUnion("type", [
   z.object({ type: z.literal("empty") }),
   z.object({ type: z.literal("git"), url: z.string().min(1), ref: z.string().min(1).optional() }),
@@ -478,6 +505,7 @@ export type GitIdentity = z.infer<typeof GitIdentity>;
 
 /** How the Sandbox was built; fixed for the Session's life (a fork can differ). */
 export const SandboxSettings = z.object({
+  environment: Environment.default("docker-linux"),
   dockerMode: DockerMode.default("none"),
   /** CPU limit; `null` follows `Settings.sandboxCpus` (read when a Sandbox is created or rebuilt). */
   cpus: z.number().positive().nullable().default(null),
@@ -573,6 +601,8 @@ export const SessionSettingsInput = z.object({
   e2eVerify: z.boolean().nullable().optional(),
   sandbox: z
     .object({
+      /** Omitted means `docker-linux`; a fork keeps the origin's. */
+      environment: Environment.optional(),
       /** Docker daemon inside the Sandbox; the mode is whatever the host offers. */
       docker: z.boolean().optional(),
       cpus: z.number().positive().nullable().optional(),
@@ -1213,6 +1243,27 @@ export const SandboxImageStatus = z.object({
 });
 export type SandboxImageStatus = z.infer<typeof SandboxImageStatus>;
 
+/**
+ * `GET /api/windows`: the shared Windows base disk every `qemu-windows` Session's VM starts from
+ * (ADR-0057). Installed once from Microsoft's media by `POST /api/windows/install` (a long
+ * unattended install); a Session cannot be created while it is `missing`.
+ */
+export const WindowsBaseStatus = z.object({
+  state: z.enum(["missing", "installing", "ready", "error"]),
+  /** The Windows edition the base was (or is being) installed with, a `WindowsSettings.version` code. */
+  version: z.string().nullable(),
+  /** Bytes the base disk takes on this machine (0 until installed). */
+  sizeBytes: z.number(),
+  /** ISO 8601, while `installing`. */
+  startedAt: z.string().nullable(),
+  /** The last lines the installer printed, while `installing` or after an `error`. */
+  log: z.array(z.string()),
+  error: z.string().nullable(),
+  /** Sessions whose VM disk builds on this base; it cannot be reinstalled while there are any. */
+  sessions: z.number().int().nonnegative(),
+});
+export type WindowsBaseStatus = z.infer<typeof WindowsBaseStatus>;
+
 /** `GET /api/speech`: whether transcription can run right now and what it is waiting for. */
 export const SpeechStatus = z.object({
   engine: z.object({
@@ -1499,6 +1550,34 @@ export const DOCKER_ADDRESS_POOL_PATTERN = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){
  */
 export const DEFAULT_DOCKER_ADDRESS_POOL = "192.168.240.0/20";
 
+/** The Windows editions the base disk can be installed with (dockur/windows `VERSION` codes). */
+export const WINDOWS_VERSIONS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: "11", label: "Windows 11 Pro" },
+  { code: "11l", label: "Windows 11 LTSC" },
+  { code: "11e", label: "Windows 11 Enterprise" },
+  { code: "10", label: "Windows 10 Pro" },
+  { code: "10l", label: "Windows 10 LTSC" },
+  { code: "2025", label: "Windows Server 2025" },
+  { code: "2022", label: "Windows Server 2022" },
+];
+
+/** The Windows VMs of `qemu-windows` Sessions (ADR-0057). */
+export const WindowsSettings = z.object({
+  /** Edition of the shared base disk (a `WINDOWS_VERSIONS` code); changing it means reinstalling the base. */
+  version: z.string().min(1).default("11"),
+  /** RAM (GB) and vCPUs each Windows VM gets, on top of its Session's Sandbox. */
+  ramGb: z.number().positive().default(4),
+  cpus: z.number().int().positive().default(2),
+  /** Virtual size (GB) of the base disk; a Session's copy grows on demand from it. */
+  diskGb: z.number().int().positive().default(64),
+  /** Password of the guest's `agent` account (Administrator), generated when the base is installed. Secret. */
+  password: z.string().default(""),
+});
+export type WindowsSettings = z.infer<typeof WindowsSettings>;
+
+/** The Windows guest account the Sandbox's RDP and SSH clients log in with. */
+export const WINDOWS_GUEST_USER = "agent";
+
 export const Settings = z.object({
   gitUserName: z.string().default(""),
   gitUserEmail: z.string().default(""),
@@ -1515,6 +1594,7 @@ export const Settings = z.object({
     .regex(DOCKER_ADDRESS_POOL_PATTERN, "an IPv4 block like 10.213.0.0/16 (/8 to /24)")
     .or(z.literal(""))
     .default(DEFAULT_DOCKER_ADDRESS_POOL),
+  windows: WindowsSettings.default({}),
   /** `docker commit` the Sandbox after every Agent turn; off unless switched on (ADR-0044). */
   autoSnapshot: z.boolean().default(false),
   /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */
@@ -1588,8 +1668,15 @@ export const Settings = z.object({
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
+  windows: WindowsSettings.omit({ password: true }),
+  /** Which Environments a Session created now can run in on this host. */
+  environments: z.object({
+    "docker-linux": EnvironmentAvailability,
+    "qemu-windows": EnvironmentAvailability,
+    "qemu-macos": EnvironmentAvailability,
+  }),
   tunnels: PublicTunnelSettings,
   claudeApi: z.object({
     baseUrl: z.string(),
@@ -1625,9 +1712,10 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true }).partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true }).partial().extend({
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
+  windows: WindowsSettings.omit({ password: true }).partial().optional(),
   tunnels: TunnelSettingsUpdate.optional(),
   /** Omitted secret fields keep what is stored; `""` forgets it. */
   claudeApi: z.object({ baseUrl: z.string(), authToken: z.string(), apiKey: z.string() }).partial().optional(),
@@ -1804,6 +1892,8 @@ export type SessionBroadcast =
   | { type: "schedule_runs"; scheduleId: string; runs: ScheduleRun[] }
   /** A transport came up, went down or failed (`PublicSettings.remote` changed). */
   | { type: "remote"; remote: RemoteAccess }
+  /** The shared Windows base disk changed state (install started, progressed, finished or failed). */
+  | { type: "windows_base"; status: WindowsBaseStatus }
   /** Answer to the UI's `ping`. */
   | { type: "pong" };
 

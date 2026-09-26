@@ -245,6 +245,24 @@ async function setLlmInspect(enabled: boolean): Promise<DaemonLlmInspectSetResul
 
 const repos = new Repos(workspace, log);
 
+/** A `qemu-windows` Session (ADR-0057): the Windows VM next to this Sandbox, how to see it and how to run things in it. */
+const windowsBriefing = (): string => {
+  const host = env.SESSIONBOXER_WINDOWS_HOST ?? "";
+  if (host === "") return "";
+  return [
+    "This is a Windows Session. The Desktop of this machine shows a Windows VM full screen over RDP (it takes a minute",
+    "to appear after a start; until then the Linux desktop shows a waiting message). The screenshot, mouse and keyboard",
+    "tools act on that Windows desktop as a human would: use them for anything that needs the Windows GUI.",
+    "",
+    `Commands in Windows: \`win <command>\` runs a PowerShell command in the VM over SSH as its user \`${env.SESSIONBOXER_WINDOWS_USER ?? "agent"}\`,`,
+    "an administrator (for example `win Get-ComputerInfo`, `win 'winget install --id Git.Git -e'`, `win 'dir C:\\Users\\agent'`); its",
+    "output comes back here. `win-scp` is scp to/from the VM (`win-scp ./file.txt win:C:/Users/agent/`). Plain `win` opens an interactive shell.",
+    "The VM has its own disk: this Workspace's repositories are on this Linux machine, not in Windows; copy what Windows must",
+    "see with `win-scp` (or clone again inside Windows), and bring results back the same way. Your shell, git, gh, the editor",
+    "and the browser are all on this Linux side.",
+  ].join("\n");
+};
+
 const agent = new AgentManager(
   {
     command: acpCommand,
@@ -257,7 +275,7 @@ const agent = new AgentManager(
     newConversation: env.SESSIONBOXER_NEW_CONVERSATION === "1",
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
-    workspaceBriefing: () => repos.briefing(),
+    workspaceBriefing: () => [repos.briefing(), windowsBriefing()].filter((s) => s !== "").join("\n\n"),
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),

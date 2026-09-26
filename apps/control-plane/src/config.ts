@@ -29,6 +29,7 @@ import {
   type RemoteAccess,
   type TunnelStatuses,
   type UpdateSettingsRequest,
+  WINDOWS_VERSIONS,
 } from "@sessionboxer/protocol";
 import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
 import { HttpError } from "./http-error.js";
@@ -157,9 +158,16 @@ export function saveSettings(settings: Settings): void {
 }
 
 export function applySettingsUpdate(current: Settings, update: UpdateSettingsRequest): Settings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, tunnels, ...rest } = update;
+  const { providerSecrets, mcpServers, connectors, claudeApi, tunnels, windows, ...rest } = update;
   const next: Settings = { ...current, ...stripUndefined(rest) };
   if (mcpServers) next.mcpServers = mergeMcpServers(current.mcpServers, mcpServers);
+  if (windows) {
+    next.windows = { ...current.windows, ...stripUndefined(windows) };
+    next.windows.version = next.windows.version.trim().toLowerCase();
+    if (!WINDOWS_VERSIONS.some((v) => v.code === next.windows.version)) {
+      throw new HttpError(400, `Unknown Windows edition "${next.windows.version}".`);
+    }
+  }
   if (tunnels) {
     next.tunnels = {
       cloudflare: { ...current.tunnels.cloudflare, ...stripUndefined(tunnels.cloudflare ?? {}) },
@@ -237,12 +245,20 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
   return Settings.parse(next);
 }
 
-export function toPublicSettings(settings: Settings, dockerModeAvailable: Exclude<DockerMode, "none">, tunnels: TunnelStatuses): PublicSettings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, ...rest } = settings;
+export function toPublicSettings(
+  settings: Settings,
+  dockerModeAvailable: Exclude<DockerMode, "none">,
+  tunnels: TunnelStatuses,
+  environments: PublicSettings["environments"],
+): PublicSettings {
+  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, windows, ...rest } = settings;
   const base = claudeBaseUrl(settings);
   const { secret, ...sessionboxer } = tunnelSettings.sessionboxer;
+  const { password: _password, ...publicWindows } = windows;
   return {
     ...rest,
+    windows: publicWindows,
+    environments,
     tunnels: { ...tunnelSettings, sessionboxer: { ...sessionboxer, secretSet: secret !== "" } },
     mcpServers: mcpServers.map(toPublicMcpServer),
     claudeApi: {

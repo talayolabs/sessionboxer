@@ -1,4 +1,4 @@
-import type { Session, Snapshot } from "@sessionboxer/protocol";
+import { WINDOWS_NO_SNAPSHOT, type Session, type Snapshot } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
 import { Modal } from "./ui";
 
@@ -42,8 +42,9 @@ export function SnapshotsDialog({
 }) {
   const effective = session.settings.autoSnapshot ?? globalAutoSnapshot;
   const overridden = session.settings.autoSnapshot !== null;
-  const isLive = session.status === "idle" || session.status === "running";
-  const canRebuild = session.status === "idle" || session.status === "stopped" || session.status === "error";
+  const windows = session.settings.sandbox.environment === "qemu-windows";
+  const isLive = !windows && (session.status === "idle" || session.status === "running");
+  const canRebuild = !windows && (session.status === "idle" || session.status === "stopped" || session.status === "error");
   const rebuilding = session.status === "creating" && snapshotting;
   const list = snapshots ? [...snapshots].reverse() : [];
 
@@ -71,6 +72,7 @@ export function SnapshotsDialog({
           )}
         </span>
       </label>
+      {windows && <p className="muted">{WINDOWS_NO_SNAPSHOT}</p>}
       <p className="muted">
         Machine: {session.diskBytes === null ? "unknown" : formatMb(session.diskBytes)} on top of its image
         {" \u00b7 "}
@@ -123,7 +125,11 @@ export function SnapshotsDialog({
           type="button"
           disabled={!canRebuild || snapshotting}
           onClick={onRebuild}
-          title="Move the Session onto a new Sandbox built from a full image of the current one's filesystem: the fix when snapshots fail with a missing content digest. Takes minutes."
+          title={
+            windows
+              ? WINDOWS_NO_SNAPSHOT
+              : "Move the Session onto a new Sandbox built from a full image of the current one's filesystem: the fix when snapshots fail with a missing content digest. Takes minutes."
+          }
         >
           {rebuilding ? "Rebuilding\u2026" : "Rebuild Sandbox"}
         </button>
@@ -132,7 +138,7 @@ export function SnapshotsDialog({
           type="button"
           disabled={!isLive || snapshotting}
           onClick={onSnapshotNow}
-          title={isLive ? "docker commit the Sandbox now" : "Snapshots need a running Sandbox"}
+          title={windows ? WINDOWS_NO_SNAPSHOT : isLive ? "docker commit the Sandbox now" : "Snapshots need a running Sandbox"}
         >
           {snapshotting ? "Snapshotting\u2026" : "Snapshot now"}
         </button>

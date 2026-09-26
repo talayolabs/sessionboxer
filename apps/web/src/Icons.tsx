@@ -16,7 +16,8 @@ export type IconName =
   | "resume"
   | "delete"
   | "image"
-  | "usb";
+  | "usb"
+  | "windows";
 
 /** Feather-style outline glyphs (24-unit grid, `currentColor` strokes). */
 const GLYPHS: Record<IconName, ReactNode> = {
@@ -96,6 +97,11 @@ const GLYPHS: Record<IconName, ReactNode> = {
       <circle cx="17" cy="7.5" r="1.5" />
       <rect x="5.5" y="10" width="3" height="3" />
       <circle cx="12" cy="20" r="2" />
+    </>
+  ),
+  windows: (
+    <>
+      <path d="M3 5.5l7.5-1v7H3zM12 4.3L21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z" />
     </>
   ),
 };

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# `win <command…>`: runs a PowerShell command in the Windows VM of this Session over
+# SSH and prints what it wrote; `win` alone opens an interactive PowerShell there.
+# (ADR-0057: the VM is a sidecar container, its user and password come with the Sandbox.)
+set -euo pipefail
+
+: "${SESSIONBOXER_WINDOWS_HOST:?This is not a Windows Session: there is no Windows VM to run commands in.}"
+: "${SESSIONBOXER_WINDOWS_SSH_PORT:=22}"
+: "${SESSIONBOXER_WINDOWS_USER:=agent}"
+: "${SESSIONBOXER_WINDOWS_PASSWORD:?SESSIONBOXER_WINDOWS_PASSWORD is not set}"
+
+export SSHPASS="$SESSIONBOXER_WINDOWS_PASSWORD"
+opts=(
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+  -o ConnectTimeout=15 -o ServerAliveInterval=30
+  -p "$SESSIONBOXER_WINDOWS_SSH_PORT"
+)
+target="$SESSIONBOXER_WINDOWS_USER@$SESSIONBOXER_WINDOWS_HOST"
+
+if [[ $# -eq 0 ]]; then
+  exec sshpass -e ssh -t "${opts[@]}" "$target"
+fi
+exec sshpass -e ssh "${opts[@]}" "$target" "$*"

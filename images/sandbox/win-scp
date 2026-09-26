@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# `win-scp <from…> <to>`: scp with the Windows VM of this Session; `win:` stands for the VM,
+# e.g. `win-scp ./build.zip win:C:/Users/agent/` or `win-scp -r win:C:/Users/agent/out ./out`.
+set -euo pipefail
+
+: "${SESSIONBOXER_WINDOWS_HOST:?This is not a Windows Session: there is no Windows VM to copy files with.}"
+: "${SESSIONBOXER_WINDOWS_SSH_PORT:=22}"
+: "${SESSIONBOXER_WINDOWS_USER:=agent}"
+: "${SESSIONBOXER_WINDOWS_PASSWORD:?SESSIONBOXER_WINDOWS_PASSWORD is not set}"
+
+export SSHPASS="$SESSIONBOXER_WINDOWS_PASSWORD"
+args=()
+for a in "$@"; do
+  args+=("${a/#win:/$SESSIONBOXER_WINDOWS_USER@$SESSIONBOXER_WINDOWS_HOST:}")
+done
+exec sshpass -e scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -o ConnectTimeout=15 -P "$SESSIONBOXER_WINDOWS_SSH_PORT" "${args[@]}"

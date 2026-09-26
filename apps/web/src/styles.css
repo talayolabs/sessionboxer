@@ -39,6 +39,7 @@
 .provider-badge { display: inline-flex; align-items: center; gap: 6px; cursor: help; }
 .provider-badge .provider-icon { opacity: 1; }
 .docker-warn { display: inline-flex; align-items: center; gap: 6px; color: var(--error); cursor: help; }
+.session-env { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); cursor: help; }
 .session-usb { display: inline-flex; align-items: center; color: var(--accent); cursor: help; }
 .session-usb.unplugged { color: var(--warn); }
 .docker-icon { display: block; }
@@ -266,6 +267,8 @@ li.expanded .saved-text { white-space: normal; }
 .dictation-line.error { color: var(--error); }
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--error); animation: pulse 0.9s ease-in-out infinite alternate; }
 .speech-assets .row { flex-wrap: wrap; }
+.windows-base .row { flex-wrap: wrap; align-items: center; }
+.windows-base-log { max-height: 12em; overflow: auto; font-size: var(--fs-xs); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; word-break: break-all; }
 .composer-footer { flex: none; display: flex; align-items: center; gap: 10px; }
 .composer-footer .hint { font-size: var(--fs-sm); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-footer .model-select, .composer-footer button { flex: none; white-space: nowrap; }

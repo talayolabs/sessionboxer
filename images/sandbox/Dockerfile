@@ -87,6 +87,9 @@ RUN --mount=type=secret,id=extra-ca \
       xdotool imagemagick ffmpeg \
       fonts-dejavu fonts-liberation \
       firefox-esr \
+      # Windows Sessions (ADR-0057): the Windows VM's desktop over RDP on this X display,
+      # its shell over SSH with the password the Control Plane hands over.
+      freerdp3-x11 sshpass \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # uv/uvx system-wide: most Python MCP servers are launched as `uvx <package>`.
@@ -262,6 +265,9 @@ COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.curs
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
+# Windows Sessions (ADR-0057): the RDP view of the VM and the `win` / `win-scp` commands into it.
+COPY --chmod=0755 images/sandbox/windows-desktop /usr/local/bin/sessionboxer-windows-desktop
+COPY --chmod=0755 images/sandbox/win images/sandbox/win-scp /usr/local/bin/
 # Skills the Control Plane asks for by name (ADR-0044); Claude Code discovers them here, Devin reads the file.
 COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
 RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent/.agents/skills && chown -Rh agent:agent /home/agent/.agents

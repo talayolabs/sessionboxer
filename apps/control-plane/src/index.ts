@@ -43,6 +43,7 @@ import {
   QueueRequest,
   UiClientMessage,
   SaveMessageRequest,
+  type SessionBroadcast,
   SPEECH_CLIP_MAX_BYTES,
   SPEECH_LANGUAGE_PATTERN,
   SpeechModel,
@@ -697,7 +698,7 @@ api.get(
       onOpen(_evt, ws) {
         unsubscribe = sessions.subscribe((msg) => ws.send(JSON.stringify(msg)));
       },
-      onMessage(evt) {
+      onMessage(evt, ws) {
         let raw: unknown;
         try {
           raw = JSON.parse(String(evt.data));
@@ -705,7 +706,9 @@ api.get(
           return;
         }
         const parsed = UiClientMessage.safeParse(raw);
-        if (parsed.success && parsed.data.type === "visibility") setVisible(parsed.data.visible);
+        if (!parsed.success) return;
+        if (parsed.data.type === "visibility") setVisible(parsed.data.visible);
+        else if (parsed.data.type === "ping") ws.send(JSON.stringify({ type: "pong" } satisfies SessionBroadcast));
       },
       onClose() {
         unsubscribe?.();

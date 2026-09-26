@@ -275,38 +275,103 @@ export function terminalSocketUrl(sessionId: string, ptyId: string): string {
   return `${proto}//${location.host}/api/sessions/${sessionId}/terminals/${ptyId}/ws`;
 }
 
+/** Quiet this long on the push socket, send a ping; no answer within `PROBE_TIMEOUT_MS` means the socket is dead. */
+const HEARTBEAT_MS = 20_000;
+const PROBE_TIMEOUT_MS = 5_000;
+
 /**
  * Subscribes to Control Plane pushes; reconnects with a 1s backoff that grows to 15s while the
  * handshake keeps failing. Tells the Control Plane whether the page is on screen, so Web Pushes
  * go to the devices that are not watching.
+ *
+ * A socket the browser still reports open can be dead underneath (the tab was in the background,
+ * the laptop slept, the network changed): nothing arrives and no `close` fires. The page pings the
+ * Control Plane when the socket has been quiet for a while and as soon as it comes back on screen or
+ * online; a missing pong drops the socket and reconnects, and every reconnection refetches what was
+ * missed through `onReconnect`.
  */
 export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnect: () => void): () => void {
   let ws: WebSocket | null = null;
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let probe: ReturnType<typeof setTimeout> | null = null;
   let hadConnection = false;
   let failures = 0;
+  let lastSeen = 0;
 
   const send = (msg: UiClientMessage) => {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
   const reportVisibility = () => send({ type: "visibility", visible: document.visibilityState === "visible" });
-  document.addEventListener("visibilitychange", reportVisibility);
+
+  const clearProbe = () => {
+    if (probe) clearTimeout(probe);
+    probe = null;
+  };
+
+  /** Abandons the current socket (no `close` event awaited: a dead one may never deliver it) and reconnects. */
+  const drop = () => {
+    clearProbe();
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const old = ws;
+    ws = null;
+    if (old) {
+      old.onopen = old.onmessage = old.onclose = old.onerror = null;
+      old.close();
+    }
+    connect();
+  };
+
+  const ping = () => {
+    if (probe || ws?.readyState !== WebSocket.OPEN) return;
+    const sentAt = Date.now();
+    send({ type: "ping" });
+    probe = setTimeout(() => {
+      probe = null;
+      if (lastSeen < sentAt) drop();
+    }, PROBE_TIMEOUT_MS);
+  };
+
+  const heartbeat = setInterval(() => {
+    if (Date.now() - lastSeen >= HEARTBEAT_MS) ping();
+  }, HEARTBEAT_MS / 4);
+
+  /** Back on screen or online: check the socket right away instead of waiting for the next heartbeat or backoff. */
+  const check = () => {
+    if (closed) return;
+    if (ws?.readyState === WebSocket.OPEN) ping();
+    else if (ws?.readyState !== WebSocket.CONNECTING) drop();
+  };
+  const onVisibility = () => {
+    reportVisibility();
+    if (document.visibilityState === "visible") check();
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("online", check);
 
   const connect = () => {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     let opened = false;
-    ws = new WebSocket(`${proto}//${location.host}/api/ws`);
-    ws.onopen = () => {
+    const socket = new WebSocket(`${proto}//${location.host}/api/ws`);
+    ws = socket;
+    socket.onopen = () => {
       opened = true;
       failures = 0;
+      lastSeen = Date.now();
       reportVisibility();
       if (hadConnection) onReconnect();
       hadConnection = true;
     };
-    ws.onmessage = (evt) => onMessage(JSON.parse(String(evt.data)) as SessionBroadcast);
-    ws.onclose = () => {
+    socket.onmessage = (evt) => {
+      lastSeen = Date.now();
+      const msg = JSON.parse(String(evt.data)) as SessionBroadcast;
+      if (msg.type === "pong") return;
+      onMessage(msg);
+    };
+    socket.onclose = () => {
       if (closed) return;
+      clearProbe();
       // A handshake the Control Plane refused looks like any other failure from here; ask it whether we are still logged in.
       if (!opened) {
         failures++;
@@ -319,13 +384,16 @@ export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnec
       }
       timer = setTimeout(connect, Math.min(1000 * 2 ** Math.min(failures, 4), 15_000));
     };
-    ws.onerror = () => ws?.close();
+    socket.onerror = () => socket.close();
   };
   connect();
 
   return () => {
     closed = true;
-    document.removeEventListener("visibilitychange", reportVisibility);
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("online", check);
+    clearInterval(heartbeat);
+    clearProbe();
     if (timer) clearTimeout(timer);
     ws?.close();
   };

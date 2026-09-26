@@ -101,6 +101,17 @@ import type { FileRef } from "./file-links";
 import { Transcript } from "./Transcript";
 import { buildTranscript, llmCallsOf } from "./transcript-model";
 
+/**
+ * The transcript refetched after a reconnection, keeping what the socket delivered while the fetch
+ * was in flight (events newer than the fetch's last one, for the same Session).
+ */
+function mergeEvents(prev: SessionEvent[], fetched: SessionEvent[]): SessionEvent[] {
+  const last = fetched[fetched.length - 1];
+  if (!last) return fetched;
+  const tail = prev.filter((e) => e.sessionId === last.sessionId && e.seq > last.seq);
+  return tail.length === 0 ? fetched : [...fetched, ...tail];
+}
+
 /** What a status dot means, spelled out: `idle` in particular is the Agent's turn being over. */
 function statusTitle(status: SessionStatus): string {
   return status === "idle" ? "waiting for you: the Agent finished its turn" : status;
@@ -457,7 +468,10 @@ export function App() {
         void run(async () => setOptions(await api.options()));
         setSnapshotting(new Set());
         if (selectedId) {
-          void run(async () => setEvents(await api.events(selectedId)));
+          void run(async () => {
+            const fetched = await api.events(selectedId);
+            setEvents((prev) => mergeEvents(prev, fetched));
+          });
           void run(async () => setSaved(await api.savedMessages(selectedId)));
           void run(async () => setSnapshots(await api.snapshots(selectedId)));
           void run(async () => setE2eRuns(await api.e2eRuns(selectedId)));

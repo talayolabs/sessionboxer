@@ -1461,8 +1461,12 @@ export type PushMessage = z.infer<typeof PushMessage>;
 /**
  * What the UI tells the Control Plane over its WebSocket. `visibility` says whether the page is on
  * screen: a device with a visible page gets no push (it sees the change live), every other device does.
+ * `ping` asks for a `pong`: how the page finds out that a socket the browser still calls open is dead.
  */
-export const UiClientMessage = z.discriminatedUnion("type", [z.object({ type: z.literal("visibility"), visible: z.boolean() })]);
+export const UiClientMessage = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("visibility"), visible: z.boolean() }),
+  z.object({ type: z.literal("ping") }),
+]);
 export type UiClientMessage = z.infer<typeof UiClientMessage>;
 
 /** Where a notification about a Session (or one of its PRs) should land. */
@@ -1799,7 +1803,9 @@ export type SessionBroadcast =
   /** The run history of one scheduled task changed. */
   | { type: "schedule_runs"; scheduleId: string; runs: ScheduleRun[] }
   /** A transport came up, went down or failed (`PublicSettings.remote` changed). */
-  | { type: "remote"; remote: RemoteAccess };
+  | { type: "remote"; remote: RemoteAccess }
+  /** Answer to the UI's `ping`. */
+  | { type: "pong" };
 
 // ---------------------------------------------------------------------------
 // Workspace files. Paths are relative to the Workspace root; the Daemon rejects escapes.

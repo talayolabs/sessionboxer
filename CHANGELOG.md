@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- No more messages missing after the tab was in the background: the page pings the Control Plane over its push socket (every 20 s quiet, and as soon as it is back on screen or online), drops a socket that does not answer and refetches what it missed.
 - Global settings in the same split view as Advanced session settings: sections on the left, the chosen section on the right; `#/settings/<section>` deep links; one Save for all sections.
 
 ## 1.3.0 — 2026-09-25

@@ -4,6 +4,7 @@
 
 - No more messages missing after the tab was in the background: the page pings the Control Plane over its push socket (every 20 s quiet, and as soon as it is back on screen or online), drops a socket that does not answer and refetches what it missed.
 - Global settings in the same split view as Advanced session settings: sections on the left, the chosen section on the right; `#/settings/<section>` deep links; one Save for all sections.
+- Environment per session: Docker · Linux (default) or QEMU · Windows — a Windows VM boots next to the box and the agent's desktop is Windows over RDP, `win <command>` runs PowerShell in it (Linux hosts with KVM; base installed once from Global settings). ([8a6350b](https://github.com/talayolabs/sessionboxer/commit/8a6350b))
 
 ## 1.3.0 — 2026-09-25
 

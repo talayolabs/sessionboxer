@@ -1,4 +1,5 @@
 import type { AgentToolsPolicy } from "@sessionboxer/protocol";
+import { Select } from "./ui";
 
 export const AGENT_TOOLS_LABELS: Record<AgentToolsPolicy, string> = {
   off: "Off",
@@ -11,6 +12,8 @@ export const AGENT_TOOLS_HINTS: Record<AgentToolsPolicy, string> = {
   session: "The Agent knows who it is (whoami, docs) and acts on this Session only: PRs, Snapshots, the queue, the title, verification, terminals, panes.",
   all: "In addition, the Agent lists, creates, forks, messages and stops other Sessions and schedules prompts (children are marked; creation asks you unless turned off).",
 };
+
+const POLICIES: readonly AgentToolsPolicy[] = ["off", "session", "all"];
 
 /**
  * What the `sessionboxer` MCP lets the Agent do (ADR-0062), for the global Settings (`value` is the
@@ -31,12 +34,16 @@ export function AgentToolsSelect({
   const effective = value ?? fallback ?? "session";
   return (
     <>
-      <select value={value ?? "default"} disabled={disabled} onChange={(e) => onChange(e.target.value === "default" ? null : (e.target.value as AgentToolsPolicy))}>
-        {fallback !== undefined && <option value="default">Settings default ({AGENT_TOOLS_LABELS[fallback]})</option>}
-        <option value="off">{AGENT_TOOLS_LABELS.off}</option>
-        <option value="session">{AGENT_TOOLS_LABELS.session}</option>
-        <option value="all">{AGENT_TOOLS_LABELS.all}</option>
-      </select>
+      <Select<AgentToolsPolicy | "default">
+        value={value ?? "default"}
+        disabled={disabled}
+        onChange={(v) => onChange(v === "default" ? null : v)}
+        aria-label="Agent tools"
+        options={[
+          ...(fallback !== undefined ? [{ value: "default" as const, label: `Settings default (${AGENT_TOOLS_LABELS[fallback]})` }] : []),
+          ...POLICIES.map((p) => ({ value: p, label: AGENT_TOOLS_LABELS[p] })),
+        ]}
+      />
       <p className="muted ss-note">{AGENT_TOOLS_HINTS[effective]}</p>
     </>
   );
@@ -55,14 +62,16 @@ export function ApproveCreateSelect({
   onChange: (value: boolean | null) => void;
 }) {
   return (
-    <select
+    <Select<"default" | "on" | "off">
       value={value === null ? "default" : value ? "on" : "off"}
       disabled={disabled}
-      onChange={(e) => onChange(e.target.value === "default" ? null : e.target.value === "on")}
-    >
-      {fallback !== undefined && <option value="default">Settings default ({fallback ? "ask" : "do not ask"})</option>}
-      <option value="on">Ask me (a card in the chat: Allow / Deny)</option>
-      <option value="off">Do not ask</option>
-    </select>
+      onChange={(v) => onChange(v === "default" ? null : v === "on")}
+      aria-label="Ask before the Agent creates a Session"
+      options={[
+        ...(fallback !== undefined ? [{ value: "default" as const, label: `Settings default (${fallback ? "ask" : "do not ask"})` }] : []),
+        { value: "on", label: "Ask me (a card in the chat: Allow / Deny)" },
+        { value: "off", label: "Do not ask" },
+      ]}
+    />
   );
 }

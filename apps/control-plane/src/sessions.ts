@@ -1439,7 +1439,7 @@ export class SessionManager {
     if (!target || target.body.type !== "turn_ended" || !inBranchScope(scope, target.branchId, seq)) {
       throw new HttpError(400, "Revert points must be a turn boundary of the current branch.");
     }
-    const visible = this.db.listEvents(id, 0, 100_000, scope);
+    const visible = this.db.listEvents(id, 0, scope);
     if (!visible.some((e) => e.seq > seq && isConversational(e))) {
       throw new HttpError(409, "This is already the end of the conversation; just send the next message.");
     }
@@ -1981,7 +1981,7 @@ export class SessionManager {
   llmCalls(id: string): { calls: LlmCall[]; withBodies: string[] } {
     const scope = this.db.activeScope(id);
     const calls: LlmCall[] = [];
-    for (const ev of this.db.listEvents(id, 0, 100000, scope)) if (ev.body.type === "llm_call") calls.push(ev.body.call);
+    for (const ev of this.db.listEvents(id, 0, scope)) if (ev.body.type === "llm_call") calls.push(ev.body.call);
     return { calls, withBodies: [] };
   }
 
@@ -2354,7 +2354,7 @@ export class SessionManager {
   /** "Run now" in the Verification pane: verifies the work so far against the last user turn of the current branch. */
   async e2eRunNow(id: string): Promise<E2eRun> {
     this.get(id);
-    const visible = this.db.listEvents(id, 0, 100_000, this.db.activeScope(id));
+    const visible = this.db.listEvents(id);
     const start = visible.map((e) => e.body.type === "user_prompt" && e.body.origin !== "e2e" && e.body.origin !== "handoff_request").lastIndexOf(true);
     const turn = start === -1 ? [] : visible.slice(start);
     return this.e2e.runNow(id, visible[visible.length - 1]?.seq ?? 0, turn);
@@ -2362,9 +2362,8 @@ export class SessionManager {
 
   /** The events of the turn that ended at `endSeq`: from its `user_prompt` on. */
   private turnEvents(id: string, endSeq: number): SessionEvent[] {
-    const recent = this.db.listEvents(id, Math.max(0, endSeq - 2000)).filter((e) => e.seq <= endSeq);
-    const start = recent.map((e) => e.body.type).lastIndexOf("user_prompt");
-    return start === -1 ? recent : recent.slice(start);
+    const promptSeq = this.db.lastPromptSeq(id, endSeq);
+    return this.db.listEvents(id, promptSeq === null ? 0 : promptSeq - 1).filter((e) => e.seq <= endSeq);
   }
 
   /**

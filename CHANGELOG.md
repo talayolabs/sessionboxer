@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Sign in with Claude Code, Codex, Cursor or Devin from Settings: the Provider's sign-in page opens in the browser you are using (already logged in, saved passwords), Sessionboxer runs the CLI's login for you (on its machine when the CLI is installed there, else in a throwaway box, always in a scratch home) and stores what it produces; paste back the code for Claude Code and Devin, type in the shown code for Codex, nothing for Cursor. A Codex, Cursor or Devin login already on the server's machine can be copied with one click. The terminal steps stay under *Or do it by hand*.
+- Long conversations no longer lose their messages on reload or when switching Sessions: the transcript was cut at 5,000 events, and a streamed turn is thousands of them.
+- The Code pane keeps each Session's own open tabs and layout: VS Code opens a workspace file named after the Session, so the browser no longer shares one workbench state between Sessions. Stop → Resume existing Sessions.
 - No more messages missing after the tab was in the background: the page pings the Control Plane over its push socket (every 20 s quiet, and as soon as it is back on screen or online), drops a socket that does not answer and refetches what it missed.
 - Global settings in the same split view as Advanced session settings: sections on the left, the chosen section on the right; `#/settings/<section>` deep links; one Save for all sections.
 - Environment per session: Docker · Linux (default) or QEMU · Windows — a Windows VM boots next to the box and the agent's desktop is Windows over RDP, `win <command>` runs PowerShell in it (Linux hosts with KVM; base installed once from Global settings). ([8a6350b](https://github.com/talayolabs/sessionboxer/commit/8a6350b))

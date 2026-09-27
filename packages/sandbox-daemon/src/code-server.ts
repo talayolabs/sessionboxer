@@ -39,6 +39,13 @@ const THEMES_EXTENSION = join("extensions", VSCODE_THEMES_EXTENSION, "package.js
  */
 const MACHINE_SETTINGS =
   env.SESSIONBOXER_CODE_MACHINE_SETTINGS ?? join(homedir(), ".openvscode-server", "data", "Machine", "settings.json");
+/**
+ * Where the Session's `.code-workspace` file goes. The browser keeps a workbench's state (open
+ * editors, layout) per origin and workspace identity, and the identity of a plain folder is its
+ * URI, which is the same for every Session (`/workspace` behind the same Control Plane); opening
+ * a workspace file named after the Session gives each one its own state instead.
+ */
+const WORKSPACES_DIR = env.SESSIONBOXER_CODE_WORKSPACES_DIR ?? join(homedir(), ".openvscode-server", "sessionboxer");
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -103,6 +110,7 @@ export class CodeServer {
   constructor(
     private readonly workspace: string,
     private readonly log: (msg: string) => void,
+    private readonly sessionId: string = "",
   ) {}
 
   status(): CodeServerStatus {
@@ -208,6 +216,18 @@ export class CodeServer {
     this.log(`code theme: ${label}`);
   }
 
+  /**
+   * Writes the Session's single-folder `.code-workspace` (see `WORKSPACES_DIR`) and returns its
+   * path, or `null` when the Daemon does not know its Session (then the folder opens directly).
+   */
+  private writeWorkspaceFile(): string | null {
+    if (!/^[A-Za-z0-9._-]+$/.test(this.sessionId)) return null;
+    mkdirSync(WORKSPACES_DIR, { recursive: true });
+    const file = join(WORKSPACES_DIR, `${this.sessionId}.code-workspace`);
+    writeFileSync(file, `${JSON.stringify({ folders: [{ path: this.workspace }], settings: {} }, null, 2)}\n`);
+    return file;
+  }
+
   /** Absolute path inside the Workspace, whatever form the chat used. */
   private resolvePath(path: string): string {
     const abs = resolve(isAbsolute(path) ? path : join(this.workspace, path));
@@ -232,11 +252,11 @@ export class CodeServer {
       "--disable-workspace-trust",
       "--telemetry-level",
       "off",
-      "--default-folder",
-      this.workspace,
     ];
     let proc: ChildProcess;
     try {
+      const workspaceFile = this.writeWorkspaceFile();
+      args.push(...(workspaceFile ? ["--default-workspace", workspaceFile] : ["--default-folder", this.workspace]));
       proc = spawn(COMMAND, args, {
         cwd: this.workspace,
         env: { ...process.env, ...caEnv(), SESSIONBOXER_CODE_OPEN_PORT: String(OPEN_PORT) },

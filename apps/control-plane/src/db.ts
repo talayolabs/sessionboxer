@@ -782,13 +782,29 @@ export class Db {
     return row.max;
   }
 
-  /** Events of one branch's view of the transcript (the active branch's by default). */
-  listEvents(sessionId: string, afterSeq = 0, limit = 5000, scope = this.activeScope(sessionId)): SessionEvent[] {
+  /**
+   * Every event after `afterSeq` in one branch's view of the transcript (the active branch's by
+   * default). Never capped: a streamed turn is thousands of `update` events, and the transcript
+   * needs all of them.
+   */
+  listEvents(sessionId: string, afterSeq = 0, scope = this.activeScope(sessionId)): SessionEvent[] {
     const where = scopeClause(scope);
     const rows = this.db
-      .prepare(`SELECT * FROM events WHERE session_id = ? AND seq > ? AND ${where.sql} ORDER BY seq ASC LIMIT ?`)
-      .all(sessionId, afterSeq, ...where.params, limit) as EventRow[];
+      .prepare(`SELECT * FROM events WHERE session_id = ? AND seq > ? AND ${where.sql} ORDER BY seq ASC`)
+      .all(sessionId, afterSeq, ...where.params) as EventRow[];
     return rows.map(rowToEvent);
+  }
+
+  /** `seq` of the last `user_prompt` at or before `uptoSeq` in the active branch's view; `null` when there is none. */
+  lastPromptSeq(sessionId: string, uptoSeq: number, scope = this.activeScope(sessionId)): number | null {
+    const where = scopeClause(scope);
+    const row = this.db
+      .prepare(
+        `SELECT MAX(seq) AS seq FROM events
+         WHERE session_id = ? AND seq <= ? AND json_extract(body, '$.type') = 'user_prompt' AND ${where.sql}`,
+      )
+      .get(sessionId, uptoSeq, ...where.params) as { seq: number | null };
+    return row.seq;
   }
 
   getDaemonCursor(sessionId: string): { epoch: string; lastSeq: number } | null {

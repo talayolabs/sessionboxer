@@ -333,7 +333,7 @@ const terminals = new Terminals(
   log,
 );
 
-const codeServer = new CodeServer(workspace, log);
+const codeServer = new CodeServer(workspace, log, env.SESSIONBOXER_SESSION_ID ?? "");
 const uploads = new Uploads(workspace, log);
 const ghApi = new GhApi(log);
 const e2eBridge = new E2eBridge(() => clients, log);

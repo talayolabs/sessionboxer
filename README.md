@@ -2,57 +2,64 @@
 
 # Sessionboxer
 
-Run coding agents in boxes. Each session gets its own Docker container with a Linux desktop. The agent (Claude Code, Codex, Cursor or Devin) works inside it with a terminal, an editor, a browser, mouse and keyboard. You watch the screen and take over whenever you want.
+Run coding agents in boxes: each session gets its own machine with a desktop, and Claude Code, Codex, Cursor or Devin works inside it while you watch and take over when you want.
 
 <br clear="left" />
 
 [![Sessionboxer demo](docs/assets/demo-poster.jpg)](https://sessionboxer.talayolabs.com/demo.mp4)
 
-*Seven minutes through the UI (v1.1.0): a new session, the agent's turn folded into one line, the desktop, the queue and usage meters, VS Code in the UI's theme, pull requests with checks and auto-merge, forks and handoffs, several repositories, scheduled tasks, themes, dictation, the phone. ([MP4](https://sessionboxer.talayolabs.com/demo.mp4) · [GIF](docs/assets/demo.gif))*
+*Seven minutes through the UI, v1.1.0. ([MP4](https://sessionboxer.talayolabs.com/demo.mp4) · [GIF](docs/assets/demo.gif))*
 
 ## Why
 
-- **Safe.** The agent has all permissions, but only inside its container. Delete the session and everything is gone.
-- **Sees the screen.** A real desktop with Firefox. The agent takes screenshots, clicks and types; you can watch and take control.
-- **Yours.** Your own Claude, ChatGPT, Cursor or Devin subscription, on your machine or your server; sign in from the browser you already use, no terminal. No Sessionboxer account, nothing in the cloud.
-- **Open.** MIT licence, plain Docker, plain X11, the [Agent Client Protocol](https://agentclientprotocol.com) between the UI and the agent.
+- **Safe.** The agent has every permission, but only inside its box; delete the session and it is gone.
+- **Sees the screen.** A real desktop the agent screenshots, clicks and types in; you can take control.
+- **Yours.** Your own subscription, on your machine or server; no Sessionboxer account, nothing in the cloud.
+- **Open.** MIT, plain Docker, the [Agent Client Protocol](https://agentclientprotocol.com) between the UI and the agent.
 
 ## Install
 
-You need Docker ([how to install it](https://sessionboxer.talayolabs.com/#docker) on macOS, Windows or Linux). Pick one:
+You need Docker ([how](https://sessionboxer.talayolabs.com/#docker)). Pick one:
 
 ```sh
 curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh   # picks npm or Docker Compose
 brew install talayolabs/tap/sessionboxer && sessionboxer serve   # macOS, Linux
 npx sessionboxer serve                                            # Node 22+
-docker compose up -d && docker compose logs control-plane        # with this repo's docker-compose.yml; the logs have the login link
+docker compose up -d && docker compose logs control-plane        # this repo's docker-compose.yml
 ```
 
-Or a [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Linux, macOS and Windows (no Node needed).
+Or the [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Linux, macOS and Windows.
 
-Then open the login link the server prints (`sessionboxer token`, or `docker compose exec control-plane sessionboxer token`, prints the access token for another browser), click your agent's logo on the first screen and **Sign in with** it: the Provider's sign-in page opens in your own browser, already logged in or with your saved password, and the login is stored for you (Claude Code and Devin ask you to paste a code back; Codex shows you one to type in; Cursor needs nothing). Or do it by hand with the three steps for your OS: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, `~/.config/cursor/auth.json` after `agent login` for Cursor, or the token from `devin auth login` for Devin. Type a prompt, add a repository if you like, **Start**.
+1. Open the login link the server prints (`sessionboxer token` prints the token again).
+2. Click your agent's logo and **Sign in with** it; the login happens in your own browser.
+3. Type a prompt, add a repository if you like, **Start**.
 
-More ways to install, updating and troubleshooting: [user guide → Install](docs/GUIDE.md#install).
+More: [user guide → Install](docs/GUIDE.md#install).
 
 ## What it does
 
-- **One box per session.** Its own container, its own copy of the code, one or many repositories.
-- **Live desktop.** Watch the agent work; **Take control** to log in somewhere or fix things yourself.
-- **VS Code and terminals** inside the box. Files named in the chat open in the editor at that line.
-- **Videos in the chat.** Ask for a recording and the agent films the desktop, with captions and optional narration.
-- **Verified turns.** After each turn the agent plans test cases from your prompt, runs them on the box's desktop while recording, fixes what fails, and posts the video.
-- **Snapshots and forks.** Snapshot the box by hand or after every finished turn. Fork a new session from any of them.
-- **Revert and branches.** Go back to an earlier turn and try another way; the old path is kept as a branch.
-- **Pull requests.** Attach a PR on GitHub or on your Bitbucket Data Center and follow its comments and checks (build statuses) from the chat. Have the agent address the comments, fix the failed checks, reply on the PR, and **auto-merge** GitHub PRs when checks pass.
-- **Context gauge.** How full the agent's memory is, what each turn cost, and every byte sent to the model (Claude Code).
-- **MCP servers.** Register once, switch on per session. GitHub connects with one click; one account per repository.
-- **Scheduled tasks.** A prompt on a timetable (cron), into a running session or a fresh one from a template; next runs, history and Run now.
-- **The agent knows where it is.** A `sessionboxer` MCP in every box: who am I, what does the user see, the guide's answers about Sessionboxer; attach a PR, snapshot, rename, queue a follow-up, open a pane for you, start a verification with its own brief — and, if you allow it, create, fork and message other sessions (you Allow / Deny creations from a card in the chat; every action is a marker).
-- **Dictation.** Talk instead of typing; whisper.cpp transcribes on your machine, offline.
-- **From your phone.** Pair a device with a QR code over a tunnel; push notifications when the agent is done.
-- **Stop and resume.** A stopped box uses nothing and comes back where it was.
-- **A Windows or macOS desktop when you need one.** Pick *QEMU · Windows* or *QEMU · macOS* as the session's environment (Linux hosts with KVM): a VM boots next to the box and the desktop the agent sees and drives is Windows or a Mac. On both, the agent itself, its MCP servers, git and the terminal run inside the VM (`C:\workspace` on Windows, `/Users/agent/workspace` on the Mac); the Linux box keeps the desktop view, recordings and sync. macOS on non-Apple hardware is subject to Apple's licence — your call.
-- **Docker inside the box**, behind a corporate proxy, several GitHub accounts, Bitbucket Data Center.
+- **One box per session**, with its own copy of one or many repositories.
+- **Live desktop**: watch the agent; **Take control** to log in or fix things yourself.
+- **Linux, Windows or macOS**: Docker for Linux, a QEMU VM for Windows or macOS with the agent inside it (Linux hosts with KVM).
+- **VS Code and terminals** in the box; files named in the chat open at that line.
+- **Videos in the chat**: the agent films the desktop, with captions.
+- **Verified turns**: after each turn the agent tests its work on the desktop, on video, and fixes what fails.
+- **Snapshots and forks**: snapshot by hand or after every turn, fork a session from any of them.
+- **Revert and branches**: go back to an earlier turn and try another way.
+- **Hand off** a session to another agent, with the context written by the origin's agent.
+- **Pull requests** on GitHub or Bitbucket Data Center: comments and checks in the chat, address them, auto-merge.
+- **Context gauge**: how full the agent's memory is, what each turn cost, every byte sent to the model.
+- **Usage limits**: session and weekly bars, auto-continue when the limit resets.
+- **Model and options** per session, changed mid-conversation.
+- **MCP servers**: register once, switch on per session; several Git accounts, one per repository.
+- **Scheduled tasks**: a prompt on a timetable into a running session or a fresh one.
+- **The agent knows where it is**: a `sessionboxer` MCP to ask about itself, attach PRs, snapshot, open panes, verify — and, if allowed, create, message and hand off to other sessions.
+- **USB devices**: one device of the host per session, for `adb` and friends.
+- **Dictation**: whisper.cpp on your machine, offline.
+- **Phone**: pair with a QR code over a tunnel; push notifications when the agent is done.
+- **Themes**: eleven palettes, shared with VS Code in the box.
+- **Stop and resume**: a stopped box uses nothing and comes back where it was.
+- **Docker inside the box**, corporate proxies, exact model API calls on request.
 
 Every feature in detail: [user guide](docs/GUIDE.md).
 
@@ -63,7 +70,7 @@ Every feature in detail: [user guide](docs/GUIDE.md).
 | Runs on your machine or your server | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
 | Your existing subscription, no new account | ✓ | ✗ | ✗ | ✗ | ✗ | API key | ✓ |
 | Agents | Claude Code, Codex, Cursor, Devin | Devin | Cursor | Codex | Claude Code | own agent, any model | Claude Code, Codex, Cursor, others |
-| Isolated sandbox per session | Docker | VM | VM | container | VM | Docker | ✗ (your machine) |
+| Isolated sandbox per session | Docker, Windows/macOS VM | VM | VM | container | VM | Docker | ✗ (your machine) |
 | Desktop the agent drives with mouse and keyboard | ✓ | browser | ✓ | — | — | browser | ✗ |
 | Watch the screen live and take over | ✓ | ✓ | ✓ | — | — | — | ✗ |
 | VS Code and terminals inside the sandbox | ✓ | ✓ | — | — | — | — | your own |
@@ -72,6 +79,7 @@ Every feature in detail: [user guide](docs/GUIDE.md).
 | Revert the conversation, branches | ✓ | — | — | — | — | — | — |
 | Pull requests: follow, address, auto-merge | ✓ | follow, address | address | address | address | address | ✗ |
 | Scheduled tasks | ✓ | ✓ | ✓ | in the app | ✓ | ✓ | — |
+| Agent creates and messages other sessions | ✓ | ✓ | — | — | — | — | — |
 | See the exact model API calls | ✓ | — | — | — | — | — | — |
 | Offline dictation | ✓ | — | — | — | — | — | — |
 | Phone | PWA + push | web | iOS app | ChatGPT app | Claude app | web | iOS, Android |
@@ -83,7 +91,7 @@ From each product's public documentation, September 2026; ✗ = not offered, —
 
 ```sh
 sessionboxer new .                                   # box the current directory
-sessionboxer new --git https://github.com/org/app --git https://github.com/org/api -p "run the tests"
+sessionboxer new --git https://github.com/org/app -p "run the tests"
 sessionboxer ls | open | stop | resume | rm
 sessionboxer service install                         # run the server in the background, at login
 ```
@@ -91,7 +99,7 @@ sessionboxer service install                         # run the server in the bac
 ## Learn more
 
 - [User guide](docs/GUIDE.md): every feature, setting and environment variable.
-- [Design](docs/DESIGN.md) and [decision records](docs/adr): how it is built and why.
+- [Design](docs/DESIGN.md) and [decision records](docs/adr).
 - [Changelog](CHANGELOG.md) and [releases](https://github.com/talayolabs/sessionboxer/releases).
 
 MIT licence. Made by [Talayo Labs](https://talayolabs.com).

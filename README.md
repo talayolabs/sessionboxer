@@ -14,7 +14,7 @@ Run coding agents in boxes. Each session gets its own Docker container with a Li
 
 - **Safe.** The agent has all permissions, but only inside its container. Delete the session and everything is gone.
 - **Sees the screen.** A real desktop with Firefox. The agent takes screenshots, clicks and types; you can watch and take control.
-- **Yours.** Your own Claude, ChatGPT, Cursor or Devin subscription, on your machine or your server. No Sessionboxer account, nothing in the cloud.
+- **Yours.** Your own Claude, ChatGPT, Cursor or Devin subscription, on your machine or your server; sign in from the browser you already use, no terminal. No Sessionboxer account, nothing in the cloud.
 - **Open.** MIT licence, plain Docker, plain X11, the [Agent Client Protocol](https://agentclientprotocol.com) between the UI and the agent.
 
 ## Install
@@ -30,7 +30,7 @@ docker compose up -d && docker compose logs control-plane        # with this rep
 
 Or a [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Linux, macOS and Windows (no Node needed).
 
-Then open the login link the server prints (`sessionboxer token`, or `docker compose exec control-plane sessionboxer token`, prints the access token for another browser), click your agent's logo on the first screen and follow the three steps for your OS: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, `~/.config/cursor/auth.json` after `agent login` for Cursor, or the token from `devin auth login` for Devin. Type a prompt, add a repository if you like, **Start**.
+Then open the login link the server prints (`sessionboxer token`, or `docker compose exec control-plane sessionboxer token`, prints the access token for another browser), click your agent's logo on the first screen and **Sign in with** it: the Provider's sign-in page opens in your own browser, already logged in or with your saved password, and the login is stored for you (Claude Code and Devin ask you to paste a code back; Codex shows you one to type in; Cursor needs nothing). Or do it by hand with the three steps for your OS: `claude setup-token` for Claude Code, `~/.codex/auth.json` after `codex login` for Codex, `~/.config/cursor/auth.json` after `agent login` for Cursor, or the token from `devin auth login` for Devin. Type a prompt, add a repository if you like, **Start**.
 
 More ways to install, updating and troubleshooting: [user guide → Install](docs/GUIDE.md#install).
 

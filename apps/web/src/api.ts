@@ -42,6 +42,9 @@ import type {
   PtyListResult,
   PromptAttachment,
   PromptRequest,
+  Provider,
+  ProviderHostLogin,
+  ProviderLoginFlow,
   PublicSettings,
   PushStatus,
   RepoRemovalBlocked,
@@ -138,6 +141,14 @@ export const api = {
   connectorGh: () => request<GhCliStatus>("/connectors/github/gh"),
   connectorDisconnect: (serverId: string) =>
     request<PublicSettings>(`/connectors/servers/${serverId}/disconnect`, { method: "POST" }),
+  providerHostLogin: (provider: Provider) => request<ProviderHostLogin>(`/providers/${provider}/host-login`),
+  providerImportHostLogin: (provider: Provider) =>
+    request<PublicSettings>(`/providers/${provider}/host-login/import`, { method: "POST" }),
+  providerLoginStart: (provider: Provider) => request<ProviderLoginFlow>(`/providers/${provider}/login`, { method: "POST" }),
+  providerLogin: (id: string) => request<ProviderLoginFlow>(`/providers/login/${id}`),
+  providerLoginCode: (id: string, code: string) =>
+    request<ProviderLoginFlow>(`/providers/login/${id}/code`, { method: "POST", body: JSON.stringify({ code }) }),
+  providerLoginCancel: (id: string) => request<void>(`/providers/login/${id}`, { method: "DELETE" }),
   schedules: () => request<Schedule[]>("/schedules"),
   createSchedule: (req: CreateScheduleRequest) => request<Schedule>("/schedules", { method: "POST", body: JSON.stringify(req) }),
   updateSchedule: (id: string, patch: UpdateScheduleRequest) =>

@@ -2358,13 +2358,13 @@ function SettingsView({
             <fieldset className="choice" id="settings-providers">
               <legend>Provider logins</legend>
               <p className="muted">
-                A Session needs the login of its Provider; one is enough to start. Each is made with the Provider&apos;s own CLI on your machine, then pasted here.
+                A Session needs the login of its Provider; one is enough to start. Sign in with the Provider in this browser, or make the login with its own CLI on your machine and paste it here.
               </p>
               <div className="guided-row">
-                <button type="button" onClick={() => setGuided(true)}>
-                  Connect step by step…
+                <button type="button" className="primary" onClick={() => setGuided(true)}>
+                  Connect a Provider…
                 </button>
-                <span className="muted">Install the CLI, log in, paste: the commands for your operating system (macOS, Windows or Linux).</span>
+                <span className="muted">Sign in with Claude, Codex, Cursor or Devin; or the CLI commands for your operating system, then paste.</span>
               </div>
               {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
               <label>

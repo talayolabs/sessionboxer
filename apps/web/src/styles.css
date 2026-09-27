@@ -418,6 +418,14 @@ li.expanded .saved-text { white-space: normal; }
 .connector-code-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .connector-code { font-size: 24px; letter-spacing: 3px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); user-select: all; }
 .connector-done { margin: 0; line-height: 1.45; }
+.provider-signin { display: flex; flex-direction: column; gap: 8px; }
+.provider-signin-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.provider-signin .connector-code-row input { flex: 1; min-width: 200px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.provider-signin p { margin: 0; line-height: 1.45; }
+.provider-signin .link { align-self: flex-start; }
+.provider-manual { display: flex; flex-direction: column; gap: 10px; }
+.provider-manual summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.provider-manual:not([open]) { gap: 0; }
 .connector-ways { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .connector-way { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 12px; white-space: normal; }
 .connector-way > span:first-child { font-weight: 600; }

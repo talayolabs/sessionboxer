@@ -8,6 +8,7 @@ import {
 import { api } from "./api";
 import { CopyCommand } from "./CopyCommand";
 import { ProviderIcon } from "./ProviderIcon";
+import { ProviderSignIn } from "./ProviderSignIn";
 import { providerTokenSet } from "./providers";
 import { Modal, Tab, TabList, TabPanel, Tabs } from "./ui";
 
@@ -246,9 +247,10 @@ function secretUpdate(provider: Provider, value: string) {
 }
 
 /**
- * "Connect a Provider": the four logos, then for the chosen one the three commands to run on your
- * own machine (for your OS, others one click away) and a field to paste the result into. Saves right
- * away; the same secrets as Global settings → Provider logins.
+ * "Connect a Provider": the four logos, then for the chosen one "Sign in with …" (the browser
+ * login, ADR-0058) and, folded away, the three commands to run on your own machine (for your OS,
+ * others one click away) with a field to paste the result into. Saves right away; the same
+ * secrets as Global settings → Provider logins.
  */
 export function ProviderConnectDialog({
   settings,
@@ -268,6 +270,7 @@ export function ProviderConnectDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [manual, setManual] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const pick = (p: Provider) => {
@@ -275,6 +278,7 @@ export function ProviderConnectDialog({
     setValue("");
     setError(null);
     setSaved(false);
+    setManual(false);
   };
 
   const save = async () => {
@@ -331,9 +335,9 @@ export function ProviderConnectDialog({
         <>
           <p className="muted">
             A Session runs one of these Agents with your own subscription;
-            connect the one you have (one is enough). Each login is made with
-            the Provider&apos;s CLI on your machine, then pasted here; the
-            steps are shown for your operating system.
+            connect the one you have (one is enough). Sign in with the
+            Provider in this browser, or make the login with its CLI on your
+            machine and paste it here.
           </p>
           <ProviderLogos settings={settings} onPick={pick} />
         </>
@@ -345,6 +349,17 @@ export function ProviderConnectDialog({
             <span className="muted">{PROVIDER_BLURB[provider]}.</span>
             {connected && <span className="ok">Connected</span>}
           </div>
+          <ProviderSignIn
+            provider={provider}
+            connected={connected}
+            onStored={onStored}
+          />
+          <details
+            className="provider-manual"
+            open={manual}
+            onToggle={(e) => setManual(e.currentTarget.open)}
+          >
+            <summary>Or do it by hand: the CLI on your machine, then paste</summary>
           <Tabs className="tabs" value={os} onValueChange={setOs}>
             <div className="os-row">
               <span className="muted">Commands for</span>
@@ -415,19 +430,7 @@ export function ProviderConnectDialog({
             />
           )}
           {error && <p className="error">{error}</p>}
-          {saved && !error && (
-            <p className="ok">
-              Saved. Sessions can use {PROVIDER_LABELS[provider]} now.
-            </p>
-          )}
           <div className="actions">
-            <a
-              className="muted"
-              href="#/settings/providers"
-              onClick={onClose}
-            >
-              More options in Global settings
-            </a>
             <span className="spacer" />
             {field.file && (
               <button
@@ -446,7 +449,23 @@ export function ProviderConnectDialog({
             >
               {busy ? "Saving…" : "Save"}
             </button>
-            {saved && (
+          </div>
+          </details>
+          {saved && !error && (
+            <p className="ok">
+              Saved. Sessions can use {PROVIDER_LABELS[provider]} now.
+            </p>
+          )}
+          <div className="actions">
+            <a
+              className="muted"
+              href="#/settings/providers"
+              onClick={onClose}
+            >
+              More options in Global settings
+            </a>
+            <span className="spacer" />
+            {(saved || connected) && (
               <button type="button" onClick={onClose}>
                 Done
               </button>

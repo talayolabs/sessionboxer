@@ -123,6 +123,20 @@ export interface CommitSpec {
 
 export type ContainerState = "running" | "stopped" | "missing";
 
+/** One command on a pty, on this machine or in a throwaway container from the Sandbox image (`SandboxDocker.runTty`). */
+export interface TtyProcess {
+  /** Raw terminal output as it arrives (control sequences included). */
+  onData(fn: (chunk: string) => void): void;
+  /** Keystrokes for the process; `\r` is Enter. */
+  write(text: string): void;
+  /** The exit code, `null` when the process was killed. */
+  exited: Promise<number | null>;
+  kill(): Promise<void>;
+}
+
+export const LABEL_TOOL = "sessionboxer.tool";
+const TTY_COLUMNS = 400;
+
 /**
  * Docker cannot read a blob of the image the container runs on (a layer, config or
  * manifest gone from the content store, typically after a disk incident or an image
@@ -351,6 +365,67 @@ export class SandboxDocker {
     } finally {
       await container.remove({ force: true }).catch(() => undefined);
     }
+  }
+
+  /**
+   * Runs `cmd` as `agent` on a pty in a fresh container from the Sandbox image: no Daemon, no
+   * desktop, no Session, removed by Docker when it exits. Wide enough that the CLIs do not wrap
+   * what they print. For interactive CLIs Sessionboxer drives itself (Provider sign-in, ADR-0058).
+   */
+  async runTty(cmd: string[], label: string, env: Record<string, string> = {}): Promise<TtyProcess> {
+    const container = await this.docker.createContainer({
+      Image: SANDBOX_IMAGE,
+      Entrypoint: ["tini", "--"],
+      Cmd: cmd,
+      User: "agent",
+      WorkingDir: "/home/agent",
+      Tty: true,
+      OpenStdin: true,
+      Env: ["TERM=xterm-256color", "NO_COLOR=1", `COLUMNS=${TTY_COLUMNS}`, ...Object.entries(env).map(([k, v]) => `${k}=${v}`)],
+      Labels: { [LABEL_TOOL]: label },
+      HostConfig: {
+        AutoRemove: true,
+        NanoCpus: 1e9,
+        Memory: 1024 ** 3,
+        NetworkMode: SANDBOX_NETWORK,
+        RestartPolicy: { Name: "no" },
+      },
+    });
+    const listeners: Array<(chunk: string) => void> = [];
+    let backlog = ""; // what arrived before anyone listened (a CLI that prints at once)
+    const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
+    stream.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      if (listeners.length === 0) backlog += text;
+      for (const fn of listeners) fn(text);
+    });
+    // Registered before `start` (hence `next-exit`, not the default that answers at once for a
+    // created container) so an early exit followed by AutoRemove cannot slip past it.
+    const waited = container.wait({ condition: "next-exit" }).then(
+      (r: { StatusCode: number }) => r.StatusCode,
+      () => null,
+    );
+    await container.start();
+    await container.resize({ h: 50, w: TTY_COLUMNS }).catch(() => undefined);
+    return {
+      onData: (fn) => {
+        listeners.push(fn);
+        if (backlog) {
+          const text = backlog;
+          backlog = "";
+          fn(text);
+        }
+      },
+      write: (text) => void stream.write(text),
+      exited: waited,
+      kill: async () => {
+        try {
+          await container.kill();
+        } catch (e) {
+          if (!isStatus(e, 404) && !isStatus(e, 409)) throw e; // gone, or already stopped
+        }
+      },
+    };
   }
 
   /** Copies this checkout's Daemon build (and the other SANDBOX_SYNC parts) into the (stopped) Sandbox; returns what was skipped. */

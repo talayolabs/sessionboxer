@@ -26,6 +26,8 @@ import {
   UpdatePrRequest,
   ConnectorKind,
   ConnectorStartRequest,
+  Provider,
+  ProviderLoginCodeRequest,
   CreateScheduleRequest,
   CreateSessionRequest,
   ForkSessionRequest,
@@ -90,6 +92,7 @@ import { SandboxDocker } from "./docker.js";
 import { findDockerEngine, noDockerAdvice } from "./docker-engine.js";
 import { HostDirError, listHostDir } from "./host-dir.js";
 import { banner, log } from "./log.js";
+import { HostOrSandboxRunner, ProviderLogins } from "./provider-login.js";
 import { PushNotifier } from "./push.js";
 import { Scheduler } from "./scheduler.js";
 import { HttpError, MACOS_AVAILABILITY, SessionManager } from "./sessions.js";
@@ -208,6 +211,17 @@ const connectors = new Connectors(
   },
   (kind) => `${PUBLIC_URL}/api/connectors/${kind}/callback`,
   () => void sessions.pushMcpServersToAll(),
+  log,
+);
+const providerLogins = new ProviderLogins(
+  new HostOrSandboxRunner(docker),
+  {
+    get: () => settings,
+    set: (next) => {
+      settings = next;
+      saveSettings(settings);
+    },
+  },
   log,
 );
 
@@ -348,6 +362,23 @@ api.get("/tunnels/sessionboxer/server", async (c) => {
   });
   return c.json({ server, info, name: tunnelName(settings.tunnels.sessionboxer) });
 });
+// Provider sign-in (ADR-0058): the CLI on this machine or in a throwaway container, the browser here, the code passed along.
+api.get("/providers/:provider/host-login", (c) => c.json(providerLogins.hostLogin(Provider.parse(c.req.param("provider")))));
+api.post("/providers/:provider/host-login/import", async (c) => {
+  providerLogins.importHostLogin(Provider.parse(c.req.param("provider")));
+  return c.json(await publicSettings());
+});
+api.post("/providers/:provider/login", (c) => c.json(providerLogins.start(Provider.parse(c.req.param("provider"))), 201));
+api.get("/providers/login/:id", (c) => c.json(providerLogins.get(c.req.param("id"))));
+api.post("/providers/login/:id/code", async (c) => {
+  const { code } = ProviderLoginCodeRequest.parse(await c.req.json());
+  return c.json(providerLogins.submit(c.req.param("id"), code));
+});
+api.delete("/providers/login/:id", (c) => {
+  providerLogins.cancel(c.req.param("id"));
+  return c.body(null, 204);
+});
+
 api.get("/tunnels/sessionboxer/names/:name", async (c) => {
   const server = c.req.query("server")?.trim() || settings.tunnels.sessionboxer.server;
   const check = await checkTunnelName(server, c.req.param("name").trim().toLowerCase()).catch((e: unknown) => {

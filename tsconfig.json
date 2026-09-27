@@ -8,6 +8,9 @@
       "path": "packages/computer-use-mcp"
     },
     {
+      "path": "packages/sessionboxer-mcp"
+    },
+    {
       "path": "packages/sandbox-daemon"
     },
     {

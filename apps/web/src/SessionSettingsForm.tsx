@@ -8,6 +8,7 @@ import {
   applyNote,
   instructionsDelivery,
   type AgentOption,
+  type AgentToolsPolicy,
   type ModelOption,
   type OptionValues,
   type Provider,
@@ -21,6 +22,7 @@ import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { EnvironmentIcon } from "./EnvironmentIcon";
 import { Select } from "./ui";
+import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 
 /** How `instructions` reach the Agent of a Provider, in one sentence for the UI. */
 export function deliveryNote(provider: Provider): string {
@@ -68,6 +70,9 @@ export interface SessionSettingsDraft {
   snapshotKeep: number | null;
   /** Verify each turn end to end (ADR-0044); `null` follows Settings. */
   e2eVerify: boolean | null;
+  /** What the `sessionboxer` MCP lets the Agent do (ADR-0062); `null` follows Settings. */
+  agentTools: AgentToolsPolicy | null;
+  approveCreate: boolean | null;
   /** Where the desktop runs (ADR-0057); fixed once the Session exists, a fork keeps the origin's. */
   environment: Environment;
   docker: boolean;
@@ -88,6 +93,8 @@ export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraf
     autoSnapshot: null,
     snapshotKeep: null,
     e2eVerify: null,
+    agentTools: null,
+    approveCreate: null,
     environment: "docker-linux",
     docker: settings.dockerInSandbox,
     cpus: null,
@@ -108,6 +115,8 @@ export function draftFromSettings(s: SessionSettings): SessionSettingsDraft {
     autoSnapshot: s.autoSnapshot,
     snapshotKeep: s.snapshotKeep,
     e2eVerify: s.e2eVerify,
+    agentTools: s.agentTools,
+    approveCreate: s.approveCreate,
     environment: s.sandbox.environment,
     docker: s.sandbox.dockerMode !== "none",
     cpus: s.sandbox.cpus,
@@ -128,6 +137,8 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
     autoSnapshot: d.autoSnapshot,
     snapshotKeep: d.snapshotKeep,
     e2eVerify: d.e2eVerify,
+    agentTools: d.agentTools,
+    approveCreate: d.approveCreate,
     sandbox: {
       environment: d.environment,
       docker: d.docker,
@@ -140,7 +151,7 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
 
 export type SessionSettingsMode = "create" | "fork" | "live";
 
-export type SessionSettingsSection = "agent" | "instructions" | "mcp" | "inspect" | "snapshots" | "verification" | "sandbox";
+export type SessionSettingsSection = "agent" | "instructions" | "mcp" | "inspect" | "snapshots" | "verification" | "tools" | "sandbox";
 
 /** The sections of the form in display order, for a split view's navigation. */
 export function sessionSettingsSections(provider: Provider): Array<{ id: SessionSettingsSection; label: string }> {
@@ -151,6 +162,7 @@ export function sessionSettingsSections(provider: Provider): Array<{ id: Session
     ...(provider === "claude-code" ? [{ id: "inspect" as const, label: "Inspect LLM" }] : []),
     { id: "snapshots", label: "Snapshots" },
     { id: "verification", label: "Verification" },
+    { id: "tools", label: "Agent tools" },
     { id: "sandbox", label: "Sandbox" },
   ];
 }
@@ -411,6 +423,23 @@ export function SessionSettingsForm({
         <p className="muted ss-note">
           After each completed turn the Agent checks what it changed, plans 2–5 test cases, runs them on the Sandbox desktop while recording, fixes
           and reruns what fails, and hands the video to the chat. Answer-only turns are skipped. Watch it in the Verification pane.
+        </p>
+      </section>
+      )}
+
+      {show("tools") && (
+      <section className="ss-section">
+        <h3>Agent tools</h3>
+        <label>
+          The sessionboxer MCP lets the Agent act on
+          <AgentToolsSelect value={value.agentTools} fallback={settings.agentTools} disabled={disabled} onChange={(agentTools) => onChange({ agentTools })} />
+        </label>
+        <label>
+          When the Agent creates a Session
+          <ApproveCreateSelect value={value.approveCreate} fallback={settings.approveCreate} disabled={disabled} onChange={(approveCreate) => onChange({ approveCreate })} />
+        </label>
+        <p className="muted ss-note">
+          Every action shows as a marker in the chat. A change applies to the running Agent at its next turn.
         </p>
       </section>
       )}

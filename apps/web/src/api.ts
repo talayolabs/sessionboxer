@@ -300,6 +300,17 @@ export function terminalSocketUrl(sessionId: string, ptyId: string): string {
   return `${proto}//${location.host}/api/sessions/${sessionId}/terminals/${ptyId}/ws`;
 }
 
+/** Which Session page and pane this browser shows; told to the Control Plane (the Agent's `whoami` lists the user's open panes). */
+export type Viewing = { sessionId: string; pane: string } | null;
+let viewing: Viewing = null;
+let sendViewing: ((view: Viewing) => void) | null = null;
+
+export function reportViewing(view: Viewing): void {
+  if (view?.sessionId === viewing?.sessionId && view?.pane === viewing?.pane) return;
+  viewing = view;
+  sendViewing?.(view);
+}
+
 /** Quiet this long on the push socket, send a ping; no answer within `PROBE_TIMEOUT_MS` means the socket is dead. */
 const HEARTBEAT_MS = 20_000;
 const PROBE_TIMEOUT_MS = 5_000;
@@ -328,6 +339,8 @@ export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnec
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
   const reportVisibility = () => send({ type: "visibility", visible: document.visibilityState === "visible" });
+  const reportView = (view: Viewing) => send({ type: "viewing", sessionId: view?.sessionId ?? null, pane: view?.pane ?? null });
+  sendViewing = reportView;
 
   const clearProbe = () => {
     if (probe) clearTimeout(probe);
@@ -385,6 +398,7 @@ export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnec
       failures = 0;
       lastSeen = Date.now();
       reportVisibility();
+      if (viewing) reportView(viewing);
       if (hadConnection) onReconnect();
       hadConnection = true;
     };
@@ -415,6 +429,7 @@ export function subscribe(onMessage: (msg: SessionBroadcast) => void, onReconnec
 
   return () => {
     closed = true;
+    if (sendViewing === reportView) sendViewing = null;
     document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("online", check);
     clearInterval(heartbeat);

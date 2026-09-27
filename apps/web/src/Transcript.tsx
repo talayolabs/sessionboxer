@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { branchScope, PROVIDER_LABELS, type Branch, type E2eRunSummary, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
+import { AgentActionMarker } from "./AgentActions";
 import { UploadedAttachments } from "./Attachments";
 import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
 import { CopyableMessage } from "./CopyMessage";
@@ -385,6 +386,7 @@ function Item({
   onInspectCompaction,
   onInspectLlmCall,
   onOpenE2e,
+  onOpenPane,
   llmTab,
 }: {
   item: TranscriptItem;
@@ -394,6 +396,7 @@ function Item({
   onInspectCompaction: (index: number, compaction: Compaction) => void;
   onInspectLlmCall: (call: LlmCall) => void;
   onOpenE2e: (runId: string | null) => void;
+  onOpenPane?: (pane: string) => void;
   /** This item is the first of its model call's output: show the call's tab over it. */
   llmTab: boolean;
 }) {
@@ -409,6 +412,7 @@ function Item({
           onInspectCompaction={onInspectCompaction}
           onInspectLlmCall={onInspectLlmCall}
           onOpenE2e={onOpenE2e}
+          onOpenPane={onOpenPane}
           llmTab={false}
         />
       </div>
@@ -541,6 +545,8 @@ function Item({
       );
     case "e2e_run":
       return <E2eMarker run={item.run} onOpen={() => onOpenE2e(item.run.runId)} />;
+    case "agent_action":
+      return <AgentActionMarker item={item} onOpenPane={onOpenPane} />;
   }
 }
 
@@ -694,6 +700,7 @@ export function Transcript({
   onInspectCompaction,
   onInspectLlmCall,
   onOpenE2e,
+  onOpenPane,
 }: {
   items: TranscriptItem[];
   actions: SnapshotActions;
@@ -713,6 +720,8 @@ export function Transcript({
   onInspectLlmCall: (call: LlmCall) => void;
   /** A verification marker was clicked: open the Verification pane on that run (`null` = the latest). */
   onOpenE2e: (runId: string | null) => void;
+  /** An Agent action marker was clicked: open the pane it concerns (`prs`, `pr:<id>`, `terminal`, …). */
+  onOpenPane?: (pane: string) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -795,6 +804,7 @@ export function Transcript({
         onInspectCompaction={onInspectCompaction}
         onInspectLlmCall={onInspectLlmCall}
         onOpenE2e={onOpenE2e}
+        onOpenPane={onOpenPane}
         llmTab={call !== undefined && call.id !== prevCall?.id}
       />
     );

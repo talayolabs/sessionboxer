@@ -19,6 +19,8 @@ import {
   resolveSessionSettings,
   sessionRoute,
   type AgentOption,
+  type AgentToolsPolicy,
+  AGENT_CHILDREN_PER_SESSION,
   type Branch,
   type CodexLogin,
   type CursorLogin,
@@ -54,7 +56,9 @@ import {
   VM_NO_SNAPSHOT,
   type SpeechStatus,
 } from "@sessionboxer/protocol";
-import { api, subscribe } from "./api";
+import { api, reportViewing, subscribe } from "./api";
+import { uiHintApplies } from "./AgentActions";
+import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 import { SIDEBAR_MAX_PX, SIDEBAR_MIN_PX, PANE_MAX_FRAC, PANE_MIN_FRAC, clampPane, clampSidebar, loadSize, saveSize, startSplitterDrag } from "./splitter";
 import { AttachmentSession } from "./Attachments";
 import { usePendingAttachments } from "./attachments-pending";
@@ -106,7 +110,7 @@ import { Schedules } from "./Schedules";
 import { Modal, Select, cx, Menu, MenuItem, Tab, TabList, TabPanel, Tabs, Tip } from "./ui";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
-import { TerminalPane } from "./Terminal";
+import { TerminalPane, type TerminalFocus } from "./Terminal";
 import { CodePane, type CodeTarget } from "./Code";
 import { OpenFile } from "./FileLink";
 import type { FileRef } from "./file-links";
@@ -239,6 +243,8 @@ export function App() {
   // Pane the selected Session should switch to (from a PR notification).
   const [paneRequest, setPaneRequest] = useState<{ sessionId: string; pane: string } | null>(null);
   const clearPaneRequest = useCallback(() => setPaneRequest(null), []);
+  /** A Terminal the Agent opened with `ui_open` that the Terminal pane should show. */
+  const [terminalFocus, setTerminalFocus] = useState<{ sessionId: string; focus: TerminalFocus } | null>(null);
   // Snapshots popup opened from the sidebar; it can be for a Session other than the selected one.
   const [snapshotsFor, setSnapshotsFor] = useState<string | null>(null);
   const [dialogSnapshots, setDialogSnapshots] = useState<Snapshot[] | null>(null);
@@ -474,6 +480,12 @@ export function App() {
           }
           case "remote":
             setSettings((prev) => (prev ? { ...prev, remote: msg.remote } : prev));
+            break;
+          case "ui_hint":
+            // The Agent asked to show a pane: only for the Session on screen, and never under a message being typed.
+            if (!uiHintApplies(msg.hint, selectedId)) break;
+            setPaneRequest({ sessionId: msg.hint.sessionId, pane: msg.hint.pane });
+            if (msg.hint.terminalId) setTerminalFocus({ sessionId: msg.hint.sessionId, focus: { ptyId: msg.hint.terminalId, nonce: Date.now() } });
             break;
           case "windows_base":
             setWindowsBase(msg.status);
@@ -894,6 +906,7 @@ export function App() {
             e2eRuns={selectedE2eRuns}
             paneRequest={paneRequest?.sessionId === selected.id ? paneRequest.pane : null}
             onPaneRequestHandled={clearPaneRequest}
+            terminalFocus={terminalFocus?.sessionId === selected.id ? terminalFocus.focus : null}
             mobile={mobile}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
@@ -1145,6 +1158,7 @@ function SessionView({
   e2eRuns,
   paneRequest,
   onPaneRequestHandled,
+  terminalFocus = null,
   mobile,
   run,
   onForked,
@@ -1183,6 +1197,8 @@ function SessionView({
   /** Pane to switch to (from a PR notification or a verification that started). */
   paneRequest: string | null;
   onPaneRequestHandled: () => void;
+  /** A Terminal the Agent opened (`ui_open`) to bring to the front. */
+  terminalFocus?: TerminalFocus | null;
   /** Phone shell: bottom tabs pick one full-width pane, header actions live in a sheet. */
   mobile: boolean;
   run: Runner;
@@ -1239,6 +1255,11 @@ function SessionView({
     setPane(paneRequest as Pane);
     onPaneRequestHandled();
   }, [paneRequest, onPaneRequestHandled]);
+  // What this browser shows, for the Agent's `whoami` (`panes`) and `ui_open`.
+  useEffect(() => {
+    reportViewing({ sessionId: session.id, pane: shown === "hidden" ? "chat" : shown });
+    return () => reportViewing(null);
+  }, [session.id, shown]);
   const openPrId = pane.startsWith("pr:") ? pane.slice(3) : null;
   const openPr = openPrId ? (prs.find((p) => p.id === openPrId) ?? null) : null;
   // A PR tab whose PR was detached falls back to the overview.
@@ -1653,6 +1674,7 @@ function SessionView({
             onInspectCompaction={(index, compaction) => setInspecting({ index, compaction })}
             onInspectLlmCall={setInspectingCall}
             onOpenE2e={openE2e}
+            onOpenPane={(p) => (p === "e2e" ? openE2e(null) : setPane(p as Pane))}
           />
           <Composer
             draft={draft}
@@ -1736,7 +1758,7 @@ function SessionView({
         )}
         {shown === "desktop" && <Desktop session={session} />}
         {shown === "code" && <CodePane session={session} target={codeTarget} />}
-        {shown === "terminal" && <TerminalPane session={session} />}
+        {shown === "terminal" && <TerminalPane session={session} focus={terminalFocus} />}
         {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
         {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
         {shown === "schedules" && <div className="pane schedules-pane">{schedulesPane}</div>}
@@ -2329,6 +2351,7 @@ const GLOBAL_SETTINGS_SECTIONS = [
   { id: "git-identity", label: "Git identity" },
   { id: "snapshots", label: "Snapshots" },
   { id: "verification", label: "Verification" },
+  { id: "agent-tools", label: "Agent tools" },
   { id: "recordings", label: "Narrated recordings" },
   { id: "dictation", label: "Dictation" },
   { id: "devices", label: "Devices and remote access" },
@@ -2402,6 +2425,9 @@ function SettingsView({
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [e2eVerify, setE2eVerify] = useState(settings.e2eVerify);
+  const [agentTools, setAgentTools] = useState<AgentToolsPolicy>(settings.agentTools);
+  const [approveCreate, setApproveCreate] = useState(settings.approveCreate);
+  const [agentChildrenCap, setAgentChildrenCap] = useState(String(settings.agentChildrenCap));
   const [narrationMode, setNarrationMode] = useState<NarrationMode>(settings.recordingNarration.mode);
   const [speechModel, setSpeechModel] = useState<SpeechModel>(settings.speech.model);
   const [speechLanguage, setSpeechLanguage] = useState(settings.speech.language);
@@ -2465,6 +2491,9 @@ function SettingsView({
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
         e2eVerify,
+        agentTools,
+        approveCreate,
+        agentChildrenCap: Math.max(0, Math.floor(Number(agentChildrenCap) || 0)),
         recordingNarration: { mode: narrationMode, askAboveSeconds: Math.max(0, Number(narrationAskAbove) || 0) },
         speech: { model: speechModel, language: speechLanguage },
         mcpServers,
@@ -2962,6 +2991,28 @@ function SettingsView({
                 change), runs them on the Sandbox desktop while recording, fixes and reruns what fails (3 attempts per case), and posts the video. Turns that
                 only answer are recorded as skipped. It costs a second turn of model time after each of yours.
               </p>
+            </fieldset>
+          )}
+          {show("agent-tools") && (
+            <fieldset className="choice">
+              <legend>Agent tools</legend>
+              <p className="muted">
+                Every Sandbox has a <code>sessionboxer</code> MCP: the Agent knows which Session it runs in (<code>whoami</code>, <code>.sessionboxer/session.json</code>)
+                and can act on Sessionboxer. Default for new Sessions; each Session can override it in its Session settings.
+              </p>
+              <label>
+                The Agent may act on
+                <AgentToolsSelect value={agentTools} onChange={(v) => setAgentTools(v ?? "session")} />
+              </label>
+              <label>
+                When the Agent creates a Session
+                <ApproveCreateSelect value={approveCreate} onChange={(v) => setApproveCreate(v ?? true)} />
+              </label>
+              <label>
+                Sessions created by Agents alive at once, over all Sessions
+                <input type="number" min={0} step={1} value={agentChildrenCap} onChange={(e) => setAgentChildrenCap(e.target.value)} />
+              </label>
+              <p className="muted">Each Agent also keeps at most {AGENT_CHILDREN_PER_SESSION} of its own children alive.</p>
             </fieldset>
           )}
           {show("recordings") && (

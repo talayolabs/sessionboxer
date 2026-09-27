@@ -542,6 +542,8 @@ function draftFromInput(input: SessionSettingsInput, settings: PublicSettings): 
     autoSnapshot: input.autoSnapshot === undefined ? base.autoSnapshot : input.autoSnapshot,
     snapshotKeep: input.snapshotKeep === undefined ? base.snapshotKeep : input.snapshotKeep,
     e2eVerify: input.e2eVerify === undefined ? base.e2eVerify : input.e2eVerify,
+    agentTools: input.agentTools === undefined ? base.agentTools : input.agentTools,
+    approveCreate: input.approveCreate === undefined ? base.approveCreate : input.approveCreate,
     environment: input.sandbox?.environment ?? base.environment,
     docker: input.sandbox?.docker ?? base.docker,
     cpus: input.sandbox?.cpus === undefined ? base.cpus : input.sandbox.cpus,

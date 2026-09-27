@@ -111,6 +111,30 @@ export class E2eVerification {
     return this.get(id, run.id);
   }
 
+  /**
+   * The Agent's `verify` tool: opens a run for the turn in progress with the Agent's own brief and,
+   * when given, its cases (else `e2e_plan` follows). No prompt is sent: the Agent is already at work
+   * and runs the cases in this turn; the turn's end closes whatever it left open.
+   */
+  openByAgent(id: string, turnSeq: number, brief: string, cases: Array<{ title: string; steps: string; expected: string }> | undefined): E2eRun {
+    const s = this.deps.getSession(id);
+    if (!s) throw new HttpError(404, `session ${id} not found`);
+    const active = this.deps.db.activeE2eRun(id);
+    if (active) throw new Error(`A verification run (${active.id}, ${active.status}) is already open for this Session; finish it with e2e_finish first.`);
+    const run = this.deps.db.insertE2eRun(id, turnSeq, "planning", null, brief);
+    if (cases && cases.length > 0) {
+      cases.forEach((c, i) => this.deps.db.insertE2eCase(run.id, { index: i + 1, title: c.title, steps: c.steps, expected: c.expected, cycle: 1, status: "pending" }));
+      this.deps.db.updateE2eRun(run.id, { status: "running", cycles: 1 });
+    }
+    return this.changed(id, run.id);
+  }
+
+  /** Whether the open run, if any, was opened by the Agent itself (`verify`), so the turn's end closes it. */
+  agentRunOpen(id: string): boolean {
+    const run = this.deps.db.activeE2eRun(id);
+    return run !== null && run.brief !== null;
+  }
+
   /** The verification turn ended (any stop reason): whatever the Agent did not close is closed now. */
   onVerificationTurnEnded(id: string, how: "end_turn" | "cancelled" | "error" | string): void {
     const run = this.deps.db.activeE2eRun(id);

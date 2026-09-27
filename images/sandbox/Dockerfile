@@ -15,17 +15,20 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /src
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/computer-use-mcp/package.json packages/computer-use-mcp/
+COPY packages/sessionboxer-mcp/package.json packages/sessionboxer-mcp/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/sandbox-daemon/package.json packages/sandbox-daemon/
 ARG EXTRA_CA_FINGERPRINT=
 RUN --mount=type=secret,id=extra-ca \
     if [ -s /run/secrets/extra-ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra-ca; fi \
-    && npm ci --workspace @sessionboxer/computer-use-mcp --workspace @sessionboxer/protocol \
-      --workspace @sessionboxer/sandbox-daemon --ignore-scripts
+    && npm ci --workspace @sessionboxer/computer-use-mcp --workspace @sessionboxer/sessionboxer-mcp \
+      --workspace @sessionboxer/protocol --workspace @sessionboxer/sandbox-daemon --ignore-scripts
 COPY packages/computer-use-mcp packages/computer-use-mcp
+COPY packages/sessionboxer-mcp packages/sessionboxer-mcp
 COPY packages/protocol packages/protocol
 COPY packages/sandbox-daemon packages/sandbox-daemon
 RUN npm run build -w @sessionboxer/computer-use-mcp \
+    && npm run build -w @sessionboxer/sessionboxer-mcp \
     && npm run build -w @sessionboxer/protocol \
     && npm run build -w @sessionboxer/sandbox-daemon
 # The VS Code extension with the Sessionboxer color themes, generated from the same palettes
@@ -203,6 +206,15 @@ RUN cd /opt/sessionboxer/computer-use-mcp \
     && npm cache clean --force \
     && ln -s /opt/sessionboxer/computer-use-mcp/dist/index.js /usr/local/bin/sessionboxer-computer-use-mcp
 
+# The `sessionboxer` MCP server (ADR-0062): the Agent's knowledge of, and actions on, its own Session,
+# through the Daemon on loopback. Its `docs` tool reads the user guide shipped here.
+COPY packages/sessionboxer-mcp/package.json /opt/sessionboxer/sessionboxer-mcp/
+RUN cd /opt/sessionboxer/sessionboxer-mcp \
+    && npm install --omit=dev --no-package-lock --ignore-scripts \
+    && npm cache clean --force \
+    && ln -s /opt/sessionboxer/sessionboxer-mcp/dist/index.js /usr/local/bin/sessionboxer-mcp
+COPY docs/GUIDE.md /opt/sessionboxer/docs/GUIDE.md
+
 # Sandbox Daemon plus the shared protocol package it imports at runtime; the workspace
 # dependency becomes a symlink. node-pty has no Linux prebuilds, so it is compiled here
 # (build-essential + python3 above).
@@ -284,6 +296,7 @@ COPY --chown=agent:agent images/sandbox/macos-briefing.md /home/agent/.sessionbo
 
 # The compiled Sessionboxer code (stage 1): the layers that change with every release, last.
 COPY --from=build --chmod=0755 /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist
+COPY --from=build --chmod=0755 /src/packages/sessionboxer-mcp/dist /opt/sessionboxer/sessionboxer-mcp/dist
 COPY --from=build /src/packages/protocol/dist /opt/sessionboxer/protocol/dist
 COPY --from=build --chmod=0755 /src/packages/sandbox-daemon/dist /opt/sessionboxer/sandbox-daemon/dist
 

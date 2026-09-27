@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as pty from "node-pty";
-import { PTY_SCROLLBACK_BYTES, type PtyAttachResult, type PtyInfo } from "@sessionboxer/protocol";
+import { PTY_SCROLLBACK_BYTES, type PtyAttachResult, type PtyInfo, type PtyReadResult } from "@sessionboxer/protocol";
 import { caEnv } from "./ca-env.js";
 
 const EXITED_RETENTION_MS = 5 * 60_000;
@@ -33,6 +33,17 @@ export class TerminalError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Terminal output without its control sequences (CSI/OSC/charset escapes, carriage returns, bells). */
+export function plainText(raw: string): string {
+  return raw
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[()][0-9A-Za-z]/g, "")
+    .replace(/\x1b[=>78]/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\x07\x08]/g, "");
 }
 
 /**
@@ -89,6 +100,14 @@ export class Terminals {
   attach(id: string): PtyAttachResult {
     const term = this.get(id);
     return { ...term.info, scrollback: Buffer.concat(term.scrollback).toString("base64") };
+  }
+
+  /** The retained output as plain text (escape sequences dropped), its last `lines` lines: what the Agent's `terminal_read` returns. */
+  read(id: string, lines: number): PtyReadResult {
+    const term = this.get(id);
+    const text = plainText(Buffer.concat(term.scrollback).toString("utf8"));
+    const all = text.split("\n");
+    return { id, text: all.slice(Math.max(0, all.length - lines)).join("\n"), exitCode: term.info.exitCode };
   }
 
   input(id: string, data: string): void {

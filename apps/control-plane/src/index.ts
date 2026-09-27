@@ -223,6 +223,7 @@ const publicSettings = async () =>
     },
     await dockerReachable(),
   );
+sessions.publicSettings = publicSettings;
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -333,8 +334,10 @@ api.post("/auth/token/rotate", (c) => {
 api.get("/settings", async (c) => c.json(await publicSettings()));
 api.put("/settings", async (c) => {
   const update = UpdateSettingsRequest.parse(await c.req.json());
+  const agentToolsBefore = settings.agentTools;
   settings = applySettingsUpdate(settings, update);
   saveSettings(settings);
+  if (settings.agentTools !== agentToolsBefore) void sessions.agentToolsPolicyChanged();
   if (update.extraCaCerts !== undefined || update.trustHostCaCerts !== undefined) applyTrustedCas(settings);
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
@@ -785,6 +788,7 @@ api.get(
     const deviceId = p.kind === "device" ? p.device.id : null;
     let unsubscribe: (() => void) | null = null;
     let visible = false;
+    const viewerKey = {};
     const setVisible = (v: boolean): void => {
       if (v === visible || deviceId === null) return;
       visible = v;
@@ -805,11 +809,13 @@ api.get(
         const parsed = UiClientMessage.safeParse(raw);
         if (!parsed.success) return;
         if (parsed.data.type === "visibility") setVisible(parsed.data.visible);
+        else if (parsed.data.type === "viewing") sessions.setViewer(viewerKey, parsed.data.sessionId ? { sessionId: parsed.data.sessionId, pane: parsed.data.pane ?? "chat" } : null);
         else if (parsed.data.type === "ping") ws.send(JSON.stringify({ type: "pong" } satisfies SessionBroadcast));
       },
       onClose() {
         unsubscribe?.();
         setVisible(false);
+        sessions.setViewer(viewerKey, null);
       },
       onError(err) {
         log(`ui ws error: ${String(err)}`);

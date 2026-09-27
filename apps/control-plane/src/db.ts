@@ -143,6 +143,7 @@ interface E2eRunRow {
   video_path: string | null;
   cycles: number;
   summary: string | null;
+  brief: string | null;
 }
 
 interface E2eCaseRow {
@@ -253,7 +254,8 @@ CREATE TABLE IF NOT EXISTS e2e_runs (
   finished_at TEXT,
   video_path TEXT,
   cycles INTEGER NOT NULL DEFAULT 0,
-  summary TEXT
+  summary TEXT,
+  brief TEXT
 );
 CREATE INDEX IF NOT EXISTS e2e_runs_session ON e2e_runs(session_id, started_at);
 CREATE TABLE IF NOT EXISTS e2e_cases (
@@ -292,6 +294,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },
   { table: "sessions", column: "usb", ddl: "ALTER TABLE sessions ADD COLUMN usb TEXT" },
+  { table: "e2e_runs", column: "brief", ddl: "ALTER TABLE e2e_runs ADD COLUMN brief TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];
@@ -647,12 +650,12 @@ export class Db {
 
   // --- End-to-end verification runs (ADR-0044) -------------------------------------------------
 
-  insertE2eRun(sessionId: string, turnSeq: number, status: E2eRunStatus, skipReason: string | null = null): E2eRun {
+  insertE2eRun(sessionId: string, turnSeq: number, status: E2eRunStatus, skipReason: string | null = null, brief: string | null = null): E2eRun {
     const id = randomBytes(6).toString("hex");
     const now = new Date().toISOString();
     this.db
-      .prepare("INSERT INTO e2e_runs (id, session_id, turn_seq, status, skip_reason, started_at, finished_at, cycles) VALUES (?, ?, ?, ?, ?, ?, ?, 0)")
-      .run(id, sessionId, turnSeq, status, skipReason, now, skipReason ? now : null);
+      .prepare("INSERT INTO e2e_runs (id, session_id, turn_seq, status, skip_reason, started_at, finished_at, cycles, brief) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)")
+      .run(id, sessionId, turnSeq, status, skipReason, now, skipReason ? now : null, brief);
     return this.getE2eRun(sessionId, id)!;
   }
 
@@ -749,6 +752,7 @@ export class Db {
       videoPath: r.video_path,
       cycles: r.cycles,
       summary: r.summary,
+      brief: r.brief,
       cases,
     };
   }

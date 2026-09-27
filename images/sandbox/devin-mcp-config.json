@@ -3,6 +3,10 @@
     "desktop": {
       "command": "sessionboxer-computer-use-mcp",
       "transport": "stdio"
+    },
+    "sessionboxer": {
+      "command": "sessionboxer-mcp",
+      "transport": "stdio"
     }
   }
 }

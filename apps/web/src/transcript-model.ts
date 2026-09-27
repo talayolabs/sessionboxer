@@ -13,6 +13,7 @@ import {
   type ToolCallContent,
   type ToolCallLocation,
 } from "@sessionboxer/protocol";
+import type { AgentActionItem } from "./AgentActions";
 import { TurnAccumulator, foldCompaction, isCompactionUpdate, type Compaction, type TurnStats } from "./context-model";
 
 export type TranscriptItem =
@@ -79,7 +80,9 @@ export type TranscriptItem =
   | { kind: "e2e_prompt"; key: string }
   /** The Control Plane's hidden request for a handoff (a fork is waiting for the Agent's reply). */
   | { kind: "handoff_request"; key: string }
-  | { kind: "e2e_run"; key: string; run: E2eRunSummary };
+  | { kind: "e2e_run"; key: string; run: E2eRunSummary }
+  /** Something the Agent did through the `sessionboxer` MCP (attached a PR, took a Snapshot, …). */
+  | AgentActionItem;
 
 function blockText(block: ContentBlock): string {
   switch (block.type) {
@@ -222,6 +225,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "e2e_run":
         items.push({ kind: "e2e_run", key, run: body.run });
+        break;
+      case "agent_action":
+        items.push({ kind: "agent_action", key, ts: ev.ts, tool: body.tool, text: body.text, pane: body.pane ?? null, sessionId: body.sessionId ?? null });
         break;
       case "llm_call":
         if (body.call.kind === "turn") labelLlmCall(items, body.call);

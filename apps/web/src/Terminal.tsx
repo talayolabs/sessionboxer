@@ -76,8 +76,14 @@ function copyPasteKeys(term: XTerm, e: KeyboardEvent): boolean {
 }
 
 
+/** A terminal the Agent opened (`ui_open`) that should come to the front; `nonce` makes a repeat request distinct. */
+export interface TerminalFocus {
+  ptyId: string;
+  nonce: number;
+}
+
 /** Shells inside the Sandbox's Workspace, one xterm.js tab per Daemon PTY. */
-export function TerminalPane({ session }: { session: Session }) {
+export function TerminalPane({ session, focus = null }: { session: Session; focus?: TerminalFocus | null }) {
   const live = isLive(session);
   const [terminals, setTerminals] = useState<PtyInfo[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -124,6 +130,29 @@ export function TerminalPane({ session }: { session: Session }) {
       cancelled = true;
     };
   }, [session.id, live, open]);
+
+  // The Agent opened a terminal: pick it up from the Daemon (it is not in our list yet) and show it.
+  useEffect(() => {
+    if (!focus || !live) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.terminals(session.id);
+        if (cancelled) return;
+        const alive = res.terminals.filter((t) => t.exitCode === null);
+        setTerminals((prev) => {
+          const known = new Set(prev.map((t) => t.id));
+          return [...prev.filter((t) => alive.some((a) => a.id === t.id)), ...alive.filter((t) => !known.has(t.id))];
+        });
+        if (alive.some((t) => t.id === focus.ptyId)) setActive(focus.ptyId);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [focus, live, session.id]);
 
   const close = async (ptyId: string) => {
     const next = terminals.filter((t) => t.id !== ptyId);

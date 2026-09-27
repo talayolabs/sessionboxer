@@ -5,6 +5,8 @@ import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
+  AgentDocsArgs,
+  GUIDE_PATH,
   CodeOpenParams,
   CodeStartParams,
   CodeThemeParams,
@@ -34,6 +36,8 @@ import {
   DaemonReposInspectParams,
   DaemonReposRemoveParams,
   DaemonReposSeedParams,
+  SESSION_INFO_PATH,
+  SessionInfo,
   DaemonReposSetParams,
   FsManifestParams,
   DaemonSessionForkParams,
@@ -44,6 +48,7 @@ import {
   PtyIdParams,
   PtyInputParams,
   PtyOpenParams,
+  PtyReadParams,
   PtyResizeParams,
   claudeRejectedReset,
   claudeUsageWindows,
@@ -69,17 +74,30 @@ import { CodeServer } from "./code-server.js";
 import { AuthFile } from "./auth-file.js";
 import { registerCursorExtensions } from "./cursor-ext.js";
 import { readCompactionDetails } from "./compactions.js";
-import { E2eBridge } from "./e2e-bridge.js";
+import { ControlPlaneBridge } from "./control-plane-bridge.js";
+import { Docs } from "./docs.js";
 import { GhApi } from "./gh-api.js";
 import { BbCredentials } from "./bb-credentials.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
-import { DevinMcpConfig } from "./mcp-config.js";
+import { DevinMcpConfig, type BuiltinMcp } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
 import { Repos } from "./repos.js";
+import { SessionInfoFile } from "./session-info.js";
 import { Uploads } from "./uploads.js";
 import { Terminals } from "./terminals.js";
-import { GuestAgentTransport, GuestRepoHost, MacGuest, registerBridgeServices, sandboxAddress, WindowsGuest, type Guest, type GuestProviderFile } from "./guest.js";
+import {
+  BRIDGE_SERVICE_DESKTOP,
+  BRIDGE_SERVICE_SESSIONBOXER,
+  GuestAgentTransport,
+  GuestRepoHost,
+  MacGuest,
+  registerBridgeServices,
+  sandboxAddress,
+  WindowsGuest,
+  type Guest,
+  type GuestProviderFile,
+} from "./guest.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 import { serveTar, workspaceDir, workspaceManifest } from "./workspace-sync.js";
 
@@ -126,6 +144,14 @@ const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
   env.SESSIONBOXER_ACP_COMMAND?.split(" ") ?? ACP_COMMANDS[provider];
 const mcpCommand = env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp";
+const agentMcpCommand = env.SESSIONBOXER_AGENT_MCP_COMMAND ?? "sessionboxer-mcp";
+/** Whether the `sessionboxer` MCP goes to the Agent; the Control Plane says with each `mcp/set` (the `off` policy, ADR-0062). */
+let sessionboxerTools = true;
+/** The image's own MCP servers, as they run on this side (`BuiltinMcp`). */
+const builtinMcps = (): BuiltinMcp[] => [
+  { name: BRIDGE_SERVICE_DESKTOP, command: mcpCommand },
+  ...(sessionboxerTools ? [{ name: BRIDGE_SERVICE_SESSIONBOXER, command: agentMcpCommand }] : []),
+];
 const tmpfsDir = env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
 /**
  * A `qemu-windows` (ADR-0057, ADR-0060) or `qemu-macos` (ADR-0059, ADR-0061) Session: the Agent, its
@@ -174,9 +200,9 @@ const agentWorkspace = guest ? guest.workspace : workspace;
 /** Devin reads MCP servers from its config file; kept on tmpfs so Snapshots never carry MCP secrets. */
 const devinMcpConfig =
   provider === "devin"
-    ? guest
-      ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, guest.desktopMcp().command, guest.desktopMcp().args)
-      : new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, mcpCommand)
+    ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, () =>
+        guest ? builtinMcps().map((b) => ({ name: b.name, ...guest.bridgeMcp(b.name) })) : builtinMcps(),
+      )
     : null;
 /** `gh`/git logins for the Sandbox; the image points `GH_CONFIG_DIR` at this tmpfs dir. */
 const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, log);
@@ -245,9 +271,10 @@ const guestProviderEnv: Record<string, string> = Object.fromEntries(
   PROVIDER_ENV_KEYS[provider].flatMap((k) => (env[k] !== undefined && env[k] !== "" ? [[k, env[k]]] : [])),
 );
 const transport = guest
-  ? new GuestAgentTransport({ guest, env: guestProviderEnv, files: guestProviderFiles, desktopCommand: mcpCommand, log })
+  ? new GuestAgentTransport({ guest, env: guestProviderEnv, files: guestProviderFiles, builtinMcps, log })
   : null;
-if (guest) registerBridgeServices(guest, mcpCommand, log);
+// Both services stay registered whatever the policy: only the Agent's MCP list changes.
+if (guest) registerBridgeServices(guest, [{ name: BRIDGE_SERVICE_DESKTOP, command: mcpCommand }, { name: BRIDGE_SERVICE_SESSIONBOXER, command: agentMcpCommand }], log);
 
 function setCursorLogin(login: string): boolean {
   if (!cursorAuth) throw new Error("this Sandbox does not run Cursor");
@@ -348,6 +375,11 @@ async function setLlmInspect(enabled: boolean): Promise<DaemonLlmInspectSetResul
 }
 
 const repos = guest ? new Repos(workspace, log, new GuestRepoHost(guest)) : new Repos(workspace, log);
+const sessionInfo = new SessionInfoFile(
+  workspace,
+  log,
+  guest ? { path: guest.guestPath(SESSION_INFO_PATH), write: (content) => guest.writeFile(guest.guestPath(SESSION_INFO_PATH), content) } : undefined,
+);
 
 /** A `qemu-windows` Session (ADR-0057): the Agent runs inside the Windows VM; its desktop is what the screenshot and input tools act on. */
 const windowsBriefing = (): string => {
@@ -388,13 +420,13 @@ const agent = new AgentManager(
     ...(transport ? { transport } : {}),
     // In the VM, Codex keeps its default home (`%USERPROFILE%\.codex`, where its files are copied to).
     ...(provider === "codex" ? { env: guest ? { INITIAL_AGENT_MODE: CODEX_AGENT_ENV.INITIAL_AGENT_MODE } : CODEX_AGENT_ENV } : {}),
-    mcpCommand,
+    builtinMcps,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     sessionId: env.SESSIONBOXER_SESSION_ID ?? "",
     newConversation: env.SESSIONBOXER_NEW_CONVERSATION === "1",
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
-    workspaceBriefing: () => [repos.briefing(), windowsBriefing(), macosBriefing()].filter((s) => s !== "").join("\n\n"),
+    workspaceBriefing: () => [sessionInfo.briefing(), repos.briefing(), windowsBriefing(), macosBriefing()].filter((s) => s !== "").join("\n\n"),
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),
@@ -442,7 +474,12 @@ const terminals = new Terminals(
 const codeServer = new CodeServer(workspace, log, env.SESSIONBOXER_SESSION_ID ?? "");
 const uploads = new Uploads(workspace, log, guest ? (rel, abs) => guest.putFile(abs, guest.guestPath(rel)) : undefined);
 const ghApi = new GhApi(log);
-const e2eBridge = new E2eBridge(() => clients, log);
+const docs = new Docs(env.SESSIONBOXER_GUIDE_PATH ?? GUIDE_PATH, log);
+const bridge = new ControlPlaneBridge(
+  () => clients,
+  log,
+  (tool, args) => (tool === "docs" ? docs.lookup(AgentDocsArgs.parse(args).query) : undefined),
+);
 
 function status(): DaemonStatus {
   return {
@@ -515,6 +552,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);
       bbCredentials.apply(p.credentials);
+      sessionboxerTools = p.sessionboxerTools;
       return { applied: agent.setMcpServers(p.servers) };
     }
     case DAEMON_METHODS.modelSet: {
@@ -578,6 +616,9 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = DaemonReposRemoveParams.parse(params);
       return repos.remove(p.dir, p.force);
     }
+    case DAEMON_METHODS.sessionInfoSet:
+      await sessionInfo.set(SessionInfo.parse(params));
+      return { ok: true };
     case DAEMON_METHODS.reposSeed: {
       const p = DaemonReposSeedParams.parse(params);
       // The clones in the VM ask this side for credentials (through the bridge): the accounts go first.
@@ -593,6 +634,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.ptyAttach:
       return terminals.attach(PtyIdParams.parse(params).id);
+    case DAEMON_METHODS.ptyRead: {
+      const p = PtyReadParams.parse(params);
+      return terminals.read(p.id, p.lines);
+    }
     case DAEMON_METHODS.ptyInput: {
       const p = PtyInputParams.parse(params);
       terminals.input(p.id, p.data);
@@ -633,7 +678,7 @@ const http = createServer((req, res) => {
   if (codeServer.handleHttp(req, res)) return;
   if (serveTar(workspace, req, res, log)) return;
   if (uploads.handle(req, res)) return;
-  if (e2eBridge.handle(req, res)) return;
+  if (bridge.handle(req, res)) return;
   serveRawFile(workspaceFs, req, res).catch((e: unknown) => {
     log(`raw file error: ${String(e)}`);
     if (!res.headersSent) res.writeHead(500);
@@ -658,7 +703,7 @@ wss.on("connection", (ws) => {
     try {
       const msg = parseJsonRpc(raw.toString());
       if (isJsonRpcResponse(msg)) {
-        e2eBridge.onResponse(msg);
+        bridge.onResponse(msg);
         return;
       }
       if (!isJsonRpcRequest(msg)) return;

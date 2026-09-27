@@ -613,6 +613,7 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 @keyframes e2e-sweep { from { background-position: 200% 0; } to { background-position: 0 0; } }
 .e2e-note { margin: 0; padding: 8px 12px; line-height: 1.5; border-top: 1px solid var(--border); }
 .e2e-summary { margin: 0; padding: 10px 12px; line-height: 1.5; border-top: 1px solid var(--border); white-space: pre-wrap; }
+.e2e-brief { margin: 0; padding: 8px 12px; line-height: 1.5; border-top: 1px solid var(--border); white-space: pre-wrap; font-style: italic; }
 .e2e-cases { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
 .e2e-case { border-bottom: 1px solid var(--border); }
 .e2e-case:last-child { border-bottom: 0; }
@@ -641,6 +642,8 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .e2e-earlier .e2e-run { margin: 8px 0; }
 .marker-button { background: none; border: 1px dashed var(--border); border-radius: var(--radius-md); padding: 4px 10px; cursor: pointer; color: var(--muted); font-size: var(--fs-sm); }
 .marker-button:hover { border-color: var(--accent); color: var(--text); }
+.marker-agent { font-style: italic; }
+.marker-agent.marker-button { font-style: italic; }
 .marker-e2e-passed { color: var(--ok); }
 .marker-e2e-failed { color: var(--error); }
 

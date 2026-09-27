@@ -16,6 +16,8 @@ function toPatch(patch: Partial<SessionSettingsDraft>): SessionSettingsPatch {
     ...(patch.autoSnapshot !== undefined ? { autoSnapshot: patch.autoSnapshot } : {}),
     ...(patch.snapshotKeep !== undefined ? { snapshotKeep: patch.snapshotKeep } : {}),
     ...(patch.e2eVerify !== undefined ? { e2eVerify: patch.e2eVerify } : {}),
+    ...(patch.agentTools !== undefined ? { agentTools: patch.agentTools } : {}),
+    ...(patch.approveCreate !== undefined ? { approveCreate: patch.approveCreate } : {}),
     ...(Object.keys(sandbox).length > 0 ? { sandbox } : {}),
   };
 }

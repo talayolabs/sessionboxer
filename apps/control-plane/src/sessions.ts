@@ -28,6 +28,14 @@ import {
   type LlmCallBody,
   type StopReason,
   DaemonMcpSetResult,
+  type DaemonMcpSetParams,
+  type AgentToolsPolicy,
+  type PublicSettings,
+  type SessionInfo,
+  MACOS_GUEST_WORKSPACE,
+  WINDOWS_GUEST_WORKSPACE,
+  PtyReadResult,
+  type PtyReadParams,
   DaemonModelSetResult,
   DaemonOptionSetResult,
   type DaemonOptionSetParams,
@@ -102,8 +110,11 @@ import {
   classifyUsageLimit,
   mergeUsageWindows,
 } from "@sessionboxer/protocol";
+import { AgentTools } from "./agent-tools.js";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
+  PUBLIC_URL,
+  VERSION,
   codexAuthJson,
   cursorLogin,
   defaultMcpEnabled,
@@ -195,6 +206,12 @@ export class SessionManager {
   readonly e2e: E2eVerification;
   /** USB devices of the host connected to Sandboxes, one Session per device (ADR-0055). */
   readonly usb: UsbDevices;
+  /** The `sessionboxer` MCP's tools, answered for the Session whose Daemon asks (ADR-0062). */
+  readonly agentTools: AgentTools;
+  /** What each connected browser looks at (Session and pane), by UI socket, for `whoami` and `ui_open`. */
+  private readonly viewers = new Map<object, { sessionId: string; pane: string }>();
+  /** Global Settings as the UI sees them, for `settings_get`; wired by the server. */
+  publicSettings: (() => Promise<PublicSettings>) | null = null;
   /** Told when a turn (verification included) is over and nothing follows it; see `onTurnSettled`. */
   private readonly settledListeners = new Set<(id: string, outcome: TurnOutcome) => void>();
 
@@ -238,6 +255,32 @@ export class SessionManager {
       log,
     });
     this.e2e.closeStale();
+    this.agentTools = new AgentTools({
+      db,
+      getSession: (id) => db.getSession(id),
+      sessionInfo: (id) => this.sessionInfoOf(this.get(id)),
+      policy: (id) => this.agentToolsPolicy(this.get(id).settings),
+      publicSettings: () => this.publicSettings?.() ?? null,
+      prs: this.prs,
+      e2e: this.e2e,
+      snapshot: (id) => this.snapshot(id, "agent"),
+      enqueue: (id, text) => this.enqueueMessage(id, text),
+      savedMessages: (id) => db.listSavedMessages(id),
+      setTitle: (id, title) => void this.edit(id, { title }),
+      terminalList: (id) => this.terminalList(id),
+      terminalRead: (id, ptyId, lines) => this.terminalRead(id, ptyId, lines),
+      terminalOpen: (id, cols, rows) => this.terminalOpen(id, cols, rows),
+      terminalInput: (id, ptyId, data) => this.terminalInput(id, ptyId, Buffer.from(data, "utf8")),
+      panesOpen: (id) => [...new Set([...this.viewers.values()].filter((v) => v.sessionId === id).map((v) => v.pane))],
+      appendEvent: (id, body) => {
+        const ev = this.db.appendEvent(id, body);
+        this.broadcast({ type: "event", event: ev });
+        return ev;
+      },
+      broadcast: (msg) => this.broadcast(msg),
+      push: (msg) => this.push(msg),
+      log,
+    });
     this.usb = new UsbDevices({
       db,
       docker,
@@ -251,6 +294,66 @@ export class SessionManager {
   subscribe(fn: (msg: SessionBroadcast) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** A browser tells which Session page and pane it shows (`null`: none); `key` identifies its UI socket. */
+  setViewer(key: object, view: { sessionId: string; pane: string } | null): void {
+    if (view) this.viewers.set(key, view);
+    else this.viewers.delete(key);
+  }
+
+  /** The policy in force for a Session: its override, else the global setting. */
+  agentToolsPolicy(settings: SessionSettings): AgentToolsPolicy {
+    return resolveSessionSettings(settings, this.settings()).agentTools;
+  }
+
+  /** What the Daemon writes to `session.json` and tells the Agent in its briefing (ADR-0062). */
+  sessionInfoOf(s: Session): SessionInfo {
+    const environment = s.settings.sandbox.environment;
+    const fork = s.workspaceSource.type === "fork" ? s.workspaceSource : null;
+    const origin = fork ? this.db.getSession(fork.sessionId) : null;
+    const branch = s.branches.find((b) => b.id === s.activeBranchId);
+    return {
+      id: s.id,
+      title: s.title,
+      url: `${PUBLIC_URL}${sessionRoute(s.id)}`,
+      provider: s.provider,
+      model: s.settings.model,
+      environment,
+      guest:
+        environment === "qemu-windows"
+          ? { os: "windows", workspace: WINDOWS_GUEST_WORKSPACE }
+          : environment === "qemu-macos"
+            ? { os: "macos", workspace: MACOS_GUEST_WORKSPACE }
+            : null,
+      createdAt: s.createdAt,
+      forkedFrom: fork ? { sessionId: fork.sessionId, title: origin?.title ?? fork.label, snapshotId: fork.snapshotId } : null,
+      createdBy: null,
+      branch: branch?.name ?? (s.activeBranchId === ROOT_BRANCH_ID ? "main" : s.activeBranchId),
+      snapshotCount: s.snapshotCount,
+      sessionboxerVersion: VERSION,
+      agentTools: this.agentToolsPolicy(s.settings),
+    };
+  }
+
+  /** Sends the current `SessionInfo` to a live Daemon (older Daemons ignore it). */
+  async pushSessionInfo(id: string): Promise<void> {
+    const s = this.db.getSession(id);
+    const client = this.clients.get(id);
+    if (!s || !client?.connected) return;
+    try {
+      await client.request(DAEMON_METHODS.sessionInfoSet, this.sessionInfoOf(s));
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) return;
+      this.log(`session info push ${id} failed: ${String(e)}`);
+    }
+  }
+
+  /** The Daemon asked something on the Agent's behalf: an e2e method (ADR-0044) or a `sessionboxer` tool (ADR-0062). */
+  private onDaemonRequest(id: string, method: string, params: unknown): Promise<unknown> {
+    const tool = AgentTools.toolOf(method);
+    if (tool) return this.agentTools.handle(id, tool, params);
+    return this.e2e.handleRequest(id, method, params);
   }
 
   /**
@@ -781,6 +884,11 @@ export class SessionManager {
     return PtyInfo.parse(await this.daemonCall(id, DAEMON_METHODS.ptyOpen, { cols, rows }));
   }
 
+  /** The last `lines` lines a Terminal retained (the Daemon's ring buffer), ANSI stripped. */
+  async terminalRead(id: string, ptyId: string, lines: number): Promise<PtyReadResult> {
+    return PtyReadResult.parse(await this.daemonCall(id, DAEMON_METHODS.ptyRead, { id: ptyId, lines } satisfies PtyReadParams));
+  }
+
   async terminalClose(id: string, ptyId: string): Promise<void> {
     await this.daemonCall(id, DAEMON_METHODS.ptyClose, { id: ptyId });
     this.detachTerminal(id, ptyId, "terminal closed");
@@ -907,6 +1015,8 @@ export class SessionManager {
         autoSnapshot: input.autoSnapshot ?? null,
         snapshotKeep: input.snapshotKeep ?? null,
         e2eVerify: input.e2eVerify ?? null,
+        agentTools: input.agentTools ?? null,
+        approveCreate: input.approveCreate ?? null,
         sandbox: {
           environment,
           dockerMode,
@@ -1006,6 +1116,8 @@ export class SessionManager {
         autoSnapshot: input.autoSnapshot !== undefined ? input.autoSnapshot : base.autoSnapshot,
         snapshotKeep: input.snapshotKeep !== undefined ? input.snapshotKeep : base.snapshotKeep,
         e2eVerify: input.e2eVerify !== undefined ? input.e2eVerify : base.e2eVerify,
+        agentTools: input.agentTools !== undefined ? input.agentTools : base.agentTools,
+        approveCreate: input.approveCreate !== undefined ? input.approveCreate : base.approveCreate,
         sandbox: {
           environment: base.sandbox.environment,
           dockerMode,
@@ -1564,7 +1676,9 @@ export class SessionManager {
       this.log(`branch ${id}/${branchId}: ACP session ${acpSessionId} could not be loaded; the Agent starts over on ${result.acpSessionId}`);
       this.db.setBranchAcpSessionId(id, branchId, result.acpSessionId);
     }
-    return this.update(id, { activeBranchId: branchId });
+    const switched = this.update(id, { activeBranchId: branchId });
+    void this.pushSessionInfo(id);
+    return switched;
   }
 
   private requireIdleForBranching(id: string): Session {
@@ -1737,6 +1851,7 @@ export class SessionManager {
       await this.pruneSnapshots(id);
       this.broadcastSnapshots(id);
       await this.refreshDiskUsage(id);
+      void this.pushSessionInfo(id);
       return snapshot;
     } finally {
       this.broadcast({ type: "snapshotting", sessionId: id, active: false });
@@ -2006,6 +2121,8 @@ export class SessionManager {
       ...(patch.autoSnapshot !== undefined ? { autoSnapshot: patch.autoSnapshot } : {}),
       ...(patch.snapshotKeep !== undefined ? { snapshotKeep: patch.snapshotKeep } : {}),
       ...(patch.e2eVerify !== undefined ? { e2eVerify: patch.e2eVerify } : {}),
+      ...(patch.agentTools !== undefined ? { agentTools: patch.agentTools } : {}),
+      ...(patch.approveCreate !== undefined ? { approveCreate: patch.approveCreate } : {}),
       sandbox: {
         ...current.settings.sandbox,
         ...(patch.sandbox?.cpus !== undefined ? { cpus: patch.sandbox.cpus } : {}),
@@ -2016,11 +2133,13 @@ export class SessionManager {
       ...(req.title !== undefined ? { title: req.title } : {}),
       ...(Object.keys(patch).length > 0 ? { settings: next } : {}),
     });
-    if (patch.mcpEnabled !== undefined) await this.pushMcpServers(id);
+    const policyChanged = patch.agentTools !== undefined && this.agentToolsPolicy(current.settings) !== this.agentToolsPolicy(next);
+    if (patch.mcpEnabled !== undefined || policyChanged) await this.pushMcpServers(id);
+    if (req.title !== undefined || patch.agentTools !== undefined) void this.pushSessionInfo(id);
     if (patch.model !== undefined) await this.pushModel(id);
     if (patch.options !== undefined) await this.pushOptions(id, patch.options);
     if (patch.inspectLlm !== undefined) await this.pushLlmInspect(id);
-    return patch.mcpEnabled !== undefined || patch.model !== undefined || patch.options !== undefined || patch.inspectLlm !== undefined
+    return patch.mcpEnabled !== undefined || policyChanged || patch.model !== undefined || patch.options !== undefined || patch.inspectLlm !== undefined
       ? this.get(id)
       : s;
   }
@@ -2256,14 +2375,24 @@ export class SessionManager {
     if (!client?.connected) return s;
     const servers = resolveMcpServers(this.settings(), s.settings.mcpEnabled);
     const credentials = resolveBoxCredentials(this.settings(), s.settings.mcpEnabled);
+    const sessionboxerTools = this.agentToolsPolicy(s.settings) !== "off";
     try {
-      const result = DaemonMcpSetResult.parse(await client.request(DAEMON_METHODS.mcpSet, { servers, credentials }));
+      const result = DaemonMcpSetResult.parse(await client.request(DAEMON_METHODS.mcpSet, { servers, credentials, sessionboxerTools } satisfies DaemonMcpSetParams));
       return this.update(id, { mcpPending: !result.applied });
     } catch (e) {
       if (e instanceof DaemonRpcError && e.code === -32601) {
         throw new HttpError(502, "The Sandbox runs an older Daemon without MCP support; Stop and Resume the session to refresh it.");
       }
       throw e;
+    }
+  }
+
+  /** The global `agentTools` changed: Sessions without an override get the MCP set (the `off` policy) and `session.json` refreshed. */
+  async agentToolsPolicyChanged(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.settings.agentTools !== null || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushMcpServers(s.id).catch((e: unknown) => this.log(`mcp push ${s.id} failed: ${String(e)}`));
+      await this.pushSessionInfo(s.id);
     }
   }
 
@@ -2295,7 +2424,7 @@ export class SessionManager {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");
       },
-      onRequest: (method, params) => this.e2e.handleRequest(id, method, params),
+      onRequest: (method, params) => this.onDaemonRequest(id, method, params),
       log: (msg) => this.log(`daemon ${id}: ${msg}`),
     });
     this.clients.set(id, client);
@@ -2318,6 +2447,7 @@ export class SessionManager {
     this.pushClaudeModels(id)
       .then(() => this.pushLlmInspect(id))
       .then(() => seeded)
+      .then(() => this.pushSessionInfo(id))
       .then(() => this.pushRepos(id))
       .then(() => this.pushCodexAuth(id))
       .then(() => this.pushCursorAuth(id))
@@ -2387,8 +2517,10 @@ export class SessionManager {
       const s = this.db.getSession(id);
       if (s?.status === "running") this.setStatus(id, "idle");
       const turn = this.turnEvents(id, stored.seq);
+      // A run the Agent opened itself (`verify`) ends with the turn too, and the turn is not verified again.
+      const agentVerified = this.e2e.agentRunOpen(id);
       const verification = E2eVerification.isVerificationTurn(turn);
-      if (verification) this.e2e.onVerificationTurnEnded(id, ev.body.type === "turn_ended" ? ev.body.stopReason : "error");
+      if (verification || agentVerified) this.e2e.onVerificationTurnEnded(id, ev.body.type === "turn_ended" ? ev.body.stopReason : "error");
       if (this.handoffs.has(id) && turn[0]?.body.type === "user_prompt" && turn[0].body.origin === "handoff_request") {
         if (ev.body.type === "agent_error") this.settleHandoff(id, { error: `${PROVIDER_LABELS[s?.provider ?? "claude-code"]} failed: ${ev.body.message}` });
         else if (ev.body.stopReason !== "end_turn") this.settleHandoff(id, { error: `the turn ended early (${ev.body.stopReason}).` });
@@ -2401,7 +2533,7 @@ export class SessionManager {
         if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
         this.settled(id, "usage_limit");
       } else if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
-        void this.afterTurn(id, stored.seq, isHiddenTurn(turn) ? [] : turn).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
+        void this.afterTurn(id, stored.seq, isHiddenTurn(turn) || agentVerified ? [] : turn).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
       } else {
         if (s?.queueRunning) {
           this.log(`queue ${id} paused after ${ev.body.type}`);

@@ -5,6 +5,12 @@
       "command": "sessionboxer-computer-use-mcp",
       "args": [],
       "env": {}
+    },
+    "sessionboxer": {
+      "type": "stdio",
+      "command": "sessionboxer-mcp",
+      "args": [],
+      "env": {}
     }
   }
 }

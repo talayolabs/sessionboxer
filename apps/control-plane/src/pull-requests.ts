@@ -131,6 +131,24 @@ export class PullRequests {
     return this.deps.db.prs.checks(prId);
   }
 
+  /** The Agent says it dealt with these comments / checks (`pr_mark_addressed`); unknown ids are reported back. */
+  markAddressed(sessionId: string, prId: string, ids: string[]): { items: number; checks: number; unknown: string[] } {
+    this.requirePr(sessionId, prId);
+    const items = new Set(this.deps.db.prs.items(prId).map((i) => i.id));
+    const checks = new Set(this.deps.db.prs.checks(prId).map((c) => c.id));
+    const itemIds = ids.filter((id) => items.has(id));
+    const checkIds = ids.filter((id) => checks.has(id));
+    if (itemIds.length > 0) {
+      this.deps.db.prs.setAddress(itemIds, "addressed");
+      this.broadcastItems(sessionId, prId);
+    }
+    if (checkIds.length > 0) {
+      this.deps.db.prs.setCheckAddress(checkIds, "addressed");
+      this.broadcastChecks(sessionId, prId);
+    }
+    return { items: itemIds.length, checks: checkIds.length, unknown: ids.filter((id) => !items.has(id) && !checks.has(id)) };
+  }
+
   // --- Attach / detach -----------------------------------------------------------
 
   /** `ref`: a github.com or Bitbucket Data Center PR URL, `owner/repo#12`, or `#12` / `12` for the Workspace's repo. */

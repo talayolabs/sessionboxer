@@ -31,7 +31,7 @@ import type {
   TurnUsage,
 } from "@sessionboxer/protocol";
 import { caEnv } from "./ca-env.js";
-import { acpMcpServers } from "./mcp-config.js";
+import { acpMcpServers, type BuiltinMcp } from "./mcp-config.js";
 import { promptBlocks } from "./prompt-blocks.js";
 
 /**
@@ -60,7 +60,8 @@ export interface AgentConfig {
   env?: Record<string, string>;
   /** Runs the Agent elsewhere; a local child process when not given. */
   transport?: AgentTransport;
-  mcpCommand: string;
+  /** The image's own MCP servers every Agent gets (`desktop`, `sessionboxer`); read at each start, so a change restarts the Agent. */
+  builtinMcps: () => BuiltinMcp[];
   stateFile: string;
   /** The Sessionboxer Session this Sandbox belongs to; recorded with the persisted state. */
   sessionId: string;
@@ -525,7 +526,7 @@ export class AgentManager {
   private startedEnv: Record<string, string> = {};
 
   private startKey(): string {
-    return JSON.stringify({ servers: this.mcpServers, allow: this.modelAllowlist, env: this.agentEnv });
+    return JSON.stringify({ builtins: this.cfg.builtinMcps().map((b) => b.name), servers: this.mcpServers, allow: this.modelAllowlist, env: this.agentEnv });
   }
 
   /**
@@ -604,7 +605,7 @@ export class AgentManager {
     await this.cfg.writeMcpConfig?.(userServers);
     if (this.modelAllowlist) await this.cfg.writeModelAllowlist?.(this.modelAllowlist);
     this.cfg.log(
-      `spawning ${[this.cfg.command, ...this.cfg.args].join(" ")} (MCP: desktop${userServers.map((s) => `, ${s.name}`).join("")})`,
+      `spawning ${[this.cfg.command, ...this.cfg.args].join(" ")} (MCP: ${[...this.cfg.builtinMcps().map((b) => b.name), ...userServers.map((s) => s.name)].join(", ")})`,
     );
     const agentEnv = { ...this.agentEnv };
     if (Object.keys(agentEnv).length > 0) this.cfg.log(`agent environment overrides: ${Object.keys(agentEnv).join(", ")}`);
@@ -1041,7 +1042,7 @@ export class AgentManager {
 
   /** The MCP servers as `session/new` / `session/load` take them, for where the Agent runs. */
   private acpMcpServers(userServers: McpServerSpec[]): McpServer[] {
-    const servers = acpMcpServers(this.cfg.mcpCommand, userServers);
+    const servers = acpMcpServers(this.cfg.builtinMcps(), userServers);
     return this.cfg.transport ? this.cfg.transport.mcpServers(servers) : servers;
   }
 

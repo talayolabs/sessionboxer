@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import type { McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
 import { GUEST_BRIDGE_PORT, REPOS_MANIFEST_PATH } from "@sessionboxer/protocol";
 import type { AgentTransport } from "./agent.js";
+import type { BuiltinMcp } from "./mcp-config.js";
 import { GUEST_BRIDGE_JS, guestAgentLauncherCmd, guestAgentLauncherSh } from "./guest-scripts.js";
 import type { RepoHost } from "./repos.js";
 import { workspaceDir } from "./workspace-sync.js";
@@ -18,6 +19,7 @@ const execFileAsync = promisify(execFile);
 const GUEST_BRIDGE_SCRIPT = "sessionboxer-bridge.js";
 /** Names the ACP `desktop` MCP entry gets when it has to cross to the Linux side. */
 export const BRIDGE_SERVICE_DESKTOP = "desktop";
+export const BRIDGE_SERVICE_SESSIONBOXER = "sessionboxer";
 export const BRIDGE_SERVICE_CREDENTIAL = "credential";
 /** Commands Windows has as `.exe`, which the Agent can start directly; anything else is an npm/uv shim (`.cmd`) that needs `cmd /c`. */
 const GUEST_EXECUTABLES = new Set(["node", "npm", "python", "python3", "uv", "uvx", "git", "cmd", "powershell", "pwsh", "docker", "dotnet", "java"]);
@@ -324,8 +326,8 @@ export abstract class Guest {
   /** The remote command line that starts `command args` through the launcher, with untouched stdio. */
   abstract agentCommandLine(command: string, args: string[]): string;
 
-  /** The desktop MCP as a command the Agent starts in the VM: the bridge client, piped to the MCP here. */
-  abstract desktopMcp(): { command: string; args: string[] };
+  /** A built-in MCP (`desktop`, `sessionboxer`) as a command the Agent starts in the VM: the bridge client, piped to the MCP here. */
+  abstract bridgeMcp(service: string): { command: string; args: string[] };
 
   /** git's `credential.helper` value that asks this side for the account's credentials through the bridge. */
   abstract credentialHelper(account: string): string;
@@ -483,8 +485,8 @@ export class WindowsGuest extends Guest {
     return [`${this.stateDir()}\\${WINDOWS_AGENT_LAUNCHER}`, command, ...args].map(cmdArg).join(" ");
   }
 
-  desktopMcp(): { command: string; args: string[] } {
-    return { command: "node", args: [`${this.stateDir()}\\${GUEST_BRIDGE_SCRIPT}`, BRIDGE_SERVICE_DESKTOP] };
+  bridgeMcp(service: string): { command: string; args: string[] } {
+    return { command: "node", args: [`${this.stateDir()}\\${GUEST_BRIDGE_SCRIPT}`, service] };
   }
 
   credentialHelper(account: string): string {
@@ -642,8 +644,8 @@ export class MacGuest extends Guest {
     return ["sh", `${this.stateDir()}/${POSIX_AGENT_LAUNCHER}`, command, ...args].map(shQuote).join(" ");
   }
 
-  desktopMcp(): { command: string; args: string[] } {
-    return { command: "/usr/local/bin/node", args: [`${this.stateDir()}/${GUEST_BRIDGE_SCRIPT}`, BRIDGE_SERVICE_DESKTOP] };
+  bridgeMcp(service: string): { command: string; args: string[] } {
+    return { command: "/usr/local/bin/node", args: [`${this.stateDir()}/${GUEST_BRIDGE_SCRIPT}`, service] };
   }
 
   credentialHelper(account: string): string {
@@ -778,8 +780,8 @@ export interface GuestTransportConfig {
   /** The Provider's environment this Sandbox was given (its login, base URL): it goes with the Agent into the VM. */
   env: Record<string, string>;
   files: GuestProviderFile[];
-  /** The desktop MCP command on the Linux side (the ACP entry named `desktop` runs it). */
-  desktopCommand: string;
+  /** The built-in MCPs as they run on the Linux side (the ACP entries with their names run them). */
+  builtinMcps: () => BuiltinMcp[];
   log: (msg: string) => void;
 }
 
@@ -788,7 +790,7 @@ export interface GuestTransportConfig {
  * ACP stream on the SSH channel. Before each start the Agent's environment (Provider login, base
  * URL, options) goes to the VM as a file the launcher loads and deletes, and the Provider's
  * configuration files follow it. MCP servers are handed to the Agent as it can start them in the
- * guest: the desktop entry becomes the bridge client, user stdio entries are adapted by the guest
+ * guest: the built-in entries (`desktop`, `sessionboxer`) become the bridge client, user stdio entries are adapted by the guest
  * (`.cmd` shims through `cmd /c` on Windows, as written on macOS), URLs pass unchanged.
  */
 export class GuestAgentTransport implements AgentTransport {
@@ -821,9 +823,9 @@ export class GuestAgentTransport implements AgentTransport {
   mcpServers(servers: McpServer[]): McpServer[] {
     return servers.map((s) => {
       if (!isStdio(s)) return s;
-      if (s.name === BRIDGE_SERVICE_DESKTOP && s.command === this.cfg.desktopCommand) {
-        const desktop = this.guest.desktopMcp();
-        return { name: s.name, command: desktop.command, args: desktop.args, env: [] };
+      if (this.cfg.builtinMcps().some((b) => b.name === s.name && b.command === s.command)) {
+        const bridged = this.guest.bridgeMcp(s.name);
+        return { name: s.name, command: bridged.command, args: bridged.args, env: [] };
       }
       return this.guest.stdioForGuest(s);
     });
@@ -924,16 +926,18 @@ export class GuestRepoHost implements RepoHost {
 }
 
 /**
- * The services the VM reaches through the bridge: the desktop MCP (the Agent's screenshots and
- * input act on the RDP/VNC view of the VM, so the MCP stays on the Linux side) and git credentials
- * (the accounts the user connected are in `gh`/`bb` here; git in the VM asks through the bridge,
- * as the active login or as one account).
+ * The services the VM reaches through the bridge: the built-in MCPs (the desktop MCP's screenshots
+ * and input act on the RDP/VNC view of the VM, and the `sessionboxer` MCP talks to the Daemon on
+ * this side, so both stay on the Linux side) and git credentials (the accounts the user connected
+ * are in `gh`/`bb` here; git in the VM asks through the bridge, as the active login or as one account).
  */
-export function registerBridgeServices(guest: Guest, desktopCommand: string, log: (msg: string) => void): void {
-  guest.onBridge(BRIDGE_SERVICE_DESKTOP, (socket) => {
-    const child = spawn(desktopCommand, [], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
-    bridgeToProcess(socket, child, log, "desktop mcp (vm)");
-  });
+export function registerBridgeServices(guest: Guest, builtins: BuiltinMcp[], log: (msg: string) => void): void {
+  for (const b of builtins) {
+    guest.onBridge(b.name, (socket) => {
+      const child = spawn(b.command, b.args ?? [], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+      bridgeToProcess(socket, child, log, `${b.name} mcp (vm)`);
+    });
+  }
   guest.onBridge(BRIDGE_SERVICE_CREDENTIAL, (socket, args) => {
     const [account = "-", op = "get"] = args;
     if (op !== "get") {

@@ -9,7 +9,7 @@ Sessionboxer keeps a **verification run** for the turn being checked: its test
 cases, their status, timings, cycles and the final video, shown live to the
 user in the Verification pane. The Control Plane opens the run and sends you
 the message that starts this skill; you fill the run in with the `e2e_*` tools
-of the `desktop` MCP server (`e2e_plan`, `e2e_case_start`, `e2e_case_end`,
+of the `sessionboxer` MCP server (`e2e_plan`, `e2e_case_start`, `e2e_case_end`,
 `e2e_finish`). The run opens after a user turn when the switch "Verify each
 turn" is on, or when the user presses **Run now** in the Verification pane; in
 that case the message says so and the work so far is what you verify, against

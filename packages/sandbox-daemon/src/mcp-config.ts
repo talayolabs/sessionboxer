@@ -3,9 +3,20 @@ import { dirname, join } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import type { McpServerSpec } from "@sessionboxer/protocol";
 
-/** The ACP `mcpServers` entries for the built-in desktop server plus the user's. */
-export function acpMcpServers(desktopCommand: string, servers: McpServerSpec[]): McpServer[] {
-  const list: McpServer[] = [{ name: "desktop", command: desktopCommand, args: [], env: [] }];
+/**
+ * A stdio MCP server the image ships and every Agent gets without configuring it: `desktop`
+ * (screenshots, input, recordings) and `sessionboxer` (the Session itself, ADR-0062; left out under
+ * the `off` policy).
+ */
+export interface BuiltinMcp {
+  name: string;
+  command: string;
+  args?: string[];
+}
+
+/** The ACP `mcpServers` entries for the built-in servers plus the user's. */
+export function acpMcpServers(builtins: BuiltinMcp[], servers: McpServerSpec[]): McpServer[] {
+  const list: McpServer[] = builtins.map((b) => ({ name: b.name, command: b.command, args: b.args ?? [], env: [] }));
   for (const s of servers) {
     if (s.transport === "stdio") {
       list.push({ name: s.name, command: s.command, args: s.args, env: s.env.map(({ name, value }) => ({ name, value })) });
@@ -26,15 +37,15 @@ export class DevinMcpConfig {
   constructor(
     private readonly configPath: string,
     private readonly tmpfsDir: string,
-    private readonly desktopCommand: string,
-    /** Arguments of the desktop command (the bridge client's, when the Agent runs in a Windows VM). */
-    private readonly desktopArgs: string[] = [],
+    /** The built-in servers as the Agent starts them (the bridge client's command line when it runs in a VM). */
+    private readonly builtins: () => BuiltinMcp[],
   ) {}
 
   write(servers: McpServerSpec[]): void {
-    const mcpServers: Record<string, unknown> = {
-      desktop: { command: this.desktopCommand, ...(this.desktopArgs.length > 0 ? { args: this.desktopArgs } : {}), transport: "stdio" },
-    };
+    const mcpServers: Record<string, unknown> = {};
+    for (const b of this.builtins()) {
+      mcpServers[b.name] = { command: b.command, ...(b.args && b.args.length > 0 ? { args: b.args } : {}), transport: "stdio" };
+    }
     for (const s of servers) {
       mcpServers[s.name] =
         s.transport === "stdio"

@@ -570,6 +570,10 @@ export const SessionSettings = z.object({
   snapshotKeep: z.number().int().nonnegative().nullable().default(null),
   /** Override of `Settings.e2eVerify` (verify each turn end to end, see `E2eRun`); `null` follows the global setting. */
   e2eVerify: z.boolean().nullable().default(null),
+  /** Override of `Settings.agentTools` (what the `sessionboxer` MCP lets the Agent do, ADR-0062); `null` follows the global setting. */
+  agentTools: z.enum(["off", "session", "all"]).nullable().default(null),
+  /** Override of `Settings.approveCreate` (the user allows each Session the Agent creates); `null` follows the global setting. */
+  approveCreate: z.boolean().nullable().default(null),
   sandbox: SandboxSettings.default({}),
 });
 export type SessionSettings = z.infer<typeof SessionSettings>;
@@ -579,6 +583,8 @@ export interface SessionSettingsDefaults {
   autoSnapshot: boolean;
   snapshotKeep: number;
   e2eVerify: boolean;
+  agentTools: "off" | "session" | "all";
+  approveCreate: boolean;
   sandboxCpus: number;
   sandboxMemoryGb: number;
 }
@@ -587,11 +593,13 @@ export interface SessionSettingsDefaults {
 export function resolveSessionSettings(
   settings: SessionSettings,
   defaults: SessionSettingsDefaults,
-): { autoSnapshot: boolean; snapshotKeep: number; e2eVerify: boolean; cpus: number; memoryGb: number } {
+): { autoSnapshot: boolean; snapshotKeep: number; e2eVerify: boolean; agentTools: "off" | "session" | "all"; approveCreate: boolean; cpus: number; memoryGb: number } {
   return {
     autoSnapshot: settings.autoSnapshot ?? defaults.autoSnapshot,
     snapshotKeep: settings.snapshotKeep ?? defaults.snapshotKeep,
     e2eVerify: settings.e2eVerify ?? defaults.e2eVerify,
+    agentTools: settings.agentTools ?? defaults.agentTools,
+    approveCreate: settings.approveCreate ?? defaults.approveCreate,
     cpus: settings.sandbox.cpus ?? defaults.sandboxCpus,
     memoryGb: settings.sandbox.memoryGb ?? defaults.sandboxMemoryGb,
   };
@@ -611,6 +619,10 @@ export const SessionSettingsPatch = z
     snapshotKeep: z.number().int().nonnegative().nullable().optional(),
     /** `null` clears the override (follow `Settings.e2eVerify`). */
     e2eVerify: z.boolean().nullable().optional(),
+    /** `null` clears the override (follow `Settings.agentTools`). */
+    agentTools: z.enum(["off", "session", "all"]).nullable().optional(),
+    /** `null` clears the override (follow `Settings.approveCreate`). */
+    approveCreate: z.boolean().nullable().optional(),
     /** Resource limits; read when the next Sandbox is built (Rebuild, fork). */
     sandbox: z
       .object({
@@ -633,6 +645,8 @@ export const SessionSettingsInput = z.object({
   autoSnapshot: z.boolean().nullable().optional(),
   snapshotKeep: z.number().int().nonnegative().nullable().optional(),
   e2eVerify: z.boolean().nullable().optional(),
+  agentTools: z.enum(["off", "session", "all"]).nullable().optional(),
+  approveCreate: z.boolean().nullable().optional(),
   sandbox: z
     .object({
       /** Omitted means `docker-linux`; a fork keeps the origin's. */
@@ -1141,7 +1155,7 @@ export type QueueRequest = z.infer<typeof QueueRequest>;
 // ---------------------------------------------------------------------------
 
 /** `rebuild`: a full image of the Sandbox's filesystem the Sandbox was moved onto (see `POST /sessions/:id/rebuild`). */
-export const SNAPSHOT_REASONS = ["turn", "manual", "rebuild"] as const;
+export const SNAPSHOT_REASONS = ["turn", "manual", "rebuild", "agent"] as const;
 export const SnapshotReason = z.enum(SNAPSHOT_REASONS);
 export type SnapshotReason = z.infer<typeof SnapshotReason>;
 
@@ -1593,6 +1607,8 @@ export type PushMessage = z.infer<typeof PushMessage>;
 export const UiClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("visibility"), visible: z.boolean() }),
   z.object({ type: z.literal("ping") }),
+  /** Which Session page and pane this browser shows (`null`: none); what `whoami` reports as the user's open panes (ADR-0062). */
+  z.object({ type: z.literal("viewing"), sessionId: z.string().nullable(), pane: z.string().max(40).nullable() }),
 ]);
 export type UiClientMessage = z.infer<typeof UiClientMessage>;
 
@@ -1728,6 +1744,16 @@ export const Settings = z.object({
    * Default for new Sessions; on unless switched off (ADR-0044).
    */
   e2eVerify: z.boolean().default(true),
+  /**
+   * What the `sessionboxer` MCP in each Sandbox lets the Agent do (ADR-0062): nothing (`off`, the
+   * server is not passed to it), its own Session (`session`), or every Session (`all`). Default for
+   * new Sessions; each Session can override it.
+   */
+  agentTools: z.enum(["off", "session", "all"]).default("session"),
+  /** Each Session an Agent asks to create (under `all`) waits for the user's Allow in the chat; denied after 10 minutes unattended. */
+  approveCreate: z.boolean().default(true),
+  /** Sessions alive at once that Agents created, over all Sessions (each Agent also has its own cap of `AGENT_CHILDREN_PER_SESSION`). */
+  agentChildrenCap: z.number().int().nonnegative().default(10),
   mcpServers: z.array(McpServerDef).default([]),
   /**
    * Model aliases Claude Code may offer (its `availableModels` setting, written to the Sandbox's
@@ -2013,6 +2039,11 @@ export type SessionEventBody =
   /** An end-to-end verification run of the previous turn ended (passed, failed, skipped or aborted); the UI shows a marker that opens the E2E pane. */
   | { type: "e2e_run"; run: E2eRunSummary }
   /**
+   * The Agent did something through the `sessionboxer` MCP (ADR-0062): a compact marker ("attached PR #12",
+   * "snapshot"). `pane` is where the marker leads; `sessionId` the other Session it concerns, when any.
+   */
+  | { type: "agent_action"; tool: string; text: string; pane?: string; sessionId?: string }
+  /**
    * The inspector saw one model API call complete (summary only; bodies stay in the Sandbox).
    * Emitted after the transcript updates the response produced, so a `turn` call claims the
    * agent messages / tool calls since the previous one.
@@ -2058,6 +2089,8 @@ export type SessionBroadcast =
   | { type: "pr_merged"; sessionId: string; sessionTitle: string; pr: PrMergedNotice }
   /** An end-to-end verification run of the Session changed (created, a case started or ended, finished). */
   | { type: "e2e_changed"; sessionId: string; run: E2eRun }
+  /** The Agent asked for a pane (`ui_open`); the page switches only when it shows this Session and the user is not typing. */
+  | { type: "ui_hint"; hint: UiHint }
   /** The list of scheduled tasks (a schedule created, edited, deleted, or its next/last run moved). */
   | { type: "schedules"; schedules: Schedule[] }
   /** The run history of one scheduled task changed. */
@@ -2145,6 +2178,8 @@ export const E2eRun = z.object({
   cycles: z.number().int().nonnegative(),
   /** The Agent's closing words (`e2e_finish`). */
   summary: z.string().nullable(),
+  /** What the run verifies, when the Agent started it itself (`verify` tool); `null` for the Control Plane's after-turn runs. */
+  brief: z.string().nullable().default(null),
   /** Every attempt of every case, by index then cycle. */
   cases: z.array(E2eCase),
 });
@@ -2205,13 +2240,169 @@ export const E2eFinishParams = z.object({
 });
 export type E2eFinishParams = z.infer<typeof E2eFinishParams>;
 
-/** Daemon `POST /e2e` body (from the desktop MCP): one of the `DAEMON_METHODS.e2e*` methods and its params. */
+/** Daemon `POST /e2e` body (older desktop MCPs): one of the `DAEMON_METHODS.e2e*` methods and its params. */
 export const E2E_PATH = "/e2e";
 export const E2eBridgeRequest = z.object({
   method: z.enum(["plan", "case_start", "case_end", "finish"]),
   params: z.unknown(),
 });
 export type E2eBridgeRequest = z.infer<typeof E2eBridgeRequest>;
+
+// ---------------------------------------------------------------------------
+// The `sessionboxer` MCP in every Sandbox (ADR-0062): the Agent knows it runs inside a Session
+// and can ask Sessionboxer to do what only it can. Its tools `POST /sessionboxer` on the Daemon
+// with `{ tool, args }`; the Daemon forwards them as JSON-RPC `_sessionboxer/agent/<tool>` over
+// its Control Plane WebSocket, and the Control Plane answers for the Session that connection
+// belongs to (never for a Session named in the request).
+// ---------------------------------------------------------------------------
+
+/**
+ * What an Agent may do through the `sessionboxer` MCP: `off` (the server is not passed to it),
+ * `session` (self-knowledge and its own Session: PRs, queue, snapshot, verification, panes,
+ * schedules for itself) or `all` (plus listing, reading, messaging, creating and stopping other Sessions).
+ */
+export const AgentToolsPolicy = z.enum(["off", "session", "all"]);
+export type AgentToolsPolicy = z.infer<typeof AgentToolsPolicy>;
+
+/** Sessions alive at once that one Agent created (`session_create`); `Settings.agentChildrenCap` bounds the total. */
+export const AGENT_CHILDREN_PER_SESSION = 3;
+/** An unattended approval (`session_create`) is denied after this long. */
+export const AGENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
+
+/** Where the Daemon writes the Session's identity for the Agent, relative to the Workspace. */
+export const SESSION_INFO_PATH = ".sessionboxer/session.json";
+/** Where the image ships the user guide the `docs` tool answers from. */
+export const GUIDE_PATH = "/opt/sessionboxer/docs/GUIDE.md";
+
+/** The object in `SESSION_INFO_PATH`; the Control Plane sends it (`sessionInfoSet`) at boot and whenever it changes. */
+export const SessionInfo = z.object({
+  id: z.string(),
+  title: z.string(),
+  /** The Session in the user's browser. */
+  url: z.string(),
+  provider: Provider,
+  /** The Agent's model, once it reported one. */
+  model: z.string().nullable(),
+  environment: Environment,
+  /** The VM the Agent runs in (Windows/macOS Sessions), `null` in a Linux Sandbox. */
+  guest: z.object({ os: z.enum(["windows", "macos"]), workspace: z.string() }).nullable(),
+  createdAt: z.string(),
+  forkedFrom: z.object({ sessionId: z.string(), title: z.string(), snapshotId: z.string() }).nullable(),
+  /** The Session an Agent created this one from, if any (`Session.createdBy`). */
+  createdBy: z.object({ sessionId: z.string(), title: z.string() }).nullable().default(null),
+  /** Conversation branch the transcript shows (`root` until the first revert). */
+  branch: z.string(),
+  snapshotCount: z.number().int().nonnegative(),
+  sessionboxerVersion: z.string(),
+  agentTools: AgentToolsPolicy,
+});
+export type SessionInfo = z.infer<typeof SessionInfo>;
+
+/** Panes of the Session page the Agent can ask to open (`ui_open`). */
+export const UiPane = z.enum(["chat", "desktop", "code", "terminal", "context", "prs", "e2e", "schedules"]);
+export type UiPane = z.infer<typeof UiPane>;
+
+/** Daemon `POST /sessionboxer` body (the `sessionboxer` MCP): a tool name and its arguments. */
+export const AGENT_BRIDGE_PATH = "/sessionboxer";
+export const AgentBridgeRequest = z.object({ tool: z.string().min(1).max(64), args: z.unknown() });
+export type AgentBridgeRequest = z.infer<typeof AgentBridgeRequest>;
+
+/** The tools of the `sessionboxer` MCP; the Daemon forwards nothing else. */
+export const AGENT_TOOLS = [
+  // self-knowledge
+  "whoami",
+  "docs",
+  "settings_get",
+  // this Session
+  "pr_attach",
+  "pr_list",
+  "pr_items",
+  "pr_mark_addressed",
+  "snapshot",
+  "queue_add",
+  "queue_list",
+  "title_set",
+  "verify",
+  "notify",
+  "terminal_list",
+  "terminal_read",
+  "ui_open",
+  "e2e_plan",
+  "e2e_case_start",
+  "e2e_case_end",
+  "e2e_finish",
+] as const;
+export type AgentTool = (typeof AGENT_TOOLS)[number];
+export function isAgentTool(tool: string): tool is AgentTool {
+  return (AGENT_TOOLS as ReadonlyArray<string>).includes(tool);
+}
+
+export const AGENT_METHOD_PREFIX = "_sessionboxer/agent/";
+/** The JSON-RPC method the Daemon sends the Control Plane for a tool. */
+export function agentMethod(tool: AgentTool): string {
+  return `${AGENT_METHOD_PREFIX}${tool}`;
+}
+/** The tool a JSON-RPC method stands for; `null` for anything else. */
+export function agentToolOf(method: string): AgentTool | null {
+  if (!method.startsWith(AGENT_METHOD_PREFIX)) return null;
+  const tool = method.slice(AGENT_METHOD_PREFIX.length);
+  return isAgentTool(tool) ? tool : null;
+}
+
+// The tools' arguments, as the Control Plane validates them (the MCP describes the same shapes to the Agent).
+export const AgentDocsArgs = z.object({ query: z.string().min(1).max(200) });
+export const AgentPrAttachArgs = z.object({ ref: z.string().min(1).max(500) });
+export const AgentPrItemsArgs = z.object({ pr: z.string().min(1) });
+export const AgentPrMarkAddressedArgs = z.object({ pr: z.string().min(1), items: z.array(z.string().min(1)).min(1).max(200) });
+export const AgentQueueAddArgs = z.object({ text: z.string().min(1).max(20_000) });
+export const AgentTitleSetArgs = z.object({ title: z.string().min(1).max(200) });
+export const AgentVerifyArgs = z.object({
+  /** What the run verifies, in the Agent's words; shown in the Verification pane. */
+  brief: z.string().min(1).max(2000),
+  /** Cases planned at once (else `e2e_plan` follows). */
+  cases: z
+    .array(z.object({ title: z.string().min(1).max(200), steps: z.string().max(4000), expected: z.string().max(2000) }))
+    .max(E2E_MAX_CASES)
+    .optional(),
+});
+export const AgentNotifyArgs = z.object({ text: z.string().min(1).max(500) });
+export const AgentTerminalReadArgs = z.object({ id: z.string().min(1), lines: z.number().int().positive().max(2000).default(100) });
+export const AgentUiOpenArgs = z.object({
+  pane: UiPane,
+  /** With `pane: "terminal"`: a new Terminal is opened and this runs in it, visibly. */
+  terminal: z.object({ command: z.string().min(1).max(4000) }).optional(),
+});
+
+/** `whoami`: `SessionInfo` plus what is live. */
+export const AgentWhoAmI = SessionInfo.extend({
+  status: SessionStatus,
+  usage: SessionUsage,
+  /** The last `/context` report (`context_breakdown` event), when any. */
+  context: z.object({ usedTokens: z.number().int().nonnegative(), maxTokens: z.number().int().nonnegative(), percent: z.number() }).nullable(),
+  queueLength: z.number().int().nonnegative(),
+  /** Panes the user has open on this Session right now (from the browsers connected). */
+  panes: z.array(z.string()),
+  terminals: z.array(z.object({ id: z.string(), createdAt: z.string(), exitCode: z.number().int().nullable() })),
+  prs: z.array(z.object({ id: z.string(), ref: z.string(), title: z.string(), state: z.string(), checks: z.number().int().nonnegative(), comments: z.number().int().nonnegative(), unseen: z.number().int().nonnegative() })),
+  verification: z.object({ id: z.string(), status: E2eRunStatus, brief: z.string().nullable() }).nullable(),
+  repos: z.array(z.object({ name: z.string(), path: z.string() })),
+});
+export type AgentWhoAmI = z.infer<typeof AgentWhoAmI>;
+
+/** Control Plane → web: the Agent asked for a pane (`ui_open`); honoured only on this Session's page and not mid-typing. */
+export const UiHint = z.object({
+  sessionId: z.string(),
+  pane: UiPane,
+  /** With `pane: "terminal"`: the Terminal opened for the Agent's command. */
+  terminalId: z.string().nullable().default(null),
+});
+export type UiHint = z.infer<typeof UiHint>;
+
+/** The Daemon's answer to `ptyRead`: the Terminal's retained output, last `lines` lines. */
+export const PtyReadResult = z.object({ id: z.string(), text: z.string(), exitCode: z.number().int().nullable() });
+export type PtyReadResult = z.infer<typeof PtyReadResult>;
+export const PtyReadParams = z.object({ id: z.string(), lines: z.number().int().positive().max(2000).default(100) });
+export type PtyReadParams = z.infer<typeof PtyReadParams>;
 
 // ---------------------------------------------------------------------------
 // Pulling a copied repository back into its host folder. Both sides describe their files
@@ -2910,6 +3101,7 @@ export const DAEMON_METHODS = {
   ptyInput: "_sessionboxer/pty/input",
   ptyResize: "_sessionboxer/pty/resize",
   ptyClose: "_sessionboxer/pty/close",
+  ptyRead: "_sessionboxer/pty/read",
   ptyOutput: "_sessionboxer/pty/output",
   ptyExit: "_sessionboxer/pty/exit",
   codeStart: "_sessionboxer/code/start",
@@ -2926,7 +3118,10 @@ export const DAEMON_METHODS = {
   reposInspect: "_sessionboxer/repos/inspect",
   reposRemove: "_sessionboxer/repos/remove",
   reposSeed: "_sessionboxer/repos/seed",
+  /** Control Plane → Daemon: the `SessionInfo` to write to `SESSION_INFO_PATH` (and to tell the Agent in its briefing). */
+  sessionInfoSet: "_sessionboxer/session-info/set",
   // Daemon → Control Plane requests (the Agent's `e2e_*` tools); each answers with the `E2eRun`.
+  // The `sessionboxer` MCP's tools are `_sessionboxer/agent/<tool>` (see `agentMethod`).
   e2ePlan: "_sessionboxer/e2e/plan",
   e2eCaseStart: "_sessionboxer/e2e/case-start",
   e2eCaseEnd: "_sessionboxer/e2e/case-end",
@@ -3040,6 +3235,8 @@ export const DaemonMcpSetParams = z.object({
   servers: z.array(McpServerSpec),
   /** First entry is the active one when several accounts of a kind are enabled. */
   credentials: z.array(BoxCredential).default([]),
+  /** Whether the built-in `sessionboxer` MCP goes to the Agent (`AgentToolsPolicy` other than `off`, ADR-0062). */
+  sessionboxerTools: z.boolean().default(true),
 });
 export type DaemonMcpSetParams = z.infer<typeof DaemonMcpSetParams>;
 

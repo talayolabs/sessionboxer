@@ -168,6 +168,12 @@ function RunCard({ session, run, open }: { session: Session; run: E2eRun; open: 
               <div className={`e2e-progress-bar${running ? " live" : ""}`} style={{ width: `${Math.round(((done + (running ? 0.5 : 0)) / groups.length) * 100)}%` }} />
             </div>
           )}
+          {run.brief && (
+            <p className="e2e-brief">
+              <span className="muted">The Agent asked to verify: </span>
+              {run.brief}
+            </p>
+          )}
           {run.status === "planning" && <p className="e2e-note muted">The Agent is looking at what the turn changed and deciding what to test…</p>}
           {run.skipReason && (
             <p className={`e2e-note${run.status === "aborted" ? " warn" : " muted"}`}>

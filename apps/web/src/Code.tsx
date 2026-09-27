@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CodeOpenParams, CodeServerStatus, Session } from "@sessionboxer/protocol";
+import { type CodeOpenParams, type CodeServerStatus, type Session, VM_AGENT_IN_GUEST } from "@sessionboxer/protocol";
 import { api, codeUrl } from "./api";
 import { currentTheme, useTheme } from "./theme";
 
@@ -22,6 +22,26 @@ function describe(target: CodeOpenParams): string {
  * through the Daemon, which starts the server and waits for the window if needed.
  */
 export function CodePane({ session, target = null }: { session: Session; target?: CodeTarget | null }) {
+  const inGuest = VM_AGENT_IN_GUEST[session.settings.sandbox.environment];
+  if (inGuest) return <GuestNote text={inGuest} />;
+  return <LinuxCodePane session={session} target={target} />;
+}
+
+/** The Workspace is inside a VM: openvscode-server on the Linux side would show only a mirror of it. */
+function GuestNote({ text }: { text: string }) {
+  return (
+    <div className="pane">
+      <div className="pane-toolbar">
+        <span className="muted">Remote VS Code</span>
+      </div>
+      <div className="code-body">
+        <div className="pane-overlay">{text}</div>
+      </div>
+    </div>
+  );
+}
+
+function LinuxCodePane({ session, target }: { session: Session; target: CodeTarget | null }) {
   const live = isLive(session);
   const [status, setStatus] = useState<CodeServerStatus | null>(null);
   const [error, setError] = useState<string | null>(null);

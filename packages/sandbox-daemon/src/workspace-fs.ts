@@ -14,7 +14,11 @@ export class FsError extends Error {
 export class WorkspaceFs {
   private readonly root: string;
 
-  constructor(root: string) {
+  constructor(
+    root: string,
+    /** Brings the file at `abs` up to date before it is served (a Windows Session copies it from the VM). */
+    private readonly refresh?: (rel: string, abs: string) => Promise<void>,
+  ) {
     this.root = resolve(root);
   }
 
@@ -45,6 +49,7 @@ export class WorkspaceFs {
 
   /** Absolute path and size of a regular file. */
   async raw(rel: string): Promise<{ abs: string; size: number; mtime: Date }> {
+    if (this.refresh) await this.refresh(rel, this.absolute(rel));
     const abs = await this.contained(rel);
     let st;
     try {

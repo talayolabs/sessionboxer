@@ -1,6 +1,6 @@
 import type { Element, ElementContent, Root, Text } from "hast";
 import { mediaKind } from "@sessionboxer/protocol";
-import { workspacePath } from "./attachment-paths";
+import { WORKSPACE_PREFIX_RE, workspacePath } from "./attachment-paths";
 
 /** A place in a Workspace file the chat points at; opened in the Code pane on click. */
 export interface FileRef {
@@ -15,7 +15,7 @@ export interface FileRef {
 // A file name: `name.ext` (extension starts with a letter, so `v1.2.3` is not one) or one of the
 // usual extensionless files.
 const NAME = String.raw`(?:[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,9}|Dockerfile|Makefile|LICENSE|README|CHANGELOG|\.env(?:\.[\w-]+)?|\.\w+rc|\.\w+ignore|\.editorconfig)`;
-const PATH = String.raw`(?:/workspace/|\./)?(?:[\w.@+-]+/)*${NAME}`;
+const PATH = String.raw`${WORKSPACE_PREFIX_RE}?(?:[\w.@+-]+[\\/])*${NAME}`;
 // `:12`, `:12:5`, `#L12`, `#L12C5`.
 const LOC = String.raw`(?::(\d+)(?::(\d+))?|#L(\d+)(?:C(\d+))?)?`;
 // Where a path may start and what may follow it (prose punctuation, quotes, brackets).
@@ -34,10 +34,11 @@ function extensionOf(name: string): string {
 
 /** `example.com`, `example.com/foo.js`: a host, not a file. */
 function looksLikeDomain(raw: string): boolean {
-  const segments = raw.split("/").filter((s) => s !== "");
+  const segments = raw.split(/[\\/]/).filter((s) => s !== "");
   const first = segments[0] ?? "";
   const last = segments[segments.length - 1] ?? "";
-  return NOT_EXTENSIONS.has(extensionOf(last)) || (!raw.startsWith("/") && !raw.startsWith("./") && NOT_EXTENSIONS.has(extensionOf(first)));
+  const anchored = raw.startsWith("/") || raw.startsWith("./") || /^[a-z]:[\\/]/i.test(raw);
+  return NOT_EXTENSIONS.has(extensionOf(last)) || (!anchored && NOT_EXTENSIONS.has(extensionOf(first)));
 }
 
 /** Binary media has its own card in the chat; text media (Markdown, Mermaid) is also code. */
@@ -91,7 +92,7 @@ export function splitFileRefs(text: string, base = ""): TextPart[] {
     const lead = m[1] ?? "";
     const raw = m[2] ?? "";
     const hasLoc = m[3] !== undefined || m[5] !== undefined;
-    if (!raw.includes("/") && !hasLoc) continue;
+    if (!/[\\/]/.test(raw) && !hasLoc) continue;
     const ref = toRef(raw, m.slice(3, 7), base);
     if (!ref) continue;
     const start = m.index + lead.length;

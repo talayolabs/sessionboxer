@@ -278,6 +278,8 @@ RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
+# The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
+COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md
 
 # The compiled Sessionboxer code (stage 1): the layers that change with every release, last.
 COPY --from=build --chmod=0755 /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist

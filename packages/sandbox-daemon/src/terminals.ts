@@ -19,6 +19,13 @@ export interface TerminalHandlers {
   onExit: (id: string, exitCode: number) => void;
 }
 
+/** What a Terminal runs instead of the login shell here: a PowerShell in a Windows Session's VM, over SSH. */
+export interface TerminalShell {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 export class TerminalError extends Error {
   constructor(
     readonly code: number,
@@ -39,6 +46,7 @@ export class Terminals {
     private readonly cwd: string,
     private readonly handlers: TerminalHandlers,
     private readonly log: (msg: string) => void,
+    private readonly shell: TerminalShell = { command: SHELL, args: ["-l"], env: {} },
   ) {}
 
   list(): PtyInfo[] {
@@ -47,12 +55,12 @@ export class Terminals {
 
   open(cols: number, rows: number): PtyInfo {
     const id = randomUUID().slice(0, 8);
-    const proc = pty.spawn(SHELL, ["-l"], {
+    const proc = pty.spawn(this.shell.command, this.shell.args, {
       name: "xterm-256color",
       cols,
       rows,
       cwd: this.cwd,
-      env: { ...process.env, ...caEnv(), TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
+      env: { ...process.env, ...caEnv(), ...this.shell.env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
     });
     const term: Terminal = {
       info: { id, cols, rows, exitCode: null, createdAt: new Date().toISOString() },

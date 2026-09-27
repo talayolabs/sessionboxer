@@ -8,6 +8,7 @@ import {
   type ClientApp,
   type ClientConnection,
   type InitializeRequest,
+  type McpServer,
   type NewSessionRequest,
   type NewSessionResponse,
   type PromptCapabilities,
@@ -33,12 +34,32 @@ import { caEnv } from "./ca-env.js";
 import { acpMcpServers } from "./mcp-config.js";
 import { promptBlocks } from "./prompt-blocks.js";
 
+/**
+ * Where the Agent process runs when not on this machine: a Windows Session's VM (ADR-0057). The
+ * transport carries the same ACP stdio; `prepare` runs before every spawn with the environment
+ * the Agent must see there (Provider secrets, `ANTHROPIC_BASE_URL`, ...), which the local spawn
+ * would have put in `process.env`.
+ */
+export interface AgentTransport {
+  prepare(env: Record<string, string>): Promise<void>;
+  spawn(command: string, args: string[]): ChildProcess;
+  /** Path the Agent uses for a Workspace-relative file (an attachment). */
+  attachmentPath(rel: string): string;
+  /** Turns the MCP servers into what the Agent can start where it runs. */
+  mcpServers(servers: McpServer[]): McpServer[];
+}
+
 export interface AgentConfig {
   command: string;
   args: string[];
+  /** The Agent's working directory, where it runs (a Windows path with a transport). */
   cwd: string;
+  /** Where the Workspace is on this machine (attachments are read from here); `cwd` when not given. */
+  localWorkspace?: string;
   /** Fixed environment for the Agent process, on top of the Daemon's own. */
   env?: Record<string, string>;
+  /** Runs the Agent elsewhere; a local child process when not given. */
+  transport?: AgentTransport;
   mcpCommand: string;
   stateFile: string;
   /** The Sessionboxer Session this Sandbox belongs to; recorded with the persisted state. */
@@ -54,9 +75,9 @@ export interface AgentConfig {
   /** Read whenever the instructions are sent: what the Workspace holds right now (its repositories). */
   workspaceBriefing?: () => string;
   /** Runs before every spawn with the user MCP servers (Devin reads them from a file, not over ACP). */
-  writeMcpConfig?: (servers: McpServerSpec[]) => void;
+  writeMcpConfig?: (servers: McpServerSpec[]) => void | Promise<void>;
   /** Runs before every spawn with the model allowlist (Claude reads `availableModels` from its settings file). */
-  writeModelAllowlist?: (models: string[]) => void;
+  writeModelAllowlist?: (models: string[]) => void | Promise<void>;
   /**
    * A slash command the adapter answers locally with the Provider's usage meters (codex-acp's
    * `/status`); run at the end of every turn, while the turn is still held, its text goes to
@@ -188,6 +209,11 @@ export class AgentManager {
 
   /** User MCP servers to start the Agent with; `null` until the Control Plane has sent them. */
   private mcpServers: McpServerSpec[] | null = null;
+  /** Resolves once the first set has arrived: a prompt that comes before it waits so the Agent does not start without the servers. */
+  private mcpFirstSet: () => void = () => undefined;
+  private readonly mcpFirstSetArrived = new Promise<void>((resolve) => {
+    this.mcpFirstSet = resolve;
+  });
   /** Set received while a turn was active; applied when it ends. */
   private mcpPendingServers: McpServerSpec[] | null = null;
   /** Fingerprints of the MCP set (and of it plus the model allowlist) the running (or last started) Agent got; `null` before the first start. */
@@ -508,6 +534,13 @@ export class AgentManager {
    * the change waits for the turn to end. Returns whether it was applied right away.
    */
   setMcpServers(servers: McpServerSpec[]): boolean {
+    if (this.mcpServers === null && this.turnActive && !this.child && !this.starting) {
+      // First set, and a prompt is waiting for it before it starts the Agent: nothing to restart.
+      this.mcpServers = [...servers].sort((a, b) => a.name.localeCompare(b.name));
+      this.mcpFirstSet();
+      this.events.onStateChange();
+      return true;
+    }
     if (this.turnActive) {
       this.mcpPendingServers = servers;
       this.events.onStateChange();
@@ -515,6 +548,7 @@ export class AgentManager {
     }
     this.mcpPendingServers = null;
     this.mcpServers = [...servers].sort((a, b) => a.name.localeCompare(b.name));
+    this.mcpFirstSet();
     this.mcpApplyChain = this.mcpApplyChain
       .then(() => this.applyMcpServers())
       .catch((e: unknown) => this.cfg.log(`agent start failed: ${String(e)}`));
@@ -567,18 +601,24 @@ export class AgentManager {
     this.error = null;
     this.currentModel = null;
     const userServers = this.mcpServers ?? [];
-    this.cfg.writeMcpConfig?.(userServers);
-    if (this.modelAllowlist) this.cfg.writeModelAllowlist?.(this.modelAllowlist);
+    await this.cfg.writeMcpConfig?.(userServers);
+    if (this.modelAllowlist) await this.cfg.writeModelAllowlist?.(this.modelAllowlist);
     this.cfg.log(
       `spawning ${[this.cfg.command, ...this.cfg.args].join(" ")} (MCP: desktop${userServers.map((s) => `, ${s.name}`).join("")})`,
     );
     const agentEnv = { ...this.agentEnv };
     if (Object.keys(agentEnv).length > 0) this.cfg.log(`agent environment overrides: ${Object.keys(agentEnv).join(", ")}`);
-    const child = spawn(this.cfg.command, this.cfg.args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...caEnv(), ...this.cfg.env, ...agentEnv },
-      cwd: this.cfg.cwd,
-    });
+    let child: ChildProcess;
+    if (this.cfg.transport) {
+      await this.cfg.transport.prepare({ ...this.cfg.env, ...agentEnv });
+      child = this.cfg.transport.spawn(this.cfg.command, this.cfg.args);
+    } else {
+      child = spawn(this.cfg.command, this.cfg.args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ...caEnv(), ...this.cfg.env, ...agentEnv },
+        cwd: this.cfg.cwd,
+      });
+    }
     this.child = child;
     this.startedEnv = agentEnv;
     child.stderr?.on("data", (d: Buffer) => this.cfg.log(`[agent] ${d.toString().trimEnd()}`));
@@ -650,7 +690,7 @@ export class AgentManager {
         : null;
       this.canFork = Boolean(init.agentCapabilities?.sessionCapabilities?.fork);
       this.promptCaps = init.agentCapabilities?.promptCapabilities ?? {};
-      const mcpServers = acpMcpServers(this.cfg.mcpCommand, userServers);
+      const mcpServers = this.acpMcpServers(userServers);
 
       let loaded = false;
       if (this.acpSessionId && init.agentCapabilities?.loadSession) {
@@ -739,9 +779,15 @@ export class AgentManager {
     this.turnActive = true;
     this.events.onStateChange();
     try {
+      if (this.mcpServers === null && !this.child && !this.starting) {
+        // The Control Plane sends the MCP set right after connecting; a prompt that overtakes it
+        // (the Session is idle while the set is still on its way) waits a little rather than
+        // starting the Agent without the servers, which would cost a restart after the turn.
+        await Promise.race([this.mcpFirstSetArrived, new Promise<void>((r) => setTimeout(r, 15_000).unref())]);
+      }
       await this.ensureStarted();
       if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
-      const built = await promptBlocks(text, attachments, this.cfg.cwd, this.promptCaps, this.cfg.log);
+      const built = await promptBlocks(text, attachments, this.cfg.localWorkspace ?? this.cfg.cwd, this.promptCaps, this.cfg.log, this.cfg.transport?.attachmentPath);
       if (attachments.length > 0) {
         this.cfg.log(`prompt carries ${attachments.length} attachment(s): ${built.blocks.map((b) => b.type).join(", ") || "none"} sent inline`);
       }
@@ -884,7 +930,7 @@ export class AgentManager {
       const conn = this.conn;
       const from = this.acpSessionId;
       if (!conn || !from) throw new Error("agent not ready");
-      const mcpServers = acpMcpServers(this.cfg.mcpCommand, this.mcpServers ?? []);
+      const mcpServers = this.acpMcpServers(this.mcpServers ?? []);
       this.replaying = true;
       try {
         if (this.canFork) {
@@ -991,6 +1037,12 @@ export class AgentManager {
     this.child = null;
     this.ready = false;
     child?.kill();
+  }
+
+  /** The MCP servers as `session/new` / `session/load` take them, for where the Agent runs. */
+  private acpMcpServers(userServers: McpServerSpec[]): McpServer[] {
+    const servers = acpMcpServers(this.cfg.mcpCommand, userServers);
+    return this.cfg.transport ? this.cfg.transport.mcpServers(servers) : servers;
   }
 
   /** `_meta` carrying the instructions for adapters that take them as a system prompt addition. */

@@ -24,6 +24,18 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
 };
 
 /**
+ * The environment the Control Plane may set on a Sandbox for its Provider: what Snapshots blank
+ * out, and what follows the Agent into a VM when it runs there (ADR-0060).
+ */
+export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
+  "claude-code": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+  devin: ["WINDSURF_API_KEY"],
+  // Codex's and Cursor's logins never travel as environment: the Daemon gets them over RPC and keeps them on tmpfs.
+  codex: [],
+  cursor: [],
+};
+
+/**
  * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT
  * account it holds; read from the id token's claims, each part `null` when absent.
  */
@@ -92,6 +104,16 @@ export const MACOS_NO_SNAPSHOT =
 export const VM_NO_SNAPSHOT: Partial<Record<Environment, string>> = {
   "qemu-windows": WINDOWS_NO_SNAPSHOT,
   "qemu-macos": MACOS_NO_SNAPSHOT,
+};
+
+/**
+ * The Environments whose Agent runs inside the VM rather than in the Linux Sandbox (ADR-0057):
+ * repositories, MCP servers and the Terminal are the guest's; the Linux side keeps the desktop
+ * bridge, recordings and a mirror of the Workspace for downloads and sync.
+ */
+export const VM_AGENT_IN_GUEST: Partial<Record<Environment, string>> = {
+  "qemu-windows":
+    "The agent, its MCP servers, git and the Terminal run inside the Windows VM; the Workspace is C:\\workspace there. VS Code is not available for Windows Sessions yet: edit through the agent, the Terminal or the desktop.",
 };
 
 /** Whether an Environment can be picked on this host, and if not, why (one sentence for the UI). */
@@ -1622,6 +1644,17 @@ export type WindowsSettings = z.infer<typeof WindowsSettings>;
 
 /** The Windows guest account the Sandbox's RDP and SSH clients log in with. */
 export const WINDOWS_GUEST_USER = "agent";
+/**
+ * Where a Windows Session's Workspace lives inside the VM: the Agent and its MCP servers run in
+ * Windows with this as their working directory, mirrored from the Sandbox's `/workspace` (ADR-0057).
+ */
+export const WINDOWS_GUEST_WORKSPACE = "C:\\workspace";
+/**
+ * TCP port on the Sandbox where the Daemon bridges Linux-side services to the Agent in the VM:
+ * the desktop MCP (screenshots and input over RDP) and git credentials (the accounts the user
+ * connected). Only reachable from the Session's own network; every connection carries a token.
+ */
+export const GUEST_BRIDGE_PORT = 7002;
 
 /** The macOS releases the base disk can be installed with (dockur/macos `VERSION` codes). */
 export const MACOS_VERSIONS: ReadonlyArray<{ code: string; label: string }> = [
@@ -2872,6 +2905,7 @@ export const DAEMON_METHODS = {
   reposSet: "_sessionboxer/repos/set",
   reposInspect: "_sessionboxer/repos/inspect",
   reposRemove: "_sessionboxer/repos/remove",
+  reposSeed: "_sessionboxer/repos/seed",
   // Daemon → Control Plane requests (the Agent's `e2e_*` tools); each answers with the `E2eRun`.
   e2ePlan: "_sessionboxer/e2e/plan",
   e2eCaseStart: "_sessionboxer/e2e/case-start",
@@ -2988,6 +3022,24 @@ export const DaemonMcpSetParams = z.object({
   credentials: z.array(BoxCredential).default([]),
 });
 export type DaemonMcpSetParams = z.infer<typeof DaemonMcpSetParams>;
+
+/**
+ * Puts repositories in place where the Agent runs when that is not the Sandbox itself (a Windows
+ * VM, ADR-0057): a git source is cloned there with the Session's connected accounts (as `account`
+ * when set); a copied folder was already unpacked into the Sandbox's `/workspace/<dir>` by the
+ * Control Plane and is pushed on from there. Answers once the machine is reachable, per repository.
+ */
+export const DaemonReposSeedParams = z.object({
+  repos: z.array(z.object({ dir: z.string().min(1), source: RepoSource, account: z.string().nullable().default(null) })),
+  /** The Session's connected accounts, so the clones can answer for private repositories (as in `mcp/set`). */
+  credentials: z.array(BoxCredential).default([]),
+});
+export type DaemonReposSeedParams = z.infer<typeof DaemonReposSeedParams>;
+
+export const DaemonReposSeedResult = z.object({
+  results: z.array(z.object({ dir: z.string(), ok: z.boolean(), error: z.string().nullable() })),
+});
+export type DaemonReposSeedResult = z.infer<typeof DaemonReposSeedResult>;
 
 export const DaemonMcpSetResult = z.object({
   /** False when the change was deferred to the end of the active turn. */

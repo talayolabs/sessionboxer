@@ -20,6 +20,8 @@ export async function promptBlocks(
   workspace: string,
   caps: PromptCapabilities,
   log: (msg: string) => void,
+  /** The path the Agent knows the file by when it runs on another machine (a Windows VM); the local one when not given. */
+  agentPath?: (rel: string) => string,
 ): Promise<{ text: string; blocks: ContentBlock[] }> {
   if (attachments.length === 0) return { text, blocks: [] };
 
@@ -35,11 +37,12 @@ export async function promptBlocks(
     }
     const inline = await inlineBlock(abs, a, caps, log);
     if (inline) blocks.push(inline);
-    lines.push(`- ${abs} (${a.mimeType}, ${formatBytes(a.size)})${inline ? inline.type === "image" ? " — shown to you below" : " — contents included below" : ""}`);
+    const shown = agentPath ? agentPath(a.path) : abs;
+    lines.push(`- ${shown} (${a.mimeType}, ${formatBytes(a.size)})${inline ? inline.type === "image" ? " — shown to you below" : " — contents included below" : ""}`);
   }
 
   const intro = text.trim() === "" ? "" : `${text}\n\n`;
-  const header = `${intro}The user attached ${attachments.length === 1 ? "this file" : "these files"} (saved in the Sandbox; use the paths with your tools):\n${lines.join("\n")}`;
+  const header = `${intro}The user attached ${attachments.length === 1 ? "this file" : "these files"} (saved on your machine; use the paths with your tools):\n${lines.join("\n")}`;
   return { text: header, blocks };
 }
 

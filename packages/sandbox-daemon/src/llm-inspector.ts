@@ -32,6 +32,8 @@ const HOP_HEADERS = new Set([
 
 export interface LlmInspectorOptions {
   port: number;
+  /** Address to listen on; loopback when not given (the Agent runs here). A Windows Session's Agent calls in from the VM. */
+  host?: string;
   /** Where the calls go: the `ANTHROPIC_BASE_URL` configured for the Sandbox, or Anthropic. */
   upstream: string;
   /** tmpfs directory for the bodies. */
@@ -245,13 +247,13 @@ export class LlmInspector {
     server.headersTimeout = 60_000;
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(this.opts.port, "127.0.0.1", () => {
+      server.listen(this.opts.port, this.opts.host ?? "127.0.0.1", () => {
         server.off("error", reject);
         resolve();
       });
     });
     this.server = server;
-    this.opts.log(`llm inspector listening on 127.0.0.1:${this.opts.port} -> ${this.upstream.origin}${this.upstream.pathname === "/" ? "" : this.upstream.pathname}`);
+    this.opts.log(`llm inspector listening on ${this.opts.host ?? "127.0.0.1"}:${this.opts.port} -> ${this.upstream.origin}${this.upstream.pathname === "/" ? "" : this.upstream.pathname}`);
   }
 
   /** Emits the summary still held back, if any (the turn ended: nothing more is coming for it). */

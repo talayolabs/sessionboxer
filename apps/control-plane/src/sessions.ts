@@ -45,8 +45,11 @@ import {
   ROOT_BRANCH_ID,
   FS_TAR_PATH,
   DaemonReposInspectResult,
+  type DaemonReposSeedParams,
+  DaemonReposSeedResult,
   DaemonReposRemoveResult,
   type DaemonReposSetParams,
+  WINDOWS_GUEST_WORKSPACE,
   type RepoGitState,
   type RepoSpec,
   type SessionRepo,
@@ -94,6 +97,7 @@ import {
   updateRequestSettings,
   type WorkspaceSource,
   USAGE_AUTO_CONTINUE_INTERVAL_MS,
+  PROVIDER_ENV_KEYS,
   USAGE_CONTINUE_TEXT,
   type UsageLimit,
   classifyUsageLimit,
@@ -101,7 +105,6 @@ import {
 } from "@sessionboxer/protocol";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
-  PROVIDER_ENV_KEYS,
   codexAuthJson,
   cursorLogin,
   defaultMcpEnabled,
@@ -150,6 +153,8 @@ const REPLAY_MAX_CHARS = 60_000;
 const CODE_START_TIMEOUT_MS = 120_000;
 /** Hashing a big Workspace in the box. */
 const MANIFEST_TIMEOUT_MS = 300_000;
+/** A repository put into a VM: the VM may still be booting (up to 15 min) before the clone or copy itself. */
+const SEED_TIMEOUT_MS = 40 * 60_000;
 const REBUILD_HINT = "This Sandbox needs a rebuild before it can be snapshotted again (Snapshots \u2192 Rebuild Sandbox)";
 
 /** One UI connection attached to a terminal. */
@@ -181,6 +186,8 @@ export class SessionManager {
   private readonly syncing = new Set<string>();
   /** Sessions with a repository being added or removed. */
   private readonly repoWork = new Set<string>();
+  /** Sessions whose repositories are being put into their VM (ADR-0057): the Agent waits for them. */
+  private readonly seeding = new Map<string, Promise<void>>();
   /** What the Agent is told at the start of its next prompt (repositories added/removed meanwhile). */
   private readonly promptNotes = new Map<string, string[]>();
   /** Pull Requests attached to Sessions: watching, notifications, actions. */
@@ -315,7 +322,7 @@ export class SessionManager {
   /** The Daemon of a live Session, waiting a little for it to come up right after create/resume. */
   private async liveClient(id: string): Promise<DaemonClient> {
     const s = this.get(id);
-    if (s.status !== "idle" && s.status !== "running") {
+    if (s.status !== "idle" && s.status !== "running" && !(s.status === "creating" && this.seeding.has(id))) {
       throw new HttpError(409, `session ${id} is ${s.status}; files and terminals are only available while the Sandbox runs`);
     }
     const client = this.clients.get(id);
@@ -477,12 +484,51 @@ export class SessionManager {
     this.update(id, { repos: s.repos.map((r) => (r.id === repoId ? { ...r, ...patch } : r)) });
   }
 
-  /** Clones or copies one repository into `/workspace/<name>` of a running Sandbox. */
+  /** Whether the Session's Agent runs in a VM next to the Sandbox (ADR-0057): repositories and the Workspace are there. */
+  private agentInGuest(session: Session): boolean {
+    return this.vms(session.settings.sandbox.environment)?.agentInGuest ?? false;
+  }
+
+  /** The Workspace path of a repository as the Agent sees it. */
+  private repoPath(session: Session, name: string): string {
+    return this.agentInGuest(session) ? `${WINDOWS_GUEST_WORKSPACE}\\${name}` : `/workspace/${name}`;
+  }
+
+  /**
+   * Clones or copies one repository into `/workspace/<name>` of a running Sandbox — or, when the
+   * Agent runs in a VM, has the Daemon put it there: git sources are cloned inside the VM with the
+   * Session's accounts answering over the bridge, copied folders go through the Sandbox's mirror.
+   */
   private async seedRepo(containerId: string, session: Session, settings: Settings, repo: SessionRepo): Promise<void> {
     const dir = repoDir(repo);
     const target = dir === "" ? "/workspace" : `/workspace/${dir}`;
     const source = repo.source;
     if (dir !== "") await this.docker.exec(containerId, ["mkdir", "-p", "--", target], "/workspace", "agent");
+    if (this.agentInGuest(session)) {
+      const credentials = resolveBoxCredentials(settings, session.settings.mcpEnabled);
+      let guestSource = source;
+      let account = repo.account;
+      if (source.type === "git") {
+        const plan = planClone(source.url, credentials, repo.account);
+        guestSource = { ...source, url: plan.url };
+        account = plan.account;
+      } else {
+        const hostDir = await resolveHostDir(source.path);
+        const entries = await planHostDir(hostDir);
+        if (entries && entries.length === 0) return;
+        this.log(`copying ${hostDir} (${entries ? `${entries.length} git entries` : "everything"}) into ${containerId.slice(0, 12)}:${target} for the VM`);
+        await this.docker.putArchive(containerId, packHostDir(hostDir, entries), target);
+        await this.docker.exec(containerId, ["chown", "-R", "agent:agent", target], "/", "root");
+      }
+      const params: DaemonReposSeedParams = { repos: [{ dir: dir || ".", source: guestSource, account }], credentials };
+      const result = DaemonReposSeedResult.parse(await this.daemonCall(session.id, DAEMON_METHODS.reposSeed, params, SEED_TIMEOUT_MS));
+      const failed = result.results.find((r) => !r.ok);
+      if (failed) {
+        const hint = source.type === "git" ? cloneFailureHint(source.url, planClone(source.url, credentials, repo.account)) : "";
+        throw new Error((failed.error ?? "could not put the repository in the VM") + hint);
+      }
+      return;
+    }
     if (source.type === "git") {
       const plan = planClone(source.url, resolveBoxCredentials(settings, session.settings.mcpEnabled), repo.account);
       const args = ["git", "clone", "--", plan.url, "."];
@@ -567,7 +613,7 @@ export class SessionManager {
       if (!byDir.has(repoDir(r) || ".")) return r;
       const state = byDir.get(repoDir(r) || ".") ?? null;
       // A directory that is gone (removed by hand, or added after the Snapshot a fork came from).
-      if (state === null) return r.status === "ready" ? { ...r, status: "error", error: `/workspace/${r.name} is not in the Sandbox`, git: null } : r;
+      if (state === null) return r.status === "ready" ? { ...r, status: "error", error: `${this.repoPath(fresh, r.name)} is not in the ${this.agentInGuest(fresh) ? "VM" : "Sandbox"}`, git: null } : r;
       return { ...r, git: state };
     });
     if (JSON.stringify(repos) !== JSON.stringify(fresh.repos)) this.update(id, { repos });
@@ -605,7 +651,7 @@ export class SessionManager {
       this.appendEvent(id, { type: "repo_changed", action: "added", name: added.name, source: added.source });
       this.note(
         id,
-        `Repository "${added.name}" was added to the Workspace at /workspace/${added.name} (${repoOriginLabel(added.source)}${added.account ? `; git and gh act as @${added.account} there` : ""}).`,
+        `Repository "${added.name}" was added to the Workspace at ${this.repoPath(this.get(id), added.name)} (${repoOriginLabel(added.source)}${added.account ? `; git and gh act as @${added.account} there` : ""}).`,
       );
       return added;
     } finally {
@@ -1130,12 +1176,39 @@ export class SessionManager {
     this.update(session.id, { containerId });
     await this.startSandbox(containerId, settings);
     // A fork's Workspace comes with its Snapshot image; only fresh Sessions seed theirs.
-    if (session.workspaceSource.type !== "fork") {
-      await this.seedRepos(containerId, session, settings, session.repos.filter((r) => r.status === "pending"));
+    const pending = session.workspaceSource.type !== "fork" ? session.repos.filter((r) => r.status === "pending") : [];
+    if (vms?.agentInGuest) {
+      // The repositories go into the VM through the Daemon: connect first, seed, and only then let the
+      // Agent start (the connect sequence and the first prompt wait for `seeding`) so it sees them.
+      const seeding = this.connect(session.id, containerId).then(() => this.seedRepos(containerId, session, settings, pending));
+      this.seeding.set(session.id, seeding);
+      try {
+        await seeding;
+      } finally {
+        this.seeding.delete(session.id);
+      }
+      this.setStatus(session.id, "idle");
+      this.dispatchPendingPrompt(session.id);
+    } else {
+      await this.seedRepos(containerId, session, settings, pending);
+      this.setStatus(session.id, "idle");
+      await this.connect(session.id, containerId);
     }
-    this.setStatus(session.id, "idle");
-    await this.connect(session.id, containerId);
     void this.refreshDiskUsage(session.id);
+  }
+
+  /** Sends the prompt that arrived while the Sandbox was being prepared, or pumps the queue. */
+  private dispatchPendingPrompt(id: string): void {
+    const s = this.db.getSession(id);
+    if (!s || s.status !== "idle") return;
+    const pending = this.pendingPrompts.get(id);
+    if (pending) {
+      this.pendingPrompts.delete(id);
+      const { origin, ...req } = pending;
+      this.prompt(id, req, origin).catch((e: unknown) => this.log(`pending prompt ${id} failed: ${String(e)}`));
+    } else {
+      void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
+    }
   }
 
   /** Whether a Session can be created in `environment` on this host; the reason as a 4xx otherwise. */
@@ -1240,7 +1313,7 @@ export class SessionManager {
     if (s.status === "running") throw new HttpError(409, "The Agent is still working on the previous prompt.");
     if (s.status === "error") throw new HttpError(409, `Session is in error state: ${s.error ?? "unknown"}`);
     const client = this.clients.get(id);
-    if (!client?.connected) {
+    if (!client?.connected || this.seeding.has(id)) {
       if (s.status === "creating") {
         this.pendingPrompts.set(id, origin ? { ...req, origin } : req);
         this.prs.onPrompt(id, req.text);
@@ -2241,8 +2314,11 @@ export class SessionManager {
     if (!cursor || cursor.epoch !== status.epoch) this.db.setDaemonCursor(id, status.epoch, 0);
     this.onDaemonStatus(id, status);
     // The Daemon waits for the MCP set before it starts the Agent (so the allowlist and the repository list go first); older Daemons ignore the calls.
+    // A Session whose repositories are being put into its VM holds the list and the MCP set until they are there.
+    const seeded = this.seeding.get(id)?.catch(() => undefined) ?? Promise.resolve();
     this.pushClaudeModels(id)
       .then(() => this.pushLlmInspect(id))
+      .then(() => seeded)
       .then(() => this.pushRepos(id))
       .then(() => this.pushCodexAuth(id))
       .then(() => this.pushCursorAuth(id))
@@ -2253,14 +2329,7 @@ export class SessionManager {
       .then(() => this.refreshRepoStates(id))
       .catch((e: unknown) => this.log(`mcp/model/options push ${id} failed: ${String(e)}`));
     this.scheduleAutoContinue(id);
-    const pending = this.pendingPrompts.get(id);
-    if (pending && !status.turnActive) {
-      this.pendingPrompts.delete(id);
-      const { origin, ...req } = pending;
-      this.prompt(id, req, origin).catch((e: unknown) => this.log(`pending prompt ${id} failed: ${String(e)}`));
-    } else if (!status.turnActive) {
-      void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
-    }
+    if (!status.turnActive && !this.seeding.has(id)) this.dispatchPendingPrompt(id);
   }
 
   private onDaemonStatus(id: string, status: DaemonStatus): void {

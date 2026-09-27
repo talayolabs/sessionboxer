@@ -221,6 +221,8 @@ export interface GuestVms {
   vmName(sessionId: string): string;
   /** The reason the Session's VM exited unexpectedly, for the Session's error. */
   readonly guestLabel: string;
+  /** Whether the Agent, its MCP servers and the repositories live in the VM (the Sandbox only shows its desktop and bridges the desktop tools). */
+  readonly agentInGuest: boolean;
   availability(): Promise<import("@sessionboxer/protocol").EnvironmentAvailability>;
   /** Creates the Session's VM container (stopped) with its own disk; returns the container id. */
   create(sessionId: string): Promise<string>;

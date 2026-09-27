@@ -1461,7 +1461,7 @@ function SessionView({
           </span>
         )}
         {session.settings.sandbox.environment === "qemu-windows" && (
-          <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: the Desktop shows a Windows VM over RDP; \`win <command>\` runs PowerShell in it`}>
+          <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: the agent, its MCP servers, git and the Terminal run inside the Windows VM (Workspace C:\\workspace); the Desktop shows it over RDP`}>
             <Icon name="windows" size={16} />
             {mobile && <span className="muted">{ENVIRONMENT_LABELS["qemu-windows"]}</span>}
           </span>

@@ -122,10 +122,13 @@ export async function drag(display: Display, from: Coordinate, to: Coordinate): 
   await xdotool(display, "mouseup", "1");
 }
 
+/** Pause between typed characters; a desktop reached over RDP/VNC drops keys at xdotool's default pace. */
+const TYPE_DELAY_MS = Number(process.env.SESSIONBOXER_TYPE_DELAY_MS ?? 12);
+
 export async function typeText(display: Display, text: string): Promise<void> {
   const chunk = 50;
   for (let i = 0; i < text.length; i += chunk) {
-    await xdotool(display, "type", "--delay", "12", "--", text.slice(i, i + chunk));
+    await xdotool(display, "type", "--delay", String(TYPE_DELAY_MS), "--", text.slice(i, i + chunk));
   }
 }
 

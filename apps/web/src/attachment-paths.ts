@@ -8,14 +8,22 @@ export interface Attachment {
 }
 
 const WORKSPACE_PREFIX = "/workspace/";
+/** The Workspace as a Windows Session's Agent names it (`C:\workspace\...`), either slash. */
+const WINDOWS_WORKSPACE = /^[a-z]:[\\/]workspace(?:[\\/]|$)/i;
+/** A Windows drive path (`C:\...`, `C:/...`), which is not a URL scheme. */
+const WINDOWS_DRIVE = /^[a-z]:[\\/]/i;
+
+/** Where a Workspace path may start: `/workspace/`, `C:\workspace\`, `./`. */
+export const WORKSPACE_PREFIX_RE = String.raw`(?:/workspace/|[A-Za-z]:[\\/]workspace[\\/]|\./)`;
 
 /**
  * Workspace paths of embeddable files (video, image, PDF…) mentioned in a message, as the Agent
- * writes them: `/workspace/recordings/demo.mp4`, `./out/report.pdf`, `docs/chart.svg`, in prose,
- * backticks or Markdown links. URLs and paths outside the Workspace are ignored.
+ * writes them: `/workspace/recordings/demo.mp4`, `C:\workspace\out\report.pdf` (a Windows Session),
+ * `./out/report.pdf`, `docs/chart.svg`, in prose, backticks or Markdown links. URLs and paths outside
+ * the Workspace are ignored.
  */
 export function findAttachments(text: string): Attachment[] {
-  const re = new RegExp(String.raw`(^|[\s\`("'\[<])(?:/workspace/|\./)?((?:[\w.@+-]+/)*[\w.@+-]+\.(?:${MEDIA_EXTENSIONS}))(?=$|[\s\`)"'\]>,;:!?]|\.\s|\.$)`, "gim");
+  const re = new RegExp(String.raw`(^|[\s\`("'\[<])(${WORKSPACE_PREFIX_RE}?(?:[\w.@+-]+[\\/])*[\w.@+-]+\.(?:${MEDIA_EXTENSIONS}))(?=$|[\s\`)"'\]>,;:!?]|\.\s|\.$)`, "gim");
   const seen = new Set<string>();
   const out: Attachment[] = [];
   for (const m of text.matchAll(re)) {
@@ -34,14 +42,15 @@ export function findAttachments(text: string): Attachment[] {
  * the Workspace. Relative paths resolve against `base` (the directory of the document they appear in).
  */
 export function workspacePath(href: string, base = ""): string | null {
+  if (WINDOWS_DRIVE.test(href)) return WINDOWS_WORKSPACE.test(href) ? normalize(href) : null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("#") || href.startsWith("//")) return null;
   if (href.startsWith("/")) return href.startsWith(WORKSPACE_PREFIX) ? normalize(href) : null;
   return normalize(base ? `${base}/${href}` : href);
 }
 
-/** Collapses `.`/`..` segments; `""` when the path climbs out of the Workspace. */
+/** Collapses `.`/`..` segments (backslashes count as slashes); `""` when the path climbs out of the Workspace. */
 function normalize(p: string): string {
-  const rel = p.startsWith(WORKSPACE_PREFIX) ? p.slice(WORKSPACE_PREFIX.length) : p;
+  const rel = p.replace(WINDOWS_WORKSPACE, WORKSPACE_PREFIX).replace(/\\/g, "/").replace(/^\/workspace\//, "");
   const out: string[] = [];
   for (const seg of rel.split("/")) {
     if (seg === "" || seg === ".") continue;

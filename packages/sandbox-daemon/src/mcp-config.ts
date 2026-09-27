@@ -27,11 +27,13 @@ export class DevinMcpConfig {
     private readonly configPath: string,
     private readonly tmpfsDir: string,
     private readonly desktopCommand: string,
+    /** Arguments of the desktop command (the bridge client's, when the Agent runs in a Windows VM). */
+    private readonly desktopArgs: string[] = [],
   ) {}
 
   write(servers: McpServerSpec[]): void {
     const mcpServers: Record<string, unknown> = {
-      desktop: { command: this.desktopCommand, transport: "stdio" },
+      desktop: { command: this.desktopCommand, ...(this.desktopArgs.length > 0 ? { args: this.desktopArgs } : {}), transport: "stdio" },
     };
     for (const s of servers) {
       mcpServers[s.name] =

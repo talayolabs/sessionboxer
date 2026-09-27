@@ -19,6 +19,8 @@ export class Uploads {
   constructor(
     private readonly workspace: string,
     private readonly log: (msg: string) => void,
+    /** Runs after a file is stored, with its Workspace-relative and absolute paths (a Windows Session copies it into the VM). */
+    private readonly onStored?: (rel: string, abs: string) => Promise<void>,
   ) {}
 
   handle(req: IncomingMessage, res: ServerResponse): boolean {
@@ -65,6 +67,7 @@ export class Uploads {
       throw e;
     }
     const mimeType = mimeTypeOf(req.headers["content-type"], name);
+    await this.onStored?.(rel, abs);
     this.log(`stored upload ${rel} (${size} bytes, ${mimeType})`);
     return { path: rel, name, size, mimeType };
   }

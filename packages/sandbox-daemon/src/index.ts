@@ -11,6 +11,7 @@ import {
   DAEMON_METHODS,
   DAEMON_PORT,
   LLM_INSPECTOR_PORT,
+  PROVIDER_ENV_KEYS,
   DaemonLlmCallBodyParams,
   type DaemonLlmCallBodyResult,
   type DaemonLlmCallsResult,
@@ -32,6 +33,7 @@ import {
   type DaemonRecordingPrefsSetResult,
   DaemonReposInspectParams,
   DaemonReposRemoveParams,
+  DaemonReposSeedParams,
   DaemonReposSetParams,
   FsManifestParams,
   DaemonSessionForkParams,
@@ -52,6 +54,8 @@ import {
   mergeUsageWindows,
   isJsonRpcResponse,
   parseJsonRpc,
+  WINDOWS_GUEST_USER,
+  WINDOWS_GUEST_WORKSPACE,
   type DaemonEvent,
   type DaemonStatus,
   type JsonRpcId,
@@ -73,6 +77,7 @@ import { serveRawFile } from "./raw-files.js";
 import { Repos } from "./repos.js";
 import { Uploads } from "./uploads.js";
 import { Terminals } from "./terminals.js";
+import { registerBridgeServices, sandboxAddress, WindowsAgentTransport, WindowsGuest, WindowsRepoHost, type GuestProviderFile } from "./guest.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 import { serveTar, workspaceDir, workspaceManifest } from "./workspace-sync.js";
 
@@ -120,8 +125,33 @@ const [acpCommand = "claude-agent-acp", ...acpArgs] =
   env.SESSIONBOXER_ACP_COMMAND?.split(" ") ?? ACP_COMMANDS[provider];
 const mcpCommand = env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp";
 const tmpfsDir = env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
+/**
+ * A `qemu-windows` Session (ADR-0057): the Agent, its MCP servers, the repositories and the Terminal
+ * run inside the Windows VM next to this Sandbox, reached over SSH; this side keeps the desktop
+ * (RDP view, screenshots, input), the Control Plane connection and a mirror of the Workspace.
+ */
+const guest =
+  (env.SESSIONBOXER_WINDOWS_HOST ?? "") !== ""
+    ? new WindowsGuest({
+        host: env.SESSIONBOXER_WINDOWS_HOST!,
+        sshPort: Number(env.SESSIONBOXER_WINDOWS_SSH_PORT ?? 22),
+        user: env.SESSIONBOXER_WINDOWS_USER ?? WINDOWS_GUEST_USER,
+        password: env.SESSIONBOXER_WINDOWS_PASSWORD ?? "",
+        workspace: WINDOWS_GUEST_WORKSPACE,
+        localWorkspace: workspace,
+        spoolDir: `${tmpfsDir}/guest`,
+        log,
+      })
+    : null;
+/** Where the Agent's working directory is: in the VM for a Windows Session. */
+const agentWorkspace = guest ? guest.workspace : workspace;
 /** Devin reads MCP servers from its config file; kept on tmpfs so Snapshots never carry MCP secrets. */
-const devinMcpConfig = provider === "devin" ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, mcpCommand) : null;
+const devinMcpConfig =
+  provider === "devin"
+    ? guest
+      ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, guest.desktopMcp().command, guest.desktopMcp().args)
+      : new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, mcpCommand)
+    : null;
 /** `gh`/git logins for the Sandbox; the image points `GH_CONFIG_DIR` at this tmpfs dir. */
 const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, log);
 /** `bb`/git logins for Bitbucket hosts; the image points `BB_CONFIG_DIR` at this tmpfs dir. */
@@ -141,12 +171,49 @@ const CODEX_AGENT_ENV = { CODEX_HOME: codexHome, INITIAL_AGENT_MODE: "agent-full
  * path Cursor reads it from, or an API key handed over in the process environment. Cursor reads
  * the file once at start, so the Agent restarts in place when the login arrives or changes.
  */
+const cursorAuthPath = `${env.XDG_CONFIG_HOME ?? `${home}/.config`}/cursor/auth.json`;
 const cursorAuth =
   provider === "cursor"
-    ? new AuthFile("cursor", `${env.XDG_CONFIG_HOME ?? `${home}/.config`}/cursor/auth.json`, tmpfsDir, log, (authJson) =>
-        notify(DAEMON_METHODS.cursorAuthChanged, { authJson }),
-      )
+    ? new AuthFile("cursor", cursorAuthPath, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.cursorAuthChanged, { authJson }))
     : null;
+
+/**
+ * The Provider's files that travel into the Windows VM before each Agent start (the ones the image
+ * and this Daemon keep here), at the paths the Provider reads on Windows; logins come back after
+ * each turn so refreshed tokens reach the Control Plane.
+ */
+const windowsBriefingFile = `${home}/.sessionboxer/windows-briefing.md`;
+const guestProviderFiles: GuestProviderFile[] = (
+  {
+    "claude-code": [
+      { local: `${home}/.claude/settings.json`, guest: ".claude/settings.json" },
+      { local: windowsBriefingFile, guest: ".claude/CLAUDE.md" },
+    ],
+    codex: [
+      { local: `${codexHome}/config.toml`, guest: ".codex/config.toml" },
+      { local: windowsBriefingFile, guest: ".codex/AGENTS.md" },
+      { local: `${codexHome}/auth.json`, guest: ".codex/auth.json", pullBack: true },
+    ],
+    cursor: [
+      { local: `${home}/.cursor/cli-config.json`, guest: ".cursor/cli-config.json" },
+      { local: windowsBriefingFile, guest: "C:\\AGENTS.md" },
+      { local: cursorAuthPath, guest: ".cursor/auth.json", pullBack: true },
+    ],
+    devin: [
+      { local: `${home}/.config/devin/config.json`, guest: ".config/devin/config.json" },
+      { local: `${home}/.config/devin/mcp_config.json`, guest: ".config/devin/mcp_config.json" },
+      { local: windowsBriefingFile, guest: ".claude/CLAUDE.md" },
+    ],
+  } satisfies Record<Provider, GuestProviderFile[]>
+)[provider];
+/** The Provider's environment the Control Plane set on this Sandbox, for the Agent in the VM. */
+const guestProviderEnv: Record<string, string> = Object.fromEntries(
+  PROVIDER_ENV_KEYS[provider].flatMap((k) => (env[k] !== undefined && env[k] !== "" ? [[k, env[k]]] : [])),
+);
+const transport = guest
+  ? new WindowsAgentTransport({ guest, env: guestProviderEnv, files: guestProviderFiles, desktopCommand: mcpCommand, log })
+  : null;
+if (guest) registerBridgeServices(guest, mcpCommand, log);
 
 function setCursorLogin(login: string): boolean {
   if (!cursorAuth) throw new Error("this Sandbox does not run Cursor");
@@ -194,10 +261,13 @@ function agentError(message: string): DaemonEvent["body"] {
   return { type: "agent_error", message, limit: { resetsAt: rejected?.resetsAt ?? hit?.resetsAt ?? null } };
 }
 
+/** Where the Agent reaches the inspector: loopback here, this Sandbox's Session-network address from the VM. */
+const llmInspectorHost = guest ? sandboxAddress() : "127.0.0.1";
 const llmInspector =
   provider === "claude-code"
     ? new LlmInspector({
         port: LLM_INSPECTOR_PORT,
+        ...(guest ? { host: "0.0.0.0" } : {}),
         upstream: llmUpstream,
         dir: `${tmpfsDir}/llm`,
         log,
@@ -219,7 +289,7 @@ const llmInspector =
  * flag tells it so.
  */
 const LLM_INSPECTOR_ENV: Record<string, string> = {
-  ANTHROPIC_BASE_URL: `http://127.0.0.1:${LLM_INSPECTOR_PORT}`,
+  ANTHROPIC_BASE_URL: `http://${llmInspectorHost}:${LLM_INSPECTOR_PORT}`,
   ...(isAnthropicApi(llmUpstream) ? { _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1" } : {}),
 };
 
@@ -243,23 +313,19 @@ async function setLlmInspect(enabled: boolean): Promise<DaemonLlmInspectSetResul
   return { applied: agent.setAgentEnv(enabled ? LLM_INSPECTOR_ENV : {}), supported: true };
 }
 
-const repos = new Repos(workspace, log);
+const repos = guest ? new Repos(workspace, log, new WindowsRepoHost(guest)) : new Repos(workspace, log);
 
-/** A `qemu-windows` Session (ADR-0057): the Windows VM next to this Sandbox, how to see it and how to run things in it. */
+/** A `qemu-windows` Session (ADR-0057): the Agent runs inside the Windows VM; its desktop is what the screenshot and input tools act on. */
 const windowsBriefing = (): string => {
-  const host = env.SESSIONBOXER_WINDOWS_HOST ?? "";
-  if (host === "") return "";
+  if (!guest) return "";
   return [
-    "This is a Windows Session. The Desktop of this machine shows a Windows VM full screen over RDP (it takes a minute",
-    "to appear after a start; until then the Linux desktop shows a waiting message). The screenshot, mouse and keyboard",
-    "tools act on that Windows desktop as a human would: use them for anything that needs the Windows GUI.",
+    `This is a Windows Session: you are running inside a Windows VM as its user \`${guest.cfg.user}\`, an administrator. Your shell is`,
+    `Windows (cmd/PowerShell; run PowerShell cmdlets through \`powershell -Command\`), your Workspace is \`${guest.workspace}\` and the`,
+    "repositories below are in it; git, node/npm/npx, uv/uvx and the MCP servers configured for this Session all run in Windows.",
+    "Use Windows paths. `gh` is not installed in the VM; git push/pull work with the connected GitHub accounts.",
     "",
-    `Commands in Windows: \`win <command>\` runs a PowerShell command in the VM over SSH as its user \`${env.SESSIONBOXER_WINDOWS_USER ?? "agent"}\`,`,
-    "an administrator (for example `win Get-ComputerInfo`, `win 'winget install --id Git.Git -e'`, `win 'dir C:\\Users\\agent'`); its",
-    "output comes back here. `win-scp` is scp to/from the VM (`win-scp ./file.txt win:C:/Users/agent/`). Plain `win` opens an interactive shell.",
-    "The VM has its own disk: this Workspace's repositories are on this Linux machine, not in Windows; copy what Windows must",
-    "see with `win-scp` (or clone again inside Windows), and bring results back the same way. Your shell, git, gh, the editor",
-    "and the browser are all on this Linux side.",
+    "The screenshot, mouse and keyboard tools show and drive this Windows desktop (rendered over RDP; a few key combinations",
+    "the RDP client keeps, such as Win-key shortcuts, may not arrive). Recordings are made of that desktop too.",
   ].join("\n");
 };
 
@@ -286,8 +352,11 @@ const agent = new AgentManager(
   {
     command: acpCommand,
     args: acpArgs,
-    cwd: workspace,
-    ...(provider === "codex" ? { env: CODEX_AGENT_ENV } : {}),
+    cwd: agentWorkspace,
+    localWorkspace: workspace,
+    ...(transport ? { transport } : {}),
+    // In the VM, Codex keeps its default home (`%USERPROFILE%\.codex`, where its files are copied to).
+    ...(provider === "codex" ? { env: guest ? { INITIAL_AGENT_MODE: CODEX_AGENT_ENV.INITIAL_AGENT_MODE } : CODEX_AGENT_ENV } : {}),
     mcpCommand,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     sessionId: env.SESSIONBOXER_SESSION_ID ?? "",
@@ -306,6 +375,7 @@ const agent = new AgentManager(
     onTurnEnded: (stopReason, usage) => {
       llmInspector?.flush();
       emit(usage ? { type: "turn_ended", stopReason, usage } : { type: "turn_ended", stopReason });
+      transport?.pullFiles().catch((e: unknown) => log(`copying the Provider's files back from the VM failed: ${String(e)}`));
     },
     onError: (message) => emit(agentError(message)),
     onUsageReport: (text) => reportUsage(codexStatusWindows(text)),
@@ -322,7 +392,11 @@ function broadcastStatus(): void {
   for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
 }
 
-const workspaceFs = new WorkspaceFs(workspace);
+/** Raw files of a Windows Session come from the VM: the mirror copy is refreshed before it is served. */
+const workspaceFs = new WorkspaceFs(
+  workspace,
+  guest ? (rel, abs) => guest.getFile(guest.guestPath(rel), abs).catch((e: unknown) => log(`could not copy ${rel} from the VM: ${String(e)}`)) : undefined,
+);
 
 const terminals = new Terminals(
   workspace,
@@ -331,10 +405,11 @@ const terminals = new Terminals(
     onExit: (id, exitCode) => notify(DAEMON_METHODS.ptyExit, { id, exitCode }),
   },
   log,
+  guest?.terminalCommand(),
 );
 
 const codeServer = new CodeServer(workspace, log, env.SESSIONBOXER_SESSION_ID ?? "");
-const uploads = new Uploads(workspace, log);
+const uploads = new Uploads(workspace, log, guest ? (rel, abs) => guest.putFile(abs, guest.guestPath(rel)) : undefined);
 const ghApi = new GhApi(log);
 const e2eBridge = new E2eBridge(() => clients, log);
 
@@ -457,8 +532,12 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.cancel:
       await agent.cancel();
       return { ok: true };
-    case DAEMON_METHODS.fsManifest:
-      return workspaceManifest(workspaceDir(workspace, FsManifestParams.parse(params ?? {}).dir));
+    case DAEMON_METHODS.fsManifest: {
+      const dir = FsManifestParams.parse(params ?? {}).dir;
+      // A Windows Session's files are in the VM: the mirror is brought up to date first (the tar that follows reads it).
+      if (guest) await guest.pullDir(guest.guestPath(dir), workspaceDir(workspace, dir));
+      return workspaceManifest(workspaceDir(workspace, dir));
+    }
     case DAEMON_METHODS.reposSet:
       await repos.set(DaemonReposSetParams.parse(params));
       return { ok: true };
@@ -467,6 +546,13 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.reposRemove: {
       const p = DaemonReposRemoveParams.parse(params);
       return repos.remove(p.dir, p.force);
+    }
+    case DAEMON_METHODS.reposSeed: {
+      const p = DaemonReposSeedParams.parse(params);
+      // The clones in the VM ask this side for credentials (through the bridge): the accounts go first.
+      ghCredentials.apply(p.credentials);
+      bbCredentials.apply(p.credentials);
+      return repos.seed(p);
     }
     case DAEMON_METHODS.ptyList:
       return { terminals: terminals.list() };
@@ -569,9 +655,12 @@ if (llmInspectRequested) {
 }
 // The Control Plane sends the MCP server set right after connecting, which warms the Agent up.
 // Should it never come (older Control Plane), start without user servers so prompts still work.
-setTimeout(() => {
-  if (agent.mcpServerNames === null) agent.setMcpServers([]);
-}, 30_000).unref();
+// Not when the Agent runs in a VM: the set waits for the repositories to be put there first.
+if (!guest) {
+  setTimeout(() => {
+    if (agent.mcpServerNames === null) agent.setMcpServers([]);
+  }, 30_000).unref();
+}
 
 const shutdown = (): void => {
   log("shutting down");

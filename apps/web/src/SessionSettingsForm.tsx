@@ -425,11 +425,17 @@ export function SessionSettingsForm({
             <EnvironmentNote settings={settings} environment={value.environment} />
           </>
         )}
-        {vm ? (
+        {windows ? (
           <p className="muted ss-note">
-            The Agent, its shell, git and the editor run on a Linux Sandbox next to the {guest} VM; the Desktop shows {guest} over{" "}
-            {windows ? "RDP" : "VNC"} and <code>{windows ? "win" : "mac"} &lt;command&gt;</code> runs {windows ? "PowerShell" : "a shell command"} in
-            it. Docker inside the Sandbox, snapshots, forks and rebuilds are not available for {guest} Sessions yet.
+            The Agent, its MCP servers, git and the Terminal (PowerShell) run inside the Windows VM, with the repositories in{" "}
+            <code>C:\workspace</code>; the Desktop shows Windows over RDP. Docker inside the Sandbox, VS Code, snapshots, forks and rebuilds are
+            not available for Windows Sessions yet.
+          </p>
+        ) : vm ? (
+          <p className="muted ss-note">
+            The Agent, its shell, git and the editor run on a Linux Sandbox next to the {guest} VM; the Desktop shows {guest} over VNC and{" "}
+            <code>mac &lt;command&gt;</code> runs a shell command in it. Docker inside the Sandbox, snapshots, forks and rebuilds are not
+            available for {guest} Sessions yet.
           </p>
         ) : frozen ? (
           <p className="muted ss-fixed">

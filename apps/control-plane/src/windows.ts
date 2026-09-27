@@ -48,6 +48,7 @@ export function windowsVolumeName(sessionId: string): string {
 
 export class WindowsVms implements GuestVms {
   readonly guestLabel = "Windows VM";
+  readonly agentInGuest = true;
   private readonly docker: Docker;
   private readonly host: VmHost;
   private base: BaseRecord | null = null;

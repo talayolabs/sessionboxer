@@ -509,15 +509,6 @@ export function claudeBaseUrl(settings: Settings): { url: string; source: Claude
   return { url: ANTHROPIC_DEFAULT_BASE_URL, source: "default" };
 }
 
-/** Everything `providerEnv` may set per Provider: what Snapshots blank out. */
-export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
-  "claude-code": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
-  devin: ["WINDSURF_API_KEY"],
-  // Codex's and Cursor's logins never travel as environment: the Daemon gets them over RPC and keeps them on tmpfs.
-  codex: [],
-  cursor: [],
-};
-
 /** The Provider has a credential to run with (`providerSetupHint` says what is missing otherwise). */
 export function providerReady(provider: Provider, settings: Settings): boolean {
   switch (provider) {

@@ -56,11 +56,13 @@ log "desktop ready"
 # long as the Sandbox lives (the VM takes a minute to boot, and reboots on its own).
 if [[ -n "${SESSIONBOXER_WINDOWS_HOST:-}" ]]; then
   log "windows desktop: rdp to ${SESSIONBOXER_WINDOWS_HOST}:${SESSIONBOXER_WINDOWS_RDP_PORT:-3389}"
+  export SESSIONBOXER_TYPE_DELAY_MS="${SESSIONBOXER_TYPE_DELAY_MS:-40}"
   sessionboxer-windows-desktop >"$LOG_DIR/windows-desktop.log" 2>&1 &
 fi
 # Likewise a macOS Session (ADR-0059), over VNC.
 if [[ -n "${SESSIONBOXER_MACOS_HOST:-}" ]]; then
   log "macos desktop: vnc to ${SESSIONBOXER_MACOS_HOST}:${SESSIONBOXER_MACOS_VNC_PORT:-5900}"
+  export SESSIONBOXER_TYPE_DELAY_MS="${SESSIONBOXER_TYPE_DELAY_MS:-40}"
   sessionboxer-macos-desktop >"$LOG_DIR/macos-desktop.log" 2>&1 &
 fi
 

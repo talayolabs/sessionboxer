@@ -72,6 +72,7 @@ export function macosVolumeName(sessionId: string): string {
 
 export class MacosVms implements GuestVms {
   readonly guestLabel = "macOS VM";
+  readonly agentInGuest = false;
   private readonly docker: Docker;
   private readonly host: VmHost;
   private base: BaseRecord | null = null;

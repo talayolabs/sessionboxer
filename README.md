@@ -50,7 +50,7 @@ More ways to install, updating and troubleshooting: [user guide → Install](doc
 - **Dictation.** Talk instead of typing; whisper.cpp transcribes on your machine, offline.
 - **From your phone.** Pair a device with a QR code over a tunnel; push notifications when the agent is done.
 - **Stop and resume.** A stopped box uses nothing and comes back where it was.
-- **A Windows or macOS desktop when you need one.** Pick *QEMU · Windows* or *QEMU · macOS* as the session's environment (Linux hosts with KVM): a VM boots next to the box, and the desktop the agent sees and drives is Windows or a Mac; `win <command>` / `mac <command>` run commands in it. macOS on non-Apple hardware is subject to Apple's licence — your call.
+- **A Windows or macOS desktop when you need one.** Pick *QEMU · Windows* or *QEMU · macOS* as the session's environment (Linux hosts with KVM): a VM boots next to the box and the desktop the agent sees and drives is Windows or a Mac. On Windows the agent itself, its MCP servers, git and the terminal run inside the VM; on macOS `mac <command>` runs commands in it. macOS on non-Apple hardware is subject to Apple's licence — your call.
 - **Docker inside the box**, behind a corporate proxy, several GitHub accounts, Bitbucket Data Center.
 
 Every feature in detail: [user guide](docs/GUIDE.md).

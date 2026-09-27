@@ -1,4 +1,4 @@
-import { MEDIA_EXTENSIONS, mediaKind, type MediaKind } from "@sessionboxer/protocol";
+import { MACOS_GUEST_WORKSPACE, MEDIA_EXTENSIONS, mediaKind, type MediaKind } from "@sessionboxer/protocol";
 
 export interface Attachment {
   /** Workspace-relative path. */
@@ -12,14 +12,16 @@ const WORKSPACE_PREFIX = "/workspace/";
 const WINDOWS_WORKSPACE = /^[a-z]:[\\/]workspace(?:[\\/]|$)/i;
 /** A Windows drive path (`C:\...`, `C:/...`), which is not a URL scheme. */
 const WINDOWS_DRIVE = /^[a-z]:[\\/]/i;
+/** The Workspace as a macOS Session's Agent names it (`/Users/agent/workspace/...`). */
+const MACOS_WORKSPACE = new RegExp(`^${MACOS_GUEST_WORKSPACE}(?:/|$)`);
 
-/** Where a Workspace path may start: `/workspace/`, `C:\workspace\`, `./`. */
-export const WORKSPACE_PREFIX_RE = String.raw`(?:/workspace/|[A-Za-z]:[\\/]workspace[\\/]|\./)`;
+/** Where a Workspace path may start: `/workspace/`, `/Users/agent/workspace/`, `C:\workspace\`, `./`. */
+export const WORKSPACE_PREFIX_RE = String.raw`(?:/workspace/|${MACOS_GUEST_WORKSPACE}/|[A-Za-z]:[\\/]workspace[\\/]|\./)`;
 
 /**
  * Workspace paths of embeddable files (video, image, PDF…) mentioned in a message, as the Agent
  * writes them: `/workspace/recordings/demo.mp4`, `C:\workspace\out\report.pdf` (a Windows Session),
- * `./out/report.pdf`, `docs/chart.svg`, in prose, backticks or Markdown links. URLs and paths outside
+ * `/Users/agent/workspace/out/report.pdf` (a macOS Session), `./out/report.pdf`, `docs/chart.svg`, in prose, backticks or Markdown links. URLs and paths outside
  * the Workspace are ignored.
  */
 export function findAttachments(text: string): Attachment[] {
@@ -44,13 +46,13 @@ export function findAttachments(text: string): Attachment[] {
 export function workspacePath(href: string, base = ""): string | null {
   if (WINDOWS_DRIVE.test(href)) return WINDOWS_WORKSPACE.test(href) ? normalize(href) : null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("#") || href.startsWith("//")) return null;
-  if (href.startsWith("/")) return href.startsWith(WORKSPACE_PREFIX) ? normalize(href) : null;
+  if (href.startsWith("/")) return href.startsWith(WORKSPACE_PREFIX) || MACOS_WORKSPACE.test(href) ? normalize(href) : null;
   return normalize(base ? `${base}/${href}` : href);
 }
 
 /** Collapses `.`/`..` segments (backslashes count as slashes); `""` when the path climbs out of the Workspace. */
 function normalize(p: string): string {
-  const rel = p.replace(WINDOWS_WORKSPACE, WORKSPACE_PREFIX).replace(/\\/g, "/").replace(/^\/workspace\//, "");
+  const rel = p.replace(WINDOWS_WORKSPACE, WORKSPACE_PREFIX).replace(MACOS_WORKSPACE, WORKSPACE_PREFIX).replace(/\\/g, "/").replace(/^\/workspace\//, "");
   const out: string[] = [];
   for (const seg of rel.split("/")) {
     if (seg === "" || seg === ".") continue;

@@ -49,7 +49,6 @@ import {
   DaemonReposSeedResult,
   DaemonReposRemoveResult,
   type DaemonReposSetParams,
-  WINDOWS_GUEST_WORKSPACE,
   type RepoGitState,
   type RepoSpec,
   type SessionRepo,
@@ -491,7 +490,7 @@ export class SessionManager {
 
   /** The Workspace path of a repository as the Agent sees it. */
   private repoPath(session: Session, name: string): string {
-    return this.agentInGuest(session) ? `${WINDOWS_GUEST_WORKSPACE}\\${name}` : `/workspace/${name}`;
+    return this.vms(session.settings.sandbox.environment)?.repoPath(name) ?? `/workspace/${name}`;
   }
 
   /**

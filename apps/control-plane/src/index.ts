@@ -344,6 +344,7 @@ api.delete("/windows", async (c) => c.json(await windows.removeBase()));
 api.get("/macos", (c) => c.json(macos.status()));
 api.post("/macos/install", async (c) => c.json(await macos.install()));
 api.post("/macos/cancel", async (c) => c.json(await macos.cancelInstall()));
+api.post("/macos/reprovision", async (c) => c.json(await macos.reprovision()));
 api.delete("/macos", async (c) => c.json(await macos.removeBase()));
 api.get(
   "/macos/screen",

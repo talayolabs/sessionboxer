@@ -223,6 +223,8 @@ export interface GuestVms {
   readonly guestLabel: string;
   /** Whether the Agent, its MCP servers and the repositories live in the VM (the Sandbox only shows its desktop and bridges the desktop tools). */
   readonly agentInGuest: boolean;
+  /** Where a repository named `name` lives in the VM, the way the guest spells it (`C:\\workspace\\x`, `/Users/agent/workspace/x`). */
+  repoPath(name: string): string;
   availability(): Promise<import("@sessionboxer/protocol").EnvironmentAvailability>;
   /** Creates the Session's VM container (stopped) with its own disk; returns the container id. */
   create(sessionId: string): Promise<string>;

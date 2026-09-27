@@ -627,7 +627,7 @@ export function App() {
                     </span>
                   )}
                   {s.settings.sandbox.environment === "qemu-macos" && (
-                    <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: a macOS VM next to the Sandbox`}>
+                    <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the agent runs inside a macOS VM next to the Sandbox`}>
                       <Icon name="apple" size={12} />
                     </span>
                   )}
@@ -1467,7 +1467,7 @@ function SessionView({
           </span>
         )}
         {session.settings.sandbox.environment === "qemu-macos" && (
-          <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the Desktop shows a macOS VM over VNC; \`mac <command>\` runs a shell command in it`}>
+          <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the agent, its MCP servers, git and the Terminal (zsh) run inside a macOS VM, with the Workspace at /Users/agent/workspace; the Desktop shows it over VNC`}>
             <Icon name="apple" size={16} />
             {mobile && <span className="muted">{ENVIRONMENT_LABELS["qemu-macos"]}</span>}
           </span>
@@ -2133,7 +2133,7 @@ function WindowsBase({
   const started = status.startedAt ? new Date(status.startedAt) : null;
   const line =
     status.state === "ready"
-      ? `Base disk ready: ${edition} (${formatMb(status.sizeBytes)} MB on disk)${status.sessions > 0 ? `, ${status.sessions} Session${status.sessions === 1 ? "" : "s"} built on it` : ""}.`
+      ? `Base disk ready: ${edition} (${formatMb(status.sizeBytes)} on disk)${status.sessions > 0 ? `, ${status.sessions} Session${status.sessions === 1 ? "" : "s"} built on it` : ""}.`
       : status.state === "installing"
         ? `Installing ${edition}${started ? `, started ${started.toLocaleTimeString()}` : ""}… Windows downloads and installs itself; this takes 20–40 minutes.`
         : status.state === "error"

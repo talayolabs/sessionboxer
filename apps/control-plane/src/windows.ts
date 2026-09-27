@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
-import { WINDOWS_GUEST_USER, WINDOWS_VERSIONS, type EnvironmentAvailability, type Settings, type WindowsBaseStatus } from "@sessionboxer/protocol";
+import { WINDOWS_GUEST_USER, WINDOWS_GUEST_WORKSPACE, WINDOWS_VERSIONS, type EnvironmentAvailability, type Settings, type WindowsBaseStatus } from "@sessionboxer/protocol";
 import { DATA_DIR, ROOT_DIR } from "./config.js";
 import { LABEL_SESSION } from "./docker.js";
 import { HttpError } from "./http-error.js";
@@ -49,6 +49,10 @@ export function windowsVolumeName(sessionId: string): string {
 export class WindowsVms implements GuestVms {
   readonly guestLabel = "Windows VM";
   readonly agentInGuest = true;
+
+  repoPath(name: string): string {
+    return `${WINDOWS_GUEST_WORKSPACE}\\${name}`;
+  }
   private readonly docker: Docker;
   private readonly host: VmHost;
   private base: BaseRecord | null = null;

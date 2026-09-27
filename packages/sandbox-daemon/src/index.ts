@@ -54,6 +54,8 @@ import {
   mergeUsageWindows,
   isJsonRpcResponse,
   parseJsonRpc,
+  MACOS_GUEST_USER,
+  MACOS_GUEST_WORKSPACE,
   WINDOWS_GUEST_USER,
   WINDOWS_GUEST_WORKSPACE,
   type DaemonEvent,
@@ -77,7 +79,7 @@ import { serveRawFile } from "./raw-files.js";
 import { Repos } from "./repos.js";
 import { Uploads } from "./uploads.js";
 import { Terminals } from "./terminals.js";
-import { registerBridgeServices, sandboxAddress, WindowsAgentTransport, WindowsGuest, WindowsRepoHost, type GuestProviderFile } from "./guest.js";
+import { GuestAgentTransport, GuestRepoHost, MacGuest, registerBridgeServices, sandboxAddress, WindowsGuest, type Guest, type GuestProviderFile } from "./guest.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 import { serveTar, workspaceDir, workspaceManifest } from "./workspace-sync.js";
 
@@ -126,11 +128,13 @@ const [acpCommand = "claude-agent-acp", ...acpArgs] =
 const mcpCommand = env.SESSIONBOXER_MCP_COMMAND ?? "sessionboxer-computer-use-mcp";
 const tmpfsDir = env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
 /**
- * A `qemu-windows` Session (ADR-0057): the Agent, its MCP servers, the repositories and the Terminal
- * run inside the Windows VM next to this Sandbox, reached over SSH; this side keeps the desktop
- * (RDP view, screenshots, input), the Control Plane connection and a mirror of the Workspace.
+ * A `qemu-windows` (ADR-0057, ADR-0060) or `qemu-macos` (ADR-0059, ADR-0061) Session: the Agent, its
+ * MCP servers, the repositories and the Terminal run inside the VM next to this Sandbox, reached over
+ * SSH; this side keeps the desktop (RDP/VNC view, screenshots, input), the Control Plane connection
+ * and a mirror of the Workspace. The macOS base authorizes an SSH key the Control Plane hands over
+ * (`SESSIONBOXER_MACOS_SSH_KEY`); it is written to tmpfs and taken out of the environment here.
  */
-const guest =
+const guest: Guest | null =
   (env.SESSIONBOXER_WINDOWS_HOST ?? "") !== ""
     ? new WindowsGuest({
         host: env.SESSIONBOXER_WINDOWS_HOST!,
@@ -142,8 +146,30 @@ const guest =
         spoolDir: `${tmpfsDir}/guest`,
         log,
       })
-    : null;
-/** Where the Agent's working directory is: in the VM for a Windows Session. */
+    : (env.SESSIONBOXER_MACOS_HOST ?? "") !== ""
+      ? new MacGuest({
+          host: env.SESSIONBOXER_MACOS_HOST!,
+          sshPort: Number(env.SESSIONBOXER_MACOS_SSH_PORT ?? 22),
+          user: env.SESSIONBOXER_MACOS_USER ?? MACOS_GUEST_USER,
+          password: env.SESSIONBOXER_MACOS_PASSWORD ?? "",
+          identityFile: guestIdentityFile(env.SESSIONBOXER_MACOS_SSH_KEY ?? "", `${tmpfsDir}/guest`),
+          workspace: MACOS_GUEST_WORKSPACE,
+          localWorkspace: workspace,
+          spoolDir: `${tmpfsDir}/guest`,
+          log,
+        })
+      : null;
+delete env.SESSIONBOXER_MACOS_SSH_KEY;
+
+/** Writes the guest's private key (PEM text) to a mode-600 file on tmpfs for `ssh -i`; `undefined` when there is none (password login then). */
+function guestIdentityFile(key: string, dir: string): string | undefined {
+  if (key.trim() === "") return undefined;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = `${dir}/id_ed25519`;
+  writeFileSync(file, key.endsWith("\n") ? key : `${key}\n`, { mode: 0o600 });
+  return file;
+}
+/** Where the Agent's working directory is: in the VM for a Windows or macOS Session. */
 const agentWorkspace = guest ? guest.workspace : workspace;
 /** Devin reads MCP servers from its config file; kept on tmpfs so Snapshots never carry MCP secrets. */
 const devinMcpConfig =
@@ -178,31 +204,39 @@ const cursorAuth =
     : null;
 
 /**
- * The Provider's files that travel into the Windows VM before each Agent start (the ones the image
- * and this Daemon keep here), at the paths the Provider reads on Windows; logins come back after
- * each turn so refreshed tokens reach the Control Plane.
+ * The Provider's files that travel into the VM before each Agent start (the ones the image and this
+ * Daemon keep here), at the paths the Provider reads on Windows or macOS; logins come back after
+ * each turn so refreshed tokens reach the Control Plane. The briefing goes where the Provider reads
+ * its user-level instructions (Cursor: `AGENTS.md` at the drive root on Windows, in the home on macOS).
  */
-const windowsBriefingFile = `${home}/.sessionboxer/windows-briefing.md`;
+const guestBriefingFile = `${home}/.sessionboxer/${guest?.os === "macos" ? "macos" : "windows"}-briefing.md`;
 const guestProviderFiles: GuestProviderFile[] = (
   {
     "claude-code": [
       { local: `${home}/.claude/settings.json`, guest: ".claude/settings.json" },
-      { local: windowsBriefingFile, guest: ".claude/CLAUDE.md" },
+      { local: guestBriefingFile, guest: ".claude/CLAUDE.md" },
     ],
     codex: [
       { local: `${codexHome}/config.toml`, guest: ".codex/config.toml" },
-      { local: windowsBriefingFile, guest: ".codex/AGENTS.md" },
+      { local: guestBriefingFile, guest: ".codex/AGENTS.md" },
       { local: `${codexHome}/auth.json`, guest: ".codex/auth.json", pullBack: true },
     ],
     cursor: [
       { local: `${home}/.cursor/cli-config.json`, guest: ".cursor/cli-config.json" },
-      { local: windowsBriefingFile, guest: "C:\\AGENTS.md" },
+      { local: guestBriefingFile, guest: guest?.os === "macos" ? `${guest.homeDir()}/AGENTS.md` : "C:\\AGENTS.md" },
       { local: cursorAuthPath, guest: ".cursor/auth.json", pullBack: true },
     ],
     devin: [
       { local: `${home}/.config/devin/config.json`, guest: ".config/devin/config.json" },
       { local: `${home}/.config/devin/mcp_config.json`, guest: ".config/devin/mcp_config.json" },
-      { local: windowsBriefingFile, guest: ".claude/CLAUDE.md" },
+      // Where the Devin CLI reads its files on macOS is not pinned down (unverified on a real Mac): both places get them.
+      ...(guest?.os === "macos"
+        ? [
+            { local: `${home}/.config/devin/config.json`, guest: ".devin/config.json" },
+            { local: `${home}/.config/devin/mcp_config.json`, guest: ".devin/mcp_config.json" },
+          ]
+        : []),
+      { local: guestBriefingFile, guest: ".claude/CLAUDE.md" },
     ],
   } satisfies Record<Provider, GuestProviderFile[]>
 )[provider];
@@ -211,7 +245,7 @@ const guestProviderEnv: Record<string, string> = Object.fromEntries(
   PROVIDER_ENV_KEYS[provider].flatMap((k) => (env[k] !== undefined && env[k] !== "" ? [[k, env[k]]] : [])),
 );
 const transport = guest
-  ? new WindowsAgentTransport({ guest, env: guestProviderEnv, files: guestProviderFiles, desktopCommand: mcpCommand, log })
+  ? new GuestAgentTransport({ guest, env: guestProviderEnv, files: guestProviderFiles, desktopCommand: mcpCommand, log })
   : null;
 if (guest) registerBridgeServices(guest, mcpCommand, log);
 
@@ -313,11 +347,11 @@ async function setLlmInspect(enabled: boolean): Promise<DaemonLlmInspectSetResul
   return { applied: agent.setAgentEnv(enabled ? LLM_INSPECTOR_ENV : {}), supported: true };
 }
 
-const repos = guest ? new Repos(workspace, log, new WindowsRepoHost(guest)) : new Repos(workspace, log);
+const repos = guest ? new Repos(workspace, log, new GuestRepoHost(guest)) : new Repos(workspace, log);
 
 /** A `qemu-windows` Session (ADR-0057): the Agent runs inside the Windows VM; its desktop is what the screenshot and input tools act on. */
 const windowsBriefing = (): string => {
-  if (!guest) return "";
+  if (guest?.os !== "windows") return "";
   return [
     `This is a Windows Session: you are running inside a Windows VM as its user \`${guest.cfg.user}\`, an administrator. Your shell is`,
     `Windows (cmd/PowerShell; run PowerShell cmdlets through \`powershell -Command\`), your Workspace is \`${guest.workspace}\` and the`,
@@ -329,22 +363,19 @@ const windowsBriefing = (): string => {
   ].join("\n");
 };
 
-/** A `qemu-macos` Session (ADR-0059): the macOS VM next to this Sandbox, how to see it and how to run things in it. */
+/** A `qemu-macos` Session (ADR-0059, ADR-0061): the Agent runs inside the macOS VM; its desktop is what the screenshot and input tools act on. */
 const macosBriefing = (): string => {
-  const host = env.SESSIONBOXER_MACOS_HOST ?? "";
-  if (host === "") return "";
+  if (guest?.os !== "macos") return "";
   return [
-    "This is a macOS Session. The Desktop of this machine shows a macOS VM full screen over VNC (it takes a minute or two",
-    "to appear after a start; until then the Linux desktop shows a waiting message). The screenshot, mouse and keyboard",
-    "tools act on that macOS desktop as a human would: use them for anything that needs the macOS GUI. The VM's keyboard",
-    "is a Mac's: Command is the Super/Meta key here (`super+c` copies), and macOS shortcuts apply.",
+    `This is a macOS Session: you are running inside a macOS VM as its user \`${guest.cfg.user}\`, an administrator (sudo asks for a`,
+    `password you do not have; stay in your home). Your shell is zsh, your Workspace is \`${guest.workspace}\` and the repositories`,
+    "below are in it; git (Apple's Command Line Tools), node/npm/npx, uv/uvx and the MCP servers configured for this Session all run in",
+    "macOS. Use POSIX paths. `gh` is not installed in the VM; git push/pull work with the connected GitHub accounts. `open <file>`,",
+    "`open -a <App>` and `osascript` act on the logged-in desktop, which is the one the screenshot tool shows.",
     "",
-    `Commands in macOS: \`mac <command>\` runs a shell command in the VM over SSH as its user \`${env.SESSIONBOXER_MACOS_USER ?? "agent"}\`,`,
-    "an administrator (for example `mac sw_vers`, `mac 'ls ~/Desktop'`, `mac 'xcode-select --install'`); its output comes back here.",
-    "`mac-scp` is scp to/from the VM (`mac-scp ./file.txt mac:/Users/agent/`, `mac-scp mac:/Users/agent/out.txt .`). Plain `mac` opens an",
-    "interactive shell. The VM has its own disk: this Workspace's repositories are on this Linux machine, not in macOS; copy what",
-    "macOS must see with `mac-scp` (or clone again inside macOS), and bring results back the same way. Your shell, git, gh, the",
-    "editor and the browser are all on this Linux side.",
+    "The screenshot, mouse and keyboard tools show and drive this macOS desktop (rendered over VNC; Command is the `super` key",
+    "there, so `super+c` copies; key combinations the VNC viewer keeps, such as `ctrl+alt+shift` and F8/Scroll Lock, may not",
+    "arrive). Recordings are made of that desktop too.",
   ].join("\n");
 };
 
@@ -392,7 +423,7 @@ function broadcastStatus(): void {
   for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.status, params });
 }
 
-/** Raw files of a Windows Session come from the VM: the mirror copy is refreshed before it is served. */
+/** Raw files of a VM Session come from the guest: the mirror copy is refreshed before it is served. */
 const workspaceFs = new WorkspaceFs(
   workspace,
   guest ? (rel, abs) => guest.getFile(guest.guestPath(rel), abs).catch((e: unknown) => log(`could not copy ${rel} from the VM: ${String(e)}`)) : undefined,
@@ -534,7 +565,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       return { ok: true };
     case DAEMON_METHODS.fsManifest: {
       const dir = FsManifestParams.parse(params ?? {}).dir;
-      // A Windows Session's files are in the VM: the mirror is brought up to date first (the tar that follows reads it).
+      // A VM Session's files are in the guest: the mirror is brought up to date first (the tar that follows reads it).
       if (guest) await guest.pullDir(guest.guestPath(dir), workspaceDir(workspace, dir));
       return workspaceManifest(workspaceDir(workspace, dir));
     }

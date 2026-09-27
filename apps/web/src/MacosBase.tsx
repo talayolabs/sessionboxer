@@ -86,23 +86,35 @@ export function MacosBase({
   const started = status.startedAt ? new Date(status.startedAt) : null;
   const since = started ? `, started ${started.toLocaleTimeString()}` : "";
   const busy = status.state === "installing" || status.state === "setup" || status.state === "finishing";
+  const reprovisioning = busy && status.reprovisioning;
   const line =
     status.state === "ready"
-      ? `Base disk ready: ${release} (${formatMb(status.sizeBytes)} MB on disk)${status.sessions > 0 ? `, ${status.sessions} Session${status.sessions === 1 ? "" : "s"} built on it` : ""}.`
+      ? `Base disk ready: ${release} (${formatMb(status.sizeBytes)} on disk)${status.sessions > 0 ? `, ${status.sessions} Session${status.sessions === 1 ? "" : "s"} built on it` : ""}.`
       : status.state === "installing"
-        ? `Starting ${release}${since}… the VM downloads Apple's Recovery image and boots it; a few minutes.`
+        ? reprovisioning
+          ? `Reprovisioning ${release}${since}… the base VM boots; a minute or two.`
+          : `Starting ${release}${since}… the VM downloads Apple's Recovery image and boots it; a few minutes.`
         : status.state === "setup"
-          ? `${release} is yours to install${since}: follow the steps below in the VM's screen.`
+          ? reprovisioning
+            ? `Reprovisioning ${release}${since}: waiting for macOS to answer on SSH (it logs in by itself; nothing to do in the screen).`
+            : `${release} is yours to install${since}: follow the steps below in the VM's screen.`
           : status.state === "finishing"
-            ? `Finishing the base${since}… the VM answered on SSH; it is being set up for Sessions and shut down.`
+            ? `${reprovisioning ? "Reprovisioning" : "Finishing"} the base${since}… the VM answered on SSH; Node, git, uv and the agent CLIs are being installed in it (10–30 minutes), then it shuts down.`
             : status.state === "error"
               ? `Installing ${release ?? "the base"} failed: ${status.error ?? "unknown error"}`
               : "No base disk yet: no macOS Session can be created until it is installed.";
   return (
     <div className="windows-base macos-base">
       <p className={status.state === "error" ? "error" : "muted"}>{line}</p>
+      {status.state === "ready" && !status.toolchain && (
+        <p className="warn">
+          This base was installed before agents ran inside the macOS VM: Node, git, uv and the agent CLIs are not on it, so no macOS Session
+          can start. Reprovision installs them on the existing disk (the VM boots once, unattended; 10–30 minutes).
+        </p>
+      )}
+      {status.state === "ready" && status.error && <p className="error">The last reprovision failed: {status.error}</p>}
       {!availability.available && availability.reason && !busy && <p className="muted">QEMU · macOS cannot be picked yet: {availability.reason}</p>}
-      {status.state === "setup" && status.setup && (
+      {status.state === "setup" && status.setup && !reprovisioning && (
         <div className="macos-setup">
           <ol>
             {status.setup.steps.map((step, i) => (
@@ -123,7 +135,7 @@ export function MacosBase({
         </div>
       )}
       {(status.state === "installing" || status.state === "setup") && <MacosScreen />}
-      {(busy || status.state === "error") && status.log.length > 0 && <pre className="windows-base-log">{status.log.join("\n")}</pre>}
+      {(busy || status.state === "error" || (status.state === "ready" && status.error)) && status.log.length > 0 && <pre className="windows-base-log">{status.log.join("\n")}</pre>}
       <div className="row">
         {(status.state === "missing" || status.state === "error") && (
           <button type="button" className="small" disabled={working || dirty} title={dirty ? "Save the settings first" : undefined} onClick={() => void act(api.macosInstall)}>
@@ -132,7 +144,18 @@ export function MacosBase({
         )}
         {busy && (
           <button type="button" className="small" disabled={working} onClick={() => void act(api.macosCancel)}>
-            Cancel the install
+            {reprovisioning ? "Cancel" : "Cancel the install"}
+          </button>
+        )}
+        {status.state === "ready" && (
+          <button
+            type="button"
+            className="small"
+            disabled={working || status.sessions > 0}
+            title={status.sessions > 0 ? "Delete the macOS Sessions first: the base cannot boot while their disks build on it" : "Boot the base once more and (re)install the agent's toolchain in it"}
+            onClick={() => void act(api.macosReprovision)}
+          >
+            {status.toolchain ? "Reprovision the tools" : "Reprovision (install the tools)"}
           </button>
         )}
         {(status.state === "ready" || status.state === "error") &&

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # `mac-scp <from…> <to>`: scp with the macOS VM of this Session; `mac:` stands for the VM,
 # e.g. `mac-scp ./build.zip mac:/Users/agent/` or `mac-scp -r mac:/Users/agent/out ./out`.
+# A convenience for the Linux side (the Workspace is in the VM since ADR-0061; the Daemon
+# mirrors it here itself for downloads and sync).
 set -euo pipefail
 
 : "${SESSIONBOXER_MACOS_HOST:?This is not a macOS Session: there is no macOS VM to copy files with.}"

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # `mac <command…>`: runs a shell command in the macOS VM of this Session over SSH
 # and prints what it wrote; `mac` alone opens an interactive shell there.
-# (ADR-0058: the VM is a sidecar container, its user and password come with the Sandbox.)
+# (ADR-0059: the VM is a sidecar container, its user and password come with the Sandbox.)
+# A convenience for the Linux side; the Agent, git and the Terminal already run in the VM
+# (ADR-0061), so from the Terminal pane there is nothing to `mac` into.
 set -euo pipefail
 
 : "${SESSIONBOXER_MACOS_HOST:?This is not a macOS Session: there is no macOS VM to run commands in.}"

@@ -269,7 +269,7 @@ COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entry
 # Windows Sessions (ADR-0057): the RDP view of the VM and the `win` / `win-scp` commands into it.
 COPY --chmod=0755 images/sandbox/windows-desktop /usr/local/bin/sessionboxer-windows-desktop
 COPY --chmod=0755 images/sandbox/win images/sandbox/win-scp /usr/local/bin/
-# macOS Sessions (ADR-0059): the VNC view of the VM and the `mac` / `mac-scp` commands into it.
+# macOS Sessions (ADR-0059, ADR-0061): the VNC view of the VM and the Linux-side `mac` / `mac-scp` conveniences into it.
 COPY --chmod=0755 images/sandbox/macos-desktop /usr/local/bin/sessionboxer-macos-desktop
 COPY --chmod=0755 images/sandbox/mac images/sandbox/mac-scp /usr/local/bin/
 # Skills the Control Plane asks for by name (ADR-0044); Claude Code discovers them here, Devin reads the file.
@@ -280,6 +280,7 @@ COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/A
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md
+COPY --chown=agent:agent images/sandbox/macos-briefing.md /home/agent/.sessionboxer/macos-briefing.md
 
 # The compiled Sessionboxer code (stage 1): the layers that change with every release, last.
 COPY --from=build --chmod=0755 /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist

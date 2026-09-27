@@ -130,6 +130,8 @@ export const api = {
   macosBase: () => request<MacosBaseStatus>("/macos"),
   macosInstall: () => request<MacosBaseStatus>("/macos/install", { method: "POST" }),
   macosCancel: () => request<MacosBaseStatus>("/macos/cancel", { method: "POST" }),
+  /** Boots an installed base once more to (re)install the Agent's toolchain in it (ADR-0061). */
+  macosReprovision: () => request<MacosBaseStatus>("/macos/reprovision", { method: "POST" }),
   macosRemove: () => request<MacosBaseStatus>("/macos", { method: "DELETE" }),
   speechStatus: () => request<SpeechStatus>("/speech"),
   speechPrepare: () => request<SpeechStatus>("/speech/prepare", { method: "POST" }),

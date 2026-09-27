@@ -114,6 +114,8 @@ export const VM_NO_SNAPSHOT: Partial<Record<Environment, string>> = {
 export const VM_AGENT_IN_GUEST: Partial<Record<Environment, string>> = {
   "qemu-windows":
     "The agent, its MCP servers, git and the Terminal run inside the Windows VM; the Workspace is C:\\workspace there. VS Code is not available for Windows Sessions yet: edit through the agent, the Terminal or the desktop.",
+  "qemu-macos":
+    "The agent, its MCP servers, git and the Terminal (zsh) run inside the macOS VM; the Workspace is /Users/agent/workspace there. VS Code is not available for macOS Sessions yet: edit through the agent, the Terminal or the desktop.",
 };
 
 /** Whether an Environment can be picked on this host, and if not, why (one sentence for the UI). */
@@ -1305,6 +1307,13 @@ export type WindowsBaseStatus = z.infer<typeof WindowsBaseStatus>;
  */
 export const MacosBaseStatus = z.object({
   state: z.enum(["missing", "installing", "setup", "finishing", "ready", "error"]),
+  /**
+   * Whether the base carries the toolchain the Agent needs in the guest (Node, git, uv, the Provider
+   * CLIs; ADR-0061). False for a base installed before that: "Reprovision" adds it in place.
+   */
+  toolchain: z.boolean(),
+  /** While `installing`/`setup`/`finishing`: this run only reprovisions an existing base (no Recovery, no Setup Assistant). */
+  reprovisioning: z.boolean(),
   /** The macOS release the base was (or is being) installed with, a `MacosSettings.version` code. */
   version: z.string().nullable(),
   /** Bytes the base disk takes on this machine (0 until installed). */
@@ -1676,11 +1685,20 @@ export const MacosSettings = z.object({
   diskGb: z.number().int().positive().default(64),
   /** Password of the guest's `agent` account, generated when the base install starts and typed by the user during setup. Secret. */
   password: z.string().default(""),
+  /**
+   * An ed25519 key pair generated when the base is provisioned; the public half is in the guest
+   * account's `authorized_keys`, the private half (PEM, secret) goes to each Session's Sandbox so
+   * the Daemon's ssh/scp need no password.
+   */
+  sshKey: z.string().default(""),
+  sshPublicKey: z.string().default(""),
 });
 export type MacosSettings = z.infer<typeof MacosSettings>;
 
 /** The macOS guest account the Sandbox's VNC and SSH clients log in with. */
 export const MACOS_GUEST_USER = "agent";
+/** The Workspace inside the macOS VM (the guest account's home is `/Users/agent`). */
+export const MACOS_GUEST_WORKSPACE = "/Users/agent/workspace";
 
 export const Settings = z.object({
   gitUserName: z.string().default(""),
@@ -1776,7 +1794,7 @@ export type Settings = z.infer<typeof Settings>;
 export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true, macos: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
   windows: WindowsSettings.omit({ password: true }),
-  macos: MacosSettings.omit({ password: true }),
+  macos: MacosSettings.omit({ password: true, sshKey: true, sshPublicKey: true }),
   /** Which Environments a Session created now can run in on this host. */
   environments: z.object({
     "docker-linux": EnvironmentAvailability,
@@ -1822,7 +1840,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connector
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
   windows: WindowsSettings.omit({ password: true }).partial().optional(),
-  macos: MacosSettings.omit({ password: true }).partial().optional(),
+  macos: MacosSettings.omit({ password: true, sshKey: true, sshPublicKey: true }).partial().optional(),
   tunnels: TunnelSettingsUpdate.optional(),
   /** Omitted secret fields keep what is stored; `""` forgets it. */
   claudeApi: z.object({ baseUrl: z.string(), authToken: z.string(), apiKey: z.string() }).partial().optional(),

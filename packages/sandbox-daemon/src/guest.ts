@@ -8,14 +8,12 @@ import { promisify } from "node:util";
 import type { McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
 import { GUEST_BRIDGE_PORT, REPOS_MANIFEST_PATH } from "@sessionboxer/protocol";
 import type { AgentTransport } from "./agent.js";
-import { GUEST_BRIDGE_JS, guestAgentLauncherCmd } from "./guest-scripts.js";
+import { GUEST_BRIDGE_JS, guestAgentLauncherCmd, guestAgentLauncherSh } from "./guest-scripts.js";
 import type { RepoHost } from "./repos.js";
 import { workspaceDir } from "./workspace-sync.js";
 
 const execFileAsync = promisify(execFile);
 
-/** Runs the Agent in the VM: loads the environment file, `cd`s to the Workspace, runs its arguments (in `%USERPROFILE%\.sessionboxer`). */
-const GUEST_AGENT_LAUNCHER = "sessionboxer-agent.cmd";
 /** Connects the VM to a bridged service here (`node sessionboxer-bridge.js desktop`). */
 const GUEST_BRIDGE_SCRIPT = "sessionboxer-bridge.js";
 /** Names the ACP `desktop` MCP entry gets when it has to cross to the Linux side. */
@@ -36,17 +34,22 @@ const SSH_OPTS = [
   "-o",
   "ServerAliveInterval=30",
 ];
-/** Sessionboxer's own files in the VM (`%USERPROFILE%\.sessionboxer`): the launcher, the bridge client, `bridge.json`, the Agent's environment. */
+/** Sessionboxer's own files in the VM (`~/.sessionboxer`): the launcher, the bridge client, `bridge.json`, the Agent's environment. */
 const GUEST_STATE_DIR = ".sessionboxer";
 const READY_POLL_MS = 3_000;
 const DEFAULT_READY_TIMEOUT_MS = 15 * 60_000;
+/** Where the POSIX launcher and the Daemon's scripts find the tools the base install put in the guest (ADR-0061). */
+const POSIX_TOOL_PATH = "/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 export interface GuestConfig {
   host: string;
   sshPort: number;
   user: string;
+  /** The guest account's password; used by `sshpass -e` when there is no `identityFile`. */
   password: string;
-  /** The Workspace in the VM, e.g. `C:\workspace`. */
+  /** A private key file here that the guest account authorizes (macOS bases provision one): no `sshpass` then. */
+  identityFile?: string;
+  /** The Workspace in the VM, e.g. `C:\workspace` or `/Users/agent/workspace`. */
   workspace: string;
   /** The Workspace on this Linux side that mirrors it (`/workspace`). */
   localWorkspace: string;
@@ -63,15 +66,28 @@ export interface GuestRunResult {
 
 export class GuestError extends Error {}
 
+export type GuestOs = "windows" | "macos";
+
+interface SshInvocation {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+}
+
 /**
- * The Windows VM of a `qemu-windows` Session, seen from the Sandbox Daemon: the machine the
- * Agent, its MCP servers, the repositories and the Terminal live on (ADR-0057). Everything
- * goes over SSH to the VM's OpenSSH server, whose default shell is `cmd.exe` so that the
- * Agent's ACP stdio (JSON lines, UTF-8) passes through untouched; PowerShell commands are
- * sent `-EncodedCommand`, so no quoting reaches cmd. The guest password only ever travels
- * as `SSHPASS` in the environment of `sshpass -e`, never on a command line.
+ * The VM of a `qemu-windows` or `qemu-macos` Session, seen from the Sandbox Daemon: the machine
+ * the Agent, its MCP servers, the repositories and the Terminal live on (ADR-0060, ADR-0061).
+ * Everything goes over SSH to the guest's server: the Agent's ACP stdio (JSON lines, UTF-8)
+ * passes through the channel untouched, scripts travel base64-encoded so no quoting reaches the
+ * remote shell. This class is the transport (ssh, scp, tar, the bridge back here); what the
+ * guest's shell, paths and process model look like is the subclass's (`WindowsGuest`, `MacGuest`).
+ * The guest password only ever travels as `SSHPASS` in the environment of `sshpass -e`, never on
+ * a command line; with an identity file, `ssh -i` and no password at all.
  */
-export class WindowsGuest {
+export abstract class Guest {
+  abstract readonly os: GuestOs;
+  /** How the guest is called in log lines, e.g. `Windows VM`. */
+  abstract readonly label: string;
   private readyPromise: Promise<void> | null = null;
   private readonly bridge = new GuestBridge(this);
   private readonly bridgeToken = randomBytes(24).toString("hex");
@@ -83,26 +99,31 @@ export class WindowsGuest {
     return this.cfg.workspace;
   }
 
-  private get target(): string {
+  protected get target(): string {
     return `${this.cfg.user}@${this.cfg.host}`;
   }
 
-  private get sshEnv(): NodeJS.ProcessEnv {
-    return { ...process.env, SSHPASS: this.cfg.password };
+  /** `ssh`/`scp` with the key when the Session has one, through `sshpass -e` (password in the environment) otherwise. */
+  protected sshInvocation(tool: "ssh" | "scp"): SshInvocation {
+    if (this.cfg.identityFile) {
+      return { command: tool, args: ["-i", this.cfg.identityFile, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", ...SSH_OPTS], env: process.env };
+    }
+    return { command: "sshpass", args: ["-e", tool, ...SSH_OPTS], env: { ...process.env, SSHPASS: this.cfg.password } };
   }
 
-  /** Path inside the VM of a Workspace-relative path (`foo/bar.txt` -> `C:\workspace\foo\bar.txt`). */
+  /** Path inside the VM of a Workspace-relative path (`foo/bar.txt` -> `C:\workspace\foo\bar.txt` or `/Users/agent/workspace/foo/bar.txt`). */
   guestPath(rel: string): string {
     const clean = posix.normalize(rel.replace(/\\/g, "/")).replace(/^\.(\/|$)/, "").replace(/\/+$/, "");
     if (clean === "" || clean === ".") return this.cfg.workspace;
     if (clean.startsWith("../") || clean === "..") throw new GuestError(`path escapes the Workspace: ${rel}`);
-    return `${this.cfg.workspace}\\${clean.replace(/\//g, "\\")}`;
+    return this.joinGuest(this.cfg.workspace, clean);
   }
 
-  /** The same path with forward slashes, which every tool in the VM accepts and cmd does not mangle. */
-  guestPathFwd(rel: string): string {
-    return this.guestPath(rel).replace(/\\/g, "/");
-  }
+  /** `base/rel` in the guest's own notation (`rel` has forward slashes). */
+  protected abstract joinGuest(base: string, rel: string): string;
+
+  /** Whether `p` is an absolute path in the guest's notation. */
+  abstract isAbsolute(p: string): boolean;
 
   /** Local (Linux) path a guest path under the Workspace maps to, or `null` when it is outside it. */
   localPathOf(guestPath: string): string | null {
@@ -116,29 +137,35 @@ export class WindowsGuest {
     return abs;
   }
 
-  /** Spawns `ssh` to the VM running `remoteCommand` (a cmd.exe command line) with piped stdio. */
+  /** Spawns `ssh` to the VM running `remoteCommand` (a line for the guest account's login shell) with piped stdio. */
   spawnSsh(remoteCommand: string, extra: string[] = []): ChildProcess {
-    return spawn("sshpass", ["-e", "ssh", ...SSH_OPTS, ...extra, "-p", String(this.cfg.sshPort), this.target, remoteCommand], {
+    const ssh = this.sshInvocation("ssh");
+    return spawn(ssh.command, [...ssh.args, ...extra, "-p", String(this.cfg.sshPort), this.target, remoteCommand], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: this.sshEnv,
+      env: ssh.env,
     });
   }
 
-  /** The command line and environment a PTY should run for an interactive PowerShell in the VM. */
+  /** The command line and environment a PTY should run for an interactive shell in the VM. */
   terminalCommand(): { command: string; args: string[]; env: Record<string, string> } {
+    const ssh = this.sshInvocation("ssh");
     return {
-      command: "sshpass",
-      args: ["-e", "ssh", "-t", ...SSH_OPTS, "-p", String(this.cfg.sshPort), this.target, `powershell -NoLogo -NoExit -Command "Set-Location -LiteralPath '${this.cfg.workspace}'"`],
-      env: { SSHPASS: this.cfg.password },
+      command: ssh.command,
+      args: [...ssh.args, "-t", "-p", String(this.cfg.sshPort), this.target, this.terminalShell()],
+      env: this.cfg.identityFile ? {} : { SSHPASS: this.cfg.password },
     };
   }
 
-  /** Runs a PowerShell script in the VM; resolves with its output, rejects on a non-zero exit unless `lenient`. */
+  /** The remote command an interactive Terminal runs: the guest's shell in the Workspace. */
+  protected abstract terminalShell(): string;
+
+  /** The remote command line that runs `script` in the guest's scripting shell (PowerShell, bash). */
+  protected abstract remoteScript(script: string): string;
+
+  /** Runs a script in the VM; resolves with its output, rejects on a non-zero exit unless `lenient`. */
   async run(script: string, opts: { lenient?: boolean; timeoutMs?: number } = {}): Promise<GuestRunResult> {
-    const encoded = Buffer.from(script, "utf16le").toString("base64");
-    const remote = `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
     return new Promise((resolvePromise, reject) => {
-      const child = this.spawnSsh(remote);
+      const child = this.spawnSsh(this.remoteScript(script));
       const out: Buffer[] = [];
       const err: Buffer[] = [];
       const timer = opts.timeoutMs ? setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs) : null;
@@ -170,28 +197,34 @@ export class WindowsGuest {
     return this.readyPromise;
   }
 
+  /** A script that prints `ready` when the guest's scripting shell works. */
+  protected abstract readonly readyProbe: string;
+
   private async pollReady(timeoutMs: number): Promise<void> {
     const started = Date.now();
     let announced = false;
     for (;;) {
-      const probe = await this.run("Write-Output ready", { lenient: true, timeoutMs: 20_000 }).catch(() => null);
+      const probe = await this.run(this.readyProbe, { lenient: true, timeoutMs: 20_000 }).catch(() => null);
       if (probe && probe.code === 0 && probe.stdout.includes("ready")) {
-        this.cfg.log(`windows vm ${this.cfg.host} answers over ssh${announced ? ` after ${Math.round((Date.now() - started) / 1000)} s` : ""}`);
+        this.cfg.log(`${this.label.toLowerCase()} ${this.cfg.host} answers over ssh${announced ? ` after ${Math.round((Date.now() - started) / 1000)} s` : ""}`);
         return;
       }
       if (!announced) {
-        this.cfg.log(`waiting for the windows vm ${this.cfg.host} to answer over ssh`);
+        this.cfg.log(`waiting for the ${this.label.toLowerCase()} ${this.cfg.host} to answer over ssh`);
         announced = true;
       }
-      if (Date.now() - started > timeoutMs) throw new GuestError(`the Windows VM ${this.cfg.host} did not answer over SSH within ${Math.round(timeoutMs / 60_000)} min`);
+      if (Date.now() - started > timeoutMs) throw new GuestError(`the ${this.label} ${this.cfg.host} did not answer over SSH within ${Math.round(timeoutMs / 60_000)} min`);
       await new Promise((r) => setTimeout(r, READY_POLL_MS));
     }
   }
 
+  /** A script that creates `dir` (and its parents) in the VM, quietly, succeeding when it exists. */
+  abstract mkdirScript(dir: string): string;
+
   /** Copies a local file into the VM (`guestPath` with forward or back slashes). */
   async putFile(localPath: string, guestPath: string): Promise<void> {
     const dir = posix.dirname(guestPath.replace(/\\/g, "/"));
-    await this.run(`New-Item -ItemType Directory -Force -Path '${psQuote(dir)}' | Out-Null`);
+    await this.run(this.mkdirScript(dir));
     await this.scp(localPath, `${this.target}:${scpPath(guestPath)}`);
   }
 
@@ -214,18 +247,25 @@ export class WindowsGuest {
   }
 
   private async scp(from: string, to: string): Promise<void> {
-    await execFileAsync("sshpass", ["-e", "scp", ...SSH_OPTS, "-P", String(this.cfg.sshPort), from, to], { env: this.sshEnv, maxBuffer: 1024 * 1024 });
+    const scp = this.sshInvocation("scp");
+    await execFileAsync(scp.command, [...scp.args, "-P", String(this.cfg.sshPort), from, to], { env: scp.env, maxBuffer: 1024 * 1024 });
   }
+
+  /** A script that prints `yes` when `path` exists in the VM, `no` otherwise. */
+  protected abstract existsScript(path: string): string;
 
   /** Whether a path exists in the VM. */
   async exists(guestPath: string): Promise<boolean> {
-    const r = await this.run(`if (Test-Path -LiteralPath '${psQuote(guestPath)}') { Write-Output yes } else { Write-Output no }`);
+    const r = await this.run(this.existsScript(guestPath));
     return r.stdout.includes("yes");
   }
 
+  /** A script that creates `dir`, unpacks `tar` (a guest path) into it and removes the tar, exiting with tar's code. */
+  protected abstract untarScript(tar: string, dir: string): string;
+
   /**
    * Copies a local directory tree into the VM at `guestDir` (created if needed): one tar over
-   * scp, unpacked by Windows' own `tar` (bsdtar, in every Windows 10+). Symlinks travel as-is.
+   * scp, unpacked by the guest's own `tar` (bsdtar on Windows and macOS). Symlinks travel as-is.
    */
   async pushDir(localDir: string, guestDir: string): Promise<void> {
     mkdirSync(this.cfg.spoolDir, { recursive: true, mode: 0o700 });
@@ -234,20 +274,21 @@ export class WindowsGuest {
       await execFileAsync("tar", ["-cf", tar, "-C", localDir, "."], { maxBuffer: 1024 * 1024 });
       const guestTar = `${this.tempDir()}/${posix.basename(tar)}`;
       await this.putFile(tar, guestTar);
-      await this.run(
-        [
-          `New-Item -ItemType Directory -Force -Path '${psQuote(guestDir)}' | Out-Null`,
-          `& tar.exe -xf '${psQuote(guestTar)}' -C '${psQuote(guestDir)}'`,
-          `$code = $LASTEXITCODE`,
-          `Remove-Item -Force -LiteralPath '${psQuote(guestTar)}'`,
-          `exit $code`,
-        ].join("\n"),
-        { timeoutMs: 20 * 60_000 },
-      );
+      await this.run(this.untarScript(guestTar, guestDir), { timeoutMs: 20 * 60_000 });
     } finally {
       rmSync(tar, { force: true });
     }
   }
+
+  /**
+   * A script that packs `dir` into `tar` (a guest path): the files git lists (tracked and
+   * untracked-but-not-ignored) plus `.git` when `dir` is a repository's top, everything but
+   * `.sessionboxer` otherwise; prints `git` or `plain` accordingly.
+   */
+  protected abstract pullDirScript(dir: string, tar: string): string;
+
+  /** A script that removes the file `path` in the VM, succeeding when it is gone. */
+  abstract rmScript(path: string): string;
 
   /**
    * Makes the local directory an exact copy of the guest's, for the files git would list
@@ -260,30 +301,9 @@ export class WindowsGuest {
     const tar = join(this.cfg.spoolDir, name);
     const guestTar = `${this.tempDir()}/${name}`;
     try {
-      const r = await this.run(
-        [
-          `Set-Location -LiteralPath '${psQuote(guestDir)}'`,
-          `$list = '${psQuote(guestTar)}.list'`,
-          `$isGit = $false`,
-          `try { $top = (& git.exe rev-parse --show-toplevel 2>$null); if ($LASTEXITCODE -eq 0 -and $top -and ((Resolve-Path -LiteralPath $top).Path -ieq (Get-Location).Path)) { $isGit = $true } } catch {}`,
-          `if ($isGit) {`,
-          `  $files = (& git.exe ls-files -z --cached --others --exclude-standard) -split "\`0" | Where-Object { $_ -ne '' -and $_ -ne '.git' -and -not $_.StartsWith('.git/') -and -not $_.StartsWith('.sessionboxer/') }`,
-          `  $files = @($files | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })`,
-          `  [IO.File]::WriteAllText($list, (($files + '.git') -join "\`n") + "\`n", (New-Object System.Text.UTF8Encoding $false))`,
-          `  & tar.exe -cf '${psQuote(guestTar)}' -T $list`,
-          `  Write-Output "git"`,
-          `} else {`,
-          `  & tar.exe -cf '${psQuote(guestTar)}' --exclude .sessionboxer .`,
-          `  Write-Output "plain"`,
-          `}`,
-          `$code = $LASTEXITCODE`,
-          `Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $list`,
-          `exit $code`,
-        ].join("\n"),
-        { timeoutMs: 20 * 60_000 },
-      );
+      const r = await this.run(this.pullDirScript(guestDir, guestTar), { timeoutMs: 20 * 60_000 });
       await this.getFile(guestTar, tar);
-      await this.run(`Remove-Item -Force -LiteralPath '${psQuote(guestTar)}'`, { lenient: true });
+      await this.run(this.rmScript(guestTar), { lenient: true });
       await clearDir(localDir);
       await execFileAsync("tar", ["-xf", tar, "-C", localDir], { maxBuffer: 1024 * 1024 });
       this.cfg.log(`mirrored ${guestDir} (${r.stdout.trim()}) back to ${localDir}`);
@@ -293,59 +313,46 @@ export class WindowsGuest {
   }
 
   /** A per-user temporary directory in the VM (forward slashes). */
-  private tempDir(): string {
-    return `C:/Users/${this.cfg.user}/AppData/Local/Temp`;
-  }
+  protected abstract tempDir(): string;
 
-  /** `%USERPROFILE%` of the guest account (forward slashes). */
-  homeDir(): string {
-    return `C:/Users/${this.cfg.user}`;
-  }
+  /** The guest account's home (forward slashes). */
+  abstract homeDir(): string;
 
-  /** Sessionboxer's directory in the VM, with back slashes (a Windows path for cmd and the Agent). */
-  private stateDir(): string {
-    return `${this.homeDir().replace(/\//g, "\\")}\\${GUEST_STATE_DIR}`;
-  }
+  /** Sessionboxer's directory in the VM, in the guest's own notation. */
+  protected abstract stateDir(): string;
 
-  /** The launcher the Agent starts through: `sessionboxer-agent.cmd <command> [args]`. */
-  agentLauncher(): string {
-    return `${this.stateDir()}\\${GUEST_AGENT_LAUNCHER}`;
-  }
+  /** The remote command line that starts `command args` through the launcher, with untouched stdio. */
+  abstract agentCommandLine(command: string, args: string[]): string;
 
   /** The desktop MCP as a command the Agent starts in the VM: the bridge client, piped to the MCP here. */
-  desktopMcp(): { command: string; args: string[] } {
-    return { command: "node", args: [`${this.stateDir()}\\${GUEST_BRIDGE_SCRIPT}`, BRIDGE_SERVICE_DESKTOP] };
-  }
+  abstract desktopMcp(): { command: string; args: string[] };
 
   /** git's `credential.helper` value that asks this side for the account's credentials through the bridge. */
-  credentialHelper(account: string): string {
-    return `!node ${this.homeDir()}/${GUEST_STATE_DIR}/${GUEST_BRIDGE_SCRIPT} ${BRIDGE_SERVICE_CREDENTIAL} ${account}`;
-  }
+  abstract credentialHelper(account: string): string;
 
-  /**
-   * Writes the environment the Agent (and everything it starts) runs with in the VM:
-   * `%USERPROFILE%\.sessionboxer\agent-env.cmd`, `call`ed (then deleted) by the launcher next to it.
-   * Values are set through `set "K=V"` with `%` doubled so cmd takes them literally.
-   */
-  async writeAgentEnv(env: Record<string, string>): Promise<void> {
-    const lines = ["@echo off"];
-    for (const [k, v] of Object.entries(env)) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || /[\r\n]/.test(v)) continue;
-      lines.push(`set "${k}=${v.replace(/%/g, "%%")}"`);
-    }
-    await this.writeFile(`${this.homeDir()}/${GUEST_STATE_DIR}/agent-env.cmd`, lines.join("\r\n") + "\r\n");
-  }
+  /** Writes the environment the Agent (and everything it starts) runs with in the VM: a file the launcher loads and deletes. */
+  abstract writeAgentEnv(env: Record<string, string>): Promise<void>;
 
   /** Ends every Agent launched through the launcher that is still running in the VM (and its children). */
-  async killAgents(): Promise<void> {
-    await this.run(
-      [
-        `Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*sessionboxer-agent.cmd*' } | ForEach-Object { & taskkill.exe /F /T /PID $_.ProcessId 2>$null | Out-Null }`,
-        `exit 0`,
-      ].join("\n"),
-      { lenient: true, timeoutMs: 60_000 },
-    ).catch((e: unknown) => this.cfg.log(`could not end the previous Agent in the VM: ${String(e)}`));
-  }
+  abstract killAgents(): Promise<void>;
+
+  /** The launcher's file name and content, generated for this Session's Workspace. */
+  protected abstract launcher(): { name: string; content: string };
+
+  /** A user's stdio MCP entry as the Agent can start it in the guest. */
+  abstract stdioForGuest(s: McpServerStdio): McpServer;
+
+  /** A script that prints the canonical form of the directory `path` (following links). */
+  abstract realpathScript(path: string): string;
+
+  /** The canonical form `realpathScript` printed, normalized so two spellings of one directory compare equal. */
+  abstract canonicalPath(printed: string): string;
+
+  /** A script that runs `git args` in `cwd` with git's stdout and stderr as the script's, exiting with git's code. */
+  abstract gitScript(cwd: string, args: string[]): string;
+
+  /** A script that removes the directory `path` and everything in it, succeeding when it is gone. */
+  abstract rmDirScript(path: string): string;
 
   /**
    * Starts the bridge (once), puts the launcher and the bridge client in the VM and tells it where
@@ -356,7 +363,8 @@ export class WindowsGuest {
     const port = await this.bridge.listen();
     const host = sandboxAddress();
     const dir = `${this.homeDir()}/${GUEST_STATE_DIR}`;
-    await this.writeFile(`${dir}/${GUEST_AGENT_LAUNCHER}`, guestAgentLauncherCmd(this.cfg.workspace));
+    const launcher = this.launcher();
+    await this.writeFile(`${dir}/${launcher.name}`, launcher.content);
     await this.writeFile(`${dir}/${GUEST_BRIDGE_SCRIPT}`, GUEST_BRIDGE_JS);
     await this.writeFile(`${dir}/bridge.json`, JSON.stringify({ host, port, token: this.bridgeToken }) + "\n");
     this.bridgeConfigured = true;
@@ -373,6 +381,329 @@ export class WindowsGuest {
   }
 }
 
+/** Runs the Agent in the Windows VM: loads the environment file, `cd`s to the Workspace, runs its arguments (in `%USERPROFILE%\.sessionboxer`). */
+const WINDOWS_AGENT_LAUNCHER = "sessionboxer-agent.cmd";
+
+/**
+ * The Windows VM of a `qemu-windows` Session (ADR-0057, ADR-0060): OpenSSH with `cmd.exe` as
+ * its default shell, PowerShell scripts sent `-EncodedCommand` so no quoting reaches cmd, Windows
+ * paths under `C:\workspace`, npm's `.cmd` shims through `cmd /c`.
+ */
+export class WindowsGuest extends Guest {
+  readonly os = "windows" as const;
+  readonly label = "Windows VM";
+  protected readonly readyProbe = "Write-Output ready";
+
+  protected joinGuest(base: string, rel: string): string {
+    return `${base}\\${rel.replace(/\//g, "\\")}`;
+  }
+
+  isAbsolute(p: string): boolean {
+    return /^[A-Za-z]:/.test(p);
+  }
+
+  /** The same path with forward slashes, which every tool in the VM accepts and cmd does not mangle. */
+  guestPathFwd(rel: string): string {
+    return this.guestPath(rel).replace(/\\/g, "/");
+  }
+
+  protected terminalShell(): string {
+    return `powershell -NoLogo -NoExit -Command "Set-Location -LiteralPath '${this.cfg.workspace}'"`;
+  }
+
+  protected remoteScript(script: string): string {
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    return `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+  }
+
+  mkdirScript(dir: string): string {
+    return `New-Item -ItemType Directory -Force -Path '${psQuote(dir)}' | Out-Null`;
+  }
+
+  protected existsScript(path: string): string {
+    return `if (Test-Path -LiteralPath '${psQuote(path)}') { Write-Output yes } else { Write-Output no }`;
+  }
+
+  protected untarScript(tar: string, dir: string): string {
+    return [
+      `New-Item -ItemType Directory -Force -Path '${psQuote(dir)}' | Out-Null`,
+      `& tar.exe -xf '${psQuote(tar)}' -C '${psQuote(dir)}'`,
+      `$code = $LASTEXITCODE`,
+      `Remove-Item -Force -LiteralPath '${psQuote(tar)}'`,
+      `exit $code`,
+    ].join("\n");
+  }
+
+  protected pullDirScript(dir: string, tar: string): string {
+    return [
+      `Set-Location -LiteralPath '${psQuote(dir)}'`,
+      `$list = '${psQuote(tar)}.list'`,
+      `$isGit = $false`,
+      `try { $top = (& git.exe rev-parse --show-toplevel 2>$null); if ($LASTEXITCODE -eq 0 -and $top -and ((Resolve-Path -LiteralPath $top).Path -ieq (Get-Location).Path)) { $isGit = $true } } catch {}`,
+      `if ($isGit) {`,
+      `  $files = (& git.exe ls-files -z --cached --others --exclude-standard) -split "\`0" | Where-Object { $_ -ne '' -and $_ -ne '.git' -and -not $_.StartsWith('.git/') -and -not $_.StartsWith('.sessionboxer/') }`,
+      `  $files = @($files | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })`,
+      `  [IO.File]::WriteAllText($list, (($files + '.git') -join "\`n") + "\`n", (New-Object System.Text.UTF8Encoding $false))`,
+      `  & tar.exe -cf '${psQuote(tar)}' -T $list`,
+      `  Write-Output "git"`,
+      `} else {`,
+      `  & tar.exe -cf '${psQuote(tar)}' --exclude .sessionboxer .`,
+      `  Write-Output "plain"`,
+      `}`,
+      `$code = $LASTEXITCODE`,
+      `Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $list`,
+      `exit $code`,
+    ].join("\n");
+  }
+
+  rmScript(path: string): string {
+    return `Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath '${psQuote(path)}'; exit 0`;
+  }
+
+  rmDirScript(path: string): string {
+    return `Remove-Item -LiteralPath '${psQuote(path)}' -Recurse -Force -ErrorAction SilentlyContinue; exit 0`;
+  }
+
+  protected tempDir(): string {
+    return `C:/Users/${this.cfg.user}/AppData/Local/Temp`;
+  }
+
+  /** `%USERPROFILE%` of the guest account (forward slashes). */
+  homeDir(): string {
+    return `C:/Users/${this.cfg.user}`;
+  }
+
+  /** Sessionboxer's directory in the VM, with back slashes (a Windows path for cmd and the Agent). */
+  protected stateDir(): string {
+    return `${this.homeDir().replace(/\//g, "\\")}\\${GUEST_STATE_DIR}`;
+  }
+
+  /** The launcher the Agent starts through: `sessionboxer-agent.cmd <command> [args]`. */
+  agentCommandLine(command: string, args: string[]): string {
+    return [`${this.stateDir()}\\${WINDOWS_AGENT_LAUNCHER}`, command, ...args].map(cmdArg).join(" ");
+  }
+
+  desktopMcp(): { command: string; args: string[] } {
+    return { command: "node", args: [`${this.stateDir()}\\${GUEST_BRIDGE_SCRIPT}`, BRIDGE_SERVICE_DESKTOP] };
+  }
+
+  credentialHelper(account: string): string {
+    return `!node ${this.homeDir()}/${GUEST_STATE_DIR}/${GUEST_BRIDGE_SCRIPT} ${BRIDGE_SERVICE_CREDENTIAL} ${account}`;
+  }
+
+  /**
+   * `%USERPROFILE%\.sessionboxer\agent-env.cmd`, `call`ed (then deleted) by the launcher next to it.
+   * Values are set through `set "K=V"` with `%` doubled so cmd takes them literally.
+   */
+  async writeAgentEnv(env: Record<string, string>): Promise<void> {
+    const lines = ["@echo off"];
+    for (const [k, v] of Object.entries(env)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || /[\r\n]/.test(v)) continue;
+      lines.push(`set "${k}=${v.replace(/%/g, "%%")}"`);
+    }
+    await this.writeFile(`${this.homeDir()}/${GUEST_STATE_DIR}/agent-env.cmd`, lines.join("\r\n") + "\r\n");
+  }
+
+  async killAgents(): Promise<void> {
+    await this.run(
+      [
+        `Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*${WINDOWS_AGENT_LAUNCHER}*' } | ForEach-Object { & taskkill.exe /F /T /PID $_.ProcessId 2>$null | Out-Null }`,
+        `exit 0`,
+      ].join("\n"),
+      { lenient: true, timeoutMs: 60_000 },
+    ).catch((e: unknown) => this.cfg.log(`could not end the previous Agent in the VM: ${String(e)}`));
+  }
+
+  protected launcher(): { name: string; content: string } {
+    return { name: WINDOWS_AGENT_LAUNCHER, content: guestAgentLauncherCmd(this.cfg.workspace) };
+  }
+
+  /** A bare command that is neither an `.exe`/`.cmd`/`.bat` nor a known executable is an npm/uv shim: `cmd /c` resolves it. */
+  stdioForGuest(s: McpServerStdio): McpServer {
+    const base = posix.basename(s.command.replace(/\\/g, "/")).toLowerCase();
+    const hasExt = /\.(exe|cmd|bat|com)$/.test(base);
+    if (hasExt || GUEST_EXECUTABLES.has(base) || /[\\/]/.test(s.command)) return s;
+    return { ...s, command: "cmd", args: ["/c", s.command, ...s.args] };
+  }
+
+  realpathScript(path: string): string {
+    return `(Resolve-Path -LiteralPath '${psQuote(path)}').ProviderPath`;
+  }
+
+  canonicalPath(printed: string): string {
+    return printed.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  }
+
+  gitScript(cwd: string, args: string[]): string {
+    const list = ["-C", cwd, ...args].map((a) => `'${psQuote(a)}'`).join(", ");
+    return [
+      `$env:GIT_TERMINAL_PROMPT = '0'`,
+      `$out = & git.exe @(${list}) 2>&1`,
+      `$code = $LASTEXITCODE`,
+      `$out | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [Console]::Error.WriteLine($_.ToString()) } else { [Console]::Out.WriteLine($_) } }`,
+      `exit $code`,
+    ].join("\n");
+  }
+}
+
+/** Runs the Agent in the macOS VM: sources the environment file, `cd`s to the Workspace, `exec`s its arguments (in `~/.sessionboxer`). */
+const POSIX_AGENT_LAUNCHER = "sessionboxer-agent.sh";
+
+/**
+ * The macOS VM of a `qemu-macos` Session (ADR-0059, ADR-0061): Apple's OpenSSH with zsh as the
+ * account's shell, scripts run by `/bin/bash` from a base64 argument, POSIX paths under
+ * `/Users/agent/workspace`, the tools the base install put in `/usr/local/bin` and `~/.local/bin`
+ * on `PATH` for everything the Daemon and the Agent run. A Linux box with sshd, an `agent` user
+ * whose home is `/Users/agent`, bash, git and tar behaves the same, which is how the transport is
+ * tested without a Mac.
+ */
+export class MacGuest extends Guest {
+  readonly os = "macos" as const;
+  readonly label = "macOS VM";
+  protected readonly readyProbe = "echo ready";
+
+  protected joinGuest(base: string, rel: string): string {
+    return `${base}/${rel}`;
+  }
+
+  isAbsolute(p: string): boolean {
+    return p.startsWith("/");
+  }
+
+  protected terminalShell(): string {
+    return `cd ${shQuote(this.cfg.workspace)} 2>/dev/null; exec zsh -l`;
+  }
+
+  /** `bash -c "$(echo <base64> | base64 --decode)"`: the script reaches bash byte for byte, whatever the login shell. */
+  protected remoteScript(script: string): string {
+    const prologue = `export PATH="${POSIX_TOOL_PATH}:$PATH" GIT_TERMINAL_PROMPT=0\n`;
+    const encoded = Buffer.from(prologue + script, "utf8").toString("base64");
+    return `bash -c "$(echo ${encoded} | base64 --decode)"`;
+  }
+
+  mkdirScript(dir: string): string {
+    return `mkdir -p -- ${shQuote(dir)}`;
+  }
+
+  protected existsScript(path: string): string {
+    return `if [ -e ${shQuote(path)} ]; then echo yes; else echo no; fi`;
+  }
+
+  protected untarScript(tar: string, dir: string): string {
+    return [`mkdir -p -- ${shQuote(dir)}`, `tar -xf ${shQuote(tar)} -C ${shQuote(dir)}`, `code=$?`, `rm -f -- ${shQuote(tar)}`, `exit $code`].join("\n");
+  }
+
+  protected pullDirScript(dir: string, tar: string): string {
+    return [
+      `cd ${shQuote(dir)} || exit 1`,
+      `list=${shQuote(tar)}.list`,
+      `: > "$list"`,
+      `if top=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] && [ "$(cd "$top" && pwd -P)" = "$(pwd -P)" ]; then`,
+      `  while IFS= read -r -d '' f; do`,
+      `    case "$f" in .git|.git/*|.sessionboxer/*) continue ;; esac`,
+      `    [ -f "$f" ] && printf '%s\\n' "$f" >> "$list"`,
+      `  done < <(git ls-files -z --cached --others --exclude-standard)`,
+      `  printf '.git\\n' >> "$list"`,
+      `  tar -cf ${shQuote(tar)} -T "$list"`,
+      `  code=$?`,
+      `  echo git`,
+      `else`,
+      `  tar -cf ${shQuote(tar)} --exclude .sessionboxer .`,
+      `  code=$?`,
+      `  echo plain`,
+      `fi`,
+      `rm -f -- "$list"`,
+      `exit $code`,
+    ].join("\n");
+  }
+
+  rmScript(path: string): string {
+    return `rm -f -- ${shQuote(path)}`;
+  }
+
+  rmDirScript(path: string): string {
+    return `rm -rf -- ${shQuote(path)}`;
+  }
+
+  protected tempDir(): string {
+    return `${this.homeDir()}/${GUEST_STATE_DIR}/tmp`;
+  }
+
+  homeDir(): string {
+    return `/Users/${this.cfg.user}`;
+  }
+
+  protected stateDir(): string {
+    return `${this.homeDir()}/${GUEST_STATE_DIR}`;
+  }
+
+  /** `sh ~/.sessionboxer/sessionboxer-agent.sh <command> [args]`, every argument single-quoted for the login shell. */
+  agentCommandLine(command: string, args: string[]): string {
+    return ["sh", `${this.stateDir()}/${POSIX_AGENT_LAUNCHER}`, command, ...args].map(shQuote).join(" ");
+  }
+
+  desktopMcp(): { command: string; args: string[] } {
+    return { command: "/usr/local/bin/node", args: [`${this.stateDir()}/${GUEST_BRIDGE_SCRIPT}`, BRIDGE_SERVICE_DESKTOP] };
+  }
+
+  credentialHelper(account: string): string {
+    return `!/usr/local/bin/node ${this.stateDir()}/${GUEST_BRIDGE_SCRIPT} ${BRIDGE_SERVICE_CREDENTIAL} ${account}`;
+  }
+
+  /** `~/.sessionboxer/agent-env.sh`, sourced (then deleted) by the launcher next to it: `export K='V'` lines. */
+  async writeAgentEnv(env: Record<string, string>): Promise<void> {
+    const lines: string[] = [];
+    for (const [k, v] of Object.entries(env)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || /[\r\n]/.test(v)) continue;
+      lines.push(`export ${k}=${shQuote(v)}`);
+    }
+    await this.writeFile(`${this.stateDir()}/agent-env.sh`, lines.join("\n") + "\n");
+  }
+
+  /**
+   * The launcher records its process group (`agent.pgid`); the whole group — the Agent and the MCP
+   * servers it started — gets TERM then KILL, if it still holds an `acp` process (a group id could
+   * have been reused after a reboot).
+   */
+  async killAgents(): Promise<void> {
+    await this.run(
+      [
+        `f=${shQuote(`${this.stateDir()}/agent.pgid`)}`,
+        `if [ -f "$f" ]; then`,
+        `  pg=$(tr -dc '0-9' < "$f")`,
+        `  if [ -n "$pg" ] && [ "$pg" -gt 1 ] && pgrep -g "$pg" -f acp >/dev/null 2>&1; then`,
+        `    kill -TERM -- "-$pg" 2>/dev/null; sleep 1; kill -KILL -- "-$pg" 2>/dev/null`,
+        `  fi`,
+        `  rm -f -- "$f"`,
+        `fi`,
+        `exit 0`,
+      ].join("\n"),
+      { lenient: true, timeoutMs: 60_000 },
+    ).catch((e: unknown) => this.cfg.log(`could not end the previous Agent in the VM: ${String(e)}`));
+  }
+
+  protected launcher(): { name: string; content: string } {
+    return { name: POSIX_AGENT_LAUNCHER, content: guestAgentLauncherSh(this.cfg.workspace, POSIX_TOOL_PATH) };
+  }
+
+  /** A POSIX guest resolves `npx`, `uvx` and binaries on the launcher's `PATH`: the entry runs as the user wrote it. */
+  stdioForGuest(s: McpServerStdio): McpServer {
+    return s;
+  }
+
+  realpathScript(path: string): string {
+    return `cd ${shQuote(path)} && pwd -P`;
+  }
+
+  canonicalPath(printed: string): string {
+    return printed.trim().replace(/\/+$/, "");
+  }
+
+  gitScript(cwd: string, args: string[]): string {
+    return `exec git -C ${shQuote(cwd)} ${args.map(shQuote).join(" ")}`;
+  }
+}
+
 /**
  * The Sandbox-side end of the guest bridge: a TCP listener where the VM connects with one
  * line `<service> <token> [args...]`, then the connection is handed to the service, which
@@ -382,7 +713,7 @@ class GuestBridge {
   private server: Server | null = null;
   private readonly handlers = new Map<string, (socket: Socket, args: string[]) => void>();
 
-  constructor(private readonly guest: WindowsGuest) {}
+  constructor(private readonly guest: Guest) {}
 
   register(service: string, handler: (socket: Socket, args: string[]) => void): void {
     this.handlers.set(service, handler);
@@ -390,7 +721,8 @@ class GuestBridge {
 
   listen(): Promise<number> {
     if (this.server) return Promise.resolve(GUEST_BRIDGE_PORT);
-    const server = createServer((socket) => this.accept(socket));
+    // Half-open: a helper that writes its request and closes its side (git's credential helper) still gets the answer.
+    const server = createServer({ allowHalfOpen: true }, (socket) => this.accept(socket));
     this.server = server;
     return new Promise((resolvePromise, reject) => {
       server.once("error", reject);
@@ -435,14 +767,14 @@ class GuestBridge {
  */
 export interface GuestProviderFile {
   local: string;
-  /** Path in the VM, relative to the guest account's profile (`.claude/settings.json`) or absolute. */
+  /** Path in the VM, relative to the guest account's home (`.claude/settings.json`) or absolute. */
   guest: string;
   /** Copied back from the VM after each turn so refreshed tokens reach the Control Plane. */
   pullBack?: boolean;
 }
 
-export interface WindowsTransportConfig {
-  guest: WindowsGuest;
+export interface GuestTransportConfig {
+  guest: Guest;
   /** The Provider's environment this Sandbox was given (its login, base URL): it goes with the Agent into the VM. */
   env: Record<string, string>;
   files: GuestProviderFile[];
@@ -452,19 +784,19 @@ export interface WindowsTransportConfig {
 }
 
 /**
- * Runs the ACP Agent inside the Windows VM (ADR-0057): `ssh vm C:\OEM\sessionboxer-agent.cmd <command>`
- * with the ACP stream on the SSH channel. Before each start the Agent's environment (Provider
- * login, base URL, options) goes to the VM as a file the launcher loads and deletes, and the
- * Provider's configuration files follow it. MCP servers are handed to the Agent as it can start
- * them in Windows: the desktop entry becomes the bridge client, user stdio entries stay as the
- * user wrote them for Windows (`.cmd` shims through `cmd /c`), URLs pass unchanged.
+ * Runs the ACP Agent inside the VM (ADR-0060, ADR-0061): `ssh vm <launcher> <command>` with the
+ * ACP stream on the SSH channel. Before each start the Agent's environment (Provider login, base
+ * URL, options) goes to the VM as a file the launcher loads and deletes, and the Provider's
+ * configuration files follow it. MCP servers are handed to the Agent as it can start them in the
+ * guest: the desktop entry becomes the bridge client, user stdio entries are adapted by the guest
+ * (`.cmd` shims through `cmd /c` on Windows, as written on macOS), URLs pass unchanged.
  */
-export class WindowsAgentTransport implements AgentTransport {
-  constructor(private readonly cfg: WindowsTransportConfig) {
+export class GuestAgentTransport implements AgentTransport {
+  constructor(private readonly cfg: GuestTransportConfig) {
     this.attachmentPath = this.attachmentPath.bind(this);
   }
 
-  private get guest(): WindowsGuest {
+  private get guest(): Guest {
     return this.cfg.guest;
   }
 
@@ -472,15 +804,14 @@ export class WindowsAgentTransport implements AgentTransport {
     await this.guest.waitReady();
     await this.guest.configureBridge();
     await this.guest.killAgents();
-    await this.guest.run(`New-Item -ItemType Directory -Force -Path '${psQuote(this.guest.workspace)}' | Out-Null`);
+    await this.guest.run(this.guest.mkdirScript(this.guest.workspace));
     await this.pushFiles();
     await this.guest.writeAgentEnv({ ...this.cfg.env, ...env });
   }
 
   spawn(command: string, args: string[]): ChildProcess {
-    const line = [this.guest.agentLauncher(), command, ...args].map(cmdArg).join(" ");
-    this.cfg.log(`starting the Agent in the Windows VM: ${[command, ...args].join(" ")}`);
-    return this.guest.spawnSsh(line);
+    this.cfg.log(`starting the Agent in the ${this.guest.label}: ${[command, ...args].join(" ")}`);
+    return this.guest.spawnSsh(this.guest.agentCommandLine(command, args));
   }
 
   attachmentPath(rel: string): string {
@@ -494,7 +825,7 @@ export class WindowsAgentTransport implements AgentTransport {
         const desktop = this.guest.desktopMcp();
         return { name: s.name, command: desktop.command, args: desktop.args, env: [] };
       }
-      return guestStdio(s);
+      return this.guest.stdioForGuest(s);
     });
   }
 
@@ -522,7 +853,7 @@ export class WindowsAgentTransport implements AgentTransport {
   }
 
   private guestFilePath(f: GuestProviderFile): string {
-    return /^[A-Za-z]:/.test(f.guest) ? f.guest : `${this.guest.homeDir()}/${f.guest}`;
+    return this.guest.isAbsolute(f.guest) ? f.guest : `${this.guest.homeDir()}/${f.guest}`;
   }
 }
 
@@ -530,25 +861,22 @@ function isStdio(s: McpServer): s is McpServerStdio {
   return !("type" in s) || s.type === undefined;
 }
 
-/** A user's stdio MCP entry as the Agent can start it in Windows. */
-function guestStdio(s: McpServerStdio): McpServer {
-  const base = posix.basename(s.command.replace(/\\/g, "/")).toLowerCase();
-  const hasExt = /\.(exe|cmd|bat|com)$/.test(base);
-  if (hasExt || GUEST_EXECUTABLES.has(base) || /[\\/]/.test(s.command)) return s;
-  return { ...s, command: "cmd", args: ["/c", s.command, ...s.args] };
-}
-
 /** Quotes one argument for a cmd.exe command line (the launcher re-splits it). */
 function cmdArg(a: string): string {
   return /[\s"&|<>^()%!]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a;
 }
 
+/** Single-quotes one word for a POSIX shell (sh, bash, zsh). */
+export function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 /**
- * The repositories of a Windows Session live in the VM under `C:\workspace`; git runs there over
- * SSH and paths in the manifest and the briefing are Windows paths.
+ * The repositories of a VM Session live in the guest under its Workspace; git runs there over
+ * SSH and paths in the manifest and the briefing are the guest's.
  */
-export class WindowsRepoHost implements RepoHost {
-  constructor(private readonly guest: WindowsGuest) {}
+export class GuestRepoHost implements RepoHost {
+  constructor(private readonly guest: Guest) {}
 
   get workspace(): string {
     return this.guest.workspace;
@@ -563,27 +891,17 @@ export class WindowsRepoHost implements RepoHost {
   }
 
   async realpath(path: string): Promise<string> {
-    const r = await this.guest.run(`(Resolve-Path -LiteralPath '${psQuote(path)}').ProviderPath`);
-    return r.stdout.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const r = await this.guest.run(this.guest.realpathScript(path));
+    return this.guest.canonicalPath(r.stdout);
   }
 
   async git(cwd: string, args: string[]): Promise<string> {
-    const list = ["-C", cwd, ...args].map((a) => `'${psQuote(a)}'`).join(", ");
-    const r = await this.guest.run(
-      [
-        `$env:GIT_TERMINAL_PROMPT = '0'`,
-        `$out = & git.exe @(${list}) 2>&1`,
-        `$code = $LASTEXITCODE`,
-        `$out | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [Console]::Error.WriteLine($_.ToString()) } else { [Console]::Out.WriteLine($_) } }`,
-        `exit $code`,
-      ].join("\n"),
-      { timeoutMs: 10 * 60_000 },
-    );
+    const r = await this.guest.run(this.guest.gitScript(cwd, args), { timeoutMs: 10 * 60_000 });
     return r.stdout;
   }
 
   async rm(path: string): Promise<void> {
-    await this.guest.run(`Remove-Item -LiteralPath '${psQuote(path)}' -Recurse -Force -ErrorAction SilentlyContinue; exit 0`);
+    await this.guest.run(this.guest.rmDirScript(path));
   }
 
   writeManifest(content: string): Promise<void> {
@@ -601,17 +919,17 @@ export class WindowsRepoHost implements RepoHost {
   async ready(): Promise<void> {
     await this.guest.waitReady();
     await this.guest.configureBridge();
-    await this.guest.run(`New-Item -ItemType Directory -Force -Path '${psQuote(this.guest.workspace)}' | Out-Null`);
+    await this.guest.run(this.guest.mkdirScript(this.guest.workspace));
   }
 }
 
 /**
  * The services the VM reaches through the bridge: the desktop MCP (the Agent's screenshots and
- * input act on the RDP view of the VM, so the MCP stays on the Linux side) and git credentials
+ * input act on the RDP/VNC view of the VM, so the MCP stays on the Linux side) and git credentials
  * (the accounts the user connected are in `gh`/`bb` here; git in the VM asks through the bridge,
  * as the active login or as one account).
  */
-export function registerBridgeServices(guest: WindowsGuest, desktopCommand: string, log: (msg: string) => void): void {
+export function registerBridgeServices(guest: Guest, desktopCommand: string, log: (msg: string) => void): void {
   guest.onBridge(BRIDGE_SERVICE_DESKTOP, (socket) => {
     const child = spawn(desktopCommand, [], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
     bridgeToProcess(socket, child, log, "desktop mcp (vm)");

@@ -433,9 +433,9 @@ export function SessionSettingsForm({
           </p>
         ) : vm ? (
           <p className="muted ss-note">
-            The Agent, its shell, git and the editor run on a Linux Sandbox next to the {guest} VM; the Desktop shows {guest} over VNC and{" "}
-            <code>mac &lt;command&gt;</code> runs a shell command in it. Docker inside the Sandbox, snapshots, forks and rebuilds are not
-            available for {guest} Sessions yet.
+            The Agent, its MCP servers, git and the Terminal (zsh) run inside the {guest} VM, with the repositories in{" "}
+            <code>/Users/agent/workspace</code>; the Desktop shows {guest} over VNC. Docker inside the Sandbox, VS Code, snapshots, forks and
+            rebuilds are not available for {guest} Sessions yet.
           </p>
         ) : frozen ? (
           <p className="muted ss-fixed">

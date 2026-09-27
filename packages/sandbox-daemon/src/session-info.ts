@@ -18,6 +18,8 @@ export interface SessionInfoMirror {
  */
 export class SessionInfoFile {
   private info: SessionInfo | null;
+  /** The mirror's writes, one after the other; the first waits for the VM to boot, so `set` does not. */
+  private mirrorChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly workspace: string,
@@ -41,10 +43,11 @@ export class SessionInfoFile {
     const file = join(this.workspace, SESSION_INFO_PATH);
     await fs.mkdir(dirname(file), { recursive: true });
     await fs.writeFile(file, content);
-    if (this.mirror) {
-      await this.mirror.write(content).catch((e: unknown) => this.log(`could not write ${this.mirror?.path} in the VM: ${String(e)}`));
-    }
     this.info = info;
+    if (this.mirror) {
+      const mirror = this.mirror;
+      this.mirrorChain = this.mirrorChain.then(() => mirror.write(content)).catch((e: unknown) => this.log(`could not write ${mirror.path} in the VM: ${String(e)}`));
+    }
   }
 
   /** The briefing paragraph; empty until the Control Plane has sent the Session's identity. */

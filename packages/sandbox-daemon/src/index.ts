@@ -378,7 +378,15 @@ const repos = guest ? new Repos(workspace, log, new GuestRepoHost(guest)) : new 
 const sessionInfo = new SessionInfoFile(
   workspace,
   log,
-  guest ? { path: guest.guestPath(SESSION_INFO_PATH), write: (content) => guest.writeFile(guest.guestPath(SESSION_INFO_PATH), content) } : undefined,
+  guest
+    ? {
+        path: guest.guestPath(SESSION_INFO_PATH),
+        write: async (content) => {
+          await guest.waitReady();
+          await guest.writeFile(guest.guestPath(SESSION_INFO_PATH), content);
+        },
+      }
+    : undefined,
 );
 
 /** A `qemu-windows` Session (ADR-0057): the Agent runs inside the Windows VM; its desktop is what the screenshot and input tools act on. */

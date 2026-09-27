@@ -173,7 +173,7 @@ export class WindowsVms implements GuestVms {
     const container = await this.docker.createContainer({
       name: INSTALL_CONTAINER,
       Image: WINDOWS_IMAGE,
-      Env: [`VERSION=${version}`, `DISK_SIZE=${diskGb}G`, `RAM_SIZE=${ramGb}G`, `CPU_CORES=${cpus}`, `USERNAME=${WINDOWS_GUEST_USER}`, `PASSWORD=${password}`],
+      Env: [`VERSION=${version}`, `DISK_SIZE=${diskGb}G`, `RAM_SIZE=${ramGb}G`, `RAM_CHECK=N`, `CPU_CORES=${cpus}`, `USERNAME=${WINDOWS_GUEST_USER}`, `PASSWORD=${password}`],
       Labels: { [LABEL_WINDOWS]: "base" },
       HostConfig: this.host.vmHostConfig([`${BASE_VOLUME}:/storage`], ramGb),
     });
@@ -306,6 +306,7 @@ export class WindowsVms implements GuestVms {
           `DISK_FMT=qcow2`,
           `DISK_SIZE=${this.base.diskGb}G`,
           `RAM_SIZE=${ramGb}G`,
+          `RAM_CHECK=N`,
           `CPU_CORES=${cpus}`,
           `USERNAME=${WINDOWS_GUEST_USER}`,
           `PASSWORD=${this.password()}`,

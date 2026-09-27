@@ -1,5 +1,12 @@
 # Research: a `sessionboxer` MCP in every box — self-knowledge and Control Plane actions
 
+> Implemented in ADR-0062 (`docs/adr/0062-the-sessionboxer-mcp-in-every-box-self-knowledge-and-control-plane-actions.md`),
+> in the three stages of §2.7, with the owner's answers to §4: Agent-created Sessions carry `createdBy` and the
+> sidebar shows *child of* / children; `ui_open` on another Session is ignored silently; `session_message` into
+> Sessions the Agent did not create is allowed under *all Sessions*, always with the marker, and the approval
+> card is only for `session_create`. `session_wait` answers `still_running`; `session_message`'s `when` is
+> `now | queue`; the user guide has a *The agent and Sessionboxer itself* section.
+
 Goal: the Agent in a box knows it runs inside Sessionboxer (which Session, which agent, which
 environment, what the user sees) and can ask Sessionboxer to do things on its behalf: create or
 fork a Session, hand its work to another one, message another box, attach a pull request, open a

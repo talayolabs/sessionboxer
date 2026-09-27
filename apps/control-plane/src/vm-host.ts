@@ -79,7 +79,9 @@ export class VmHost {
         { PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm" },
       ],
       CapAdd: ["NET_ADMIN"],
-      // The guest's RAM plus QEMU's own; the container must not be OOM-killed under the guest.
+      // The guest's RAM plus QEMU's own; the container must not be OOM-killed under the guest. This limit
+      // is the sizing (dockur's own free-memory check is off: it counts the page cache of the ISO it just
+      // downloaded or of the base disk it reads against the cgroup, and shrinks RAM_SIZE to nothing).
       Memory: Math.round((ramGb + 1.5) * 1024 ** 3),
       RestartPolicy: { Name: "no" },
       PublishAllPorts: false,

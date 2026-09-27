@@ -47,6 +47,7 @@ More ways to install, updating and troubleshooting: [user guide → Install](doc
 - **Context gauge.** How full the agent's memory is, what each turn cost, and every byte sent to the model (Claude Code).
 - **MCP servers.** Register once, switch on per session. GitHub connects with one click; one account per repository.
 - **Scheduled tasks.** A prompt on a timetable (cron), into a running session or a fresh one from a template; next runs, history and Run now.
+- **The agent knows where it is.** A `sessionboxer` MCP in every box: who am I, what does the user see, the guide's answers about Sessionboxer; attach a PR, snapshot, rename, queue a follow-up, open a pane for you, start a verification with its own brief — and, if you allow it, create, fork and message other sessions (you Allow / Deny creations from a card in the chat; every action is a marker).
 - **Dictation.** Talk instead of typing; whisper.cpp transcribes on your machine, offline.
 - **From your phone.** Pair a device with a QR code over a tunnel; push notifications when the agent is done.
 - **Stop and resume.** A stopped box uses nothing and comes back where it was.

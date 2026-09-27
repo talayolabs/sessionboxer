@@ -368,6 +368,7 @@ export class MacosVms implements GuestVms {
       `VERSION=${version}`,
       `DISK_SIZE=${diskGb}G`,
       `RAM_SIZE=${ramGb}G`,
+      `RAM_CHECK=N`,
       `CPU_CORES=${cpus}`,
       `WIDTH=${SCREEN.width}`,
       `HEIGHT=${SCREEN.height}`,

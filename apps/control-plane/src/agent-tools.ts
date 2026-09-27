@@ -153,6 +153,8 @@ const SECRET_SHAPED = /secret|token|password|passwd|apikey|api_key|credential|au
 const ITEM_BODY_MAX = 2000;
 const TERMINAL_COLS = 120;
 const TERMINAL_ROWS = 40;
+/** How long `ui_open` waits for a new Terminal's shell to print its prompt before typing the command. */
+const TERMINAL_PROMPT_TIMEOUT_MS = 8_000;
 
 /**
  * The `sessionboxer` MCP's tools, answered for the Session whose Daemon asked (ADR-0062). The Session
@@ -591,12 +593,26 @@ export class AgentTools {
     return { ok: true };
   }
 
+  /**
+   * A shell that gets its first line before it has drawn its prompt garbles it (PowerShell over ssh in a
+   * Windows VM answers with a `>>` continuation prompt); type only once it has written something.
+   */
+  private async waitForPrompt(id: string, ptyId: string): Promise<void> {
+    const deadline = Date.now() + TERMINAL_PROMPT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const read = await this.deps.terminalRead(id, ptyId, 5);
+      if (read.text.trim() !== "" || read.exitCode !== null) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
   private async uiOpen(id: string, p: { pane: UiHint["pane"]; terminal?: { command: string } }): Promise<unknown> {
     let terminalId: string | null = null;
     if (p.pane === "terminal" && p.terminal) {
       const pty = await this.deps.terminalOpen(id, TERMINAL_COLS, TERMINAL_ROWS);
       terminalId = pty.id;
-      await this.deps.terminalInput(id, pty.id, `${p.terminal.command}\n`);
+      await this.waitForPrompt(id, pty.id);
+      await this.deps.terminalInput(id, pty.id, `${p.terminal.command}\r`);
     }
     this.deps.broadcast({ type: "ui_hint", hint: { sessionId: id, pane: p.pane, terminalId } });
     this.mark(id, "ui_open", terminalId ? `opened a Terminal running ${excerpt(p.terminal!.command, 80)}` : `opened the ${p.pane} pane`, p.pane);

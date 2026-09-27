@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# `mac <command…>`: runs a shell command in the macOS VM of this Session over SSH
+# and prints what it wrote; `mac` alone opens an interactive shell there.
+# (ADR-0058: the VM is a sidecar container, its user and password come with the Sandbox.)
+set -euo pipefail
+
+: "${SESSIONBOXER_MACOS_HOST:?This is not a macOS Session: there is no macOS VM to run commands in.}"
+: "${SESSIONBOXER_MACOS_SSH_PORT:=22}"
+: "${SESSIONBOXER_MACOS_USER:=agent}"
+: "${SESSIONBOXER_MACOS_PASSWORD:?SESSIONBOXER_MACOS_PASSWORD is not set}"
+
+export SSHPASS="$SESSIONBOXER_MACOS_PASSWORD"
+opts=(
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+  -o ConnectTimeout=15 -o ServerAliveInterval=30
+  -p "$SESSIONBOXER_MACOS_SSH_PORT"
+)
+target="$SESSIONBOXER_MACOS_USER@$SESSIONBOXER_MACOS_HOST"
+
+if [[ $# -eq 0 ]]; then
+  exec sshpass -e ssh -t "${opts[@]}" "$target"
+fi
+exec sshpass -e ssh "${opts[@]}" "$target" "$*"

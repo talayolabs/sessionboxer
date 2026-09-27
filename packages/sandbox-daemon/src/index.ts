@@ -263,6 +263,25 @@ const windowsBriefing = (): string => {
   ].join("\n");
 };
 
+/** A `qemu-macos` Session (ADR-0058): the macOS VM next to this Sandbox, how to see it and how to run things in it. */
+const macosBriefing = (): string => {
+  const host = env.SESSIONBOXER_MACOS_HOST ?? "";
+  if (host === "") return "";
+  return [
+    "This is a macOS Session. The Desktop of this machine shows a macOS VM full screen over VNC (it takes a minute or two",
+    "to appear after a start; until then the Linux desktop shows a waiting message). The screenshot, mouse and keyboard",
+    "tools act on that macOS desktop as a human would: use them for anything that needs the macOS GUI. The VM's keyboard",
+    "is a Mac's: Command is the Super/Meta key here (`super+c` copies), and macOS shortcuts apply.",
+    "",
+    `Commands in macOS: \`mac <command>\` runs a shell command in the VM over SSH as its user \`${env.SESSIONBOXER_MACOS_USER ?? "agent"}\`,`,
+    "an administrator (for example `mac sw_vers`, `mac 'ls ~/Desktop'`, `mac 'xcode-select --install'`); its output comes back here.",
+    "`mac-scp` is scp to/from the VM (`mac-scp ./file.txt mac:/Users/agent/`, `mac-scp mac:/Users/agent/out.txt .`). Plain `mac` opens an",
+    "interactive shell. The VM has its own disk: this Workspace's repositories are on this Linux machine, not in macOS; copy what",
+    "macOS must see with `mac-scp` (or clone again inside macOS), and bring results back the same way. Your shell, git, gh, the",
+    "editor and the browser are all on this Linux side.",
+  ].join("\n");
+};
+
 const agent = new AgentManager(
   {
     command: acpCommand,
@@ -275,7 +294,7 @@ const agent = new AgentManager(
     newConversation: env.SESSIONBOXER_NEW_CONVERSATION === "1",
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
-    workspaceBriefing: () => [repos.briefing(), windowsBriefing()].filter((s) => s !== "").join("\n\n"),
+    workspaceBriefing: () => [repos.briefing(), windowsBriefing(), macosBriefing()].filter((s) => s !== "").join("\n\n"),
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),

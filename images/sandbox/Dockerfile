@@ -89,7 +89,8 @@ RUN --mount=type=secret,id=extra-ca \
       firefox-esr \
       # Windows Sessions (ADR-0057): the Windows VM's desktop over RDP on this X display,
       # its shell over SSH with the password the Control Plane hands over.
-      freerdp3-x11 sshpass \
+      # macOS Sessions (ADR-0058): the same over VNC (QEMU's server) and SSH.
+      freerdp3-x11 tigervnc-viewer sshpass \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # uv/uvx system-wide: most Python MCP servers are launched as `uvx <package>`.
@@ -268,6 +269,9 @@ COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entry
 # Windows Sessions (ADR-0057): the RDP view of the VM and the `win` / `win-scp` commands into it.
 COPY --chmod=0755 images/sandbox/windows-desktop /usr/local/bin/sessionboxer-windows-desktop
 COPY --chmod=0755 images/sandbox/win images/sandbox/win-scp /usr/local/bin/
+# macOS Sessions (ADR-0058): the VNC view of the VM and the `mac` / `mac-scp` commands into it.
+COPY --chmod=0755 images/sandbox/macos-desktop /usr/local/bin/sessionboxer-macos-desktop
+COPY --chmod=0755 images/sandbox/mac images/sandbox/mac-scp /usr/local/bin/
 # Skills the Control Plane asks for by name (ADR-0044); Claude Code discovers them here, Devin reads the file.
 COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
 RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent/.agents/skills && chown -Rh agent:agent /home/agent/.agents

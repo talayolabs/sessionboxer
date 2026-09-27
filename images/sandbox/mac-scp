@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# `mac-scp <from…> <to>`: scp with the macOS VM of this Session; `mac:` stands for the VM,
+# e.g. `mac-scp ./build.zip mac:/Users/agent/` or `mac-scp -r mac:/Users/agent/out ./out`.
+set -euo pipefail
+
+: "${SESSIONBOXER_MACOS_HOST:?This is not a macOS Session: there is no macOS VM to copy files with.}"
+: "${SESSIONBOXER_MACOS_SSH_PORT:=22}"
+: "${SESSIONBOXER_MACOS_USER:=agent}"
+: "${SESSIONBOXER_MACOS_PASSWORD:?SESSIONBOXER_MACOS_PASSWORD is not set}"
+
+export SSHPASS="$SESSIONBOXER_MACOS_PASSWORD"
+args=()
+for a in "$@"; do
+  args+=("${a/#mac:/$SESSIONBOXER_MACOS_USER@$SESSIONBOXER_MACOS_HOST:}")
+done
+exec sshpass -e scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -o ConnectTimeout=15 -P "$SESSIONBOXER_MACOS_SSH_PORT" "${args[@]}"

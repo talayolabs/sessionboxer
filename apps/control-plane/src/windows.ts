@@ -4,10 +4,11 @@ import { join } from "node:path";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { WINDOWS_GUEST_USER, WINDOWS_VERSIONS, type EnvironmentAvailability, type Settings, type WindowsBaseStatus } from "@sessionboxer/protocol";
-import { DATA_DIR, ROOT_DIR, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
+import { DATA_DIR, ROOT_DIR } from "./config.js";
 import { LABEL_SESSION } from "./docker.js";
 import { HttpError } from "./http-error.js";
 import { log } from "./log.js";
+import { type GuestVms, VM_LOG_LINES, VmHost, demux, isStatus } from "./vm-host.js";
 
 /**
  * Windows VMs for `qemu-windows` Sessions (ADR-0057). Each such Session gets, next to its Linux
@@ -29,9 +30,6 @@ const OEM_DIR = join(ROOT_DIR, "images/windows/oem");
 const BASE_DISK = "data.img";
 const SESSION_DISK = "data.qcow2";
 const BASE_MOUNT = "/base";
-const LOG_LINES = 40;
-/** A guest shutdown request must get through before the container is killed (Windows takes its time). */
-const STOP_SECONDS = 120;
 
 interface BaseRecord {
   version: string;
@@ -48,20 +46,24 @@ export function windowsVolumeName(sessionId: string): string {
   return `sbx-win-${sessionId}`;
 }
 
-export class WindowsVms {
+export class WindowsVms implements GuestVms {
+  readonly guestLabel = "Windows VM";
+  private readonly docker: Docker;
+  private readonly host: VmHost;
   private base: BaseRecord | null = null;
   private installing: { startedAt: string; version: string; diskGb: number; log: string[]; container: Docker.Container } | null = null;
   private lastError: string | null = null;
   private errorLog: string[] = [];
-  private kvm: string | null | undefined;
 
   constructor(
-    private readonly docker: Docker,
+    docker: Docker,
     private readonly settings: () => Settings,
     private readonly saveSettings: (next: Settings) => void,
     private readonly countSessions: () => number,
     private readonly onStatus: (status: WindowsBaseStatus) => void,
   ) {
+    this.docker = docker;
+    this.host = new VmHost(docker, "win", WINDOWS_IMAGE, LABEL_WINDOWS, "Windows VMs");
     if (existsSync(BASE_FILE)) {
       try {
         this.base = JSON.parse(readFileSync(BASE_FILE, "utf8")) as BaseRecord;
@@ -73,7 +75,7 @@ export class WindowsVms {
 
   /** Re-attaches to an install left running by a previous Control Plane; drops a base record whose volume is gone. */
   async init(): Promise<void> {
-    if (this.base && !(await this.volumeExists(BASE_VOLUME))) {
+    if (this.base && !(await this.host.volumeExists(BASE_VOLUME))) {
       log(`windows: base volume ${BASE_VOLUME} is gone; forgetting the installed base`);
       this.setBase(null);
     }
@@ -96,46 +98,12 @@ export class WindowsVms {
     }
   }
 
-  /**
-   * Whether this Docker host can run KVM guests: a throwaway container is given `/dev/kvm`
-   * and looks for it, which covers a missing module, Docker Desktop's VM (no nested KVM) and
-   * a Control Plane running in a container that cannot see the host's `/dev`. Cached; `null`
-   * when it can, the reason otherwise.
-   */
-  async kvmUnavailable(refresh = false): Promise<string | null> {
-    if (this.kvm !== undefined && !refresh) return this.kvm;
-    const info = (await this.docker.info()) as { OSType?: string; OperatingSystem?: string };
-    if (info.OSType && info.OSType !== "linux") {
-      return (this.kvm = `Windows VMs need a Linux Docker host with KVM (this one runs ${info.OSType}).`);
-    }
-    const desktop = /docker desktop/i.test(info.OperatingSystem ?? "");
-    let container: Docker.Container | null = null;
-    try {
-      // The Sandbox image is always local; the VM image is only pulled when a base gets installed.
-      container = await this.docker.createContainer({
-        name: `sbx-kvm-probe-${Date.now().toString(36)}`,
-        Image: SANDBOX_IMAGE,
-        Entrypoint: ["/bin/sh", "-c", "test -c /dev/kvm && test -w /dev/kvm"],
-        Cmd: [],
-        User: "0:0",
-        Labels: { [LABEL_WINDOWS]: "probe" },
-        HostConfig: { NetworkMode: "none", Devices: [{ PathOnHost: "/dev/kvm", PathInContainer: "/dev/kvm", CgroupPermissions: "rwm" }] },
-      });
-      await container.start();
-      const { StatusCode } = (await container.wait()) as { StatusCode: number };
-      this.kvm = StatusCode === 0 ? null : "/dev/kvm is not usable inside containers on this Docker host.";
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (/kvm|no such file/i.test(message)) {
-        this.kvm = `The Docker host has no /dev/kvm${desktop ? " (Docker Desktop's VM has no KVM)" : ""}; Windows VMs need a Linux host with KVM.`;
-      } else {
-        // Anything else (the image not pulled yet, Docker hiccup) is transient: try again next time.
-        return `Cannot check for KVM: ${message}`;
-      }
-    } finally {
-      await container?.remove({ force: true }).catch(() => undefined);
-    }
-    return this.kvm;
+  vmName(sessionId: string): string {
+    return windowsVmName(sessionId);
+  }
+
+  kvmUnavailable(refresh = false): Promise<string | null> {
+    return this.host.kvmUnavailable(refresh);
   }
 
   /** Whether a `qemu-windows` Session can be created now, for `PublicSettings.environments`. */
@@ -189,12 +157,12 @@ export class WindowsVms {
     if (!existsSync(join(OEM_DIR, "install.bat"))) throw new HttpError(500, `${OEM_DIR}/install.bat is missing from this checkout.`);
     const password = this.password();
 
-    await this.removeContainer(INSTALL_CONTAINER);
-    if (this.base || (await this.volumeExists(BASE_VOLUME))) {
-      await this.removeVolume(BASE_VOLUME);
+    await this.host.removeContainer(INSTALL_CONTAINER);
+    if (this.base || (await this.host.volumeExists(BASE_VOLUME))) {
+      await this.host.removeVolume(BASE_VOLUME);
       this.setBase(null);
     }
-    await this.ensureImage();
+    await this.host.ensureImage();
     this.lastError = null;
     this.errorLog = [];
     const container = await this.docker.createContainer({
@@ -202,7 +170,7 @@ export class WindowsVms {
       Image: WINDOWS_IMAGE,
       Env: [`VERSION=${version}`, `DISK_SIZE=${diskGb}G`, `RAM_SIZE=${ramGb}G`, `CPU_CORES=${cpus}`, `USERNAME=${WINDOWS_GUEST_USER}`, `PASSWORD=${password}`],
       Labels: { [LABEL_WINDOWS]: "base" },
-      HostConfig: this.vmHostConfig([`${BASE_VOLUME}:/storage`], ramGb),
+      HostConfig: this.host.vmHostConfig([`${BASE_VOLUME}:/storage`], ramGb),
     });
     // dockur/windows takes the OEM folder from `/storage/oem` when no `/oem` is mounted: no host path needed.
     await container.putArchive(pack(OEM_DIR, { map: (h) => ({ ...h, name: `oem/${h.name}` }) }), { path: "/storage" });
@@ -220,7 +188,7 @@ export class WindowsVms {
     const { container } = this.installing;
     this.installing = null;
     await container.remove({ force: true, v: true }).catch(() => undefined);
-    await this.removeVolume(BASE_VOLUME).catch(() => undefined);
+    await this.host.removeVolume(BASE_VOLUME).catch(() => undefined);
     this.lastError = "The install was cancelled.";
     this.errorLog = [];
     this.onStatus(this.status());
@@ -232,8 +200,8 @@ export class WindowsVms {
     if (this.installing) throw new HttpError(409, "The Windows base disk is installing; cancel that first.");
     const sessions = this.countSessions();
     if (sessions > 0) throw new HttpError(409, `${sessions} Windows Session${sessions === 1 ? " still uses" : "s still use"} the base disk; delete ${sessions === 1 ? "it" : "them"} first.`);
-    await this.removeContainer(INSTALL_CONTAINER);
-    await this.removeVolume(BASE_VOLUME);
+    await this.host.removeContainer(INSTALL_CONTAINER);
+    await this.host.removeVolume(BASE_VOLUME);
     this.setBase(null);
     this.lastError = null;
     this.onStatus(this.status());
@@ -246,12 +214,12 @@ export class WindowsVms {
     const { container, version, diskGb } = current;
     let lastReport = 0;
     try {
-      const stream = (await container.logs({ follow: true, stdout: true, stderr: true, tail: LOG_LINES })) as NodeJS.ReadableStream;
+      const stream = (await container.logs({ follow: true, stdout: true, stderr: true, tail: VM_LOG_LINES })) as NodeJS.ReadableStream;
       stream.on("data", (chunk: Buffer) => {
         if (this.installing !== current) return;
         for (const line of demux(chunk)) {
           current.log.push(line);
-          if (current.log.length > LOG_LINES) current.log.splice(0, current.log.length - LOG_LINES);
+          if (current.log.length > VM_LOG_LINES) current.log.splice(0, current.log.length - VM_LOG_LINES);
         }
         if (Date.now() - lastReport > 2000) {
           lastReport = Date.now();
@@ -273,10 +241,10 @@ export class WindowsVms {
   /** The installer container exited: a clean guest power-off after the OEM marker means the base is ready. */
   private async finishInstall(container: Docker.Container, version: string, diskGb: number, exitCode: number, tail?: string[]): Promise<void> {
     this.installing = null;
-    const lines = tail ?? (await this.tailLogs(container));
+    const lines = tail ?? (await this.host.tailLogs(container));
     const complete = exitCode === 0 && (await this.baseComplete());
     if (complete) {
-      const sizeBytes = await this.volumeSize(BASE_VOLUME);
+      const sizeBytes = await this.host.volumeSize(BASE_VOLUME);
       this.setBase({ version, diskGb, installedAt: new Date().toISOString(), sizeBytes });
       this.lastError = null;
       this.errorLog = [];
@@ -290,22 +258,13 @@ export class WindowsVms {
       log(`windows: base install failed: ${this.lastError}`);
     }
     await container.remove({ force: true }).catch(() => undefined);
-    if (!complete) await this.removeVolume(BASE_VOLUME).catch(() => undefined);
+    if (!complete) await this.host.removeVolume(BASE_VOLUME).catch(() => undefined);
     this.onStatus(this.status());
-  }
-
-  private async tailLogs(container: Docker.Container): Promise<string[]> {
-    try {
-      const logs = (await container.logs({ stdout: true, stderr: true, tail: LOG_LINES })) as unknown as Buffer;
-      return demux(logs);
-    } catch {
-      return [];
-    }
   }
 
   /** dockur/windows creates `windows.boot` once Windows Setup has finished; the OEM script's own marker sits inside the guest disk, which only Windows reads. */
   private async baseComplete(): Promise<boolean> {
-    return this.helper(`test -f /storage/windows.boot && test -s /storage/${BASE_DISK}`, [`${BASE_VOLUME}:/storage:ro`])
+    return this.host.helper(`test -f /storage/windows.boot && test -s /storage/${BASE_DISK}`, [`${BASE_VOLUME}:/storage:ro`])
       .then(() => true)
       .catch(() => false);
   }
@@ -320,11 +279,11 @@ export class WindowsVms {
     if (!this.base) throw new HttpError(409, "The Windows base disk is not installed (Global settings → Windows).");
     const { ramGb, cpus } = this.settings().windows;
     const volume = windowsVolumeName(sessionId);
-    await this.removeContainer(windowsVmName(sessionId));
-    await this.removeVolume(volume).catch(() => undefined);
+    await this.host.removeContainer(windowsVmName(sessionId));
+    await this.host.removeVolume(volume).catch(() => undefined);
     await this.docker.createVolume({ Name: volume, Labels: { [LABEL_WINDOWS]: sessionId } });
     try {
-      await this.helper(
+      await this.host.helper(
         [
           "set -e",
           `cd ${BASE_MOUNT}`,
@@ -348,48 +307,37 @@ export class WindowsVms {
         ],
         // The Session label puts the VM on the same death watch as the Sandbox (`watchDeaths`).
         Labels: { [LABEL_WINDOWS]: "vm", [LABEL_SESSION]: sessionId },
-        HostConfig: this.vmHostConfig([`${volume}:/storage`, `${BASE_VOLUME}:${BASE_MOUNT}:ro`], ramGb),
+        HostConfig: this.host.vmHostConfig([`${volume}:/storage`, `${BASE_VOLUME}:${BASE_MOUNT}:ro`], ramGb),
       });
       return container.id;
     } catch (e) {
-      await this.removeVolume(volume).catch(() => undefined);
+      await this.host.removeVolume(volume).catch(() => undefined);
       throw e;
     }
   }
 
-  async start(vmId: string): Promise<void> {
-    await this.docker.getContainer(vmId).start();
+  start(vmId: string): Promise<void> {
+    return this.host.start(vmId);
   }
 
-  /** Asks the guest to shut down (dockur/windows turns SIGTERM into an ACPI power button) and waits for it. */
-  async stop(vmId: string): Promise<void> {
-    try {
-      await this.docker.getContainer(vmId).stop({ t: STOP_SECONDS });
-    } catch (e) {
-      if (!isStatus(e, 304)) throw e;
-    }
+  stop(vmId: string): Promise<void> {
+    return this.host.stop(vmId);
   }
 
-  async state(vmId: string): Promise<"running" | "stopped" | "missing"> {
-    try {
-      const info = await this.docker.getContainer(vmId).inspect();
-      return info.State.Running ? "running" : "stopped";
-    } catch (e) {
-      if (isStatus(e, 404)) return "missing";
-      throw e;
-    }
+  state(vmId: string): Promise<"running" | "stopped" | "missing"> {
+    return this.host.state(vmId);
   }
 
   /** Removes the VM container and the Session's disk. */
   async remove(sessionId: string): Promise<void> {
-    await this.removeContainer(windowsVmName(sessionId));
-    await this.removeVolume(windowsVolumeName(sessionId));
+    await this.host.removeContainer(windowsVmName(sessionId));
+    await this.host.removeVolume(windowsVolumeName(sessionId));
   }
 
   /** Bytes the Session's overlay disk takes (what the VM wrote on top of the base). */
   async diskUsage(sessionId: string): Promise<number | null> {
     try {
-      return await this.volumeSize(windowsVolumeName(sessionId));
+      return await this.host.volumeSize(windowsVolumeName(sessionId));
     } catch {
       return null;
     }
@@ -406,122 +354,9 @@ export class WindowsVms {
     };
   }
 
-  private vmHostConfig(binds: string[], ramGb: number): Docker.HostConfig {
-    return {
-      Binds: binds,
-      NetworkMode: SANDBOX_NETWORK,
-      Devices: [
-        { PathOnHost: "/dev/kvm", PathInContainer: "/dev/kvm", CgroupPermissions: "rwm" },
-        { PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm" },
-      ],
-      CapAdd: ["NET_ADMIN"],
-      // The guest's RAM plus QEMU's own; the container must not be OOM-killed under the guest.
-      Memory: Math.round((ramGb + 1.5) * 1024 ** 3),
-      RestartPolicy: { Name: "no" },
-      PublishAllPorts: false,
-    };
-  }
-
-  private async ensureImage(): Promise<void> {
-    try {
-      await this.docker.getImage(WINDOWS_IMAGE).inspect();
-      return;
-    } catch (e) {
-      if (!isStatus(e, 404)) throw e;
-    }
-    log(`windows: pulling ${WINDOWS_IMAGE}`);
-    const stream = (await this.docker.pull(WINDOWS_IMAGE)) as NodeJS.ReadableStream;
-    await new Promise<void>((resolve, reject) => {
-      this.docker.modem.followProgress(stream, (err) => (err ? reject(err) : resolve()));
-    });
-  }
-
-  /** Runs `script` as root in a throwaway container on the VM image (it has qemu-img) with `binds`; throws with the output on failure. */
-  private async helper(script: string, binds: string[]): Promise<string> {
-    await this.ensureImage();
-    const container = await this.docker.createContainer({
-      name: `sbx-win-helper-${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`,
-      Image: WINDOWS_IMAGE,
-      Entrypoint: ["/bin/sh", "-c", script],
-      Cmd: [],
-      User: "0:0",
-      Labels: { [LABEL_WINDOWS]: "helper" },
-      HostConfig: { Binds: binds, NetworkMode: "none", CapDrop: ["ALL"], CapAdd: ["CHOWN", "FOWNER", "DAC_OVERRIDE"] },
-    });
-    try {
-      await container.start();
-      const { StatusCode } = (await container.wait()) as { StatusCode: number };
-      const logs = (await container.logs({ stdout: true, stderr: true })) as unknown as Buffer;
-      const output = demux(logs).join("\n");
-      if (StatusCode !== 0) throw new Error(`Windows disk helper exited ${StatusCode}: ${output.slice(-500)}`);
-      return output;
-    } finally {
-      await container.remove({ force: true }).catch(() => undefined);
-    }
-  }
-
-  private async volumeExists(name: string): Promise<boolean> {
-    try {
-      await this.docker.getVolume(name).inspect();
-      return true;
-    } catch (e) {
-      if (isStatus(e, 404)) return false;
-      throw e;
-    }
-  }
-
-  /** Blocks actually used (the disk images are sparse; their apparent size is the full disk). */
-  private async volumeSize(name: string): Promise<number> {
-    const out = await this.helper("du -sk /storage | cut -f1", [`${name}:/storage:ro`]);
-    const n = Number(out.trim().split("\n").pop());
-    return Number.isFinite(n) ? n * 1024 : 0;
-  }
-
-  private async removeVolume(name: string): Promise<void> {
-    try {
-      await this.docker.getVolume(name).remove();
-    } catch (e) {
-      if (!isStatus(e, 404)) throw e;
-    }
-  }
-
-  private async removeContainer(nameOrId: string): Promise<void> {
-    try {
-      await this.docker.getContainer(nameOrId).remove({ force: true, v: true });
-    } catch (e) {
-      if (!isStatus(e, 404)) throw e;
-    }
-  }
-
   private setBase(base: BaseRecord | null): void {
     this.base = base;
     if (base) writeFileSync(BASE_FILE, JSON.stringify(base, null, 2) + "\n");
     else rmSync(BASE_FILE, { force: true });
   }
-}
-
-/** Docker's multiplexed log stream (8-byte frame headers) or plain bytes, as clean lines. */
-function demux(buf: Buffer): string[] {
-  const lines: string[] = [];
-  let text = "";
-  let offset = 0;
-  if (buf.length >= 8 && (buf[0] === 1 || buf[0] === 2) && buf[1] === 0 && buf[2] === 0 && buf[3] === 0) {
-    while (offset + 8 <= buf.length) {
-      const size = buf.readUInt32BE(offset + 4);
-      text += buf.subarray(offset + 8, offset + 8 + size).toString("utf8");
-      offset += 8 + size;
-    }
-  } else {
-    text = buf.toString("utf8");
-  }
-  for (const raw of text.split(/\r?\n/)) {
-    // eslint-disable-next-line no-control-regex
-    const line = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/^❯\s*/, "").trim();
-    if (line) lines.push(line);
-  }
-  return lines;
-}
-
-function isStatus(e: unknown, status: number): boolean {
-  return typeof e === "object" && e !== null && (e as { statusCode?: unknown }).statusCode === status;
 }

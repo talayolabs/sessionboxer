@@ -73,6 +73,7 @@ import type {
   TunnelServerInfo,
   UpdateSettingsRequest,
   WindowsBaseStatus,
+  MacosBaseStatus,
 } from "@sessionboxer/protocol";
 
 /** Fired on `window` when the Control Plane answers 401 to anything but a login attempt: the device cookie is gone or revoked. */
@@ -125,6 +126,11 @@ export const api = {
   windowsInstall: () => request<WindowsBaseStatus>("/windows/install", { method: "POST" }),
   windowsCancel: () => request<WindowsBaseStatus>("/windows/cancel", { method: "POST" }),
   windowsRemove: () => request<WindowsBaseStatus>("/windows", { method: "DELETE" }),
+  /** The shared macOS base disk of `qemu-macos` Sessions (ADR-0058). */
+  macosBase: () => request<MacosBaseStatus>("/macos"),
+  macosInstall: () => request<MacosBaseStatus>("/macos/install", { method: "POST" }),
+  macosCancel: () => request<MacosBaseStatus>("/macos/cancel", { method: "POST" }),
+  macosRemove: () => request<MacosBaseStatus>("/macos", { method: "DELETE" }),
   speechStatus: () => request<SpeechStatus>("/speech"),
   speechPrepare: () => request<SpeechStatus>("/speech/prepare", { method: "POST" }),
   speechDeleteModel: (model: SpeechModel) => request<void>(`/speech/models/${model}`, { method: "DELETE" }),

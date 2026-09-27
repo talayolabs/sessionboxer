@@ -17,7 +17,8 @@ export type IconName =
   | "delete"
   | "image"
   | "usb"
-  | "windows";
+  | "windows"
+  | "apple";
 
 /** Feather-style outline glyphs (24-unit grid, `currentColor` strokes). */
 const GLYPHS: Record<IconName, ReactNode> = {
@@ -102,6 +103,13 @@ const GLYPHS: Record<IconName, ReactNode> = {
   windows: (
     <>
       <path d="M3 5.5l7.5-1v7H3zM12 4.3L21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z" />
+    </>
+  ),
+  // An apple with a leaf: the mark of a macOS Session.
+  apple: (
+    <>
+      <path d="M12 7.5c-1.2-1-3.3-1.2-4.8.1C5 9.5 5.2 14 7.2 17.3c1 1.7 2.1 3 3.5 2.9 1-.1 1.3-.6 2.3-.6s1.3.6 2.3.6c1.4 0 2.4-1.4 3.4-3 .5-.9.8-1.6 1-2.1-2.8-1.2-3.2-5.1-.4-6.5-1.3-1.6-3.6-1.9-5.1-.9-.6.4-1.2.4-1.2.4" />
+      <path d="M12 7.5c0-2 1.4-3.6 3.3-4" />
     </>
   ),
 };

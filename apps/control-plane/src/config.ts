@@ -30,6 +30,7 @@ import {
   type TunnelStatuses,
   type UpdateSettingsRequest,
   WINDOWS_VERSIONS,
+  MACOS_VERSIONS,
 } from "@sessionboxer/protocol";
 import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
 import { HttpError } from "./http-error.js";
@@ -158,7 +159,7 @@ export function saveSettings(settings: Settings): void {
 }
 
 export function applySettingsUpdate(current: Settings, update: UpdateSettingsRequest): Settings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, tunnels, windows, ...rest } = update;
+  const { providerSecrets, mcpServers, connectors, claudeApi, tunnels, windows, macos, ...rest } = update;
   const next: Settings = { ...current, ...stripUndefined(rest) };
   if (mcpServers) next.mcpServers = mergeMcpServers(current.mcpServers, mcpServers);
   if (windows) {
@@ -166,6 +167,13 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     next.windows.version = next.windows.version.trim().toLowerCase();
     if (!WINDOWS_VERSIONS.some((v) => v.code === next.windows.version)) {
       throw new HttpError(400, `Unknown Windows edition "${next.windows.version}".`);
+    }
+  }
+  if (macos) {
+    next.macos = { ...current.macos, ...stripUndefined(macos) };
+    next.macos.version = next.macos.version.trim().toLowerCase();
+    if (!MACOS_VERSIONS.some((v) => v.code === next.macos.version)) {
+      throw new HttpError(400, `Unknown macOS release "${next.macos.version}".`);
     }
   }
   if (tunnels) {
@@ -251,13 +259,15 @@ export function toPublicSettings(
   tunnels: TunnelStatuses,
   environments: PublicSettings["environments"],
 ): PublicSettings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, windows, ...rest } = settings;
+  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, windows, macos, ...rest } = settings;
   const base = claudeBaseUrl(settings);
   const { secret, ...sessionboxer } = tunnelSettings.sessionboxer;
   const { password: _password, ...publicWindows } = windows;
+  const { password: _macPassword, ...publicMacos } = macos;
   return {
     ...rest,
     windows: publicWindows,
+    macos: publicMacos,
     environments,
     tunnels: { ...tunnelSettings, sessionboxer: { ...sessionboxer, secretSet: secret !== "" } },
     mcpServers: mcpServers.map(toPublicMcpServer),

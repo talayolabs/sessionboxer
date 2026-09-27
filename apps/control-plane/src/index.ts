@@ -95,8 +95,9 @@ import { banner, log } from "./log.js";
 import { HostOrSandboxRunner, ProviderLogins } from "./provider-login.js";
 import { PushNotifier } from "./push.js";
 import { Scheduler } from "./scheduler.js";
-import { HttpError, MACOS_AVAILABILITY, SessionManager } from "./sessions.js";
+import { HttpError, SessionManager } from "./sessions.js";
 import { WindowsVms } from "./windows.js";
+import { MacosVms } from "./macos.js";
 import { deleteModel, Speech } from "./speech.js";
 import { bridgeTerminal } from "./terminal-bridge.js";
 import { checkTunnelName, tunnelName, tunnelServerInfo } from "./tunnel-frp.js";
@@ -155,7 +156,17 @@ const windows = new WindowsVms(
   () => db.listSessions().filter((s) => s.settings.sandbox.environment === "qemu-windows").length,
   (status) => sessions.notify({ type: "windows_base", status }),
 );
-const sessions = new SessionManager(db, docker, windows, () => settings, log, (msg) => push.send(msg));
+const macos = new MacosVms(
+  docker,
+  () => settings,
+  (next) => {
+    settings = next;
+    saveSettings(settings);
+  },
+  () => db.listSessions().filter((s) => s.settings.sandbox.environment === "qemu-macos").length,
+  (status) => sessions.notify({ type: "macos_base", status }),
+);
+const sessions = new SessionManager(db, docker, windows, macos, () => settings, log, (msg) => push.send(msg));
 // Codex rotates its ChatGPT tokens inside the Sandbox; the rewritten auth.json replaces the stored one
 // (unless it is older than what another Sandbox already sent) and reaches the other Codex Sessions.
 sessions.codexAuthRefreshed = (sessionId, authJson) => {
@@ -199,7 +210,7 @@ const publicSettings = async () =>
   toPublicSettings(settings, await sessions.dockerModeAvailable(), tunnels.statuses(), {
     "docker-linux": { available: true, reason: null },
     "qemu-windows": await windows.availability(),
-    "qemu-macos": MACOS_AVAILABILITY,
+    "qemu-macos": await macos.availability(),
   });
 const connectors = new Connectors(
   {
@@ -328,6 +339,27 @@ api.get("/windows", (c) => c.json(windows.status()));
 api.post("/windows/install", async (c) => c.json(await windows.install()));
 api.post("/windows/cancel", async (c) => c.json(await windows.cancelInstall()));
 api.delete("/windows", async (c) => c.json(await windows.removeBase()));
+
+/** The shared macOS base disk (ADR-0058): its state, installing / cancelling / deleting it, and its screen while it installs. */
+api.get("/macos", (c) => c.json(macos.status()));
+api.post("/macos/install", async (c) => c.json(await macos.install()));
+api.post("/macos/cancel", async (c) => c.json(await macos.cancelInstall()));
+api.delete("/macos", async (c) => c.json(await macos.removeBase()));
+api.get(
+  "/macos/screen",
+  upgradeWebSocket(async () => {
+    const target = await macos.screenUrl();
+    return {
+      onOpen(_evt, ws) {
+        if (!ws.raw) return;
+        bridgeDesktop(ws.raw, target, log);
+      },
+      onError(err) {
+        log(`macos screen ws error: ${String(err)}`);
+      },
+    };
+  }),
+);
 
 api.get("/sandbox-image", (c) => c.json(docker.imageStatus()));
 // Retries a pull that failed (a network drop, a registry outage); a no-op while one runs or once the image is here.
@@ -784,6 +816,7 @@ if (existsSync(webDist)) {
 }
 
 await windows.init().catch((e: unknown) => log(`windows: ${e instanceof Error ? e.message : String(e)}`));
+await macos.init().catch((e: unknown) => log(`macos: ${e instanceof Error ? e.message : String(e)}`));
 await sessions.boot();
 scheduler.start();
 if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {

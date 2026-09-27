@@ -46,7 +46,10 @@ import {
   type WindowsBaseStatus,
   WINDOWS_VERSIONS,
   WINDOWS_GUEST_USER,
-  WINDOWS_NO_SNAPSHOT,
+  type MacosBaseStatus,
+  MACOS_VERSIONS,
+  MACOS_GUEST_USER,
+  VM_NO_SNAPSHOT,
   type SpeechStatus,
 } from "@sessionboxer/protocol";
 import { api, subscribe } from "./api";
@@ -76,6 +79,7 @@ import { AdvancedSettingsDialog } from "./AdvancedSettingsDialog";
 import { providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
 import { Icon, type IconName } from "./Icons";
+import { MacosBase } from "./MacosBase";
 import { ContextGauge, ContextPane } from "./Context";
 import { NoEntrySign, UsageBars, UsageLimitBar } from "./Usage";
 import { deriveContext, type Compaction, type ContextState } from "./context-model";
@@ -212,6 +216,7 @@ export function App() {
   const [snapshotting, setSnapshotting] = useState<Set<string>>(() => new Set());
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [windowsBase, setWindowsBase] = useState<WindowsBaseStatus | null>(null);
+  const [macosBase, setMacosBase] = useState<MacosBaseStatus | null>(null);
   const [models, setModels] = useState<ProviderModels | null>(null);
   const [options, setOptions] = useState<ProviderOptions | null>(null);
   // The set-up dialogs (Provider logins, GitHub), reachable from the first screen, the sidebar checklist and the banner.
@@ -303,6 +308,7 @@ export function App() {
     void reloadSessions();
     void run(async () => setSettings(await api.settings()));
     void api.windowsBase().then(setWindowsBase, () => undefined);
+    void api.macosBase().then(setMacosBase, () => undefined);
     void run(async () => setModels(await api.models()));
     void run(async () => setOptions(await api.options()));
     void run(async () => setSchedules(await api.schedules()));
@@ -471,6 +477,10 @@ export function App() {
             // Whether `qemu-windows` can be picked follows the base disk's state.
             void api.settings().then(setSettings, () => undefined);
             break;
+          case "macos_base":
+            setMacosBase(msg.status);
+            void api.settings().then(setSettings, () => undefined);
+            break;
         }
       },
       () => {
@@ -614,6 +624,11 @@ export function App() {
                   {s.settings.sandbox.environment === "qemu-windows" && (
                     <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: a Windows VM next to the Sandbox`}>
                       <Icon name="windows" size={12} />
+                    </span>
+                  )}
+                  {s.settings.sandbox.environment === "qemu-macos" && (
+                    <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: a macOS VM next to the Sandbox`}>
+                      <Icon name="apple" size={12} />
                     </span>
                   )}
                   <SessionSourceIcon session={s} />
@@ -819,6 +834,8 @@ export function App() {
             }}
             windowsBase={windowsBase}
             onWindowsBase={setWindowsBase}
+            macosBase={macosBase}
+            onMacosBase={setMacosBase}
             run={run}
           />
         )}
@@ -1267,7 +1284,7 @@ function SessionView({
 
   const copiedRepos = session.repos.filter((r) => r.source.type === "copy");
   const isLive = session.status === "idle" || session.status === "running";
-  const windows = session.settings.sandbox.environment === "qemu-windows";
+  const noSnapshot = VM_NO_SNAPSHOT[session.settings.sandbox.environment];
   const latestSnapshot = snapshots[snapshots.length - 1];
   const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
   const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending;
@@ -1293,16 +1310,16 @@ function SessionView({
       key: "snapshot",
       icon: "snapshot",
       label: snapshotting ? "Snapshotting\u2026" : "Snapshot",
-      title: windows ? WINDOWS_NO_SNAPSHOT : isLive ? "docker commit the Sandbox now (a fork point)" : "Snapshots need a running Sandbox",
-      disabled: windows || !isLive || snapshotting,
+      title: noSnapshot ?? (isLive ? "docker commit the Sandbox now (a fork point)" : "Snapshots need a running Sandbox"),
+      disabled: noSnapshot !== undefined || !isLive || snapshotting,
       onPick: () => void run(() => api.createSnapshot(session.id)),
     },
     {
       key: "fork",
       icon: "fork",
       label: "Fork\u2026",
-      title: windows ? WINDOWS_NO_SNAPSHOT : latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first",
-      disabled: windows || !latestSnapshot,
+      title: noSnapshot ?? (latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first"),
+      disabled: noSnapshot !== undefined || !latestSnapshot,
       onPick: () => latestSnapshot && setForkFrom(latestSnapshot.id),
     },
     ...(copiedRepos.length > 0
@@ -1447,6 +1464,12 @@ function SessionView({
           <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: the Desktop shows a Windows VM over RDP; \`win <command>\` runs PowerShell in it`}>
             <Icon name="windows" size={16} />
             {mobile && <span className="muted">{ENVIRONMENT_LABELS["qemu-windows"]}</span>}
+          </span>
+        )}
+        {session.settings.sandbox.environment === "qemu-macos" && (
+          <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the Desktop shows a macOS VM over VNC; \`mac <command>\` runs a shell command in it`}>
+            <Icon name="apple" size={16} />
+            {mobile && <span className="muted">{ENVIRONMENT_LABELS["qemu-macos"]}</span>}
           </span>
         )}
         {session.repos.length > 0 ? (
@@ -2174,6 +2197,7 @@ const GLOBAL_SETTINGS_SECTIONS = [
   { id: "mcp", label: "MCP servers" },
   { id: "sandbox", label: "Sandbox resources" },
   { id: "windows", label: "Windows VMs" },
+  { id: "macos", label: "macOS VMs" },
   { id: "git-identity", label: "Git identity" },
   { id: "snapshots", label: "Snapshots" },
   { id: "verification", label: "Verification" },
@@ -2199,6 +2223,8 @@ function SettingsView({
   onStored,
   windowsBase,
   onWindowsBase,
+  macosBase,
+  onMacosBase,
   run,
 }: {
   settings: PublicSettings;
@@ -2211,6 +2237,9 @@ function SettingsView({
   /** The shared Windows base disk (ADR-0057), kept current by the `windows_base` broadcast. */
   windowsBase: WindowsBaseStatus | null;
   onWindowsBase: (status: WindowsBaseStatus) => void;
+  /** The shared macOS base disk (ADR-0058), kept current by the `macos_base` broadcast. */
+  macosBase: MacosBaseStatus | null;
+  onMacosBase: (status: MacosBaseStatus) => void;
   run: Runner;
 }) {
   const [token, setToken] = useState("");
@@ -2238,6 +2267,10 @@ function SettingsView({
   const [windowsRam, setWindowsRam] = useState(String(settings.windows.ramGb));
   const [windowsCpus, setWindowsCpus] = useState(String(settings.windows.cpus));
   const [windowsDisk, setWindowsDisk] = useState(String(settings.windows.diskGb));
+  const [macosVersion, setMacosVersion] = useState(settings.macos.version);
+  const [macosRam, setMacosRam] = useState(String(settings.macos.ramGb));
+  const [macosCpus, setMacosCpus] = useState(String(settings.macos.cpus));
+  const [macosDisk, setMacosDisk] = useState(String(settings.macos.diskGb));
   const [autoSnapshot, setAutoSnapshot] = useState(settings.autoSnapshot);
   const [snapshotKeep, setSnapshotKeep] = useState(String(settings.snapshotKeep));
   const [e2eVerify, setE2eVerify] = useState(settings.e2eVerify);
@@ -2294,6 +2327,12 @@ function SettingsView({
           ramGb: Math.max(1, Number(windowsRam) || settings.windows.ramGb),
           cpus: Math.max(1, Math.floor(Number(windowsCpus) || settings.windows.cpus)),
           diskGb: Math.max(16, Math.floor(Number(windowsDisk) || settings.windows.diskGb)),
+        },
+        macos: {
+          version: macosVersion,
+          ramGb: Math.max(2, Number(macosRam) || settings.macos.ramGb),
+          cpus: Math.max(1, Math.floor(Number(macosCpus) || settings.macos.cpus)),
+          diskGb: Math.max(32, Math.floor(Number(macosDisk) || settings.macos.diskGb)),
         },
         autoSnapshot,
         snapshotKeep: Math.max(0, Math.floor(Number(snapshotKeep) || 0)),
@@ -2722,6 +2761,59 @@ function SettingsView({
                 status={windowsBase}
                 onStatus={onWindowsBase}
                 dirty={windowsVersion !== settings.windows.version || Number(windowsDisk) !== settings.windows.diskGb}
+              />
+            </fieldset>
+          )}
+          {show("macos") && (
+            <fieldset className="choice">
+              <legend>macOS VMs</legend>
+              <p className="muted">
+                A <strong>QEMU · macOS</strong> Session runs a macOS VM (QEMU/KVM booted by OpenCore, the dockur/macos way) next to its Linux Sandbox:
+                the Desktop shows macOS over VNC, the Agent drives it with the same screenshot, mouse and keyboard tools, and{" "}
+                <code>mac &lt;command&gt;</code> runs a shell command in it over SSH as <code>{MACOS_GUEST_USER}</code>. Every VM starts from one
+                shared base disk, installed here once from Apple&apos;s Recovery image. There is no unattended installer: you install macOS and create
+                the <code>{MACOS_GUEST_USER}</code> account by hand in the VM&apos;s screen below (about an hour, mostly waiting), then Sessionboxer
+                finishes the base by itself.
+              </p>
+              <p className="muted">
+                Needs a Linux host with <code>/dev/kvm</code> and a CPU with AVX2; Docker Desktop on macOS or Windows cannot run it. Apple&apos;s
+                software licence allows macOS to run in a VM only on Apple hardware: running this on other hardware is on you.
+              </p>
+              <div className="row">
+                <label>
+                  Release of the base disk
+                  <select value={macosVersion} onChange={(e) => setMacosVersion(e.target.value)}>
+                    {MACOS_VERSIONS.map((v) => (
+                      <option key={v.code} value={v.code}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Base disk size (GB)
+                  <input type="number" min={32} step={1} value={macosDisk} onChange={(e) => setMacosDisk(e.target.value)} />
+                </label>
+              </div>
+              <div className="row">
+                <label>
+                  VM memory (GB)
+                  <input type="number" min={2} step={1} value={macosRam} onChange={(e) => setMacosRam(e.target.value)} />
+                </label>
+                <label>
+                  VM CPUs
+                  <input type="number" min={1} step={1} value={macosCpus} onChange={(e) => setMacosCpus(e.target.value)} />
+                </label>
+              </div>
+              <p className="muted">
+                Memory and CPUs are on top of the Session&apos;s Sandbox and apply to VMs started afterwards; release and disk size are those of the base,
+                so changing them means deleting and installing the base again. Save first, then install.
+              </p>
+              <MacosBase
+                settings={settings}
+                status={macosBase}
+                onStatus={onMacosBase}
+                dirty={macosVersion !== settings.macos.version || Number(macosDisk) !== settings.macos.diskGb}
               />
             </fieldset>
           )}

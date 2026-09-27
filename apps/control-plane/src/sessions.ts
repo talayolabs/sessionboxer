@@ -67,9 +67,8 @@ import {
   type DeleteSnapshotsResult,
   type DockerMode,
   ENVIRONMENT_LABELS,
-  WINDOWS_NO_SNAPSHOT,
+  VM_NO_SNAPSHOT,
   type Environment,
-  type EnvironmentAvailability,
   type ForkSessionRequest,
   type OptionValues,
   type PromptRequest,
@@ -128,15 +127,11 @@ import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectE
 import { HttpError } from "./http-error.js";
 import { PullRequests } from "./pull-requests.js";
 import { UsbDevices } from "./usb.js";
-import { type WindowsVms, windowsVmName } from "./windows.js";
+import type { GuestVms } from "./vm-host.js";
+import type { WindowsVms } from "./windows.js";
+import type { MacosVms } from "./macos.js";
 
 export { HttpError };
-
-/** `qemu-macos` needs Apple hardware and Apple's Virtualization framework, which no Docker host offers (ADR-0057). */
-export const MACOS_AVAILABILITY: EnvironmentAvailability = {
-  available: false,
-  reason: "macOS VMs are only allowed on Apple hardware and need a runtime of their own; not implemented yet.",
-};
 
 /** How a turn ended: ACP's stop reason, `error` for an `agent_error`, `usage_limit` when the Provider refused for lack of credit. */
 export type TurnOutcome = StopReason | "error" | "usage_limit";
@@ -202,6 +197,8 @@ export class SessionManager {
     private readonly docker: SandboxDocker,
     /** The Windows VMs of `qemu-windows` Sessions (ADR-0057). */
     readonly windows: WindowsVms,
+    /** The macOS VMs of `qemu-macos` Sessions (ADR-0058). */
+    readonly macos: MacosVms,
     private readonly settings: () => Settings,
     private readonly log: (msg: string) => void,
     /** Web Push to devices that are not watching (see `PushNotifier`). */
@@ -796,8 +793,9 @@ export class SessionManager {
         if (this.stopping.has(sessionId)) return;
         const s = this.db.getSession(sessionId);
         if (!s || s.status === "stopped") return;
-        if (name === windowsVmName(sessionId)) {
-          if (s.status === "idle" || s.status === "running") this.setStatus(sessionId, "error", `The Windows VM exited unexpectedly (exit code ${exitCode})`);
+        const vms = this.vms(s.settings.sandbox.environment);
+        if (vms && name === vms.vmName(sessionId)) {
+          if (s.status === "idle" || s.status === "running") this.setStatus(sessionId, "error", `The ${vms.guestLabel} exited unexpectedly (exit code ${exitCode})`);
           return;
         }
         if (s.containerId !== containerId) return;
@@ -818,8 +816,8 @@ export class SessionManager {
         if (s.status !== "stopped") this.setStatus(s.id, "stopped");
       } else {
         if (s.status !== "idle" && s.status !== "running") this.setStatus(s.id, "idle");
-        if (s.settings.sandbox.environment === "qemu-windows") {
-          await this.startWindowsVm(s.id).catch((e: unknown) => this.setStatus(s.id, "error", e instanceof Error ? e.message : String(e)));
+        if (this.vms(s.settings.sandbox.environment)) {
+          await this.startVm(s.id).catch((e: unknown) => this.setStatus(s.id, "error", e instanceof Error ? e.message : String(e)));
         }
         await this.connect(s.id, s.containerId);
       }
@@ -926,7 +924,7 @@ export class SessionManager {
       throw new HttpError(400, providerSetupHint(provider));
     }
     if (req.conversation === "handoff") this.assertCanWriteHandoff(origin);
-    if (origin.settings.sandbox.environment === "qemu-windows") throw new HttpError(409, WINDOWS_NO_SNAPSHOT);
+    this.assertSnapshottable(origin.settings.sandbox.environment);
     if (!(await this.docker.imageExists(snapshot.imageId))) {
       throw new HttpError(409, `The image of snapshot ${snapshot.ordinal} is gone from Docker; delete the snapshot.`);
     }
@@ -1086,7 +1084,7 @@ export class SessionManager {
       if (settings.sandboxDockerAddressPool) env.SESSIONBOXER_DOCKER_POOL = settings.sandboxDockerAddressPool;
     }
     if (session.settings.inspectLlm) env.SESSIONBOXER_INSPECT_LLM = "1";
-    if (session.settings.sandbox.environment === "qemu-windows") Object.assign(env, this.windows.sandboxEnv(session.id));
+    Object.assign(env, this.vms(session.settings.sandbox.environment)?.sandboxEnv(session.id) ?? {});
     if (gitIdentity.name) {
       env.GIT_AUTHOR_NAME = gitIdentity.name;
       env.GIT_COMMITTER_NAME = gitIdentity.name;
@@ -1123,10 +1121,10 @@ export class SessionManager {
   }
 
   private async provision(session: Session, settings: Settings, image?: string, newConversation = false): Promise<void> {
-    const windows = session.settings.sandbox.environment === "qemu-windows";
-    if (windows) {
-      await this.windows.create(session.id);
-      await this.startWindowsVm(session.id);
+    const vms = this.vms(session.settings.sandbox.environment);
+    if (vms) {
+      await vms.create(session.id);
+      await this.startVm(session.id);
     }
     const containerId = await this.createSandbox(session, settings, image, newConversation);
     this.update(session.id, { containerId });
@@ -1142,17 +1140,34 @@ export class SessionManager {
 
   /** Whether a Session can be created in `environment` on this host; the reason as a 4xx otherwise. */
   private async assertEnvironmentAvailable(environment: Environment): Promise<void> {
-    if (environment === "docker-linux") return;
-    const availability = environment === "qemu-windows" ? await this.windows.availability() : MACOS_AVAILABILITY;
+    const vms = this.vms(environment);
+    if (!vms) return;
+    const availability = await vms.availability();
     if (!availability.available) throw new HttpError(409, `${ENVIRONMENT_LABELS[environment]}: ${availability.reason ?? "not available on this host"}`);
   }
 
-  /** Boots the Session's Windows VM if it is not running (the Sandbox's RDP client waits for it). */
-  private async startWindowsVm(id: string): Promise<void> {
-    const vm = windowsVmName(id);
-    const state = await this.windows.state(vm);
-    if (state === "missing") throw new HttpError(409, "The Windows VM container is missing; delete the session.");
-    if (state === "stopped") await this.windows.start(vm);
+  /** Snapshots, forks and rebuilds need the whole Workspace in the Sandbox's image, which VM Environments do not have. */
+  private assertSnapshottable(environment: Environment): void {
+    const reason = VM_NO_SNAPSHOT[environment];
+    if (reason) throw new HttpError(409, reason);
+  }
+
+  /** The VMs of a VM Environment (ADR-0057/0058); null for `docker-linux`. */
+  private vms(environment: Environment): GuestVms | null {
+    if (environment === "qemu-windows") return this.windows;
+    if (environment === "qemu-macos") return this.macos;
+    return null;
+  }
+
+  /** Boots the Session's VM if it is not running (the Sandbox's desktop client waits for it). */
+  private async startVm(id: string): Promise<void> {
+    const s = this.get(id);
+    const vms = this.vms(s.settings.sandbox.environment);
+    if (!vms) return;
+    const vm = vms.vmName(id);
+    const state = await vms.state(vm);
+    if (state === "missing") throw new HttpError(409, `The ${vms.guestLabel} container is missing; delete the session.`);
+    if (state === "stopped") await vms.start(vm);
   }
 
   /**
@@ -1616,7 +1631,7 @@ export class SessionManager {
 
   private async doSnapshot(id: string, reason: SnapshotReason, eventSeq?: number): Promise<Snapshot> {
     const s = this.get(id);
-    if (s.settings.sandbox.environment === "qemu-windows") throw new HttpError(409, WINDOWS_NO_SNAPSHOT);
+    this.assertSnapshottable(s.settings.sandbox.environment);
     if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {
       throw new HttpError(409, `Session is ${s.status}; Snapshots need a running Sandbox.`);
     }
@@ -1669,7 +1684,7 @@ export class SessionManager {
 
   private async doRebuild(id: string): Promise<Session> {
     const s = this.get(id);
-    if (s.settings.sandbox.environment === "qemu-windows") throw new HttpError(409, WINDOWS_NO_SNAPSHOT);
+    this.assertSnapshottable(s.settings.sandbox.environment);
     const old = s.containerId;
     if (!old) throw new HttpError(409, "Session has no Sandbox to rebuild.");
     if (s.status !== "idle" && s.status !== "stopped" && s.status !== "error") {
@@ -1811,7 +1826,8 @@ export class SessionManager {
     if (!s?.containerId) return;
     try {
       let diskBytes = await this.docker.diskUsage(s.containerId);
-      if (diskBytes !== null && s.settings.sandbox.environment === "qemu-windows") diskBytes += (await this.windows.diskUsage(id)) ?? 0;
+      const vms = this.vms(s.settings.sandbox.environment);
+      if (diskBytes !== null && vms) diskBytes += (await vms.diskUsage(id)) ?? 0;
       if (diskBytes !== null && diskBytes !== s.diskBytes) this.update(id, { diskBytes });
     } catch (e) {
       this.log(`disk usage ${id} failed: ${String(e)}`);
@@ -1837,7 +1853,8 @@ export class SessionManager {
       this.clearAutoContinue(id);
       this.disconnect(id);
       await this.docker.stop(s.containerId);
-      if (s.settings.sandbox.environment === "qemu-windows") await this.windows.stop(windowsVmName(id));
+      const vms = this.vms(s.settings.sandbox.environment);
+      if (vms) await vms.stop(vms.vmName(id));
       const stopped = this.setStatus(id, "stopped");
       void this.refreshDiskUsage(id);
       return stopped;
@@ -1868,7 +1885,7 @@ export class SessionManager {
     if ((await this.docker.state(s.containerId)) === "missing") {
       throw new HttpError(409, "Sandbox container is missing; delete the session.");
     }
-    if (s.settings.sandbox.environment === "qemu-windows") await this.startWindowsVm(id);
+    await this.startVm(id);
     await this.startSandbox(s.containerId, this.settings());
     const next = this.setStatus(id, "idle");
     await this.connect(id, s.containerId);
@@ -1886,7 +1903,7 @@ export class SessionManager {
     this.promptOrigins.delete(id);
     try {
       if (s.containerId) await this.docker.remove(s.containerId);
-      if (s.settings.sandbox.environment === "qemu-windows") await this.windows.remove(id);
+      await this.vms(s.settings.sandbox.environment)?.remove(id);
     } finally {
       this.stopping.delete(id);
     }
@@ -2365,7 +2382,7 @@ export class SessionManager {
 
   private async autoSnapshot(id: string, eventSeq: number): Promise<void> {
     const s = this.db.getSession(id);
-    if (!s || s.status !== "idle" || s.settings.sandbox.environment === "qemu-windows") return;
+    if (!s || s.status !== "idle" || VM_NO_SNAPSHOT[s.settings.sandbox.environment]) return;
     if (!resolveSessionSettings(s.settings, this.settings()).autoSnapshot) return;
     try {
       await this.snapshot(id, "turn", eventSeq);

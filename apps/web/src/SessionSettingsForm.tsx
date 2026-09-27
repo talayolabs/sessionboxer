@@ -198,6 +198,8 @@ export function SessionSettingsForm({
   const dockerMode = session?.settings.sandbox.dockerMode ?? (value.docker ? settings.dockerModeAvailable : "none");
   const environment = session?.settings.sandbox.environment ?? value.environment;
   const windows = environment === "qemu-windows";
+  const vm = environment !== "docker-linux";
+  const guest = environment === "qemu-macos" ? "macOS" : "Windows";
   // A fork keeps the origin's Environment: its snapshot is a disk of that kind.
   const environmentFixed = frozen || mode === "fork";
 
@@ -423,11 +425,11 @@ export function SessionSettingsForm({
             <EnvironmentNote settings={settings} environment={value.environment} />
           </>
         )}
-        {windows ? (
+        {vm ? (
           <p className="muted ss-note">
-            The Agent, its shell, git and the editor run on a Linux Sandbox next to the Windows VM; the Desktop shows Windows over RDP and{" "}
-            <code>win &lt;command&gt;</code> runs PowerShell in it. Docker inside the Sandbox, snapshots, forks and rebuilds are not available
-            for Windows Sessions yet.
+            The Agent, its shell, git and the editor run on a Linux Sandbox next to the {guest} VM; the Desktop shows {guest} over{" "}
+            {windows ? "RDP" : "VNC"} and <code>{windows ? "win" : "mac"} &lt;command&gt;</code> runs {windows ? "PowerShell" : "a shell command"} in
+            it. Docker inside the Sandbox, snapshots, forks and rebuilds are not available for {guest} Sessions yet.
           </p>
         ) : frozen ? (
           <p className="muted ss-fixed">
@@ -497,7 +499,7 @@ export function SessionSettingsForm({
             </p>
           </>
         )}
-        {live && onFork && !windows && (
+        {live && onFork && !vm && (
           <div className="ss-fork">
             <button type="button" onClick={onFork} disabled={disabled}>
               Fork with different settings…
@@ -523,6 +525,11 @@ function EnvironmentNote({ settings, environment }: { settings: PublicSettings; 
             {" "}
             See <a href="#/settings/windows">Settings › Windows</a>.
           </>
+        ) : environment === "qemu-macos" ? (
+          <>
+            {" "}
+            See <a href="#/settings/macos">Settings › macOS</a>.
+          </>
         ) : null}
       </p>
     );
@@ -532,6 +539,14 @@ function EnvironmentNote({ settings, environment }: { settings: PublicSettings; 
       <p className="muted ss-note">
         A Windows {settings.windows.version} VM (QEMU/KVM, {settings.windows.ramGb} GB RAM, {settings.windows.cpus} vCPUs, its own disk from the
         shared base) starts next to the Linux Sandbox; the Desktop shows it over RDP.
+      </p>
+    );
+  }
+  if (environment === "qemu-macos") {
+    return (
+      <p className="muted ss-note">
+        A macOS {settings.macos.version} VM (QEMU/KVM with OpenCore, {settings.macos.ramGb} GB RAM, {settings.macos.cpus} vCPUs, its own disk from the
+        shared base) starts next to the Linux Sandbox; the Desktop shows it over VNC.
       </p>
     );
   }

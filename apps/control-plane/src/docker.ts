@@ -478,7 +478,11 @@ export class SandboxDocker {
   }
 
   async start(containerId: string): Promise<void> {
-    await this.docker.getContainer(containerId).start();
+    try {
+      await this.docker.getContainer(containerId).start();
+    } catch (e) {
+      if (!isStatus(e, 304)) throw e; // 304: already running (a Session in error whose Sandbox outlived its VM)
+    }
   }
 
   async stop(containerId: string, timeoutSeconds = 10): Promise<void> {

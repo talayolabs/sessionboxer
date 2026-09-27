@@ -68,7 +68,8 @@ export const DOCKER_MODE_LABELS: Record<DockerMode, string> = {
  * Where a Session's desktop runs (ADR-0057). `docker-linux` is the Sandbox container's own XFCE
  * desktop; `qemu-windows` adds a Windows VM (QEMU/KVM in a sidecar container) whose desktop fills
  * the Sandbox's screen over RDP, so the Agent, its tools and the repositories stay on the Linux
- * side; `qemu-macos` is reserved for a Mac host (Apple allows macOS guests on Apple hardware only).
+ * side; `qemu-macos` does the same with a macOS VM (OpenCore, dockur/macos) shown over VNC
+ * (ADR-0058).
  */
 export const ENVIRONMENTS = ["docker-linux", "qemu-windows", "qemu-macos"] as const;
 export const Environment = z.enum(ENVIRONMENTS);
@@ -83,6 +84,15 @@ export const ENVIRONMENT_LABELS: Record<Environment, string> = {
 /** Why Snapshot / Fork / Rebuild are refused for `qemu-windows` Sessions (ADR-0057). */
 export const WINDOWS_NO_SNAPSHOT =
   "Snapshots, forks and rebuilds are not available for Windows Sessions yet: the VM disk is outside the Sandbox's image.";
+/** The same for `qemu-macos` Sessions (ADR-0058). */
+export const MACOS_NO_SNAPSHOT =
+  "Snapshots, forks and rebuilds are not available for macOS Sessions yet: the VM disk is outside the Sandbox's image.";
+
+/** The Environments whose desktop is a VM next to the Sandbox, with the reason their Sessions cannot be snapshotted. */
+export const VM_NO_SNAPSHOT: Partial<Record<Environment, string>> = {
+  "qemu-windows": WINDOWS_NO_SNAPSHOT,
+  "qemu-macos": MACOS_NO_SNAPSHOT,
+};
 
 /** Whether an Environment can be picked on this host, and if not, why (one sentence for the UI). */
 export const EnvironmentAvailability = z.object({
@@ -1264,6 +1274,41 @@ export const WindowsBaseStatus = z.object({
 });
 export type WindowsBaseStatus = z.infer<typeof WindowsBaseStatus>;
 
+/**
+ * `GET /api/macos`: the shared macOS base disk every `qemu-macos` Session's VM starts from
+ * (ADR-0058). Unlike Windows, macOS has no unattended installer: `POST /api/macos/install` boots
+ * Apple's Recovery in a VM (`installing`), then the user installs macOS and creates the account by
+ * hand in the VM's screen (`setup`); once the guest answers on SSH the Control Plane finishes the
+ * base (`finishing`) and shuts the VM down (`ready`).
+ */
+export const MacosBaseStatus = z.object({
+  state: z.enum(["missing", "installing", "setup", "finishing", "ready", "error"]),
+  /** The macOS release the base was (or is being) installed with, a `MacosSettings.version` code. */
+  version: z.string().nullable(),
+  /** Bytes the base disk takes on this machine (0 until installed). */
+  sizeBytes: z.number(),
+  /** ISO 8601, while `installing`, `setup` or `finishing`. */
+  startedAt: z.string().nullable(),
+  /** The last lines the VM container printed, while installing or after an `error`. */
+  log: z.array(z.string()),
+  error: z.string().nullable(),
+  /** Sessions whose VM disk builds on this base; it cannot be reinstalled while there are any. */
+  sessions: z.number().int().nonnegative(),
+  /**
+   * While `setup`: the account the user must create in the guest, so the Sandbox can log in over
+   * SSH later, and where the VM's screen is (`GET /api/macos/screen`, a noVNC websocket).
+   */
+  setup: z
+    .object({
+      user: z.string(),
+      password: z.string(),
+      /** The steps left, as shown in Global settings. */
+      steps: z.array(z.string()),
+    })
+    .nullable(),
+});
+export type MacosBaseStatus = z.infer<typeof MacosBaseStatus>;
+
 /** `GET /api/speech`: whether transcription can run right now and what it is waiting for. */
 export const SpeechStatus = z.object({
   engine: z.object({
@@ -1578,6 +1623,32 @@ export type WindowsSettings = z.infer<typeof WindowsSettings>;
 /** The Windows guest account the Sandbox's RDP and SSH clients log in with. */
 export const WINDOWS_GUEST_USER = "agent";
 
+/** The macOS releases the base disk can be installed with (dockur/macos `VERSION` codes). */
+export const MACOS_VERSIONS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: "15", label: "macOS 15 Sequoia" },
+  { code: "14", label: "macOS 14 Sonoma" },
+  { code: "13", label: "macOS 13 Ventura" },
+  { code: "12", label: "macOS 12 Monterey" },
+  { code: "11", label: "macOS 11 Big Sur" },
+];
+
+/** The macOS VMs of `qemu-macos` Sessions (ADR-0058). */
+export const MacosSettings = z.object({
+  /** Release of the shared base disk (a `MACOS_VERSIONS` code); changing it means reinstalling the base. */
+  version: z.string().min(1).default("15"),
+  /** RAM (GB) and vCPUs each macOS VM gets, on top of its Session's Sandbox. */
+  ramGb: z.number().positive().default(4),
+  cpus: z.number().int().positive().default(2),
+  /** Virtual size (GB) of the base disk; a Session's copy grows on demand from it. */
+  diskGb: z.number().int().positive().default(64),
+  /** Password of the guest's `agent` account, generated when the base install starts and typed by the user during setup. Secret. */
+  password: z.string().default(""),
+});
+export type MacosSettings = z.infer<typeof MacosSettings>;
+
+/** The macOS guest account the Sandbox's VNC and SSH clients log in with. */
+export const MACOS_GUEST_USER = "agent";
+
 export const Settings = z.object({
   gitUserName: z.string().default(""),
   gitUserEmail: z.string().default(""),
@@ -1595,6 +1666,7 @@ export const Settings = z.object({
     .or(z.literal(""))
     .default(DEFAULT_DOCKER_ADDRESS_POOL),
   windows: WindowsSettings.default({}),
+  macos: MacosSettings.default({}),
   /** `docker commit` the Sandbox after every Agent turn; off unless switched on (ADR-0044). */
   autoSnapshot: z.boolean().default(false),
   /** Automatic Snapshots kept per Session (oldest pruned first); 0 keeps all. */
@@ -1668,9 +1740,10 @@ export const Settings = z.object({
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
-export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true }).extend({
+export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true, macos: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
   windows: WindowsSettings.omit({ password: true }),
+  macos: MacosSettings.omit({ password: true }),
   /** Which Environments a Session created now can run in on this host. */
   environments: z.object({
     "docker-linux": EnvironmentAvailability,
@@ -1712,10 +1785,11 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
 });
 export type PublicSettings = z.infer<typeof PublicSettings>;
 
-export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true }).partial().extend({
+export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true, macos: true }).partial().extend({
   /** Whole registry; `null` secret values keep what is stored for that server/name. */
   mcpServers: z.array(PublicMcpServerDef).optional(),
   windows: WindowsSettings.omit({ password: true }).partial().optional(),
+  macos: MacosSettings.omit({ password: true }).partial().optional(),
   tunnels: TunnelSettingsUpdate.optional(),
   /** Omitted secret fields keep what is stored; `""` forgets it. */
   claudeApi: z.object({ baseUrl: z.string(), authToken: z.string(), apiKey: z.string() }).partial().optional(),
@@ -1939,6 +2013,8 @@ export type SessionBroadcast =
   | { type: "remote"; remote: RemoteAccess }
   /** The shared Windows base disk changed state (install started, progressed, finished or failed). */
   | { type: "windows_base"; status: WindowsBaseStatus }
+  /** The shared macOS base disk changed state (ADR-0058). */
+  | { type: "macos_base"; status: MacosBaseStatus }
   /** Answer to the UI's `ping`. */
   | { type: "pong" };
 

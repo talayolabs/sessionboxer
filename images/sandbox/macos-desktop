@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Shows the macOS VM of a `qemu-macos` Session (ADR-0058) full screen on this
+# Sandbox's X display over VNC (QEMU's server in the VM container), for as long as
+# the Sandbox lives: waits for the VM's VNC port (a moment after a start), connects,
+# and connects again whenever the connection ends (QEMU restarted, the network
+# blinked). A message on the desktop says what is going on while there is no macOS
+# to show.
+set -uo pipefail
+
+: "${DISPLAY:=:1}"
+: "${SESSIONBOXER_MACOS_HOST:?SESSIONBOXER_MACOS_HOST is not set: not a macOS Session}"
+: "${SESSIONBOXER_MACOS_VNC_PORT:=5900}"
+: "${SESSIONBOXER_DISPLAY_WIDTH:=1024}"
+: "${SESSIONBOXER_DISPLAY_HEIGHT:=768}"
+
+host="$SESSIONBOXER_MACOS_HOST"
+port="$SESSIONBOXER_MACOS_VNC_PORT"
+log() { printf '[macos-desktop] %s\n' "$*" >&2; }
+
+notice_pid=""
+notice() {
+  [[ -n "$notice_pid" ]] && kill "$notice_pid" 2>/dev/null
+  xmessage -center -buttons "" -title "macOS" "$1" &
+  notice_pid=$!
+}
+clear_notice() {
+  [[ -n "$notice_pid" ]] && kill "$notice_pid" 2>/dev/null
+  notice_pid=""
+}
+
+port_open() { (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; }
+
+first=1
+while :; do
+  if ! port_open; then
+    if [[ $first -eq 1 ]]; then
+      notice "Waiting for the macOS VM to boot ($host)…"
+    else
+      notice "The macOS VM is restarting; connecting again when it is back…"
+    fi
+    until port_open; do sleep 3; done
+  fi
+  log "connecting to $host:$port"
+  clear_notice
+  # -FullScreen: the whole display, so the screenshots show macOS alone (the guest's screen has
+  # the display's size, set by the Control Plane). -Shared: the Control Plane may look too.
+  # -MenuKey: TigerVNC's own menu is moved off F8, which macOS applications use.
+  # QEMU's VNC has no password; the VM is only reachable on the Sandbox network.
+  xtigervncviewer -FullScreen -FullscreenSystemKeys=0 -Shared -MenuKey=Scroll_Lock -RemoteResize=0 \
+    -AlertOnFatalError=0 -ReconnectOnError=0 -DotWhenNoCursor=0 -SecurityTypes=None \
+    -Log '*:stderr:30' "$host::$port"
+  rc=$?
+  log "vnc session ended (exit $rc)"
+  first=0
+  sleep 3
+done

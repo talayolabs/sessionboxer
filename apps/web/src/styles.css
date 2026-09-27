@@ -645,6 +645,19 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .marker-button:hover { border-color: var(--accent); color: var(--text); }
 .marker-agent { font-style: italic; }
 .marker-agent.marker-button { font-style: italic; }
+/* A prompt another Session's Agent sent (session_message), and the approval card (ADR-0062). */
+.msg-from-agent { border: 1px dashed var(--border); }
+.from-agent { font-size: var(--fs-xs); color: var(--muted); font-style: italic; margin-bottom: 4px; }
+.from-agent a { color: var(--accent); }
+.approval { align-self: center; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; max-width: 900px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--panel); font-size: var(--fs-sm); }
+.approval-denied, .approval-expired { border-color: var(--border); color: var(--muted); }
+.approval-allowed { border-color: var(--ok); }
+.approval-text a { color: var(--accent); }
+.approval-actions { display: flex; gap: 8px; }
+.approval-error { color: var(--error); flex-basis: 100%; }
+.session-family { font-size: var(--fs-xs); color: var(--muted); margin-left: 34px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: calc(100% - 34px); }
+.session-family-link { color: var(--muted); text-decoration: underline dotted; }
+.session-family-link:hover { color: var(--text); }
 .marker-e2e-passed { color: var(--ok); }
 .marker-e2e-failed { color: var(--error); }
 

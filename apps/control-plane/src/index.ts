@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { ZodError } from "zod";
 import {
   AskRequest,
+  AgentApprovalAnswer,
   AutoContinueRequest,
   AttachPrRequest,
   AddRepoRequest,
@@ -224,6 +225,7 @@ const publicSettings = async () =>
     await dockerReachable(),
   );
 sessions.publicSettings = publicSettings;
+sessions.scheduler = scheduler;
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -554,6 +556,12 @@ api.post("/sessions/:id/usage/continue", async (c) => c.json(await sessions.cont
 api.post("/sessions/:id/usage/auto-continue", async (c) => {
   const req = AutoContinueRequest.parse(await c.req.json());
   return c.json(sessions.setAutoContinue(c.req.param("id"), req.enabled));
+});
+
+// The Agent asked for permission through the `sessionboxer` MCP (ADR-0062): the chat card's Allow / Deny.
+api.post("/sessions/:id/approvals/:approvalId", async (c) => {
+  const req = AgentApprovalAnswer.parse(await c.req.json());
+  return c.json(await sessions.agentTools.settleApproval(c.req.param("id"), c.req.param("approvalId"), req.allow));
 });
 
 // End-to-end verification runs of the Session (ADR-0044).

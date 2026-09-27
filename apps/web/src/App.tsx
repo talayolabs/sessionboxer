@@ -58,6 +58,7 @@ import {
 } from "@sessionboxer/protocol";
 import { api, reportViewing, subscribe } from "./api";
 import { uiHintApplies } from "./AgentActions";
+import { SessionFamily } from "./SessionFamily";
 import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 import { SIDEBAR_MAX_PX, SIDEBAR_MIN_PX, PANE_MAX_FRAC, PANE_MIN_FRAC, clampPane, clampSidebar, loadSize, saveSize, startSplitterDrag } from "./splitter";
 import { AttachmentSession } from "./Attachments";
@@ -661,6 +662,7 @@ export function App() {
                 autoSnapshot={s.settings.autoSnapshot ?? settings?.autoSnapshot ?? false}
                 onClick={() => setSnapshotsFor(s.id)}
               />
+              <SessionFamily session={s} sessions={sessions} onOpen={(id) => setRoute({ view: "session", id })} />
               {expanded.has(s.id) && s.branches.length > 1 && (
                 <BranchTree
                   session={s}
@@ -1675,6 +1677,7 @@ function SessionView({
             onInspectLlmCall={setInspectingCall}
             onOpenE2e={openE2e}
             onOpenPane={(p) => (p === "e2e" ? openE2e(null) : setPane(p as Pane))}
+            agent={{ sessionId: session.id, label: PROVIDER_LABELS[session.provider] }}
           />
           <Composer
             draft={draft}

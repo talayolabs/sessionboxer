@@ -186,6 +186,147 @@ server.registerTool(
   (args) => tool("ui_open", args),
 );
 
+// --- Other Sessions (policy `all`; ADR-0062 Stage 2) ----------------------------------------------
+// The Control Plane refuses these under the `session` policy with the reason; `session_create` may
+// answer `{ pending: true, id }` when the user has to allow it first (a card in their chat).
+
+const PROVIDERS = ["claude-code", "devin", "codex", "cursor"] as const;
+const SESSION_REF = z.string().min(1).max(100).describe("A Session id from sessions_list (a prefix of 6+ characters does)");
+const REPOS = z
+  .array(
+    z.object({
+      name: z.string().min(1).max(100).optional().describe("Directory name under /workspace (derived from the source when omitted)"),
+      source: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("git"), url: z.string().min(1), ref: z.string().min(1).optional() }),
+        z.object({ type: z.literal("copy"), path: z.string().min(1).describe("A directory on the host, copied in") }),
+      ]),
+    }),
+  )
+  .max(20)
+  .default([])
+  .describe("Repositories the new Session starts with");
+const WAIT_TIMEOUT = z.number().int().positive().max(20).default(15).describe("Seconds to wait at most (the call returns earlier when the Session settles); up to 20");
+
+server.registerTool(
+  "sessions_list",
+  {
+    description:
+      "Every Sessionboxer Session on this Control Plane (yours marked self, the ones your Agent created marked mine): id, title, URL, status, Provider, Environment, repositories, who created it, queue length. Needs the all-Sessions policy.",
+    inputSchema: {},
+  },
+  () => tool("sessions_list", {}),
+);
+
+server.registerTool(
+  "session_get",
+  {
+    description: "One Session's summary plus the last thing its Agent said (capped). Needs the all-Sessions policy.",
+    inputSchema: { id: SESSION_REF },
+  },
+  (args) => tool("session_get", args),
+);
+
+server.registerTool(
+  "session_create",
+  {
+    description:
+      "Start a new Session whose first prompt is first_prompt; it is marked as created by this Session. When the user's settings ask for approval the result is { pending: true, id }: a card in their chat asks them to allow or deny; approval_wait(id) blocks for the answer. At most 3 alive Sessions created by you at a time (session_stop frees a place) and a global cap in Settings. Needs the all-Sessions policy.",
+    inputSchema: {
+      title: z.string().min(1).max(200).optional().describe("Defaults to the start of first_prompt"),
+      provider: z.enum(PROVIDERS).optional().describe("Defaults to this Session's Provider"),
+      repos: REPOS,
+      first_prompt: z.string().min(1).max(20_000).describe("What the new Session's Agent is asked first: the whole task, self-contained (it shares nothing with you but this text)"),
+    },
+  },
+  (args) => tool("session_create", args),
+);
+
+server.registerTool(
+  "session_fork",
+  {
+    description:
+      "Fork this Session from a Snapshot taken now: the fork gets the same files and tools. conversation continue keeps your conversation (same Provider only), new starts an empty one, handoff starts from the handoff document you pass (goal, state of the work, decisions, open items, files, how to run it). Needs the all-Sessions policy.",
+    inputSchema: {
+      conversation: z.enum(["continue", "new", "handoff"]).default("continue"),
+      provider: z.enum(PROVIDERS).optional().describe("Another Agent for the fork (then conversation must be new or handoff)"),
+      title: z.string().min(1).max(200).optional(),
+      document: z.string().min(1).max(200_000).optional().describe("With conversation handoff: the handoff, written by you, in Markdown"),
+      first_prompt: z.string().min(1).max(20_000).optional().describe("A prompt queued for the fork's Agent after it starts"),
+    },
+  },
+  (args) => tool("session_fork", args),
+);
+
+server.registerTool(
+  "session_message",
+  {
+    description:
+      "Send a prompt to another Session's Agent; its transcript shows it as coming from this Session, and yours shows it was sent. Not to yourself (use queue_add); at most one message of yours in flight per Session (session_wait for the reply first); chains of Agents prompting Agents stop at 4 hops. A busy Session gets it queued for when it is idle; when queue always queues it. Needs the all-Sessions policy.",
+    inputSchema: {
+      id: SESSION_REF,
+      text: z.string().min(1).max(20_000),
+      when: z.enum(["now", "queue"]).default("now"),
+    },
+  },
+  (args) => tool("session_message", args),
+);
+
+server.registerTool(
+  "session_wait",
+  {
+    description:
+      "Wait until another Session's Agent finishes its turn (and queue), at most timeout_s seconds; returns still_running, its status and the last thing its Agent said. Call it again while still_running is true. Needs the all-Sessions policy.",
+    inputSchema: { id: SESSION_REF, timeout_s: WAIT_TIMEOUT },
+  },
+  (args) => tool("session_wait", args),
+);
+
+server.registerTool(
+  "session_stop",
+  {
+    description: "Stop a Session your Agent created (session_create / session_fork); its Sandbox stops, the user can resume it. Other Sessions are the user's to stop. Needs the all-Sessions policy.",
+    inputSchema: { id: SESSION_REF },
+  },
+  (args) => tool("session_stop", args),
+);
+
+server.registerTool(
+  "approval_wait",
+  {
+    description:
+      "Wait for the user's answer to a pending approval (the id session_create returned), at most timeout_s seconds: status pending / allowed (with the Session created) / denied / expired (unanswered for 10 minutes). Call it again while pending; tell the user what you are waiting for.",
+    inputSchema: { id: z.string().min(1).max(100), timeout_s: WAIT_TIMEOUT },
+  },
+  (args) => tool("approval_wait", args),
+);
+
+server.registerTool(
+  "schedule_create",
+  {
+    description:
+      "Create a scheduled task (the user's Scheduled tasks page shows it): on a cron schedule, prompt a Session (this one, or with the all-Sessions policy another) or start a new Session each time. Say what you scheduled in your reply.",
+    inputSchema: {
+      name: z.string().min(1).max(200),
+      cron: z.string().min(1).max(200).describe("5-field cron expression, e.g. '0 9 * * 1-5'"),
+      timezone: z.string().min(1).max(100).optional().describe("IANA time zone; the Control Plane's when omitted"),
+      action: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("prompt"), sessionId: SESSION_REF.optional().describe("Defaults to this Session"), text: z.string().min(1).max(20_000) }),
+        z.object({
+          type: z.literal("new_session"),
+          title: z.string().min(1).max(200).optional(),
+          provider: z.enum(PROVIDERS).optional(),
+          repos: REPOS,
+          prompt: z.string().min(1).max(20_000),
+          stopAfter: z.boolean().default(true).describe("Stop the Session once its first turn ends"),
+        }),
+      ]),
+    },
+  },
+  (args) => tool("schedule_create", args),
+);
+
+server.registerTool("schedule_list", { description: "The scheduled tasks on this Control Plane: id, name, cron, time zone, enabled, action, next and last run.", inputSchema: {} }, () => tool("schedule_list", {}));
+
 // --- End-to-end verification runs (ADR-0044) -------------------------------------------------
 // The Control Plane opens a run after a user turn and asks for the `e2e-verification` skill; these
 // tools fill the run in (Daemon → Control Plane) so the user's Verification pane follows along.

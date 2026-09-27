@@ -30,6 +30,10 @@ import {
   DaemonMcpSetResult,
   type DaemonMcpSetParams,
   type AgentToolsPolicy,
+  type AgentPromptOrigin,
+  AGENT_CHILDREN_PER_SESSION,
+  AGENT_LAST_REPLY_MAX_CHARS,
+  AGENT_MESSAGE_MAX_HOPS,
   type PublicSettings,
   type SessionInfo,
   MACOS_GUEST_WORKSPACE,
@@ -110,7 +114,7 @@ import {
   classifyUsageLimit,
   mergeUsageWindows,
 } from "@sessionboxer/protocol";
-import { AgentTools } from "./agent-tools.js";
+import { AgentTools, type AgentScheduler } from "./agent-tools.js";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
   PUBLIC_URL,
@@ -182,6 +186,12 @@ export class SessionManager {
   private readonly pendingPrompts = new Map<string, PromptRequest & { origin?: PromptOrigin }>();
   /** Origin the next `user_prompt` event of a Session is recorded with (set by `prompt` for a hidden prompt). */
   private readonly promptOrigins = new Map<string, PromptOrigin>();
+  /** Saved messages another Session's Agent queued (`session_message`), by message id: sent with that origin. */
+  private readonly queuedOrigins = new Map<string, { targetId: string; origin: AgentPromptOrigin }>();
+  /** Senders with an Agent-to-Agent prompt in flight, by target Session (one per target per sender, ADR-0062). */
+  private readonly agentInflight = new Map<string, Set<string>>();
+  /** Who can create and schedule Sessions on the Agent's behalf; wired by the server. */
+  scheduler: AgentScheduler | null = null;
   /** Handoffs being written, by origin Session: settled by the end of the hidden turn, or aborted when the origin goes away. */
   private readonly handoffs = new Map<string, { forkId: string; settle: (outcome: { text: string } | { error: string }) => void }>();
   /** Turns ended per Session, to notice a turn that was over before the prompt RPC even returned. */
@@ -266,6 +276,16 @@ export class SessionManager {
       snapshot: (id) => this.snapshot(id, "agent"),
       enqueue: (id, text) => this.enqueueMessage(id, text),
       savedMessages: (id) => db.listSavedMessages(id),
+      listSessions: () => db.listSessions(),
+      settings: () => this.settings(),
+      lastReply: (id) => this.lastReply(id),
+      assertChildAllowed: (createdBy) => this.assertChildAllowed(createdBy),
+      createSession: (createdBy, req) => this.create(req, createdBy),
+      forkSession: (fromId, req) => this.fork(fromId, req, fromId),
+      messageSession: (from, target, text, when) => this.promptFromAgent(from, target, text, when),
+      waitSession: (id, timeoutMs) => this.waitForTurn(id, timeoutMs),
+      stopSession: (id) => this.stop(id),
+      scheduler: () => this.scheduler,
       setTitle: (id, title) => void this.edit(id, { title }),
       terminalList: (id) => this.terminalList(id),
       terminalRead: (id, ptyId, lines) => this.terminalRead(id, ptyId, lines),
@@ -328,7 +348,7 @@ export class SessionManager {
             : null,
       createdAt: s.createdAt,
       forkedFrom: fork ? { sessionId: fork.sessionId, title: origin?.title ?? fork.label, snapshotId: fork.snapshotId } : null,
-      createdBy: null,
+      createdBy: s.createdBy ? { sessionId: s.createdBy.sessionId, title: this.db.getSession(s.createdBy.sessionId)?.title ?? s.createdBy.sessionId } : null,
       branch: branch?.name ?? (s.activeBranchId === ROOT_BRANCH_ID ? "main" : s.activeBranchId),
       snapshotCount: s.snapshotCount,
       sessionboxerVersion: VERSION,
@@ -979,11 +999,13 @@ export class SessionManager {
     this.prs.start();
   }
 
-  async create(req: CreateSessionRequest): Promise<Session> {
+  /** `createdBy`: the Session whose Agent asked (`session_create`, ADR-0062); the child counts towards its caps. */
+  async create(req: CreateSessionRequest, createdBy?: string): Promise<Session> {
     const settings = this.settings();
     if (!providerReady(req.provider, settings)) {
       throw new HttpError(400, providerSetupHint(req.provider));
     }
+    if (createdBy) this.assertChildAllowed(createdBy);
     // Older clients send one `workspaceSource`; it becomes the Session's one repository.
     const legacy = req.workspaceSource;
     const specs: RepoSpec[] = req.repos ?? (legacy.type === "git" || legacy.type === "copy" ? [{ source: legacy }] : []);
@@ -1040,6 +1062,7 @@ export class SessionManager {
       activeBranchId: ROOT_BRANCH_ID,
       usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
       usb: null,
+      createdBy: createdBy ? { sessionId: createdBy } : null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1065,7 +1088,7 @@ export class SessionManager {
    * may be another Provider with `new` or `handoff`. The origin Session, its Sandbox and
    * its saved messages are untouched.
    */
-  async fork(fromId: string, req: ForkSessionRequest): Promise<Session> {
+  async fork(fromId: string, req: ForkSessionRequest, createdBy?: string): Promise<Session> {
     const origin = this.get(fromId);
     const snapshot = this.db.getSnapshot(fromId, req.snapshotId);
     if (!snapshot) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
@@ -1078,7 +1101,11 @@ export class SessionManager {
     if (!providerReady(provider, settings)) {
       throw new HttpError(400, providerSetupHint(provider));
     }
-    if (req.conversation === "handoff") this.assertCanWriteHandoff(origin);
+    if (req.document !== undefined && req.conversation !== "handoff") throw new HttpError(400, "A handoff document goes with conversation: handoff.");
+    // A document supplied with the request (the origin's Agent wrote it itself) needs no hidden turn.
+    const hiddenHandoff = req.conversation === "handoff" && req.document === undefined;
+    if (hiddenHandoff) this.assertCanWriteHandoff(origin);
+    if (createdBy) this.assertChildAllowed(createdBy);
     this.assertSnapshottable(origin.settings.sandbox.environment);
     if (!(await this.docker.imageExists(snapshot.imageId))) {
       throw new HttpError(409, `The image of snapshot ${snapshot.ordinal} is gone from Docker; delete the snapshot.`);
@@ -1141,6 +1168,7 @@ export class SessionManager {
       activeBranchId: ROOT_BRANCH_ID,
       usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
       usb: null,
+      createdBy: createdBy ? { sessionId: createdBy } : null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1162,11 +1190,13 @@ export class SessionManager {
     this.broadcast({ type: "event", event: marker });
     void this.copyBaselines(origin, session);
 
-    if (req.conversation === "handoff") {
+    if (hiddenHandoff) {
       void this.forkWithHandoff(origin, session, snapshot.imageId, snapshot.ordinal, settings, req.prompt);
       return session;
     }
-    if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
+    if (req.document !== undefined) {
+      this.pendingPrompts.set(id, { text: handoffMessage(req.document, origin, origin.provider, provider, snapshot.ordinal, req.prompt), origin: "handoff" });
+    } else if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
     void this.provision(session, settings, snapshot.imageId, req.conversation === "new").catch((e: unknown) => {
       this.log(`provision fork ${id} failed: ${String(e)}`);
       this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
@@ -1445,6 +1475,11 @@ export class SessionManager {
       this.promptOrigins.delete(id);
       throw e;
     }
+    if (typeof origin === "object") {
+      const senders = this.agentInflight.get(id) ?? new Set<string>();
+      senders.add(origin.fromSessionId);
+      this.agentInflight.set(id, senders);
+    }
     notes.splice(0, sent);
     // A slash command answered locally ends its turn within the same batch of Daemon messages
     // as the RPC reply; the Daemon's own status notifications are authoritative then.
@@ -1710,10 +1745,11 @@ export class SessionManager {
    * resumed). A queue the user paused with messages still in it stays paused, the new message
    * waits behind them, unless `resumePaused` (scheduled tasks, PR actions) asks otherwise.
    */
-  async enqueueMessage(id: string, text: string, opts: { resumePaused?: boolean } = {}): Promise<SavedMessage> {
+  async enqueueMessage(id: string, text: string, opts: { resumePaused?: boolean; origin?: AgentPromptOrigin } = {}): Promise<SavedMessage> {
     const s = this.get(id);
     const paused = !s.queueRunning && this.db.listSavedMessages(id).length > 0;
     const saved = this.db.insertSavedMessage(id, text);
+    if (opts.origin) this.queuedOrigins.set(saved.id, { targetId: id, origin: opts.origin });
     this.broadcastSaved(id);
     if (!s.queueRunning && (!paused || opts.resumePaused) && s.status !== "error") {
       this.update(id, { queueRunning: true });
@@ -1773,14 +1809,97 @@ export class SessionManager {
     // `onDaemonConnected` pumps then.
     if (!this.clients.get(id)?.connected) return;
     try {
-      await this.prompt(id, { text: next.text });
+      await this.prompt(id, { text: next.text }, this.queuedOrigins.get(next.id)?.origin);
     } catch (e) {
       this.log(`queue ${id} paused: ${e instanceof Error ? e.message : String(e)}`);
       this.update(id, { queueRunning: false });
       return;
     }
+    this.queuedOrigins.delete(next.id);
     this.db.deleteSavedMessage(id, next.id);
     this.broadcastSaved(id);
+  }
+
+  // --- Sessions the Agent creates and messages (ADR-0062) -----------------------
+
+  /** Sessions an Agent created that are alive (a stopped or deleted child frees its place); every parent's when `parentId` is `null`. */
+  private aliveChildren(parentId: string | null): Session[] {
+    return this.db.listSessions().filter((s) => s.createdBy !== null && (parentId === null || s.createdBy.sessionId === parentId) && s.status !== "stopped");
+  }
+
+  private assertChildAllowed(parentId: string): void {
+    const mine = this.aliveChildren(parentId).length;
+    if (mine >= AGENT_CHILDREN_PER_SESSION) {
+      throw new HttpError(409, `This Session's Agent already has ${mine} alive Sessions it created (the limit is ${AGENT_CHILDREN_PER_SESSION}); session_stop one first.`);
+    }
+    const cap = this.settings().agentChildrenCap;
+    const all = this.aliveChildren(null).length;
+    if (all >= cap) throw new HttpError(409, `${all} Sessions created by Agents are alive, the limit set in Settings (${cap}); stop one first, or the user raises the limit.`);
+  }
+
+  /** How many Agent-to-Agent hops the prompt `id` is working on has travelled (0: the user's or a schedule's). */
+  private agentHopsOf(id: string): number {
+    const first = this.turnEvents(id, this.db.lastEventSeq(id))[0]?.body;
+    return first?.type === "user_prompt" && typeof first.origin === "object" ? first.origin.hops : 0;
+  }
+
+  /** The last thing `id`'s Agent said (its current or last turn), capped. */
+  lastReply(id: string): string | null {
+    const text = lastAgentMessage(this.turnEvents(id, this.db.lastEventSeq(id))).trim();
+    if (text === "") return null;
+    return text.length > AGENT_LAST_REPLY_MAX_CHARS ? `${text.slice(0, AGENT_LAST_REPLY_MAX_CHARS - 1)}…` : text;
+  }
+
+  /**
+   * `session_message`: `from`'s Agent prompts `targetId`. Refused to itself, past `AGENT_MESSAGE_MAX_HOPS`
+   * Agent-to-Agent hops, and while a previous message of the same sender is in flight there. A busy
+   * target (or `when: "queue"`) gets it as a saved message that keeps the sender as its origin.
+   */
+  async promptFromAgent(fromId: string, targetId: string, text: string, when: "now" | "queue"): Promise<"prompted" | "queued"> {
+    const from = this.get(fromId);
+    const target = this.get(targetId);
+    if (target.id === from.id) throw new HttpError(400, "A Session cannot message itself; queue_add leaves a message for your own next turn.");
+    const hops = this.agentHopsOf(from.id) + 1;
+    if (hops > AGENT_MESSAGE_MAX_HOPS) {
+      throw new HttpError(409, `This message would be hop ${hops} of a chain of Agents prompting Agents; the limit is ${AGENT_MESSAGE_MAX_HOPS}. Report to the user instead.`);
+    }
+    const queued = [...this.queuedOrigins.values()].some((q) => q.targetId === target.id && q.origin.fromSessionId === from.id);
+    if (queued || this.agentInflight.get(target.id)?.has(from.id)) {
+      throw new HttpError(409, `Your previous message to “${target.title}” is still in flight (one at a time per Session); session_wait for its reply first.`);
+    }
+    const origin: AgentPromptOrigin = { type: "agent", fromSessionId: from.id, fromTitle: from.title, hops };
+    if (target.status === "error") throw new HttpError(409, `“${target.title}” is in error state (${target.error ?? "unknown"}).`);
+    const busy = target.status !== "idle" || !this.clients.get(target.id)?.connected || this.seeding.has(target.id) || target.usage.limit !== null || target.queueRunning;
+    if (when === "queue" || busy) {
+      if (target.status === "stopped" && when === "now") throw new HttpError(409, `“${target.title}” is stopped; the user can resume it, or send with when: "queue" for when it is.`);
+      await this.enqueueMessage(target.id, text, { origin });
+      return "queued";
+    }
+    await this.prompt(target.id, { text }, origin);
+    return "prompted";
+  }
+
+  /**
+   * `session_wait`: resolves once `id` has settled after its turn (and queue), or after `timeoutMs`,
+   * with whether it is still at work and its Agent's last reply.
+   */
+  async waitForTurn(id: string, timeoutMs: number): Promise<{ stillRunning: boolean; status: SessionStatus; lastReply: string | null }> {
+    const busy = (s: Session) => s.status === "running" || s.status === "creating" || (s.queueRunning && this.db.listSavedMessages(s.id).length > 0);
+    if (busy(this.get(id))) {
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          off();
+          resolve();
+        };
+        const timer = setTimeout(done, timeoutMs);
+        const off = this.onTurnSettled((settledId) => {
+          if (settledId === id) done();
+        });
+      });
+    }
+    const now = this.get(id);
+    return { stillRunning: busy(now), status: now.status, lastReply: this.lastReply(id) };
   }
 
   private broadcastSaved(id: string): void {
@@ -2088,6 +2207,8 @@ export class SessionManager {
     this.disconnect(id);
     this.pendingPrompts.delete(id);
     this.promptOrigins.delete(id);
+    this.agentInflight.delete(id);
+    for (const [messageId, q] of this.queuedOrigins) if (q.targetId === id) this.queuedOrigins.delete(messageId);
     try {
       if (s.containerId) await this.docker.remove(s.containerId);
       await this.vms(s.settings.sandbox.environment)?.remove(id);
@@ -2514,6 +2635,7 @@ export class SessionManager {
     }
     if (ev.body.type === "turn_ended" || ev.body.type === "agent_error") {
       this.turnEnds.set(id, (this.turnEnds.get(id) ?? 0) + 1);
+      this.agentInflight.delete(id);
       const s = this.db.getSession(id);
       if (s?.status === "running") this.setStatus(id, "idle");
       const turn = this.turnEvents(id, stored.seq);

@@ -840,6 +840,8 @@ export const Session = z.object({
   usage: SessionUsage.default({}),
   /** USB device of the host connected to this Sandbox (one Session per device). */
   usb: SessionUsb.nullable().default(null),
+  /** The Session whose Agent created this one (`session_create` / `session_fork`, ADR-0062); `null` when the user did. */
+  createdBy: z.object({ sessionId: z.string() }).nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -1196,6 +1198,8 @@ export type DeleteSnapshotsResult = z.infer<typeof DeleteSnapshotsResult>;
  */
 export const ForkConversation = z.enum(["continue", "new", "handoff"]);
 export type ForkConversation = z.infer<typeof ForkConversation>;
+/** Longest handoff document a fork request carries. */
+export const HANDOFF_DOCUMENT_MAX_CHARS = 200_000;
 
 export const ForkSessionRequest = z.object({
   snapshotId: z.string(),
@@ -1209,6 +1213,11 @@ export const ForkSessionRequest = z.object({
   prompt: z.string().min(1).optional(),
   /** Texts to put in the fork's saved-message list, in order. */
   savedMessages: z.array(z.string().min(1)).default([]),
+  /**
+   * With `conversation: "handoff"`: the handoff document, already written (the origin's Agent hands
+   * off through `session_fork`); the hidden handoff turn is skipped.
+   */
+  document: z.string().min(1).max(HANDOFF_DOCUMENT_MAX_CHARS).optional(),
 });
 export type ForkSessionRequest = z.infer<typeof ForkSessionRequest>;
 
@@ -2001,10 +2010,48 @@ export type ProviderHostLogin = z.infer<typeof ProviderHostLogin>;
 /**
  * Who wrote a `user_prompt` that is not the user's own words (shown as a marker): `e2e` the Control
  * Plane's hidden verification prompt; `handoff_request` its request to write a handoff for a fork;
- * `handoff` the handoff document a fork starts with.
+ * `handoff` the handoff document a fork starts with; an `agent` origin is another Session's Agent
+ * (`session_message`, ADR-0062), with how many Agent-to-Agent hops the message has travelled.
  */
-export const PromptOrigin = z.enum(["e2e", "handoff_request", "handoff"]);
-export type PromptOrigin = z.infer<typeof PromptOrigin>;
+export const HiddenPromptOrigin = z.enum(["e2e", "handoff_request", "handoff"]);
+export type HiddenPromptOrigin = z.infer<typeof HiddenPromptOrigin>;
+export const AgentPromptOrigin = z.object({
+  type: z.literal("agent"),
+  fromSessionId: z.string(),
+  fromTitle: z.string(),
+  /** 1 for a message the user's own prompt led to; a Session prompted by an Agent sends at `hops + 1`. */
+  hops: z.number().int().positive(),
+});
+export type AgentPromptOrigin = z.infer<typeof AgentPromptOrigin>;
+export type PromptOrigin = HiddenPromptOrigin | AgentPromptOrigin;
+/** Agent-to-Agent messages stop travelling after this many hops (a loop of Sessions prompting each other). */
+export const AGENT_MESSAGE_MAX_HOPS = 4;
+
+/**
+ * The Agent asked for something the user has to allow (`session_create` under `approveCreate`):
+ * shown as a card in the chat until settled; the settlement is a second event with the same `id`.
+ */
+export const AgentApprovalKind = z.enum(["session_create", "session_fork", "schedule_create"]);
+export type AgentApprovalKind = z.infer<typeof AgentApprovalKind>;
+export const AgentApprovalStatus = z.enum(["pending", "allowed", "denied", "expired"]);
+export type AgentApprovalStatus = z.infer<typeof AgentApprovalStatus>;
+export const AgentApproval = z.object({
+  id: z.string(),
+  kind: AgentApprovalKind,
+  /** What the Agent asked for, in one line ("create a Session “Fix the tests”"). */
+  summary: z.string(),
+  status: AgentApprovalStatus,
+  /** When an unanswered request is denied (`AGENT_APPROVAL_TIMEOUT_MS` after it was made). */
+  expiresAt: z.string(),
+  /** What the allowed action produced (the Session created), for the card's link. */
+  result: z.object({ sessionId: z.string(), title: z.string() }).nullable().default(null),
+  /** Why an allowed action still failed, when it did. */
+  error: z.string().nullable().default(null),
+});
+export type AgentApproval = z.infer<typeof AgentApproval>;
+/** `POST /sessions/:id/approvals/:approvalId`: the card's Allow / Deny. */
+export const AgentApprovalAnswer = z.object({ allow: z.boolean() });
+export type AgentApprovalAnswer = z.infer<typeof AgentApprovalAnswer>;
 
 export type SessionEventBody =
   | { type: "user_prompt"; text: string; attachments?: PromptAttachment[]; origin?: PromptOrigin }
@@ -2043,6 +2090,8 @@ export type SessionEventBody =
    * "snapshot"). `pane` is where the marker leads; `sessionId` the other Session it concerns, when any.
    */
   | { type: "agent_action"; tool: string; text: string; pane?: string; sessionId?: string }
+  /** The Agent asked for the user's permission (a card in the chat), or that request settled (same `approval.id`). */
+  | { type: "agent_approval"; approval: AgentApproval }
   /**
    * The inspector saw one model API call complete (summary only; bodies stay in the Sandbox).
    * Emitted after the transcript updates the response produced, so a `turn` call claims the
@@ -2268,6 +2317,10 @@ export type AgentToolsPolicy = z.infer<typeof AgentToolsPolicy>;
 export const AGENT_CHILDREN_PER_SESSION = 3;
 /** An unattended approval (`session_create`) is denied after this long. */
 export const AGENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
+/** The Daemon's `POST /sessionboxer` waits this long for the Control Plane; `session_wait` and `approval_wait` return before it. */
+export const AGENT_BRIDGE_TIMEOUT_MS = 20_000;
+/** Longest `session_get` / `session_wait` last-reply excerpt. */
+export const AGENT_LAST_REPLY_MAX_CHARS = 4000;
 
 /** Where the Daemon writes the Session's identity for the Agent, relative to the Workspace. */
 export const SESSION_INFO_PATH = ".sessionboxer/session.json";
@@ -2331,6 +2384,17 @@ export const AGENT_TOOLS = [
   "e2e_case_start",
   "e2e_case_end",
   "e2e_finish",
+  "session_fork",
+  "approval_wait",
+  "schedule_create",
+  "schedule_list",
+  // other Sessions (policy `all`)
+  "sessions_list",
+  "session_get",
+  "session_create",
+  "session_message",
+  "session_wait",
+  "session_stop",
 ] as const;
 export type AgentTool = (typeof AGENT_TOOLS)[number];
 export function isAgentTool(tool: string): tool is AgentTool {
@@ -2372,6 +2436,92 @@ export const AgentUiOpenArgs = z.object({
   /** With `pane: "terminal"`: a new Terminal is opened and this runs in it, visibly. */
   terminal: z.object({ command: z.string().min(1).max(4000) }).optional(),
 });
+/** Longest prompt an Agent sends another Session or schedules (the Schedules pane's limit too). */
+export const AGENT_PROMPT_MAX_CHARS = 20_000;
+export const AgentSessionGetArgs = z.object({ id: z.string().min(1) });
+export type AgentSessionGetArgs = z.infer<typeof AgentSessionGetArgs>;
+export const AgentSessionCreateArgs = z.object({
+  title: z.string().min(1).max(200).optional(),
+  /** The new Session's Agent; the caller's when omitted. */
+  provider: Provider.optional(),
+  /** Repositories for the new Workspace (the same shapes the New session form accepts). */
+  repos: z.array(RepoSpec).max(20).default([]),
+  /** Sent as the Session's first prompt once its Sandbox is ready. */
+  first_prompt: z.string().min(1).max(AGENT_PROMPT_MAX_CHARS),
+});
+export type AgentSessionCreateArgs = z.infer<typeof AgentSessionCreateArgs>;
+export const AgentSessionForkArgs = z.object({
+  conversation: ForkConversation.default("continue"),
+  /** The fork's Agent; the caller's when omitted (`new` or `handoff` needed for another one). */
+  provider: Provider.optional(),
+  title: z.string().min(1).max(200).optional(),
+  /** With `handoff`: the document the fork's Agent starts with, written by the caller (no hidden handoff turn). */
+  document: z.string().min(1).max(HANDOFF_DOCUMENT_MAX_CHARS).optional(),
+  first_prompt: z.string().min(1).max(AGENT_PROMPT_MAX_CHARS).optional(),
+});
+export type AgentSessionForkArgs = z.infer<typeof AgentSessionForkArgs>;
+export const AgentSessionMessageArgs = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1).max(AGENT_PROMPT_MAX_CHARS),
+  /** `now` prompts the target (queued behind its current turn when busy); `queue` always appends to its queue. */
+  when: z.enum(["now", "queue"]).default("now"),
+});
+export type AgentSessionMessageArgs = z.infer<typeof AgentSessionMessageArgs>;
+export const AgentSessionWaitArgs = z.object({
+  id: z.string().min(1),
+  /** Seconds to wait for the target's turn to end, at most the bridge's timeout. */
+  timeout_s: z.number().int().positive().max(AGENT_BRIDGE_TIMEOUT_MS / 1000).default(15),
+});
+export type AgentSessionWaitArgs = z.infer<typeof AgentSessionWaitArgs>;
+export const AgentSessionStopArgs = z.object({ id: z.string().min(1) });
+export type AgentSessionStopArgs = z.infer<typeof AgentSessionStopArgs>;
+export const AgentApprovalWaitArgs = z.object({
+  id: z.string().min(1),
+  timeout_s: z.number().int().positive().max(AGENT_BRIDGE_TIMEOUT_MS / 1000).default(15),
+});
+export type AgentApprovalWaitArgs = z.infer<typeof AgentApprovalWaitArgs>;
+export const AgentScheduleCreateArgs = z.object({
+  name: z.string().min(1).max(200),
+  /** Standard 5-field cron expression (`@hourly`-style nicknames accepted). */
+  cron: z.string().min(1).max(200),
+  /** IANA time zone; the Control Plane's when omitted. */
+  timezone: z.string().min(1).max(100).optional(),
+  action: z.discriminatedUnion("type", [
+    /** Prompts a Session (the caller's own when `sessionId` is omitted). */
+    z.object({ type: z.literal("prompt"), sessionId: z.string().min(1).optional(), text: z.string().min(1).max(AGENT_PROMPT_MAX_CHARS) }),
+    /** Starts a new Session each time (policy `all`). */
+    z.object({
+      type: z.literal("new_session"),
+      title: z.string().min(1).max(200).optional(),
+      provider: Provider.optional(),
+      repos: z.array(RepoSpec).max(20).default([]),
+      prompt: z.string().min(1).max(AGENT_PROMPT_MAX_CHARS),
+      stopAfter: z.boolean().default(true),
+    }),
+  ]),
+});
+export type AgentScheduleCreateArgs = z.infer<typeof AgentScheduleCreateArgs>;
+
+/** `sessions_list` rows and `session_get` (which adds the last reply). */
+export const AgentSessionSummary = z.object({
+  id: z.string(),
+  title: z.string(),
+  url: z.string(),
+  status: SessionStatus,
+  provider: Provider,
+  environment: Environment,
+  repos: z.array(z.string()),
+  createdAt: z.string(),
+  /** The Session whose Agent created it, when one did. */
+  createdBy: z.object({ sessionId: z.string(), title: z.string() }).nullable(),
+  forkedFrom: z.object({ sessionId: z.string(), title: z.string() }).nullable(),
+  /** The calling Session itself. */
+  self: z.boolean(),
+  /** Created by the calling Session's Agent (so `session_stop` may stop it). */
+  mine: z.boolean(),
+  queueLength: z.number().int().nonnegative(),
+});
+export type AgentSessionSummary = z.infer<typeof AgentSessionSummary>;
 
 /** `whoami`: `SessionInfo` plus what is live. */
 export const AgentWhoAmI = SessionInfo.extend({

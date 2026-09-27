@@ -1,5 +1,7 @@
 import {
   repoOriginLabel,
+  type AgentApproval,
+  type AgentPromptOrigin,
   type ContentBlock,
   type E2eRunSummary,
   type ForkConversation,
@@ -25,6 +27,8 @@ export type TranscriptItem =
       attachments?: PromptAttachment[];
       /** The fork's first message: the handoff the origin's Agent wrote, not the user's words. */
       handoff?: boolean;
+      /** Another Session's Agent sent it (`session_message`, ADR-0062), not the user. */
+      fromAgent?: AgentPromptOrigin;
     }
   /** `handoff`: written in reply to the hidden handoff request (rendered without its tags). */
   | { kind: "agent"; key: string; ts: string; text: string; llmCall?: LlmCall; handoff?: boolean }
@@ -81,6 +85,8 @@ export type TranscriptItem =
   /** The Control Plane's hidden request for a handoff (a fork is waiting for the Agent's reply). */
   | { kind: "handoff_request"; key: string }
   | { kind: "e2e_run"; key: string; run: E2eRunSummary }
+  /** The Agent asked the user's permission (a card with Allow / Deny while pending); the latest state of each id. */
+  | { kind: "agent_approval"; key: string; ts: string; approval: AgentApproval }
   /** Something the Agent did through the `sessionboxer` MCP (attached a PR, took a Snapshot, …). */
   | AgentActionItem;
 
@@ -168,6 +174,7 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
             text: body.text,
             ...(body.attachments?.length ? { attachments: body.attachments } : {}),
             ...(body.origin === "handoff" ? { handoff: true } : {}),
+            ...(typeof body.origin === "object" ? { fromAgent: body.origin } : {}),
           });
         }
         {
@@ -229,6 +236,13 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
       case "agent_action":
         items.push({ kind: "agent_action", key, ts: ev.ts, tool: body.tool, text: body.text, pane: body.pane ?? null, sessionId: body.sessionId ?? null });
         break;
+      case "agent_approval": {
+        // The card stays where it was asked; a later event of the same id settles it in place.
+        const card = items.find((it) => it.kind === "agent_approval" && it.approval.id === body.approval.id);
+        if (card && card.kind === "agent_approval") card.approval = body.approval;
+        else items.push({ kind: "agent_approval", key, ts: ev.ts, approval: body.approval });
+        break;
+      }
       case "llm_call":
         if (body.call.kind === "turn") labelLlmCall(items, body.call);
         break;

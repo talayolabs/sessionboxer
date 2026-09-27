@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { branchScope, PROVIDER_LABELS, type Branch, type E2eRunSummary, type LlmCall, type Snapshot, type ToolCallContent } from "@sessionboxer/protocol";
 import { AgentActionMarker } from "./AgentActions";
+import { ApprovalCard } from "./ApprovalCard";
 import { UploadedAttachments } from "./Attachments";
 import { formatCost, formatTokens, type Compaction, type TurnStats } from "./context-model";
 import { CopyableMessage } from "./CopyMessage";
@@ -380,6 +381,7 @@ function useElapsed(from: number, live: boolean): number {
 
 function Item({
   item,
+  agent,
   actions,
   branchActions,
   branchView,
@@ -390,6 +392,7 @@ function Item({
   llmTab,
 }: {
   item: TranscriptItem;
+  agent: AgentOnScreen;
   actions: SnapshotActions;
   branchActions: BranchActions;
   branchView: BranchView;
@@ -406,6 +409,7 @@ function Item({
         <LlmTab call={item.llmCall} onInspect={onInspectLlmCall} />
         <Item
           item={item}
+          agent={agent}
           actions={actions}
           branchActions={branchActions}
           branchView={branchView}
@@ -433,7 +437,12 @@ function Item({
         );
       }
       return (
-        <CopyableMessage className="msg-user" text={item.text} footer={<Timestamp ts={item.ts} />}>
+        <CopyableMessage className={`msg-user${item.fromAgent ? " msg-from-agent" : ""}`} text={item.text} footer={<Timestamp ts={item.ts} />}>
+          {item.fromAgent && (
+            <div className="from-agent" title={`Sent by the Agent of another Session through the sessionboxer MCP (session_message), hop ${item.fromAgent.hops} of a chain of Agents`}>
+              from Session <a href={`#/sessions/${item.fromAgent.fromSessionId}`}>{item.fromAgent.fromTitle}</a> (its Agent)
+            </div>
+          )}
           {item.text.trim() !== "" && <Markdown text={item.text} />}
           {item.attachments && <UploadedAttachments attachments={item.attachments} />}
         </CopyableMessage>
@@ -547,7 +556,16 @@ function Item({
       return <E2eMarker run={item.run} onOpen={() => onOpenE2e(item.run.runId)} />;
     case "agent_action":
       return <AgentActionMarker item={item} onOpenPane={onOpenPane} />;
+    case "agent_approval":
+      return <ApprovalCard sessionId={agent.sessionId} approval={item.approval} agent={agent.label} />;
   }
+}
+
+/** Whose transcript this is: the approval card names the Agent and answers to the Session. */
+export interface AgentOnScreen {
+  sessionId: string;
+  /** "Claude", "Codex", … */
+  label: string;
 }
 
 function forkedNote(item: Extract<TranscriptItem, { kind: "forked" }>): string {
@@ -701,8 +719,10 @@ export function Transcript({
   onInspectLlmCall,
   onOpenE2e,
   onOpenPane,
+  agent,
 }: {
   items: TranscriptItem[];
+  agent: AgentOnScreen;
   actions: SnapshotActions;
   branchActions: BranchActions;
   branches: Branch[];
@@ -798,6 +818,7 @@ export function Transcript({
       <Item
         key={item.key}
         item={item}
+        agent={agent}
         actions={actions}
         branchActions={branchActions}
         branchView={branchView}

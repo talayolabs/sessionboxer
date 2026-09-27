@@ -27,6 +27,7 @@ import type {
   UpdateScheduleRequest,
   DeleteSnapshotsResult,
   E2eRun,
+  AgentApproval,
   ForkSessionRequest,
   HostDirListing,
   LlmCall,
@@ -288,6 +289,8 @@ export const api = {
     request<PrActionResult>(`/sessions/${id}/prs/actions`, { method: "POST", body: JSON.stringify(req) }),
   e2eRuns: (id: string) => request<E2eRun[]>(`/sessions/${id}/e2e`),
   e2eRunNow: (id: string) => request<E2eRun>(`/sessions/${id}/e2e/run`, { method: "POST" }),
+  answerApproval: (id: string, approvalId: string, allow: boolean) =>
+    request<AgentApproval>(`/sessions/${id}/approvals/${approvalId}`, { method: "POST", body: JSON.stringify({ allow }) }),
 };
 
 /** Same-origin URL of a Session's VS Code (the Code pane's iframe), proxied by the Control Plane. */

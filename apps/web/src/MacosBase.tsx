@@ -5,7 +5,7 @@ import { api } from "./api";
 import { formatMb } from "./format";
 import { currentTheme } from "./theme";
 
-/** The VM's screen while the base is installed by hand (ADR-0058): `GET /api/macos/screen`, a noVNC websocket. */
+/** The VM's screen while the base is installed by hand (ADR-0059): `GET /api/macos/screen`, a noVNC websocket. */
 export function screenUrl(): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}/api/macos/screen`;
@@ -51,7 +51,7 @@ function MacosScreen() {
   );
 }
 
-/** The shared macOS base disk (ADR-0058): its state, the interactive install, the Install / Cancel / Delete buttons. */
+/** The shared macOS base disk (ADR-0059): its state, the interactive install, the Install / Cancel / Delete buttons. */
 export function MacosBase({
   settings,
   status,

@@ -263,7 +263,7 @@ const windowsBriefing = (): string => {
   ].join("\n");
 };
 
-/** A `qemu-macos` Session (ADR-0058): the macOS VM next to this Sandbox, how to see it and how to run things in it. */
+/** A `qemu-macos` Session (ADR-0059): the macOS VM next to this Sandbox, how to see it and how to run things in it. */
 const macosBriefing = (): string => {
   const host = env.SESSIONBOXER_MACOS_HOST ?? "";
   if (host === "") return "";

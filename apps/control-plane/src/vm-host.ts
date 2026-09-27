@@ -4,7 +4,7 @@ import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 import { log } from "./log.js";
 
 /**
- * What the Windows (ADR-0057) and macOS (ADR-0058) VM sidecars share: the KVM probe, the
+ * What the Windows (ADR-0057) and macOS (ADR-0059) VM sidecars share: the KVM probe, the
  * dockur images and their QEMU/KVM container shape, throwaway helper containers on those
  * images (they carry qemu-img), volumes and their real size, and Docker's log framing.
  */

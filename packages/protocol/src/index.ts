@@ -69,7 +69,7 @@ export const DOCKER_MODE_LABELS: Record<DockerMode, string> = {
  * desktop; `qemu-windows` adds a Windows VM (QEMU/KVM in a sidecar container) whose desktop fills
  * the Sandbox's screen over RDP, so the Agent, its tools and the repositories stay on the Linux
  * side; `qemu-macos` does the same with a macOS VM (OpenCore, dockur/macos) shown over VNC
- * (ADR-0058).
+ * (ADR-0059).
  */
 export const ENVIRONMENTS = ["docker-linux", "qemu-windows", "qemu-macos"] as const;
 export const Environment = z.enum(ENVIRONMENTS);
@@ -84,7 +84,7 @@ export const ENVIRONMENT_LABELS: Record<Environment, string> = {
 /** Why Snapshot / Fork / Rebuild are refused for `qemu-windows` Sessions (ADR-0057). */
 export const WINDOWS_NO_SNAPSHOT =
   "Snapshots, forks and rebuilds are not available for Windows Sessions yet: the VM disk is outside the Sandbox's image.";
-/** The same for `qemu-macos` Sessions (ADR-0058). */
+/** The same for `qemu-macos` Sessions (ADR-0059). */
 export const MACOS_NO_SNAPSHOT =
   "Snapshots, forks and rebuilds are not available for macOS Sessions yet: the VM disk is outside the Sandbox's image.";
 
@@ -1276,7 +1276,7 @@ export type WindowsBaseStatus = z.infer<typeof WindowsBaseStatus>;
 
 /**
  * `GET /api/macos`: the shared macOS base disk every `qemu-macos` Session's VM starts from
- * (ADR-0058). Unlike Windows, macOS has no unattended installer: `POST /api/macos/install` boots
+ * (ADR-0059). Unlike Windows, macOS has no unattended installer: `POST /api/macos/install` boots
  * Apple's Recovery in a VM (`installing`), then the user installs macOS and creates the account by
  * hand in the VM's screen (`setup`); once the guest answers on SSH the Control Plane finishes the
  * base (`finishing`) and shuts the VM down (`ready`).
@@ -1632,7 +1632,7 @@ export const MACOS_VERSIONS: ReadonlyArray<{ code: string; label: string }> = [
   { code: "11", label: "macOS 11 Big Sur" },
 ];
 
-/** The macOS VMs of `qemu-macos` Sessions (ADR-0058). */
+/** The macOS VMs of `qemu-macos` Sessions (ADR-0059). */
 export const MacosSettings = z.object({
   /** Release of the shared base disk (a `MACOS_VERSIONS` code); changing it means reinstalling the base. */
   version: z.string().min(1).default("15"),
@@ -2013,7 +2013,7 @@ export type SessionBroadcast =
   | { type: "remote"; remote: RemoteAccess }
   /** The shared Windows base disk changed state (install started, progressed, finished or failed). */
   | { type: "windows_base"; status: WindowsBaseStatus }
-  /** The shared macOS base disk changed state (ADR-0058). */
+  /** The shared macOS base disk changed state (ADR-0059). */
   | { type: "macos_base"; status: MacosBaseStatus }
   /** Answer to the UI's `ping`. */
   | { type: "pong" };

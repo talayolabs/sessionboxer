@@ -2237,7 +2237,7 @@ function SettingsView({
   /** The shared Windows base disk (ADR-0057), kept current by the `windows_base` broadcast. */
   windowsBase: WindowsBaseStatus | null;
   onWindowsBase: (status: WindowsBaseStatus) => void;
-  /** The shared macOS base disk (ADR-0058), kept current by the `macos_base` broadcast. */
+  /** The shared macOS base disk (ADR-0059), kept current by the `macos_base` broadcast. */
   macosBase: MacosBaseStatus | null;
   onMacosBase: (status: MacosBaseStatus) => void;
   run: Runner;

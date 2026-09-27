@@ -10,7 +10,7 @@ import { log } from "./log.js";
 import { type GuestVms, VM_LOG_LINES, VmHost, demux, isStatus } from "./vm-host.js";
 
 /**
- * macOS VMs for `qemu-macos` Sessions (ADR-0058). The shape is the Windows one (ADR-0057): a
+ * macOS VMs for `qemu-macos` Sessions (ADR-0059). The shape is the Windows one (ADR-0057): a
  * sidecar container on dockur/macos runs one QEMU/KVM guest booted by OpenCore, on a qcow2
  * overlay over a shared read-only *base disk* in the `sbx-macos-base` volume. What differs is
  * how the base gets there: Apple ships no unattended installer, so the base VM boots Apple's

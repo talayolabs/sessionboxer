@@ -58,7 +58,7 @@ if [[ -n "${SESSIONBOXER_WINDOWS_HOST:-}" ]]; then
   log "windows desktop: rdp to ${SESSIONBOXER_WINDOWS_HOST}:${SESSIONBOXER_WINDOWS_RDP_PORT:-3389}"
   sessionboxer-windows-desktop >"$LOG_DIR/windows-desktop.log" 2>&1 &
 fi
-# Likewise a macOS Session (ADR-0058), over VNC.
+# Likewise a macOS Session (ADR-0059), over VNC.
 if [[ -n "${SESSIONBOXER_MACOS_HOST:-}" ]]; then
   log "macos desktop: vnc to ${SESSIONBOXER_MACOS_HOST}:${SESSIONBOXER_MACOS_VNC_PORT:-5900}"
   sessionboxer-macos-desktop >"$LOG_DIR/macos-desktop.log" 2>&1 &

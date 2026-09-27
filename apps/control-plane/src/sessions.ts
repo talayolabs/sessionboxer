@@ -197,7 +197,7 @@ export class SessionManager {
     private readonly docker: SandboxDocker,
     /** The Windows VMs of `qemu-windows` Sessions (ADR-0057). */
     readonly windows: WindowsVms,
-    /** The macOS VMs of `qemu-macos` Sessions (ADR-0058). */
+    /** The macOS VMs of `qemu-macos` Sessions (ADR-0059). */
     readonly macos: MacosVms,
     private readonly settings: () => Settings,
     private readonly log: (msg: string) => void,

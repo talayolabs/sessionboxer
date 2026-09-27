@@ -126,7 +126,7 @@ export const api = {
   windowsInstall: () => request<WindowsBaseStatus>("/windows/install", { method: "POST" }),
   windowsCancel: () => request<WindowsBaseStatus>("/windows/cancel", { method: "POST" }),
   windowsRemove: () => request<WindowsBaseStatus>("/windows", { method: "DELETE" }),
-  /** The shared macOS base disk of `qemu-macos` Sessions (ADR-0058). */
+  /** The shared macOS base disk of `qemu-macos` Sessions (ADR-0059). */
   macosBase: () => request<MacosBaseStatus>("/macos"),
   macosInstall: () => request<MacosBaseStatus>("/macos/install", { method: "POST" }),
   macosCancel: () => request<MacosBaseStatus>("/macos/cancel", { method: "POST" }),

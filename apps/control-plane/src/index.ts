@@ -340,7 +340,7 @@ api.post("/windows/install", async (c) => c.json(await windows.install()));
 api.post("/windows/cancel", async (c) => c.json(await windows.cancelInstall()));
 api.delete("/windows", async (c) => c.json(await windows.removeBase()));
 
-/** The shared macOS base disk (ADR-0058): its state, installing / cancelling / deleting it, and its screen while it installs. */
+/** The shared macOS base disk (ADR-0059): its state, installing / cancelling / deleting it, and its screen while it installs. */
 api.get("/macos", (c) => c.json(macos.status()));
 api.post("/macos/install", async (c) => c.json(await macos.install()));
 api.post("/macos/cancel", async (c) => c.json(await macos.cancelInstall()));

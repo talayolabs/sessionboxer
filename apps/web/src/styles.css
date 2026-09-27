@@ -431,7 +431,8 @@ li.expanded .saved-text { white-space: normal; }
 .connector-code { font-size: 24px; letter-spacing: 3px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); user-select: all; }
 .connector-done { margin: 0; line-height: 1.45; }
 .provider-signin { display: flex; flex-direction: column; gap: 8px; }
-.provider-signin-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.provider-signin-row { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.provider-signin > .muted { text-align: center; }
 .provider-signin .connector-code-row input { flex: 1; min-width: 200px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .provider-signin p { margin: 0; line-height: 1.45; }
 .provider-signin .link { align-self: flex-start; }
@@ -992,13 +993,11 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .start-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid var(--border); }
 .start-tools button.small { padding: 5px 10px; font-size: var(--fs-md); display: inline-flex; align-items: center; gap: 6px; }
 .start-tools button.small.active { border-color: var(--accent); }
-.start-tools button.warn-btn { border-color: var(--warn); color: var(--warn); }
 .start-tools button.primary { padding: 6px 16px; }
 .start-tools .select-trigger.compact { min-height: 28px; }
 .start-tools .model-select .select-trigger > .select-label { max-width: 180px; }
 .start-repos { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); }
 .start-repos p { margin: 0; font-size: var(--fs-md); }
-.start-foot { margin: 0; text-align: center; font-size: var(--fs-md); }
 
 /* Four Provider logos; each opens the connect dialog. */
 .provider-logos { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -1009,6 +1008,8 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .provider-logo-state { font-size: var(--fs-sm); }
 .provider-logo-state.muted { color: var(--muted); }
 .provider-connect { max-width: 620px; max-height: 90vh; overflow-y: auto; gap: 12px; }
+.provider-connect-head { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0 4px; }
+.runtime-install { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; margin: 8px 0 12px; }
 .provider-connect .muted { margin: 0; line-height: 1.5; }
 .provider-connect .field-hint { margin: 0; }
 .os-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

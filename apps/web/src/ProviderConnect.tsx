@@ -345,8 +345,7 @@ export function ProviderConnectDialog({
       {provider && field && (
         <>
           <div className="provider-connect-head">
-            <ProviderIcon provider={provider} size={28} />
-            <span className="muted">{PROVIDER_BLURB[provider]}.</span>
+            <ProviderIcon provider={provider} size={40} />
             {connected && <span className="ok">Connected</span>}
           </div>
           <ProviderSignIn
@@ -359,7 +358,7 @@ export function ProviderConnectDialog({
             open={manual}
             onToggle={(e) => setManual(e.currentTarget.open)}
           >
-            <summary>Or do it by hand: the CLI on your machine, then paste</summary>
+            <summary>Or using the CLI</summary>
           <Tabs className="tabs" value={os} onValueChange={setOs}>
             <div className="os-row">
               <span className="muted">Commands for</span>

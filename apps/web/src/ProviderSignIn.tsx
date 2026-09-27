@@ -149,12 +149,6 @@ export function ProviderSignIn({
           )}
         </div>
       )}
-      {!pending && (
-        <p className="muted">
-          Opens {label}&apos;s sign-in page in this browser (with your saved passwords and open sessions); nothing to install, nothing to paste from a
-          terminal.
-        </p>
-      )}
       {flow?.status === "starting" && <p className="muted">Starting {label}&apos;s CLI…</p>}
       {flow?.status === "awaiting_code" && flow.url && (
         <div className="connector-device">

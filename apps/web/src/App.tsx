@@ -1932,6 +1932,57 @@ function RuntimeDialog({ settings, onClose }: { settings: PublicSettings; onClos
   );
 }
 
+/** Whether a Session of this Environment can start here: Docker answers for the Linux box, the VM base disk and KVM for the others. */
+function runtimePresent(settings: PublicSettings, environment: Environment): boolean {
+  return environment === "docker-linux" ? settings.dockerReachable : settings.environments[environment].available;
+}
+
+/** Picking an Environment whose runtime is missing from the New session toolbar: what it needs and where to get it. */
+function RuntimeInstallDialog({ environment, settings, onClose }: { environment: Environment; settings: PublicSettings; onClose: () => void }) {
+  const label = ENVIRONMENT_LABELS[environment];
+  const section = environment === "qemu-windows" ? "windows" : environment === "qemu-macos" ? "macos" : null;
+  const reason = environment === "docker-linux" ? null : settings.environments[environment].reason;
+  return (
+    <Modal title={`${label} needs to be installed`} onClose={onClose}>
+      <div className="runtime-install">
+        <EnvironmentIcon environment={environment} size={40} />
+        <p className="muted">
+          {environment === "docker-linux"
+            ? settings.hostPlatform === "darwin"
+              ? "Docker is not reachable. Install OrbStack or Docker Desktop and start it."
+              : "Docker is not reachable. Install Docker Engine, make sure the daemon runs and that your user can run docker."
+            : (reason ?? `${label} is not available on this host.`)}
+        </p>
+      </div>
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+        {environment === "docker-linux" ? (
+          <button
+            type="button"
+            className="primary"
+            onClick={() => window.open(settings.hostPlatform === "darwin" ? "https://orbstack.dev" : dockerInstallUrl(settings.hostPlatform), "_blank", "noreferrer")}
+          >
+            Install Docker
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              onClose();
+              location.hash = `#/settings/${section}`;
+            }}
+          >
+            Install…
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 const NEW_PROVIDER_KEY = "sessionboxer.new.provider";
 const NEW_ENVIRONMENT_KEY = "sessionboxer.new.environment";
 
@@ -1983,6 +2034,7 @@ function NewSession({
   const [prompt, setPrompt] = useState("");
   const [reposOpen, setReposOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [runtimeNeeded, setRuntimeNeeded] = useState<Environment | null>(null);
   const [busy, setBusy] = useState(false);
   const pickedRef = useRef(false);
 
@@ -2048,6 +2100,10 @@ function NewSession({
             <Select<Environment>
               value={draft.environment}
               onChange={(environment) => {
+                if (!runtimePresent(settings, environment)) {
+                  setRuntimeNeeded(environment);
+                  return;
+                }
                 localStorage.setItem(NEW_ENVIRONMENT_KEY, environment);
                 setDraft((d) => ({ ...d, environment }));
               }}
@@ -2059,8 +2115,7 @@ function NewSession({
                 value: env,
                 label: ENVIRONMENT_LABELS[env],
                 icon: <EnvironmentIcon environment={env} />,
-                disabled: !settings.environments[env].available,
-                hint: settings.environments[env].available ? undefined : (settings.environments[env].reason ?? "Not available on this host"),
+                hint: runtimePresent(settings, env) ? undefined : "not installed",
               }))}
             >
               <EnvironmentIcon environment={draft.environment} />
@@ -2072,6 +2127,7 @@ function NewSession({
                 localStorage.setItem(NEW_PROVIDER_KEY, p);
                 setProvider(p);
                 setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: true }));
+                if (!providerTokenSet(settings, p)) onConnectProvider(p);
               }}
               disabled={busy}
               aria-label="Agent"
@@ -2095,11 +2151,6 @@ function NewSession({
               allowDefault
               emptyHint={`The list of ${PROVIDER_LABELS[provider]} models appears once one of its Sessions has started; you can switch the model from the chat afterwards.`}
             />
-            {!providerReady && (
-              <button type="button" className="small warn-btn" disabled={busy} onClick={() => onConnectProvider(provider)} title={`No ${PROVIDER_LABELS[provider]} login yet`}>
-                Connect…
-              </button>
-            )}
             <button
               type="button"
               className={`small${reposOpen ? " active" : ""}`}
@@ -2139,11 +2190,8 @@ function NewSession({
           )}
         </form>
         {repoError && <p className="field-hint warn">{repoError}</p>}
-        <p className="muted start-foot">
-          Each Session gets its own Sandbox (a Docker container with a desktop, a terminal and your repositories) that the Agent works in; you watch and
-          steer from the chat.
-        </p>
       </div>
+      {runtimeNeeded && <RuntimeInstallDialog environment={runtimeNeeded} settings={settings} onClose={() => setRuntimeNeeded(null)} />}
       {advancedOpen && (
         <AdvancedSettingsDialog
           provider={provider}

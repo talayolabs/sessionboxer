@@ -15,7 +15,8 @@ import {
 import { formatMb, formatTime } from "./format";
 import { providerCredentialNoun, providerTokenSet } from "./providers";
 import { SessionSettingsForm, draftFromSettings, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
-import { Modal } from "./ui";
+import { ProviderIcon } from "./ProviderIcon";
+import { Modal, Select } from "./ui";
 
 const PREVIEW_CHARS = 120;
 
@@ -147,26 +148,30 @@ export function ForkDialog({
       </p>
       <label>
         Fork point
-        <select value={snapshot.id} onChange={(e) => setSnapshotId(e.target.value)}>
-          {[...snapshots].reverse().map((s) => (
-            <option key={s.id} value={s.id}>
-              #{s.ordinal}
-              {s.reason === "manual" ? " (manual)" : ""} {"\u00b7"} {formatTime(s.createdAt)} {"\u00b7"} {formatMb(s.sizeBytes)}
-              {s.queuedMessages.length > 0 ? ` \u00b7 ${s.queuedMessages.length} queued` : ""}
-            </option>
-          ))}
-        </select>
+        <Select<string>
+          value={snapshot.id}
+          onChange={setSnapshotId}
+          aria-label="Fork point"
+          options={[...snapshots].reverse().map((s) => ({
+            value: s.id,
+            label: `#${s.ordinal}${s.reason === "manual" ? " (manual)" : ""} \u00b7 ${formatTime(s.createdAt)} \u00b7 ${formatMb(s.sizeBytes)}${s.queuedMessages.length > 0 ? ` \u00b7 ${s.queuedMessages.length} queued` : ""}`,
+          }))}
+        />
       </label>
       <label>
         Agent
-        <select value={provider} onChange={(e) => pickProvider(e.target.value as Provider)} disabled={busy}>
-          {PROVIDERS.map((p) => (
-            <option key={p} value={p}>
-              {PROVIDER_LABELS[p]}
-              {p === session.provider ? " (the origin's)" : ""}
-            </option>
-          ))}
-        </select>
+        <Select<Provider>
+          value={provider}
+          onChange={pickProvider}
+          disabled={busy}
+          aria-label="Agent"
+          options={PROVIDERS.map((p) => ({
+            value: p,
+            label: PROVIDER_LABELS[p],
+            icon: <ProviderIcon provider={p} size={16} />,
+            hint: p === session.provider ? "the origin's" : providerTokenSet(settings, p) ? undefined : "not connected",
+          }))}
+        />
       </label>
       {!providerTokenSet(settings, provider) && (
         <p className="field-hint warn">

@@ -19,6 +19,8 @@ import {
 import { summarize } from "./mcp";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
+import { EnvironmentIcon } from "./EnvironmentIcon";
+import { Select } from "./ui";
 
 /** How `instructions` reach the Agent of a Provider, in one sentence for the UI. */
 export function deliveryNote(provider: Provider): string {
@@ -216,16 +218,23 @@ export function SessionSettingsForm({
             Provider: {providerLabel} <span className="ss-lock">(fixed for the Session)</span>
           </p>
         )}
+        {mode === "create" && (
+          <p className="muted ss-fixed">
+            Model: {value.model ?? `${providerLabel}'s default`} <span className="ss-lock">(picked under the prompt box)</span>
+          </p>
+        )}
         {models.length > 0 || value.model !== null ? (
           <>
-            <ModelSelect
-              models={models}
-              value={value.model}
-              onChange={(model) => onChange({ model })}
-              allowDefault={!live}
-              disabled={disabled}
-              pending={pending?.modelPending ?? false}
-            />
+            {mode !== "create" && (
+              <ModelSelect
+                models={models}
+                value={value.model}
+                onChange={(model) => onChange({ model })}
+                allowDefault={!live}
+                disabled={disabled}
+                pending={pending?.modelPending ?? false}
+              />
+            )}
             <OptionSelects
               options={options}
               values={value.options}
@@ -357,15 +366,17 @@ export function SessionSettingsForm({
         <h3>Snapshots</h3>
         <label>
           Snapshot automatically after every completed turn
-          <select
+          <Select<"default" | "on" | "off">
             value={value.autoSnapshot === null ? "default" : value.autoSnapshot ? "on" : "off"}
             disabled={disabled}
-            onChange={(e) => onChange({ autoSnapshot: e.target.value === "default" ? null : e.target.value === "on" })}
-          >
-            <option value="default">Settings default ({settings.autoSnapshot ? "on" : "off"})</option>
-            <option value="on">On</option>
-            <option value="off">Off</option>
-          </select>
+            onChange={(v) => onChange({ autoSnapshot: v === "default" ? null : v === "on" })}
+            aria-label="Snapshot automatically after every completed turn"
+            options={[
+              { value: "default", label: `Settings default (${settings.autoSnapshot ? "on" : "off"})` },
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ]}
+          />
         </label>
         <NumberField
           label="Automatic snapshots to keep"
@@ -385,15 +396,17 @@ export function SessionSettingsForm({
         <h3>Verification</h3>
         <label>
           Verify each turn end to end
-          <select
+          <Select<"default" | "on" | "off">
             value={value.e2eVerify === null ? "default" : value.e2eVerify ? "on" : "off"}
             disabled={disabled}
-            onChange={(e) => onChange({ e2eVerify: e.target.value === "default" ? null : e.target.value === "on" })}
-          >
-            <option value="default">Settings default ({settings.e2eVerify ? "on" : "off"})</option>
-            <option value="on">On</option>
-            <option value="off">Off</option>
-          </select>
+            onChange={(v) => onChange({ e2eVerify: v === "default" ? null : v === "on" })}
+            aria-label="Verify each turn end to end"
+            options={[
+              { value: "default", label: `Settings default (${settings.e2eVerify ? "on" : "off"})` },
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ]}
+          />
         </label>
         <p className="muted ss-note">
           After each completed turn the Agent checks what it changed, plans 2–5 test cases, runs them on the Sandbox desktop while recording, fixes
@@ -413,14 +426,19 @@ export function SessionSettingsForm({
           <>
             <label>
               Environment
-              <select value={value.environment} disabled={disabled} onChange={(e) => onChange({ environment: e.target.value as Environment })}>
-                {ENVIRONMENTS.map((env) => (
-                  <option key={env} value={env} disabled={!settings.environments[env].available}>
-                    {ENVIRONMENT_LABELS[env]}
-                    {settings.environments[env].available ? "" : " — not available"}
-                  </option>
-                ))}
-              </select>
+              <Select<Environment>
+                value={value.environment}
+                disabled={disabled}
+                onChange={(environment) => onChange({ environment })}
+                aria-label="Environment"
+                options={ENVIRONMENTS.map((env) => ({
+                  value: env,
+                  label: ENVIRONMENT_LABELS[env],
+                  icon: <EnvironmentIcon environment={env} />,
+                  disabled: !settings.environments[env].available,
+                  hint: settings.environments[env].available ? undefined : (settings.environments[env].reason ?? "Not available on this host"),
+                }))}
+              />
             </label>
             <EnvironmentNote settings={settings} environment={value.environment} />
           </>

@@ -40,6 +40,11 @@
 .provider-badge .provider-icon { opacity: 1; }
 .docker-warn { display: inline-flex; align-items: center; gap: 6px; color: var(--error); cursor: help; }
 .session-env { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); cursor: help; }
+/* Environment mark: OS glyph with the runtime (Docker, QEMU) as a badge in the bottom-right corner, on a disc of the surface colour. */
+.env-icon { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; }
+.env-icon > svg { display: block; }
+.env-icon-badge { position: absolute; right: -3px; bottom: -3px; display: inline-flex; border-radius: 50%; background: var(--panel); box-shadow: 0 0 0 1.5px var(--panel); }
+.env-icon-badge > svg { display: block; }
 .session-usb { display: inline-flex; align-items: center; color: var(--accent); cursor: help; }
 .session-usb.unplugged { color: var(--warn); }
 .docker-icon { display: block; }
@@ -134,7 +139,7 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .turn-divider-label { white-space: nowrap; }
 .turn-divider .small { padding: 1px 7px; font-size: var(--fs-xs); white-space: nowrap; }
 .branch-select { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: var(--fs-md); }
-.branch-select select { padding: 2px 6px; font-size: var(--fs-sm); }
+.branch-select .select-trigger { padding: 2px 6px; font-size: var(--fs-sm); }
 /* The Agent's messages of a turn behind one squiggly rule (GitHub's "load more" look). */
 .fold { display: flex; flex-direction: column; gap: 10px; }
 .fold > * { flex: none; }
@@ -279,11 +284,12 @@ li.expanded .saved-text { white-space: normal; }
 .composer-footer .hint { font-size: var(--fs-sm); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-footer .model-select, .composer-footer button { flex: none; white-space: nowrap; }
 .composer-footer .model-select { display: inline-flex; align-items: center; gap: 4px; }
-.composer-footer .model-select select { padding: 3px 6px; font-size: var(--fs-sm); max-width: 220px; }
+.composer-footer .model-select .select-trigger { padding: 2px 5px 2px 6px; min-height: 22px; font-size: var(--fs-sm); background: var(--bg); }
+.composer-footer .model-select .select-trigger > .select-label { max-width: 220px; }
 @container (max-width: 760px) {
   .composer-footer { gap: 6px; }
   .composer-footer .hint { display: none; }
-  .composer-footer .model-select select { max-width: 150px; }
+  .composer-footer .model-select .select-trigger > .select-label { max-width: 150px; }
 }
 @container (max-width: 680px) {
   .composer-footer { flex-wrap: wrap; }
@@ -906,7 +912,7 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
   .app.mobile .session-actions > button, .app.mobile .session-actions .header-tabs > button { min-height: var(--touch-target); text-align: left; }
   .app.mobile .header-tabs { display: contents; }
   .app.mobile .session-actions .branch-select { display: flex; align-items: center; gap: 8px; }
-  .app.mobile .session-actions .branch-select select { flex: 1; }
+  .app.mobile .session-actions .branch-select .select-trigger { flex: 1; }
 
   .app.mobile .session-body { min-height: 0; }
   .app.mobile .chat { min-width: 0; width: 100%; }
@@ -985,9 +991,8 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .start-tools button.small.active { border-color: var(--accent); }
 .start-tools button.warn-btn { border-color: var(--warn); color: var(--warn); }
 .start-tools button.primary { padding: 6px 16px; }
-.start-provider { display: inline-flex; align-items: center; gap: 6px; padding: 0 0 0 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
-.start-provider select { width: auto; border: 0; background: transparent; padding: 5px 6px; font-size: var(--fs-md); }
-.start-provider select:focus { outline: none; }
+.start-tools .select-trigger.compact { min-height: 28px; }
+.start-tools .model-select .select-trigger > .select-label { max-width: 180px; }
 .start-repos { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); }
 .start-repos p { margin: 0; font-size: var(--fs-md); }
 .start-foot { margin: 0; text-align: center; font-size: var(--fs-md); }
@@ -1035,6 +1040,10 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .setup-item { display: flex; align-items: center; gap: 8px; text-align: left; border: 0; background: transparent; padding: 6px; border-radius: var(--radius); }
 .setup-item:hover { background: var(--hover); }
 .setup-item.done { opacity: 0.7; }
+.setup-item.done .setup-text > .setup-title { text-decoration: line-through; }
+.runtime-list { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 12px; padding: 0; list-style: none; }
+.runtime-list li { display: flex; align-items: flex-start; gap: 10px; }
+.runtime-list li > .env-icon { margin-top: 2px; }
 .setup-check { flex: none; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-sm); color: var(--ok); }
 .setup-item.done .setup-check { border-color: var(--ok); }
 .setup-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; font-size: var(--fs-md); }

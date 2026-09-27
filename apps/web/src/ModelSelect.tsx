@@ -1,7 +1,11 @@
 import type { ModelOption } from "@sessionboxer/protocol";
+import { Select, type SelectOption } from "./ui";
 
 /** Above this many entries a flat list gets grouped by model family (first token of the value). */
 const GROUP_FLAT_ABOVE = 24;
+
+/** The RadioGroup value standing for "the Provider's default" (`null` to callers). */
+const DEFAULT_VALUE = "";
 
 function familyOf(value: string): string {
   const head = value.split(/[-_:/[ ]/, 1)[0] ?? value;
@@ -13,6 +17,12 @@ function describe(m: ModelOption): string {
   if (!m.description) return m.name;
   const rest = m.description.startsWith(m.name) ? m.description.slice(m.name.length).replace(/^\s*[\u00b7\u2014\-:,]\s*/, "") : m.description;
   return rest.length > 0 ? `${m.name} \u2014 ${rest}` : m.name;
+}
+
+/** The description alone, without the name it may start with; `undefined` when there is none. */
+function detail(m: ModelOption): string | undefined {
+  const full = describe(m);
+  return full === m.name ? undefined : full.slice(m.name.length).replace(/^\s*\u2014\s*/, "");
 }
 
 /** Ordered `[group label, models]` pairs; a `null` label means ungrouped (rendered flat, first). */
@@ -42,6 +52,7 @@ export function ModelSelect({
   allowDefault = false,
   compact = false,
   pending = false,
+  emptyHint,
 }: {
   models: ModelOption[];
   value: string | null;
@@ -49,10 +60,12 @@ export function ModelSelect({
   disabled?: boolean;
   /** Offer a "Provider default" entry (New Session, where no model has been picked yet). */
   allowDefault?: boolean;
-  /** Footer styling for the composer instead of a form field. */
+  /** Toolbar styling (composer footer, New session) instead of a form field: the model's short name only. */
   compact?: boolean;
   /** The change waits for the current turn to end. */
   pending?: boolean;
+  /** Shown as a disabled entry when the list is empty (New session, before the Provider's models are known). */
+  emptyHint?: string;
 }) {
   const known = value === null || models.some((m) => m.value === value);
   const current = models.find((m) => m.value === value);
@@ -62,33 +75,36 @@ export function ModelSelect({
       ? `Model "${value}" (not in the current list)`
       : "Model";
   const title = pending ? `${label} (change applies after this turn)` : label;
+  const options: SelectOption<string>[] = [];
+  if (allowDefault || value === null) options.push({ value: DEFAULT_VALUE, label: "Provider default", textValue: "Provider default" });
+  if (!known && value !== null) options.push({ value, label: value, hint: "not in the current list" });
+  for (const [group, list] of groupModels(models)) {
+    for (const m of list) {
+      options.push({ value: m.value, label: m.name, hint: detail(m), textValue: m.name, ...(group === null ? {} : { group }) });
+    }
+  }
+  if (models.length === 0 && emptyHint) options.push({ value: "\u0000empty", label: "No model list yet", hint: emptyHint, disabled: true });
   const select = (
     <>
-      <select value={value ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)} aria-label="Model">
-        {(allowDefault || value === null) && <option value="">Provider default</option>}
-        {!known && value !== null && <option value={value}>{value}</option>}
-        {groupModels(models).map(([group, list]) => {
-          const options = list.map((m) => (
-            <option key={m.value} value={m.value} title={m.description ?? undefined}>
-              {compact ? m.name : describe(m)}
-            </option>
-          ));
-          return group === null ? (
-            options
-          ) : (
-            <optgroup key={group} label={group}>
-              {options}
-            </optgroup>
-          );
-        })}
-      </select>
+      <Select<string>
+        value={value ?? DEFAULT_VALUE}
+        onChange={(v) => onChange(v === DEFAULT_VALUE ? null : v)}
+        options={options}
+        disabled={disabled}
+        aria-label="Model"
+        className={compact ? "compact" : "field"}
+        title={compact ? title : undefined}
+        menuClassName="model-menu"
+      >
+        {compact && (
+          <span className={`select-label${value === null ? " muted" : ""}`}>{current ? current.name : value === null ? "Default model" : value}</span>
+        )}
+      </Select>
       {pending && <span className="warn-sign">pending</span>}
     </>
   );
   return compact ? (
-    <span className="model-select" title={title}>
-      {select}
-    </span>
+    <span className="model-select">{select}</span>
   ) : (
     <label className="model-select" title={title}>
       Model

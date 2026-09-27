@@ -258,6 +258,7 @@ export function toPublicSettings(
   dockerModeAvailable: Exclude<DockerMode, "none">,
   tunnels: TunnelStatuses,
   environments: PublicSettings["environments"],
+  dockerReachable: boolean,
 ): PublicSettings {
   const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, windows, macos, ...rest } = settings;
   const base = claudeBaseUrl(settings);
@@ -269,6 +270,7 @@ export function toPublicSettings(
     windows: publicWindows,
     macos: publicMacos,
     environments,
+    dockerReachable,
     tunnels: { ...tunnelSettings, sessionboxer: { ...sessionboxer, secretSet: secret !== "" } },
     mcpServers: mcpServers.map(toPublicMcpServer),
     claudeApi: {

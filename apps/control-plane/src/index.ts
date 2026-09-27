@@ -206,12 +206,23 @@ const tunnels = new Tunnels(
   log,
 );
 const auth = new Auth(db.connection, () => accessToken(settings), TRUST_PROXY, new URL(PUBLIC_URL).host, log, () => tunnels.hosts());
+const dockerReachable = () =>
+  docker.docker.ping().then(
+    () => true,
+    () => false,
+  );
 const publicSettings = async () =>
-  toPublicSettings(settings, await sessions.dockerModeAvailable(), tunnels.statuses(), {
-    "docker-linux": { available: true, reason: null },
-    "qemu-windows": await windows.availability(),
-    "qemu-macos": await macos.availability(),
-  });
+  toPublicSettings(
+    settings,
+    await sessions.dockerModeAvailable(),
+    tunnels.statuses(),
+    {
+      "docker-linux": { available: true, reason: null },
+      "qemu-windows": await windows.availability(),
+      "qemu-macos": await macos.availability(),
+    },
+    await dockerReachable(),
+  );
 const connectors = new Connectors(
   {
     get: () => settings,

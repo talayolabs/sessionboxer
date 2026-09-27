@@ -7,6 +7,7 @@ import {
   DEFAULT_INSTRUCTIONS,
   DOCKER_ADDRESS_POOL_PATTERN,
   DOCKER_MODE_LABELS,
+  ENVIRONMENTS,
   ENVIRONMENT_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
@@ -22,6 +23,7 @@ import {
   type CodexLogin,
   type CursorLogin,
   type E2eRun,
+  type Environment,
   type LlmCall,
   type ModelOption,
   type NarrationMode,
@@ -78,6 +80,7 @@ import { ProviderConnectDialog, ProviderLogos } from "./ProviderConnect";
 import { AdvancedSettingsDialog } from "./AdvancedSettingsDialog";
 import { providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
+import { EnvironmentIcon } from "./EnvironmentIcon";
 import { Icon, type IconName } from "./Icons";
 import { MacosBase } from "./MacosBase";
 import { ContextGauge, ContextPane } from "./Context";
@@ -100,7 +103,7 @@ import { SnapshotsDialog } from "./SnapshotsDialog";
 import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
 import { UsbDialog } from "./UsbDialog";
 import { Schedules } from "./Schedules";
-import { cx, Menu, MenuItem, Tab, TabList, TabPanel, Tabs, Tip } from "./ui";
+import { Modal, Select, cx, Menu, MenuItem, Tab, TabList, TabPanel, Tabs, Tip } from "./ui";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane } from "./Terminal";
@@ -522,7 +525,10 @@ export function App() {
   const settingsWarning = !anyTokenSet ? "No Provider login configured" : dockerWarning;
   const gitConnected = (settings?.mcpServers ?? []).some((s) => s.connector !== null);
   const [gitLater, setGitLater] = useState(() => localStorage.getItem("sessionboxer.setup.gitLater") === "1");
-  const showSetup = settings !== null && (!anyTokenSet || (!gitConnected && !gitLater));
+  const [runtimeHelp, setRuntimeHelp] = useState(false);
+  const runtimes = settings === null ? [] : runtimesPresent(settings);
+  const runtimeReady = runtimes.length > 0;
+  const showSetup = settings !== null && (!runtimeReady || !anyTokenSet || (!gitConnected && !gitLater));
 
   const topTitle =
     route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
@@ -623,12 +629,12 @@ export function App() {
                   )}
                   {s.settings.sandbox.environment === "qemu-windows" && (
                     <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: a Windows VM next to the Sandbox`}>
-                      <Icon name="windows" size={12} />
+                      <EnvironmentIcon environment="qemu-windows" size={13} />
                     </span>
                   )}
                   {s.settings.sandbox.environment === "qemu-macos" && (
                     <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the agent runs inside a macOS VM next to the Sandbox`}>
-                      <Icon name="apple" size={12} />
+                      <EnvironmentIcon environment="qemu-macos" size={13} />
                     </span>
                   )}
                   <SessionSourceIcon session={s} />
@@ -670,19 +676,26 @@ export function App() {
             <div className="setup-todo" aria-label="Set-up checklist">
               <div className="setup-todo-head">
                 <span>To set up</span>
-                <span className="muted">{(anyTokenSet ? 1 : 0) + (gitConnected ? 1 : 0)}/2</span>
+                <span className="muted">{(runtimeReady ? 1 : 0) + (anyTokenSet ? 1 : 0) + (gitConnected ? 1 : 0)}/3</span>
               </div>
+              <button type="button" className={`setup-item${runtimeReady ? " done" : ""}`} onClick={() => setRuntimeHelp(true)}>
+                <span className="setup-check" aria-hidden="true">{runtimeReady ? "\u2713" : ""}</span>
+                <span className="setup-text">
+                  <span className="setup-title">Runtime</span>
+                  <span className="muted">{runtimeReady ? runtimes.join(" + ") : "Docker, or QEMU for Windows/macOS VMs"}</span>
+                </span>
+              </button>
               <button type="button" className={`setup-item${anyTokenSet ? " done" : ""}`} onClick={() => setProviderConnect({ provider: null })}>
                 <span className="setup-check" aria-hidden="true">{anyTokenSet ? "\u2713" : ""}</span>
                 <span className="setup-text">
-                  Connect a Provider
+                  <span className="setup-title">Connect a Provider</span>
                   <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor or Devin"}</span>
                 </span>
               </button>
               <button type="button" className={`setup-item${gitConnected ? " done" : ""}`} onClick={() => setGitConnect(true)}>
                 <span className="setup-check" aria-hidden="true">{gitConnected ? "\u2713" : ""}</span>
                 <span className="setup-text">
-                  Connect a Git account
+                  <span className="setup-title">Connect a Git account</span>
                   <span className="muted">{gitConnected ? "done" : "GitHub or Bitbucket, to push and open PRs"}</span>
                 </span>
                 {!gitConnected && (
@@ -702,6 +715,7 @@ export function App() {
               </button>
             </div>
           )}
+          {runtimeHelp && settings && <RuntimeDialog settings={settings} onClose={() => setRuntimeHelp(false)} />}
           <button onClick={() => setRoute({ view: "schedules" })} title={schedules.some((s) => s.lastStatus === "failed") ? "A scheduled task failed" : undefined}>
             Scheduled tasks
             {schedules.some((s) => s.lastStatus === "failed") && <span className="warn-sign" aria-label="A scheduled task failed">⚠</span>}
@@ -1462,13 +1476,13 @@ function SessionView({
         )}
         {session.settings.sandbox.environment === "qemu-windows" && (
           <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: the agent, its MCP servers, git and the Terminal run inside the Windows VM (Workspace C:\\workspace); the Desktop shows it over RDP`}>
-            <Icon name="windows" size={16} />
+            <EnvironmentIcon environment="qemu-windows" size={18} />
             {mobile && <span className="muted">{ENVIRONMENT_LABELS["qemu-windows"]}</span>}
           </span>
         )}
         {session.settings.sandbox.environment === "qemu-macos" && (
           <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the agent, its MCP servers, git and the Terminal (zsh) run inside a macOS VM, with the Workspace at /Users/agent/workspace; the Desktop shows it over VNC`}>
-            <Icon name="apple" size={16} />
+            <EnvironmentIcon environment="qemu-macos" size={18} />
             {mobile && <span className="muted">{ENVIRONMENT_LABELS["qemu-macos"]}</span>}
           </span>
         )}
@@ -1497,18 +1511,18 @@ function SessionView({
         {session.branches.length > 1 && (
           <label className="branch-select" title="Conversation branch (from “Revert to here”); only the active one talks to the Agent">
             {"\u2387"}
-            <select
+            <Select<string>
               value={session.activeBranchId}
               disabled={branching || session.status !== "idle"}
-              onChange={(e) => branchActions.onSwitch(e.target.value)}
-            >
-              {session.branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                  {b.forkedAtSeq !== null ? ` (from ${session.branches.find((p) => p.id === b.parentId)?.name ?? "?"})` : ""}
-                </option>
-              ))}
-            </select>
+              onChange={(id) => branchActions.onSwitch(id)}
+              aria-label="Conversation branch"
+              className="compact"
+              options={session.branches.map((b) => ({
+                value: b.id,
+                label: b.name,
+                hint: b.forkedAtSeq !== null ? `from ${session.branches.find((p) => p.id === b.parentId)?.name ?? "?"}` : undefined,
+              }))}
+            />
             {branching && <span className="muted">switching…</span>}
           </label>
         )}
@@ -1837,6 +1851,80 @@ function gitIdentityNote(session: Session): string {
  * with the Provider, the repositories and the advanced settings under it, and the four Provider
  * logos above it until one is connected. Nothing here is a long form.
  */
+/** The runtimes the Control Plane can start Sessions on right now, for the set-up checklist. */
+function runtimesPresent(settings: PublicSettings): string[] {
+  const out: string[] = [];
+  if (settings.dockerReachable) out.push("Docker");
+  if (settings.environments["qemu-windows"].available || settings.environments["qemu-macos"].available) out.push("QEMU");
+  return out;
+}
+
+function dockerInstallUrl(hostPlatform: string): string {
+  if (hostPlatform === "darwin") return "https://docs.docker.com/desktop/setup/install/mac-install/";
+  if (hostPlatform === "win32") return "https://docs.docker.com/desktop/setup/install/windows-install/";
+  return "https://docs.docker.com/engine/install/";
+}
+
+/** What the Runtime item of the set-up checklist opens: the state of each runtime and how to get the missing ones. */
+function RuntimeDialog({ settings, onClose }: { settings: PublicSettings; onClose: () => void }) {
+  const vms = (["qemu-windows", "qemu-macos"] as const).map((env) => [env, settings.environments[env]] as const);
+  return (
+    <Modal title="Runtime" description="Every Session runs in a Sandbox on Docker; Windows and macOS Sessions add a QEMU VM next to it." onClose={onClose}>
+      <ul className="runtime-list">
+        <li>
+          <EnvironmentIcon environment="docker-linux" />
+          <span>
+            <b>Docker</b>: {settings.dockerReachable ? "reachable" : "not reachable"}.{" "}
+            {settings.dockerReachable
+              ? "Linux Sessions can start."
+              : settings.hostPlatform === "darwin"
+                ? <>
+                    Install <a href="https://orbstack.dev" target="_blank" rel="noreferrer">OrbStack</a> or{" "}
+                    <a href={dockerInstallUrl(settings.hostPlatform)} target="_blank" rel="noreferrer">Docker Desktop</a> and start it.
+                  </>
+                : <>
+                    Install <a href={dockerInstallUrl(settings.hostPlatform)} target="_blank" rel="noreferrer">Docker Engine</a>, make sure the daemon runs and that
+                    your user can run <code>docker</code>.
+                  </>}
+          </span>
+        </li>
+        {vms.map(([env, a]) => (
+          <li key={env}>
+            <EnvironmentIcon environment={env} />
+            <span>
+              <b>{ENVIRONMENT_LABELS[env]}</b>: {a.available ? "available." : `not available. ${a.reason ?? ""}`.trim()}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="muted small-text">
+        Windows and macOS VMs need a Linux host with <code>/dev/kvm</code> (bare metal, a VM with nested virtualisation, or WSL2 with KVM) that your user can
+        use; Docker Desktop on macOS cannot. See the guide&apos;s Requirements.
+      </p>
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+const NEW_PROVIDER_KEY = "sessionboxer.new.provider";
+const NEW_ENVIRONMENT_KEY = "sessionboxer.new.environment";
+
+/** The Agent picked last time on the New session screen, if still one of ours. */
+function rememberedProvider(): Provider | null {
+  const v = localStorage.getItem(NEW_PROVIDER_KEY);
+  return PROVIDERS.find((p) => p === v) ?? null;
+}
+
+/** The Environment picked last time on the New session screen. */
+function rememberedEnvironment(): Environment | null {
+  const v = localStorage.getItem(NEW_ENVIRONMENT_KEY);
+  return ENVIRONMENTS.find((e) => e === v) ?? null;
+}
+
 function NewSession({
   settings,
   models,
@@ -1858,8 +1946,16 @@ function NewSession({
   run: Runner;
 }) {
   const connectedProviders = PROVIDERS.filter((p) => providerTokenSet(settings, p));
-  const [provider, setProvider] = useState<Provider>(() => connectedProviders[0] ?? "claude-code");
-  const [draft, setDraft] = useState<SessionSettingsDraft>(() => draftFromDefaults(settings));
+  const [provider, setProvider] = useState<Provider>(() => {
+    const remembered = rememberedProvider();
+    if (remembered && (connectedProviders.length === 0 || providerTokenSet(settings, remembered))) return remembered;
+    return connectedProviders[0] ?? "claude-code";
+  });
+  const [draft, setDraft] = useState<SessionSettingsDraft>(() => {
+    const remembered = rememberedEnvironment();
+    const base = draftFromDefaults(settings);
+    return remembered && settings.environments[remembered].available ? { ...base, environment: remembered } : base;
+  });
   const [repos, setRepos] = useState<RepoDraft[]>([]);
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -1927,24 +2023,56 @@ function NewSession({
             disabled={busy}
           />
           <div className="start-tools">
-            <label className="start-provider" title="Which Agent runs this Session">
+            <Select<Environment>
+              value={draft.environment}
+              onChange={(environment) => {
+                localStorage.setItem(NEW_ENVIRONMENT_KEY, environment);
+                setDraft((d) => ({ ...d, environment }));
+              }}
+              disabled={busy}
+              aria-label="Environment"
+              tip={`Environment: ${ENVIRONMENT_LABELS[draft.environment]}`}
+              className="compact icon-only"
+              options={ENVIRONMENTS.map((env) => ({
+                value: env,
+                label: ENVIRONMENT_LABELS[env],
+                icon: <EnvironmentIcon environment={env} />,
+                disabled: !settings.environments[env].available,
+                hint: settings.environments[env].available ? undefined : (settings.environments[env].reason ?? "Not available on this host"),
+              }))}
+            >
+              <EnvironmentIcon environment={draft.environment} />
+            </Select>
+            <Select<Provider>
+              value={provider}
+              onChange={(p) => {
+                pickedRef.current = true;
+                localStorage.setItem(NEW_PROVIDER_KEY, p);
+                setProvider(p);
+                setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: true }));
+              }}
+              disabled={busy}
+              aria-label="Agent"
+              tip={`Agent: ${PROVIDER_LABELS[provider]}`}
+              className="compact icon-only"
+              options={PROVIDERS.map((p) => ({
+                value: p,
+                label: PROVIDER_LABELS[p],
+                icon: <ProviderIcon provider={p} size={16} />,
+                hint: providerTokenSet(settings, p) ? undefined : "not connected",
+              }))}
+            >
               <ProviderIcon provider={provider} size={16} />
-              <select
-                value={provider}
-                disabled={busy}
-                onChange={(e) => {
-                  pickedRef.current = true;
-                  setProvider(e.target.value as Provider);
-                  setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: true }));
-                }}
-              >
-                {PROVIDERS.map((p) => (
-                  <option key={p} value={p}>
-                    {PROVIDER_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            </label>
+            </Select>
+            <ModelSelect
+              compact
+              models={models[provider]}
+              value={draft.model}
+              onChange={(model) => setDraft((d) => ({ ...d, model }))}
+              disabled={busy}
+              allowDefault
+              emptyHint={`The list of ${PROVIDER_LABELS[provider]} models appears once one of its Sessions has started; you can switch the model from the chat afterwards.`}
+            />
             {!providerReady && (
               <button type="button" className="small warn-btn" disabled={busy} onClick={() => onConnectProvider(provider)} title={`No ${PROVIDER_LABELS[provider]} login yet`}>
                 Connect…
@@ -2729,13 +2857,7 @@ function SettingsView({
               <div className="row">
                 <label>
                   Edition of the base disk
-                  <select value={windowsVersion} onChange={(e) => setWindowsVersion(e.target.value)}>
-                    {WINDOWS_VERSIONS.map((v) => (
-                      <option key={v.code} value={v.code}>
-                        {v.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select<string> value={windowsVersion} onChange={setWindowsVersion} aria-label="Edition of the base disk" options={WINDOWS_VERSIONS.map((v) => ({ value: v.code, label: v.label }))} />
                 </label>
                 <label>
                   Base disk size (GB)
@@ -2782,13 +2904,7 @@ function SettingsView({
               <div className="row">
                 <label>
                   Release of the base disk
-                  <select value={macosVersion} onChange={(e) => setMacosVersion(e.target.value)}>
-                    {MACOS_VERSIONS.map((v) => (
-                      <option key={v.code} value={v.code}>
-                        {v.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select<string> value={macosVersion} onChange={setMacosVersion} aria-label="Release of the base disk" options={MACOS_VERSIONS.map((v) => ({ value: v.code, label: v.label }))} />
                 </label>
                 <label>
                   Base disk size (GB)
@@ -2858,11 +2974,16 @@ function SettingsView({
               <div className="row">
                 <label>
                   Narrate recordings
-                  <select value={narrationMode} onChange={(e) => setNarrationMode(e.target.value as NarrationMode)}>
-                    <option value="ask">Ask when it takes longer than…</option>
-                    <option value="always">Always</option>
-                    <option value="never">Never</option>
-                  </select>
+                  <Select<NarrationMode>
+                    value={narrationMode}
+                    onChange={setNarrationMode}
+                    aria-label="Narrate recordings"
+                    options={[
+                      { value: "ask", label: "Ask when it takes longer than…" },
+                      { value: "always", label: "Always" },
+                      { value: "never", label: "Never" },
+                    ]}
+                  />
                 </label>
                 {narrationMode === "ask" && (
                   <label>
@@ -2883,36 +3004,44 @@ function SettingsView({
               <div className="row">
                 <label>
                   Model
-                  <select value={speechModel} onChange={(e) => setSpeechModel(e.target.value as SpeechModel)}>
-                    {SPEECH_MODELS.map((m) => (
-                      <option key={m} value={m}>
-                        {SPEECH_MODEL_INFO[m].label} ({formatMb(SPEECH_MODEL_INFO[m].bytes)}) — {SPEECH_MODEL_INFO[m].note}
-                      </option>
-                    ))}
-                  </select>
+                  <Select<SpeechModel>
+                    value={speechModel}
+                    onChange={setSpeechModel}
+                    aria-label="Dictation model"
+                    options={SPEECH_MODELS.map((m) => ({
+                      value: m,
+                      label: `${SPEECH_MODEL_INFO[m].label} (${formatMb(SPEECH_MODEL_INFO[m].bytes)})`,
+                      hint: SPEECH_MODEL_INFO[m].note,
+                    }))}
+                  />
                 </label>
                 <label>
                   Language
-                  <select value={speechLanguage} onChange={(e) => setSpeechLanguage(e.target.value)}>
-                    <option value="auto">Detect (slower, one language per clip)</option>
-                    <option value="en">English</option>
-                    <option value="es">Spanish</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="fr">French</option>
-                    <option value="de">German</option>
-                    <option value="it">Italian</option>
-                    <option value="ca">Catalan</option>
-                    <option value="nl">Dutch</option>
-                    <option value="pl">Polish</option>
-                    <option value="ru">Russian</option>
-                    <option value="uk">Ukrainian</option>
-                    <option value="tr">Turkish</option>
-                    <option value="ja">Japanese</option>
-                    <option value="zh">Chinese</option>
-                    <option value="ko">Korean</option>
-                    <option value="hi">Hindi</option>
-                    <option value="ar">Arabic</option>
-                  </select>
+                  <Select<string>
+                    value={speechLanguage}
+                    onChange={setSpeechLanguage}
+                    aria-label="Dictation language"
+                    options={[
+                      { value: "auto", label: "Detect (slower, one language per clip)" },
+                      { value: "en", label: "English" },
+                      { value: "es", label: "Spanish" },
+                      { value: "pt", label: "Portuguese" },
+                      { value: "fr", label: "French" },
+                      { value: "de", label: "German" },
+                      { value: "it", label: "Italian" },
+                      { value: "ca", label: "Catalan" },
+                      { value: "nl", label: "Dutch" },
+                      { value: "pl", label: "Polish" },
+                      { value: "ru", label: "Russian" },
+                      { value: "uk", label: "Ukrainian" },
+                      { value: "tr", label: "Turkish" },
+                      { value: "ja", label: "Japanese" },
+                      { value: "zh", label: "Chinese" },
+                      { value: "ko", label: "Korean" },
+                      { value: "hi", label: "Hindi" },
+                      { value: "ar", label: "Arabic" },
+                    ]}
+                  />
                 </label>
               </div>
               <SpeechAssets selected={speechModel} saved={settings.speech.model} />

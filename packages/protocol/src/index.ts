@@ -1825,6 +1825,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   }),
   /** Mode a Docker-enabled Session created now would get, given the host's runtimes. */
   dockerModeAvailable: DockerMode.exclude(["none"]),
+  /** Whether the Docker engine answered a ping just now: the runtime every Session needs, VM Environments included. */
+  dockerReachable: z.boolean(),
   /** OS the Control Plane runs on (Node's `process.platform`): Sysbox exists on Linux only, so the UI words Docker warnings accordingly. */
   hostPlatform: z.string(),
   /** Subjects of the non-public CA certificates found in this machine's trust store. */

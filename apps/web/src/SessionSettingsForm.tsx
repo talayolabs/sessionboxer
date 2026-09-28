@@ -165,8 +165,8 @@ export function sessionSettingsSections(provider: Provider): Array<{ id: Session
   ];
 }
 
-export const DESKTOP_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/desktop/";
-export const SESSIONBOXER_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/the-agent-and-sessionboxer/";
+export const DESKTOP_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/mcp-tools/#the-desktop-server";
+export const SESSIONBOXER_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/mcp-tools/#the-sessionboxer-server";
 
 type OnOff = "default" | "on" | "off";
 const onOff = (v: boolean | null): OnOff => (v === null ? "default" : v ? "on" : "off");

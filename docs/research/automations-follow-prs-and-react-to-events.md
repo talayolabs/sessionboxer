@@ -13,7 +13,7 @@ No code changes come with this document. Every external claim links to the page 
 - **Events are derived by diffing snapshots**: `opened`, `synchronize`, `ready_for_review`, `converted_to_draft`, `review_requested`, `review_submitted`, `comment`, `check_failed`, `merged`, `closed`, `reopened`. Webhooks stay an *optional* accelerator: a signed `POST /api/hooks/github` that only says "poll this PR now", worth switching on when a tunnel with a stable hostname is up.
 - **Reactions are Session-shaped.** Auto review and Auto QA both start a new Session on the PR head (`stopAfter: true` like scheduled Sessions). The review is written by the agent but **posted by the Control Plane** through a new `pr_review_submit` MCP tool, which is where the marker, the dedupe key and the loop guard live. The QA video is attached to a PR comment with `gh pr comment --attach` (GitHub renders it as a player; documented in September 2026), with a link to the Session's Auto QA pane as the always-available fallback and the only option on Bitbucket Data Center.
 - **Scheduled tasks migrate into Automations** (`schedules` → `automations` with `trigger.type = "schedule"`, `schedule_runs` → `automation_runs`); `/api/schedules*` and the `schedule_create` / `schedule_list` MCP tools stay as aliases for one release.
-- **Two new top-level pages**: `#/automations` (replaces `#/schedules`) and `#/prs` (the followed PRs, with what each automation did to each PR). Effort: about 5–6 sessions over five stages; two stages need a Sandbox image rebuild.
+- **Two new top-level pages, deliberately separate**: `#/prs` (the followed PRs — a place to look at a PR by hand, read its comments and failing checks, copy an error, attach it to a Session — with no automation involved) and `#/automations` (replaces `#/schedules`; a trigger can be a PR event). Following a PR never requires an automation; an automation only picks which follows it listens to, and the PRs page shows a badge for what an automation did. Effort: about 5–6 sessions over five stages; two stages need a Sandbox image rebuild.
 
 ## 1. Where we start
 
@@ -599,11 +599,12 @@ Total ≈ **5–6 sessions**. Stages 0 and 1 are independent of 2–4 and alread
 
 ## 7. Open questions for the owner (with the recommended default)
 
+Settled with the owner: **Pull requests is a top-level page from stage 1**, independent of Automations — following and manually inspecting PRs (copying a failing check's output, reading comments, attaching to a Session) is a feature on its own; automations are an optional layer over the same follows. The per-Session PRs pane stays.
+
 1. **Migrate `schedules` into `automations`, or keep the tables and only unify the page?** Default: **migrate** (§4.3), keeping `/api/schedules*` and `schedule_*` MCP tools as aliases for one release.
 2. **Where does the QA video go by default on GitHub?** Default: **`gh pr comment --attach` from the Control Plane host** (inline player, documented, no infra); release asset only as a size fallback; link-only on Bitbucket DC and whenever the upload fails. Opt-in S3/R2 in stage 4.
 3. **Who posts the review?** Default: **the Control Plane via `pr_review_submit`** (works for Bitbucket, marker/loop guard structural, verdict capped), at the price of one MCP tool and an image rebuild. Alternative: the agent runs `gh pr review` itself (GitHub only, no rebuild).
 4. **Fork PRs.** Default: **review only** — clone through `pull/{n}/head` with no connector credentials in the box; Auto QA and fixed-prompt Sessions skip forks unless the automation says `forks: "allow"`.
-5. **"Pull requests" as a top-level sidebar page in stage 1, or only automation badges until later?** Default: **top-level page in stage 1** — it is where followed PRs and their events become visible, and without it the follow feature has no home; the per-Session PRs pane stays.
 
 ## References
 

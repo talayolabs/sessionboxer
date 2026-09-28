@@ -114,7 +114,7 @@ import {
   classifyUsageLimit,
   mergeUsageWindows,
 } from "@sessionboxer/protocol";
-import { AgentTools, type AgentScheduler } from "./agent-tools.js";
+import { AgentTools, type AgentAutomations } from "./agent-tools.js";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
   PUBLIC_URL,
@@ -195,7 +195,7 @@ export class SessionManager {
   /** Senders with an Agent-to-Agent prompt in flight, by target Session (one per target per sender, ADR-0062). */
   private readonly agentInflight = new Map<string, Set<string>>();
   /** Who can create and schedule Sessions on the Agent's behalf; wired by the server. */
-  scheduler: AgentScheduler | null = null;
+  automations: AgentAutomations | null = null;
   /** Handoffs being written, by origin Session: settled by the end of the hidden turn, or aborted when the origin goes away. */
   private readonly handoffs = new Map<string, { forkId: string; settle: (outcome: { text: string } | { error: string }) => void }>();
   /** Turns ended per Session, to notice a turn that was over before the prompt RPC even returned. */
@@ -290,7 +290,7 @@ export class SessionManager {
       messageSession: (from, target, text, when) => this.promptFromAgent(from, target, text, when),
       waitSession: (id, timeoutMs) => this.waitForTurn(id, timeoutMs),
       stopSession: (id) => this.stop(id),
-      scheduler: () => this.scheduler,
+      automations: () => this.automations,
       setTitle: (id, title) => void this.edit(id, { title }),
       terminalList: (id) => this.terminalList(id),
       terminalRead: (id, ptyId, lines) => this.terminalRead(id, ptyId, lines),

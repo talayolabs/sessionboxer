@@ -30,7 +30,7 @@ import {
   type Snapshot,
 } from "@sessionboxer/protocol";
 import { PrStore } from "./pr-store.js";
-import { ScheduleStore } from "./schedule-store.js";
+import { AutomationStore } from "./automation-store.js";
 
 const BRANCH_TITLE_MAX = 40;
 
@@ -313,8 +313,8 @@ export class Db {
   private readonly db: Database.Database;
   /** Pull Requests attached to Sessions and their comments. */
   readonly prs: PrStore;
-  /** Scheduled tasks and their run history. */
-  readonly schedules: ScheduleStore;
+  /** Automations (scheduled tasks, PR reactions) and their run history. */
+  readonly automations: AutomationStore;
 
   constructor(file: string) {
     this.db = new Database(file);
@@ -325,7 +325,7 @@ export class Db {
     this.titleBranches();
     if (added.has("repos")) this.reposFromWorkspaceSource();
     this.prs = new PrStore(this.db);
-    this.schedules = new ScheduleStore(this.db);
+    this.automations = new AutomationStore(this.db);
   }
 
   /** The connection, for stores that live in their own module (devices). */

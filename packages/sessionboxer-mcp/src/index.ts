@@ -304,7 +304,7 @@ server.registerTool(
   "schedule_create",
   {
     description:
-      "Create a scheduled task (the user's Scheduled tasks page shows it): on a cron schedule, prompt a Session (this one, or with the all-Sessions policy another) or start a new Session each time. Say what you scheduled in your reply.",
+      "Create a scheduled task (an automation with a schedule trigger; the user's Automations page shows it): on a cron schedule, prompt a Session (this one, or with the all-Sessions policy another) or start a new Session each time. Say what you scheduled in your reply.",
     inputSchema: {
       name: z.string().min(1).max(200),
       cron: z.string().min(1).max(200).describe("5-field cron expression, e.g. '0 9 * * 1-5'"),
@@ -325,7 +325,110 @@ server.registerTool(
   (args) => tool("schedule_create", args),
 );
 
-server.registerTool("schedule_list", { description: "The scheduled tasks on this Control Plane: id, name, cron, time zone, enabled, action, next and last run.", inputSchema: {} }, () => tool("schedule_list", {}));
+server.registerTool(
+  "schedule_list",
+  { description: "The automations with a schedule trigger (scheduled tasks): id, name, cron, time zone, enabled, action, next and last run. See automation_list for every automation.", inputSchema: {} },
+  () => tool("schedule_list", {}),
+);
+
+// --- Automations (ADR-0063) ------------------------------------------------------------------
+
+const PR_EVENTS = ["opened", "synchronize", "ready_for_review", "converted_to_draft", "review_requested", "review_submitted", "comment", "check_failed", "merged", "closed", "reopened"] as const;
+
+server.registerTool(
+  "automation_create",
+  {
+    description:
+      "Create an automation (the user's Automations page shows it): a trigger — a cron schedule, a followed pull request's event (opened, new commits, comment, failing check…), or manual — and an action — prompt a Session (this one; another or a new one with the all-Sessions policy), auto-review or auto-QA the PR, attach the PR to its Session, or notify the user. PR-event triggers need the user to follow repositories on the Pull requests page first (pr_follow). Say what you created in your reply.",
+    inputSchema: {
+      name: z.string().min(1).max(200),
+      enabled: z.boolean().default(true),
+      trigger: z.discriminatedUnion("type", [
+        z.object({
+          type: z.literal("schedule"),
+          cron: z.string().min(1).max(200).describe("5-field cron expression, e.g. '0 9 * * 1-5'"),
+          timezone: z.string().min(1).max(100).describe("IANA time zone"),
+          missedRun: z.enum(["skip", "catch_up"]).default("skip"),
+        }),
+        z.object({
+          type: z.literal("pr_event"),
+          follows: z.array(z.string()).default([]).describe("pr_follows ids to listen to; empty = every follow"),
+          events: z.array(z.enum(PR_EVENTS)).min(1),
+          filters: z
+            .object({
+              drafts: z.enum(["skip", "include"]).default("skip"),
+              forks: z.enum(["skip", "review_only", "allow"]).default("review_only"),
+              authors: z.enum(["any", "not_self", "self_only"]).default("not_self"),
+              includeOwn: z.boolean().default(false),
+              baseRef: z.string().max(200).optional(),
+              titleMatch: z.string().max(200).optional(),
+              labels: z.array(z.string()).max(20).optional(),
+            })
+            .default({}),
+        }),
+        z.object({ type: z.literal("manual") }),
+      ]),
+      action: z.discriminatedUnion("type", [
+        z.object({
+          type: z.literal("prompt"),
+          sessionId: z.union([SESSION_REF, z.literal("attached")]).optional().describe("Defaults to this Session; 'attached' = the Session the PR is attached to (PR triggers)"),
+          text: z.string().min(1).max(20_000).describe("Placeholders for PR triggers: {pr.url} {pr.number} {pr.title} {pr.repo} {pr.headSha} {event}"),
+        }),
+        z.object({
+          type: z.literal("new_session"),
+          title: z.string().min(1).max(200).optional(),
+          provider: z.enum(PROVIDERS).optional(),
+          repos: REPOS,
+          prompt: z.string().min(1).max(20_000),
+          stopAfter: z.boolean().default(true).describe("Stop the Session once its first turn ends"),
+          checkoutPrHead: z.boolean().default(true).describe("PR triggers: clone the PR's repository at the PR head first"),
+        }),
+        z.object({
+          type: z.literal("auto_review"),
+          provider: z.enum(PROVIDERS).optional(),
+          instructions: z.string().max(20_000).optional(),
+          maxVerdict: z.enum(["comment", "request_changes", "approve"]).default("comment"),
+          deltaOnly: z.boolean().default(true),
+          notifyOn: z.enum(["always", "findings", "never"]).default("findings"),
+          stopAfter: z.boolean().default(true),
+        }),
+        z.object({
+          type: z.literal("auto_qa"),
+          provider: z.enum(PROVIDERS).optional(),
+          instructions: z.string().max(20_000).optional(),
+          publish: z.enum(["github_attachment", "link_only"]).default("github_attachment"),
+          commentOnSkip: z.boolean().default(false),
+          maxMinutes: z.number().int().min(1).max(30).default(10),
+          stopAfter: z.boolean().default(true),
+        }),
+        z.object({ type: z.literal("attach") }),
+        z.object({ type: z.literal("notify"), text: z.string().max(500).optional() }),
+      ]),
+      limits: z
+        .object({
+          maxConcurrent: z.number().int().min(1).max(20).optional(),
+          maxRunsPerDay: z.number().int().min(1).max(1000).optional(),
+          maxRunsPerPrPerDay: z.number().int().min(1).max(100).optional(),
+          debounceSeconds: z.number().int().min(0).max(3600).optional(),
+          timeoutMinutes: z.number().int().min(1).max(1440).optional(),
+        })
+        .default({}),
+    },
+  },
+  (args) => tool("automation_create", args),
+);
+
+server.registerTool(
+  "automation_list",
+  { description: "Every automation on this Control Plane: id, name, enabled, trigger, action, limits, next/last run, runs today.", inputSchema: {} },
+  () => tool("automation_list", {}),
+);
+
+server.registerTool(
+  "automation_runs",
+  { description: "The last 50 runs of an automation: trigger, status, PR, Session, detail, error, result.", inputSchema: { id: z.string().min(1) } },
+  (args) => tool("automation_runs", args),
+);
 
 // --- End-to-end verification runs (ADR-0044) -------------------------------------------------
 // The Control Plane opens a run after a user turn and asks for the `e2e-verification` skill; these

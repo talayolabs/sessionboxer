@@ -29,10 +29,12 @@ import {
   ConnectorStartRequest,
   Provider,
   ProviderLoginCodeRequest,
+  CreateAutomationRequest,
   CreateScheduleRequest,
   CreateSessionRequest,
   ForkSessionRequest,
   SchedulePreviewRequest,
+  UpdateAutomationRequest,
   UpdateScheduleRequest,
   RevertRequest,
   SwitchBranchRequest,
@@ -95,7 +97,7 @@ import { HostDirError, listHostDir } from "./host-dir.js";
 import { banner, log } from "./log.js";
 import { HostOrSandboxRunner, ProviderLogins } from "./provider-login.js";
 import { PushNotifier } from "./push.js";
-import { Scheduler } from "./scheduler.js";
+import { Automations, scheduleRunOf } from "./automations.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { WindowsVms } from "./windows.js";
 import { MacosVms } from "./macos.js";
@@ -195,7 +197,7 @@ sessions.cursorAuthRefreshed = (sessionId, authJson) => {
   log(`cursor login refreshed by session ${sessionId}; stored`);
   void sessions.pushCursorAuthToAll();
 };
-const scheduler = new Scheduler({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
+const automations = new Automations({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
 const tunnels = new Tunnels(
   LOCAL_ORIGIN,
   settings.tunnels,
@@ -225,7 +227,7 @@ const publicSettings = async () =>
     await dockerReachable(),
   );
 sessions.publicSettings = publicSettings;
-sessions.scheduler = scheduler;
+sessions.automations = automations;
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -577,20 +579,40 @@ api.post("/sessions/:id/e2e/run", async (c) => c.json(await sessions.e2eRunNow(c
 api.get("/sessions/:id/e2e/:runId", (c) => c.json(sessions.e2e.get(c.req.param("id"), c.req.param("runId"))));
 
 // Scheduled tasks (ADR-0047).
-api.get("/schedules", (c) => c.json(scheduler.list()));
-api.post("/schedules", async (c) => c.json(scheduler.create(CreateScheduleRequest.parse(await c.req.json())), 201));
-api.post("/schedules/preview", async (c) => {
+// Automations (ADR-0063); `/schedules*` is the pre-1.5 shape of the ones with a schedule trigger.
+api.get("/automations", (c) => c.json(automations.list()));
+api.post("/automations", async (c) => c.json(automations.create(CreateAutomationRequest.parse(await c.req.json())), 201));
+api.post("/automations/preview", async (c) => {
   const req = SchedulePreviewRequest.parse(await c.req.json());
-  return c.json(scheduler.preview(req.cron, req.timezone));
+  return c.json(automations.preview(req.cron, req.timezone));
 });
-api.get("/schedules/:id", (c) => c.json(scheduler.get(c.req.param("id"))));
-api.patch("/schedules/:id", async (c) => c.json(scheduler.update(c.req.param("id"), UpdateScheduleRequest.parse(await c.req.json()))));
-api.delete("/schedules/:id", (c) => {
-  scheduler.delete(c.req.param("id"));
+api.get("/automations/:id", (c) => c.json(automations.get(c.req.param("id"))));
+api.patch("/automations/:id", async (c) => c.json(automations.update(c.req.param("id"), UpdateAutomationRequest.parse(await c.req.json()))));
+api.delete("/automations/:id", (c) => {
+  automations.delete(c.req.param("id"));
   return c.body(null, 204);
 });
-api.post("/schedules/:id/run", async (c) => c.json(await scheduler.runNow(c.req.param("id")), 202));
-api.get("/schedules/:id/runs", (c) => c.json(scheduler.listRuns(c.req.param("id"))));
+api.post("/automations/:id/run", async (c) => c.json(await automations.runNow(c.req.param("id")), 202));
+api.get("/automations/:id/runs", (c) => c.json(automations.listRuns(c.req.param("id"))));
+
+api.get("/schedules", (c) => c.json(automations.listSchedules()));
+api.post("/schedules", async (c) => c.json(automations.createSchedule(CreateScheduleRequest.parse(await c.req.json())), 201));
+api.post("/schedules/preview", async (c) => {
+  const req = SchedulePreviewRequest.parse(await c.req.json());
+  return c.json(automations.preview(req.cron, req.timezone));
+});
+api.get("/schedules/:id", (c) => c.json(automations.getSchedule(c.req.param("id"))));
+api.patch("/schedules/:id", async (c) => c.json(automations.updateSchedule(c.req.param("id"), UpdateScheduleRequest.parse(await c.req.json()))));
+api.delete("/schedules/:id", (c) => {
+  automations.getSchedule(c.req.param("id"));
+  automations.delete(c.req.param("id"));
+  return c.body(null, 204);
+});
+api.post("/schedules/:id/run", async (c) => {
+  automations.getSchedule(c.req.param("id"));
+  return c.json(scheduleRunOf(await automations.runNow(c.req.param("id"))), 202);
+});
+api.get("/schedules/:id/runs", (c) => c.json(automations.listScheduleRuns(c.req.param("id"))));
 
 // Pull Requests attached to the Session (ADR-0027).
 api.get("/sessions/:id/prs", (c) => c.json(sessions.prs.list(c.req.param("id"))));
@@ -851,7 +873,7 @@ if (existsSync(webDist)) {
 await windows.init().catch((e: unknown) => log(`windows: ${e instanceof Error ? e.message : String(e)}`));
 await macos.init().catch((e: unknown) => log(`macos: ${e instanceof Error ? e.message : String(e)}`));
 await sessions.boot();
-scheduler.start();
+automations.start();
 void sessions.staged.sweep();
 setInterval(() => void sessions.staged.sweep(), 60 * 60 * 1000).unref();
 if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {
@@ -912,7 +934,7 @@ const shutdown = (): void => {
   log("shutting down");
   const exit = (): void => {
     clearInterval(keepalive);
-    scheduler.stop();
+    automations.stop();
     tunnels.close();
     db.close();
     server.close();

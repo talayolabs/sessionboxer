@@ -52,7 +52,7 @@ More: [user guide → Install](docs/GUIDE.md#install).
 - **Usage limits**: session and weekly bars, auto-continue when the limit resets.
 - **Model and options** per session, changed mid-conversation.
 - **MCP servers**: register once, switch on per session; several Git accounts, one per repository.
-- **Scheduled tasks**: a prompt on a timetable into a running session or a fresh one.
+- **Automations**: a prompt on a timetable into a running session or a fresh one; a review, a QA video or a prompt when a followed pull request opens or changes.
 - **The agent knows where it is**: a `sessionboxer` MCP to ask about itself, attach PRs, snapshot, open panes, verify — and, if allowed, create, message and hand off to other sessions.
 - **USB devices**: one device of the host per session, for `adb` and friends.
 - **Dictation**: whisper.cpp on your machine, offline.
@@ -78,7 +78,7 @@ Every feature in detail: [user guide](docs/GUIDE.md).
 | Snapshot and fork the whole machine | ✓ | — | — | — | — | — | ✗ |
 | Revert the conversation, branches | ✓ | — | — | — | — | — | — |
 | Pull requests: follow, address, auto-merge | ✓ | follow, address | address | address | address | address | ✗ |
-| Scheduled tasks | ✓ | ✓ | ✓ | in the app | ✓ | ✓ | — |
+| Scheduled tasks and PR-triggered automations | ✓ | ✓ | ✓ | in the app | ✓ | ✓ | — |
 | Agent creates and messages other sessions | ✓ | ✓ | — | — | — | — | — |
 | See the exact model API calls | ✓ | — | — | — | — | — | — |
 | Offline dictation | ✓ | — | — | — | — | — | — |

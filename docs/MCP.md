@@ -239,8 +239,8 @@ Two settings decide what the agent may do: the default in **Global settings → 
 | Policy | The agent gets |
 | --- | --- |
 | **Off** | No `sessionboxer` server at all (the briefing and `session.json` remain). Every call errors with "the sessionboxer tools are off for this Session" |
-| **This Session only** | The self-knowledge tools, the tools on its own session (PRs, snapshot, queue, title, verify, notify, terminals, `ui_open`), `session_fork` of itself, `approval_wait`, schedules that target itself, and the Auto QA tools. A cross-session tool errors with the reason and where you can allow it |
-| **All Sessions** (the default for new installs) | Everything, including `sessions_list`, `session_get`, `session_create`, `session_message`, `session_wait`, `session_stop` and schedules that prompt other sessions |
+| **This Session only** | The self-knowledge tools, the tools on its own session (PRs, snapshot, queue, title, verify, notify, terminals, `ui_open`), `session_fork` of itself, `approval_wait`, automations that prompt itself (or attach / notify), and the Auto QA tools. A cross-session tool errors with the reason and where you can allow it |
+| **All Sessions** (the default for new installs) | Everything, including `sessions_list`, `session_get`, `session_create`, `session_message`, `session_wait`, `session_stop` and automations that prompt other sessions or start Sessions |
 
 **When the Agent creates a Session** (same place): *Ask me* (default) or *Do not ask*. With *Ask me*, `session_create` returns `{ pending: true, id, summary, expiresAt, hint }` and a card appears in your chat ("Claude Code wants to create a Session 'Backend tests'") with **Allow** and **Deny**; the agent waits with `approval_wait`. A card nobody answers in **10 minutes** expires and counts as denied. Settled cards stay in the transcript with a link to the session they created.
 
@@ -276,6 +276,9 @@ The wait tools (`session_wait`, `approval_wait`) block for at most **20 s** per 
 | [`approval_wait`](#approval_wait) | Wait for your Allow / Deny | session |
 | [`schedule_create`](#schedule_create) | Create a scheduled task | session (own), all (others) |
 | [`schedule_list`](#schedule_list) | The scheduled tasks | session |
+| [`automation_create`](#automation_create) | Create an automation | session (own prompt, attach, notify), all (others) |
+| [`automation_list`](#automation_list) | Every automation | session |
+| [`automation_runs`](#automation_runs) | An automation's last runs | session |
 | [`e2e_plan`](#e2e_plan) | Register the cases of the Auto QA run | session |
 | [`e2e_case_start`](#e2e_case_start) | Start a case | session |
 | [`e2e_case_end`](#e2e_case_end) | Record a case's result | session |
@@ -511,11 +514,52 @@ Wait for your answer to a pending approval.
 
 Returns the approval: `{ id, kind, summary, status, expiresAt, result?, error? }` with `status` one of `pending`, `allowed`, `denied`, `expired`; with `allowed`, `result` is what the approved action returned (the created session). The agent is told to call again while `pending` and to tell you what it is waiting for; its turn may also end, in which case the card in the chat still creates the session when you allow it.
 
-### Scheduled tasks
+### Automations
+
+An automation (Automations page; ADR-0063) is a trigger — a cron schedule, an event on a followed pull request, or manual — an action, and limits. Scheduled tasks are automations with a schedule trigger; the `schedule_*` tools below are the older, narrower way to make one.
+
+#### `automation_create`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `name` | string, 1–200 characters, *required* | |
+| `enabled` | boolean, default `true` | |
+| `trigger` | one of the objects below, *required* | |
+| `action` | one of the objects below, *required* | |
+| `limits` | `{ maxConcurrent?, maxRunsPerDay?, maxRunsPerPrPerDay?, debounceSeconds?, timeoutMinutes? }`, optional | Defaults 2 · 20 · 4 · 120 s · 360 min |
+
+`trigger`:
+
+- `{ type: "schedule", cron, timezone, missedRun? }`: a 5-field cron expression and an IANA time zone; `missedRun` is `skip` (default) or `catch_up`.
+- `{ type: "pr_event", follows?, events, filters? }`: `follows` are `pr_follows` ids (empty = every follow the user has; the user follows repositories on the Pull requests page or with `pr_follow`); `events` among `opened`, `synchronize`, `ready_for_review`, `converted_to_draft`, `review_requested`, `review_submitted`, `comment`, `check_failed`, `merged`, `closed`, `reopened`; `filters` `{ drafts: skip|include, forks: skip|review_only|allow, authors: any|not_self|self_only, includeOwn, baseRef?, titleMatch?, labels? }`.
+- `{ type: "manual" }`: only Run now.
+
+`action`:
+
+- `{ type: "prompt", sessionId?, text }`: `sessionId` defaults to the caller; `"attached"` means the Session the PR is attached to (PR triggers). `text` (1–20,000) may use `{pr.url}`, `{pr.number}`, `{pr.title}`, `{pr.repo}`, `{pr.headSha}`, `{event}`.
+- `{ type: "new_session", title?, provider?, repos, prompt, stopAfter, checkoutPrHead }`: as in `schedule_create`; `checkoutPrHead` (default `true`) clones the PR's repository at the PR head first on a PR trigger.
+- `{ type: "auto_review", provider?, instructions?, maxVerdict, deltaOnly, notifyOn, stopAfter }`: a Session on the PR head reviews it; the Control Plane posts the review (`maxVerdict` `comment` by default, `request_changes`, `approve`).
+- `{ type: "auto_qa", provider?, instructions?, publish, commentOnSkip, maxMinutes, stopAfter }`: a Session on the PR head runs the Auto QA flow and posts the video (`publish` `github_attachment` or `link_only`).
+- `{ type: "attach" }`: attach the PR to the Session that pushed its branch.
+- `{ type: "notify", text? }`: a push notification.
+
+Prompting the caller's own session, `attach` and `notify` work under *This Session only*; anything that prompts another session or starts one needs *All Sessions*. Returns `{ id, name, enabled, trigger, action, nextRunAt }`. Marker: "created the automation …".
+
+#### `automation_list`
+
+No parameters. Returns every automation with `id`, `name`, `enabled`, `trigger`, `action`, `limits`, `nextRunAt`, `lastRunAt`, `lastStatus`, `runsToday`.
+
+#### `automation_runs`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `id` | string, *required* | The automation |
+
+Returns its last 50 runs: `id`, `trigger`, `status` (`queued`, `running`, `succeeded`, `failed`, `skipped`), `event`, `prUrl`, `sessionId`, `queuedAt`, `finishedAt`, `detail`, `error`, `result`.
 
 #### `schedule_create`
 
-Create a scheduled task, the same as one made on the Scheduled tasks page: on a cron schedule, prompt a session or start a new one each time. Prompting the caller's own session works under *This Session only*; another session's needs *All Sessions*.
+Create a scheduled task — an automation with a schedule trigger — the same as one made on the Automations page: on a cron schedule, prompt a session or start a new one each time. Prompting the caller's own session works under *This Session only*; another session's needs *All Sessions*.
 
 | Parameter | Type | Meaning |
 | --- | --- | --- |
@@ -529,11 +573,11 @@ Create a scheduled task, the same as one made on the Scheduled tasks page: on a 
 - `{ type: "prompt", sessionId?, text }`: send `text` (1–20,000 characters) to a session at each run; `sessionId` defaults to the caller.
 - `{ type: "new_session", title?, provider?, repos, prompt, stopAfter }`: start a session at each run with `prompt` (1–20,000) as its first prompt; `repos` as in `session_create` (default `[]`); `stopAfter` (default `true`) stops the session once its first turn ends.
 
-Returns `{ id, name, cron, timezone, nextRunAt }`. The schedule is enabled at once and skips runs missed while Sessionboxer was down (the *skip* policy; you can change it on the Scheduled tasks page). Marker: "scheduled …"; the agent is told to say what it scheduled in its reply.
+Returns `{ id, name, cron, timezone, nextRunAt }`. The schedule is enabled at once and skips runs missed while Sessionboxer was down (the *skip* policy; you can change it on the Automations page). Marker: "scheduled …"; the agent is told to say what it scheduled in its reply.
 
 #### `schedule_list`
 
-No parameters. Returns every scheduled task on the Control Plane with `id`, `name`, `cron`, `timezone`, `enabled`, `action`, `nextRunAt` and `lastRunAt`.
+No parameters. Returns the automations with a schedule trigger with `id`, `name`, `cron`, `timezone`, `enabled`, `action`, `nextRunAt` and `lastRunAt`.
 
 ### Auto QA (end-to-end verification) runs
 

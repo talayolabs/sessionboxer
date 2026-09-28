@@ -39,8 +39,8 @@ import {
   type PublicSettings,
   type PullRequest,
   type SavedMessage,
-  type Schedule,
-  type ScheduleRun,
+  type Automation,
+  type AutomationRun,
   type Session,
   type SessionEvent,
   type SessionStatus,
@@ -110,7 +110,7 @@ import {
 import { SnapshotsDialog } from "./SnapshotsDialog";
 import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
 import { UsbDialog } from "./UsbDialog";
-import { Schedules } from "./Schedules";
+import { Automations, promptsSession } from "./Automations";
 import { Caption, Modal, Select, cx, Menu, MenuItem, Tab, TabList, TabPanel, Tabs, Tip } from "./ui";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
@@ -168,7 +168,7 @@ function describeCursorLogin(login: CursorLogin): string {
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
-type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings"; section?: string } | { view: "schedules" };
+type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings"; section?: string } | { view: "automations"; id?: string };
 
 // Routes live in the URL hash so a reload (or a shared link) lands on the same Session.
 function parseRoute(hash: string): Route {
@@ -176,7 +176,10 @@ function parseRoute(hash: string): Route {
   if (path === "new") return { view: "new" };
   const settings = /^settings(?:\/([a-z-]+))?$/.exec(path);
   if (settings) return settings[1] ? { view: "settings", section: settings[1] } : { view: "settings" };
-  if (path === "schedules") return { view: "schedules" };
+  // `#/schedules` is where Scheduled tasks lived before Automations (ADR-0063).
+  if (path === "schedules") return { view: "automations" };
+  const automations = /^automations(?:\/([^/]+))?$/.exec(path);
+  if (automations) return automations[1] ? { view: "automations", id: automations[1] } : { view: "automations" };
   const m = /^sessions\/([^/]+)(?:\/(prs)|\/pr\/([^/]+))?$/.exec(path);
   if (!m) return { view: "session", id: null };
   const pane = m[2] ? "prs" : m[3] ? `pr:${m[3]}` : undefined;
@@ -186,7 +189,7 @@ function parseRoute(hash: string): Route {
 function routeToHash(route: Route): string {
   if (route.view === "new") return "#/new";
   if (route.view === "settings") return route.section ? `#/settings/${route.section}` : "#/settings";
-  if (route.view === "schedules") return "#/schedules";
+  if (route.view === "automations") return route.id ? `#/automations/${route.id}` : "#/automations";
   return route.id ? `#/sessions/${route.id}` : "#/";
 }
 
@@ -239,8 +242,8 @@ export function App() {
   const [prChecks, setPrChecks] = useState<Record<string, PrCheckItem[]>>({});
   // End-to-end verification runs of the selected Session (ADR-0044); the ref lets the WS handler see what changed.
   const [e2eRuns, setE2eRuns] = useState<E2eRun[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [scheduleRuns, setScheduleRuns] = useState<Record<string, ScheduleRun[]>>({});
+  const [automations, setAutomations] = useState<Automation[]>([]);
+  const [automationRuns, setAutomationRuns] = useState<Record<string, AutomationRun[]>>({});
   const e2eRunsRef = useRef<E2eRun[]>([]);
   e2eRunsRef.current = e2eRuns;
   const [toasts, setToasts] = useState<Array<{ id: number; sessionId: string; sessionTitle: string; lines: Array<{ prId: string; text: string }> }>>([]);
@@ -324,14 +327,14 @@ export function App() {
     void api.macosBase().then(setMacosBase, () => undefined);
     void run(async () => setModels(await api.models()));
     void run(async () => setOptions(await api.options()));
-    void run(async () => setSchedules(await api.schedules()));
+    void run(async () => setAutomations(await api.automations()));
   }, [reloadSessions, run]);
 
-  const loadScheduleRuns = useCallback(
-    (scheduleId: string) => {
+  const loadAutomationRuns = useCallback(
+    (automationId: string) => {
       void run(async () => {
-        const runs = await api.scheduleRuns(scheduleId);
-        setScheduleRuns((prev) => ({ ...prev, [scheduleId]: runs }));
+        const runs = await api.automationRuns(automationId);
+        setAutomationRuns((prev) => ({ ...prev, [automationId]: runs }));
       });
     },
     [run],
@@ -438,11 +441,11 @@ export function App() {
           case "pr_checks":
             setPrChecks((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.checks } : prev));
             break;
-          case "schedules":
-            setSchedules(msg.schedules);
+          case "automations":
+            setAutomations(msg.automations);
             break;
-          case "schedule_runs":
-            setScheduleRuns((prev) => ({ ...prev, [msg.scheduleId]: msg.runs }));
+          case "automation_runs":
+            setAutomationRuns((prev) => ({ ...prev, [msg.automationId]: msg.runs }));
             break;
           case "e2e_changed": {
             if (msg.sessionId !== selectedId) break;
@@ -547,7 +550,7 @@ export function App() {
   const showSetup = settings !== null && (!runtimeReady || !anyTokenSet || (!gitConnected && !gitLater));
 
   const topTitle =
-    route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "schedules" ? "Scheduled tasks" : (selected?.title ?? "Sessionboxer");
+    route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "automations" ? "Automations" : (selected?.title ?? "Sessionboxer");
   const collapseSidebar = (collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
     localStorage.setItem("sessionboxer.sidebarCollapsed", collapsed ? "1" : "0");
@@ -733,9 +736,9 @@ export function App() {
             </div>
           )}
           {runtimeHelp && settings && <RuntimeDialog settings={settings} onClose={() => setRuntimeHelp(false)} />}
-          <button onClick={() => setRoute({ view: "schedules" })} title={schedules.some((s) => s.lastStatus === "failed") ? "A scheduled task failed" : undefined}>
-            Scheduled tasks
-            {schedules.some((s) => s.lastStatus === "failed") && <span className="warn-sign" aria-label="A scheduled task failed">⚠</span>}
+          <button onClick={() => setRoute({ view: "automations" })} title={automations.some((a) => a.lastStatus === "failed") ? "An automation failed" : undefined}>
+            Automations
+            {automations.some((a) => a.lastStatus === "failed") && <span className="warn-sign" aria-label="An automation failed">⚠</span>}
           </button>
           <button onClick={() => setRoute({ view: "settings" })} title={settingsWarning ?? undefined}>
             Global settings
@@ -870,17 +873,19 @@ export function App() {
             run={run}
           />
         )}
-        {route.view === "schedules" && settings && (
-          <Schedules
-            schedules={schedules}
-            runs={scheduleRuns}
+        {route.view === "automations" && settings && (
+          <Automations
+            automations={automations}
+            runs={automationRuns}
             sessions={sessions}
             settings={settings}
             models={models ?? EMPTY_MODELS}
             options={options ?? EMPTY_OPTIONS}
             onOpenSession={(id) => setRoute({ view: "session", id })}
-            loadRuns={loadScheduleRuns}
+            loadRuns={loadAutomationRuns}
             run={run}
+            focusId={route.id ?? null}
+            onFocus={(id) => setRoute(id ? { view: "automations", id } : { view: "automations" })}
           />
         )}
         {route.view === "session" && selected && (
@@ -915,18 +920,18 @@ export function App() {
             mobile={mobile}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
-            sessionSchedules={schedules.filter((s) => s.action.type === "prompt" && s.action.sessionId === selected.id).length}
+            sessionSchedules={automations.filter((a) => promptsSession(a, selected.id)).length}
             schedulesPane={
               settings && (
-                <Schedules
-                  schedules={schedules}
-                  runs={scheduleRuns}
+                <Automations
+                  automations={automations}
+                  runs={automationRuns}
                   sessions={sessions}
                   settings={settings}
                   models={models ?? EMPTY_MODELS}
                   options={options ?? EMPTY_OPTIONS}
                   onOpenSession={(id) => setRoute({ view: "session", id })}
-                  loadRuns={loadScheduleRuns}
+                  loadRuns={loadAutomationRuns}
                   run={run}
                   forSession={selected}
                 />
@@ -1049,7 +1054,7 @@ const MENU_PANES: Array<{ id: "terminal" | "context"; label: string; hint: strin
   { id: "terminal", label: "Terminal", hint: "A shell inside the Sandbox, alongside the one the Agent uses" },
   { id: "context", label: "Context", hint: "What the Agent is carrying in its context window, and the model calls behind it" },
 ];
-const SCHEDULES_HINT = "Prompts sent to this Session on a schedule";
+const SCHEDULES_HINT = "Automations that prompt this Session";
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
@@ -1208,7 +1213,7 @@ function SessionView({
   mobile: boolean;
   run: Runner;
   onForked: (s: Session) => void;
-  /** The Scheduled pane: the scheduled tasks that prompt this Session, and how many there are. */
+  /** The Scheduled pane: the automations that prompt this Session, and how many there are. */
   schedulesPane: ReactNode;
   sessionSchedules: number;
 }) {

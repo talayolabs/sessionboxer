@@ -1086,6 +1086,14 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .schedule-history-empty { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
 .schedule-preview { flex: none; display: flex; flex-direction: column; gap: 4px; min-height: 14px; }
 .schedule-preview .field-hint { margin: 0; }
+.automation-form { display: flex; flex-direction: column; gap: 12px; }
+.automation-step { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.automation-step h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: var(--fs-lg); }
+.automation-step-n { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-fg, #fff); font-size: var(--fs-sm); font-weight: 600; }
+.automation-step .actions { justify-content: flex-start; }
+.automation-events { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px 12px; }
+.automation-filters { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+.automation-filters summary { cursor: pointer; font-weight: 500; }
 
 /* First screen / New session: a prompt box in the middle, the settings under it (hallway feedback A+B). */
 .start { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; padding: 24px; }

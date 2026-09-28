@@ -3,6 +3,8 @@ import {
   AGENT_APPROVAL_TIMEOUT_MS,
   AGENT_BRIDGE_TIMEOUT_MS,
   AgentApprovalWaitArgs,
+  AgentAutomationCreateArgs,
+  AgentAutomationRunsArgs,
   AgentNotifyArgs,
   AgentPrAttachArgs,
   AgentPrItemsArgs,
@@ -31,6 +33,10 @@ import {
   type AgentTool,
   type AgentToolsPolicy,
   type ContextBreakdown,
+  type Automation,
+  type AutomationLimits,
+  type AutomationRun,
+  type CreateAutomationRequest,
   type CreateScheduleRequest,
   type CreateSessionRequest,
   type ForkSessionRequest,
@@ -55,10 +61,13 @@ import type { Db } from "./db.js";
 import type { E2eVerification } from "./e2e.js";
 import type { PullRequests } from "./pull-requests.js";
 
-/** The part of the `Scheduler` the Agent's `schedule_*` tools use. */
-export interface AgentScheduler {
-  list(): Schedule[];
-  create(req: CreateScheduleRequest): Schedule;
+/** The part of `Automations` the Agent's `automation_*` and `schedule_*` tools use. */
+export interface AgentAutomations {
+  list(): Automation[];
+  create(req: CreateAutomationRequest): Automation;
+  listRuns(id: string): AutomationRun[];
+  listSchedules(): Schedule[];
+  createSchedule(req: CreateScheduleRequest): Schedule;
 }
 
 /** What the Control Plane needs to answer the `sessionboxer` MCP's tools for one Session. */
@@ -80,8 +89,8 @@ export interface AgentToolsDeps {
   messageSession: (from: string, target: string, text: string, when: "now" | "queue") => Promise<"prompted" | "queued">;
   waitSession: (id: string, timeoutMs: number) => Promise<{ stillRunning: boolean; status: SessionStatus; lastReply: string | null }>;
   stopSession: (id: string) => Promise<Session>;
-  /** `null` until the server wires the Scheduler. */
-  scheduler: () => AgentScheduler | null;
+  /** `null` until the server wires the Automations. */
+  automations: () => AgentAutomations | null;
   /** The `SessionInfo` the Daemon writes to `session.json`, as of now. */
   sessionInfo: (id: string) => SessionInfo;
   /** The policy in force (`Settings.agentTools` with the Session's override). */
@@ -133,6 +142,9 @@ const SESSION_TOOLS: ReadonlySet<AgentTool> = new Set<AgentTool>([
   "approval_wait",
   "schedule_create",
   "schedule_list",
+  "automation_create",
+  "automation_list",
+  "automation_runs",
 ]);
 
 /** An approval the user has not answered yet, with what runs when they allow it. */
@@ -231,9 +243,54 @@ export class AgentTools {
       case "schedule_create":
         return this.scheduleCreate(id, policy, AgentScheduleCreateArgs.parse(args));
       case "schedule_list":
-        return this.scheduler()
+        return this.automations()
+          .listSchedules()
+          .map((s) => ({
+            id: s.id,
+            name: s.name,
+            cron: s.cron,
+            timezone: s.timezone,
+            enabled: s.enabled,
+            action: s.action,
+            nextRunAt: s.nextRunAt,
+            lastRunAt: s.lastRunAt,
+          }));
+      case "automation_create":
+        return this.automationCreate(id, policy, AgentAutomationCreateArgs.parse(args));
+      case "automation_list":
+        return this.automations()
           .list()
-          .map((s) => ({ id: s.id, name: s.name, cron: s.cron, timezone: s.timezone, enabled: s.enabled, action: s.action, nextRunAt: s.nextRunAt, lastRunAt: s.lastRunAt }));
+          .map((a) => ({
+            id: a.id,
+            name: a.name,
+            enabled: a.enabled,
+            trigger: a.trigger,
+            action: a.action,
+            limits: a.limits,
+            nextRunAt: a.nextRunAt,
+            lastRunAt: a.lastRunAt,
+            lastStatus: a.lastStatus,
+            runsToday: a.runsToday,
+          }));
+      case "automation_runs": {
+        const p = AgentAutomationRunsArgs.parse(args);
+        return this.automations()
+          .listRuns(p.id)
+          .slice(0, 50)
+          .map((r) => ({
+            id: r.id,
+            trigger: r.trigger,
+            status: r.status,
+            event: r.event,
+            prUrl: r.prUrl,
+            sessionId: r.sessionId,
+            queuedAt: r.queuedAt,
+            finishedAt: r.finishedAt,
+            detail: r.detail,
+            error: r.error,
+            result: r.result,
+          }));
+      }
       case "docs":
       case "e2e_plan":
       case "e2e_case_start":
@@ -291,9 +348,9 @@ export class AgentTools {
     return null;
   }
 
-  private scheduler(): AgentScheduler {
-    const s = this.deps.scheduler();
-    if (!s) throw new Error("Schedules are not available yet.");
+  private automations(): AgentAutomations {
+    const s = this.deps.automations();
+    if (!s) throw new Error("Automations are not available yet.");
     return s;
   }
 
@@ -463,7 +520,7 @@ export class AgentTools {
     if (otherSession && policy !== "all") {
       throw new Error(`Scheduling ${action.type === "new_session" ? "new Sessions" : "prompts to other Sessions"} needs the "all Sessions" policy; this Session's is "${policy}" (schedule a prompt to yourself instead).`);
     }
-    const schedule = this.scheduler().create({
+    const schedule = this.automations().createSchedule({
       name: p.name,
       cron: p.cron,
       timezone: p.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -473,6 +530,27 @@ export class AgentTools {
     });
     this.mark(id, "schedule_create", `scheduled “${schedule.name}” (${schedule.cron}${action.type === "prompt" && action.sessionId !== id ? `, prompts “${this.other(id, action.sessionId).title}”` : action.type === "new_session" ? ", a new Session each time" : ""})`, "schedules");
     return { id: schedule.id, name: schedule.name, cron: schedule.cron, timezone: schedule.timezone, nextRunAt: schedule.nextRunAt };
+  }
+
+  private automationCreate(id: string, policy: AgentToolsPolicy, p: AgentAutomationCreateArgs): unknown {
+    const self = this.session(id);
+    const a = p.action;
+    const action: CreateAutomationRequest["action"] =
+      a.type === "prompt"
+        ? { type: "prompt", sessionId: a.sessionId === undefined ? id : a.sessionId === "attached" ? "attached" : this.other(id, a.sessionId).id, text: a.text }
+        : a.type === "new_session"
+          ? { ...a, provider: a.provider ?? self.provider }
+          : a;
+    const startsSessions = action.type === "new_session" || action.type === "auto_review" || action.type === "auto_qa" || (action.type === "prompt" && action.sessionId !== id);
+    if (startsSessions && policy !== "all") {
+      throw new Error(`An automation that ${action.type === "prompt" ? "prompts other Sessions" : "starts Sessions"} needs the "all Sessions" policy; this Session's is "${policy}" (a prompt to yourself, attach or notify do not).`);
+    }
+    const limits: AutomationLimits = { maxConcurrent: 2, maxRunsPerDay: 20, maxRunsPerPrPerDay: 4, debounceSeconds: 120, timeoutMinutes: 360, ...p.limits };
+    const automation = this.automations().create({ name: p.name, enabled: p.enabled, trigger: p.trigger, action, limits });
+    const trigger =
+      automation.trigger.type === "schedule" ? automation.trigger.cron : automation.trigger.type === "pr_event" ? `on PR ${automation.trigger.events.join(", ")}` : "manual";
+    this.mark(id, "automation_create", `created the automation “${automation.name}” (${trigger} → ${action.type.replace("_", " ")})`, "automations");
+    return { id: automation.id, name: automation.name, enabled: automation.enabled, trigger: automation.trigger, action: automation.action, nextRunAt: automation.nextRunAt };
   }
 
   private async whoami(id: string): Promise<AgentWhoAmI> {

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- PRs pane redesigned for narrow panes and phones: the overview is a row list (provider, `repo#number`, one-line title, one state/review chip, a needs-you line, a ⋯ menu) sorted needs-attention first; a PR opens as one column — chips, toolbar, auto-merge in a popover, Checks folded when green, comments grouped by thread, a selection bar only while something is ticked. No horizontal scrolling at 360 px. ([COMMIT](https://github.com/talayolabs/sessionboxer/commit/COMMIT))
+- PRs pane redesigned for narrow panes and phones: the overview is a row list (provider, `repo#number`, one-line title, one state/review chip, a needs-you line, a ⋯ menu) sorted needs-attention first; a PR opens as one column — chips, toolbar, auto-merge in a popover, Checks folded when green, comments grouped by thread, a selection bar only while something is ticked. No horizontal scrolling at 360 px. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
 
 ## 1.4.1 — 2026-09-25
 
@@ -10,10 +10,10 @@ Install: `npx sessionboxer@1.4.1 serve`, `brew install talayolabs/tap/sessionbox
 release, `docker compose up`, or `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox
 image did not change.
 
-- New defaults: verification off, automatic snapshots off, Agent tools on All Sessions; saved values are kept. ([716fe44](https://github.com/talayolabs/sessionboxer/commit/716fe44))
-- Advanced, Session and Global settings share one layout — Environment, Agent, MCP & connectors, Auto QA, Debug — with the explanations behind `?` popovers; the Verification pane is now Auto QA. ([8955281](https://github.com/talayolabs/sessionboxer/commit/8955281))
-- Attach files and dictate on the New session screen, sent with the first prompt. ([ab389d7](https://github.com/talayolabs/sessionboxer/commit/ab389d7))
-- [MCP tools reference](https://sessionboxer.talayolabs.com/guide/mcp-tools/): every tool of the built-in `desktop` and `sessionboxer` servers. ([af8f1c6](https://github.com/talayolabs/sessionboxer/commit/af8f1c6))
+- New defaults: verification off, automatic snapshots off, Agent tools on All Sessions; saved values are kept. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Advanced, Session and Global settings share one layout — Environment, Agent, MCP & connectors, Auto QA, Debug — with the explanations behind `?` popovers; the Verification pane is now Auto QA. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Attach files and dictate on the New session screen, sent with the first prompt. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- [MCP tools reference](https://sessionboxer.talayolabs.com/guide/mcp-tools/): every tool of the built-in `desktop` and `sessionboxer` servers. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
 
 ## 1.4.0 — 2026-09-27
 
@@ -21,36 +21,36 @@ Install: `npx sessionboxer@1.4.0 serve`, `brew install talayolabs/tap/sessionbox
 release, `docker compose up`, or `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox
 image changed: Stop → Resume existing sessions.
 
-- The agent knows it runs inside Sessionboxer: a `sessionboxer` MCP in every box (`whoami`, `docs`, PRs, snapshot, queue, title, `verify`, `notify`, terminals, `ui_open`), `.sessionboxer/session.json`, a marker in the chat for every action; policy off / this Session / all Sessions in Settings → Agent tools. ([cb1a172](https://github.com/talayolabs/sessionboxer/commit/cb1a172))
-- Agents work across Sessions: list, create (you Allow or Deny in the chat), fork with their own handoff, message another Session (marked *from Session X* on both sides), wait, stop own children, schedules; children show *child of …* in the sidebar. ([5f94bcf](https://github.com/talayolabs/sessionboxer/commit/5f94bcf))
-- The `sessionboxer` MCP in Windows and macOS Sessions too; the guide's *The agent and Sessionboxer itself* section (ADR-0062); Windows/macOS VMs no longer refuse to boot on a false low-RAM check. ([834f2ff](https://github.com/talayolabs/sessionboxer/commit/834f2ff))
-- Windows Sessions run the agent inside the VM: agent, MCP servers, git and the Terminal (PowerShell) are Windows-native, repositories in `C:\workspace`; reinstall the Windows base once. ([cc50730](https://github.com/talayolabs/sessionboxer/commit/cc50730))
-- macOS Sessions run the agent inside the VM the same way (zsh Terminal, `/Users/agent/workspace`); an existing base is reprovisioned from Global settings → macOS VMs. ([d38f65e](https://github.com/talayolabs/sessionboxer/commit/d38f65e))
-- Environment per session: Docker · Linux, QEMU · Windows (a Windows VM next to the box, its desktop over RDP; Linux hosts with KVM, base installed once from Global settings). ([8a6350b](https://github.com/talayolabs/sessionboxer/commit/8a6350b))
-- QEMU · macOS as a third environment: a macOS VM (dockur/macos, OpenCore) next to the box, its desktop over VNC; Linux hosts with KVM and AVX2, Apple's licence terms apply. ([4078b03](https://github.com/talayolabs/sessionboxer/commit/4078b03))
-- New session toolbar: Environment, Agent and Model dropdowns with logos; every native `<select>` replaced by the themed list; a *Runtime* item first in the set-up checklist. ([4d4a065](https://github.com/talayolabs/sessionboxer/commit/4d4a065))
-- New session: picking an unconnected Agent opens Connect a Provider, picking an environment that is not installed opens its install dialog. ([f4f9eb3](https://github.com/talayolabs/sessionboxer/commit/f4f9eb3))
-- Sign in with Claude Code, Codex, Cursor or Devin from Settings in your own browser; a login already on the server's machine is copied with one click. ([7cbe0c3](https://github.com/talayolabs/sessionboxer/commit/7cbe0c3))
-- One USB device of the host per Session (Connect USB device… menu; WSL2 via usbipd). ([52ce83a](https://github.com/talayolabs/sessionboxer/commit/52ce83a))
-- Global settings as a split view with `#/settings/<section>` deep links and one Save. ([f6126ef](https://github.com/talayolabs/sessionboxer/commit/f6126ef))
-- An in-repo design system: Radix Primitives for menus, dialogs and tooltips; `--vscode-*` aliases from the same palette as the VS Code theme. ([8d4505f](https://github.com/talayolabs/sessionboxer/commit/8d4505f))
-- Long conversations no longer lose messages on reload (the 5,000-event cap is gone); the Code pane keeps each Session's own tabs and layout. ([7a12588](https://github.com/talayolabs/sessionboxer/commit/7a12588))
-- No more messages missing after the tab was in the background: a dead push socket is detected and the transcript refetched. ([054616a](https://github.com/talayolabs/sessionboxer/commit/054616a))
+- The agent knows it runs inside Sessionboxer: a `sessionboxer` MCP in every box (`whoami`, `docs`, PRs, snapshot, queue, title, `verify`, `notify`, terminals, `ui_open`), `.sessionboxer/session.json`, a marker in the chat for every action; policy off / this Session / all Sessions in Settings → Agent tools. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Agents work across Sessions: list, create (you Allow or Deny in the chat), fork with their own handoff, message another Session (marked *from Session X* on both sides), wait, stop own children, schedules; children show *child of …* in the sidebar. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- The `sessionboxer` MCP in Windows and macOS Sessions too; the guide's *The agent and Sessionboxer itself* section (ADR-0062); Windows/macOS VMs no longer refuse to boot on a false low-RAM check. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Windows Sessions run the agent inside the VM: agent, MCP servers, git and the Terminal (PowerShell) are Windows-native, repositories in `C:\workspace`; reinstall the Windows base once. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- macOS Sessions run the agent inside the VM the same way (zsh Terminal, `/Users/agent/workspace`); an existing base is reprovisioned from Global settings → macOS VMs. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Environment per session: Docker · Linux, QEMU · Windows (a Windows VM next to the box, its desktop over RDP; Linux hosts with KVM, base installed once from Global settings). ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- QEMU · macOS as a third environment: a macOS VM (dockur/macos, OpenCore) next to the box, its desktop over VNC; Linux hosts with KVM and AVX2, Apple's licence terms apply. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- New session toolbar: Environment, Agent and Model dropdowns with logos; every native `<select>` replaced by the themed list; a *Runtime* item first in the set-up checklist. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- New session: picking an unconnected Agent opens Connect a Provider, picking an environment that is not installed opens its install dialog. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Sign in with Claude Code, Codex, Cursor or Devin from Settings in your own browser; a login already on the server's machine is copied with one click. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- One USB device of the host per Session (Connect USB device… menu; WSL2 via usbipd). ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Global settings as a split view with `#/settings/<section>` deep links and one Save. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- An in-repo design system: Radix Primitives for menus, dialogs and tooltips; `--vscode-*` aliases from the same palette as the VS Code theme. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Long conversations no longer lose messages on reload (the 5,000-event cap is gone); the Code pane keeps each Session's own tabs and layout. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- No more messages missing after the tab was in the background: a dead push socket is detected and the transcript refetched. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
 
 ## 1.3.0 — 2026-09-25
 
 Install: `npx sessionboxer@1.3.0 serve`, `brew install talayolabs/tap/sessionboxer`, the installers on the
 release, `docker compose up`, or `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`.
 
-- New first screen: a prompt box with the Provider, repositories and Start under it; the four Provider logos above it until one is connected. ([ccb681b](https://github.com/talayolabs/sessionboxer/commit/ccb681b))
-- Connect a Provider from the app: per-Provider dialog with the install, log-in and paste steps for your OS (macOS, Windows, Linux). ([ccb681b](https://github.com/talayolabs/sessionboxer/commit/ccb681b))
-- Session settings behind "Advanced…", sections on the left, controls on the right. ([ccb681b](https://github.com/talayolabs/sessionboxer/commit/ccb681b))
-- "To set up" checklist in the sidebar: Provider and Git account, each a two-click wizard; Git offers GitHub or Bitbucket. ([b0bd4cd](https://github.com/talayolabs/sessionboxer/commit/b0bd4cd))
-- Settings → Git accounts: GitHub with a personal access token (direct create link, exact permissions) next to the CLI and OAuth App logins. ([bf5c407](https://github.com/talayolabs/sessionboxer/commit/bf5c407))
-- Login page: "Where do I find the token?" per install method, for `docker compose up -d` and friends. ([bf5c407](https://github.com/talayolabs/sessionboxer/commit/bf5c407))
-- Pull request rows open the PR detail; the GitHub link stays a separate button. ([bf5c407](https://github.com/talayolabs/sessionboxer/commit/bf5c407))
-- `sessionboxer serve` without Docker: one readable message and exit instead of a stack trace; a banner with Retry when the Sandbox image cannot be pulled. ([5fee507](https://github.com/talayolabs/sessionboxer/commit/5fee507))
-- Install: Homebrew tap, `sessionboxer` on npm, the desktop app's Get Docker link per OS. ([085c511](https://github.com/talayolabs/sessionboxer/commit/085c511))
+- New first screen: a prompt box with the Provider, repositories and Start under it; the four Provider logos above it until one is connected. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Connect a Provider from the app: per-Provider dialog with the install, log-in and paste steps for your OS (macOS, Windows, Linux). ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Session settings behind "Advanced…", sections on the left, controls on the right. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- "To set up" checklist in the sidebar: Provider and Git account, each a two-click wizard; Git offers GitHub or Bitbucket. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Settings → Git accounts: GitHub with a personal access token (direct create link, exact permissions) next to the CLI and OAuth App logins. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Login page: "Where do I find the token?" per install method, for `docker compose up -d` and friends. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Pull request rows open the PR detail; the GitHub link stays a separate button. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- `sessionboxer serve` without Docker: one readable message and exit instead of a stack trace; a banner with Retry when the Sandbox image cannot be pulled. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Install: Homebrew tap, `sessionboxer` on npm, the desktop app's Get Docker link per OS. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
 
 ## 1.2.0 — 2026-09-25
 
@@ -58,7 +58,7 @@ Install: `npx sessionboxer@1.2.0 serve`, the installers on the release, `docker 
 `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox image changed:
 Stop → Resume existing sessions.
 
-- Cursor as a fourth agent, on your Cursor subscription (`agent login` file or API key). ([164c955](https://github.com/talayolabs/sessionboxer/commit/164c955))
+- Cursor as a fourth agent, on your Cursor subscription (`agent login` file or API key). ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
 
 ## 1.1.0 — 2026-09-24
 
@@ -66,30 +66,30 @@ Install: `npx sessionboxer@1.1.0 serve`, the installers on the release, `docker 
 `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox image changed:
 Stop → Resume existing sessions. Details in the [guide](docs/GUIDE.md) and the linked commits.
 
-- Codex as a third agent, on your ChatGPT subscription. ([fa615a2](https://github.com/talayolabs/sessionboxer/commit/fa615a2))
-- Scheduled tasks: run a prompt on a cron schedule, into an existing session or a new one. ([dfdd394](https://github.com/talayolabs/sessionboxer/commit/dfdd394))
-- Color themes, eleven light and dark, shared with the VS Code in the box. ([7f2b908](https://github.com/talayolabs/sessionboxer/commit/7f2b908))
-- Verify each turn end to end, on by default, with a video; automatic snapshots off by default. ([217fe5a](https://github.com/talayolabs/sessionboxer/commit/217fe5a))
-- Verification pane: **Run now**. ([ffae185](https://github.com/talayolabs/sessionboxer/commit/ffae185))
-- PR checks (GitHub Actions, statuses) watched, a failure announced once, fixed from the PR pane. ([9b8442d](https://github.com/talayolabs/sessionboxer/commit/9b8442d))
-- Bitbucket Data Center pull requests watched too, build statuses as checks. ([ede0ace](https://github.com/talayolabs/sessionboxer/commit/ede0ace))
-- PR checks count only the newest run of each check; auto-merge says when it waits for an approval. ([2dea40d](https://github.com/talayolabs/sessionboxer/commit/2dea40d))
-- A PR opens inside the PRs pane with a breadcrumb; comment HTML rendered, sanitised. ([043c4ca](https://github.com/talayolabs/sessionboxer/commit/043c4ca))
-- Fork: continue the conversation, start a new one, or hand off — to another agent or the same. ([4e44832](https://github.com/talayolabs/sessionboxer/commit/4e44832))
-- Usage limits: no-entry sign with a reset countdown, **Continue** / **Auto-continue**, three usage bars. ([ab871ea](https://github.com/talayolabs/sessionboxer/commit/ab871ea))
-- Chat folds the agent's messages of a turn behind one rule, with a count and the turn's duration. ([8f2b55f](https://github.com/talayolabs/sessionboxer/commit/8f2b55f))
-- A time on every message, exact date on hover. ([c604e9b](https://github.com/talayolabs/sessionboxer/commit/c604e9b))
-- Tool-call screenshots stay inside the folded row, with a picture icon. ([9a4157c](https://github.com/talayolabs/sessionboxer/commit/9a4157c))
-- Composer: **Enqueue** replaces Save for later and the queue plays by itself. ([75816ff](https://github.com/talayolabs/sessionboxer/commit/75816ff))
-- Composer: one **Preview** switch, full-width context gauge, toolbar dividers, no typing lag. ([5ab1767](https://github.com/talayolabs/sessionboxer/commit/5ab1767))
-- Desktop MCP: the cursor glides to its target instead of jumping. ([ce964c5](https://github.com/talayolabs/sessionboxer/commit/ce964c5))
-- Session header: five tabs with icons and a ⋯ menu; provider logo; **Global settings** / **Session settings**. ([623d146](https://github.com/talayolabs/sessionboxer/commit/623d146))
-- Terminal pane: copy, paste and a right-click menu. ([bf04308](https://github.com/talayolabs/sessionboxer/commit/bf04308))
-- Inspect LLM on by default for Claude Code sessions. ([e1a91f3](https://github.com/talayolabs/sessionboxer/commit/e1a91f3))
-- Default agent instructions no longer ask for an end-to-end test (Verify each turn does that). ([2e96398](https://github.com/talayolabs/sessionboxer/commit/2e96398))
-- Docker inside Sandboxes uses `192.168.240.0/20`, configurable. ([a39e546](https://github.com/talayolabs/sessionboxer/commit/a39e546))
-- Sandbox image layers ordered so a Sessionboxer change rebuilds in seconds. ([2c4895d](https://github.com/talayolabs/sessionboxer/commit/2c4895d))
-- Fix: 1M Claude models were capped at a 200k window with Inspect LLM on. ([3c34f4e](https://github.com/talayolabs/sessionboxer/commit/3c34f4e))
+- Codex as a third agent, on your ChatGPT subscription. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Scheduled tasks: run a prompt on a cron schedule, into an existing session or a new one. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Color themes, eleven light and dark, shared with the VS Code in the box. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Verify each turn end to end, on by default, with a video; automatic snapshots off by default. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Verification pane: **Run now**. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- PR checks (GitHub Actions, statuses) watched, a failure announced once, fixed from the PR pane. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Bitbucket Data Center pull requests watched too, build statuses as checks. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- PR checks count only the newest run of each check; auto-merge says when it waits for an approval. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- A PR opens inside the PRs pane with a breadcrumb; comment HTML rendered, sanitised. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Fork: continue the conversation, start a new one, or hand off — to another agent or the same. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Usage limits: no-entry sign with a reset countdown, **Continue** / **Auto-continue**, three usage bars. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Chat folds the agent's messages of a turn behind one rule, with a count and the turn's duration. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- A time on every message, exact date on hover. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Tool-call screenshots stay inside the folded row, with a picture icon. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Composer: **Enqueue** replaces Save for later and the queue plays by itself. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Composer: one **Preview** switch, full-width context gauge, toolbar dividers, no typing lag. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Desktop MCP: the cursor glides to its target instead of jumping. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Session header: five tabs with icons and a ⋯ menu; provider logo; **Global settings** / **Session settings**. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Terminal pane: copy, paste and a right-click menu. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Inspect LLM on by default for Claude Code sessions. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Default agent instructions no longer ask for an end-to-end test (Verify each turn does that). ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Docker inside Sandboxes uses `192.168.240.0/20`, configurable. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Sandbox image layers ordered so a Sessionboxer change rebuilds in seconds. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
+- Fix: 1M Claude models were capped at a 200k window with Inspect LLM on. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
 
 ## 1.0.0 — 2026-09-22
 

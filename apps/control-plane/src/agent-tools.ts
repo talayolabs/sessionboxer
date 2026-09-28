@@ -11,6 +11,7 @@ import {
   AgentPrFollowArgs,
   AgentPrItemsArgs,
   AgentPrMarkAddressedArgs,
+  AgentPrReviewSubmitArgs,
   AgentQueueAddArgs,
   AgentScheduleCreateArgs,
   AgentSessionCreateArgs,
@@ -82,6 +83,11 @@ export interface AgentFollowedPrs {
   list(filter: { state?: "open" | "all"; repo?: string }): FollowedPr[];
 }
 
+/** The Auto review action's poster (`pr-reviews.ts`). */
+export interface AgentPrReviews {
+  submit(sessionId: string, args: AgentPrReviewSubmitArgs): Promise<{ url: string | null; verdict: string; findings: number; inline: number; note: string }>;
+}
+
 /** What the Control Plane needs to answer the `sessionboxer` MCP's tools for one Session. */
 export interface AgentToolsDeps {
   db: Db;
@@ -105,6 +111,8 @@ export interface AgentToolsDeps {
   automations: () => AgentAutomations | null;
   /** `null` until the server wires the followed pull requests. */
   followedPrs: () => AgentFollowedPrs | null;
+  /** `null` until the server wires the Auto review action. */
+  reviews: () => AgentPrReviews | null;
   /** The `SessionInfo` the Daemon writes to `session.json`, as of now. */
   sessionInfo: (id: string) => SessionInfo;
   /** The policy in force (`Settings.agentTools` with the Session's override). */
@@ -139,6 +147,7 @@ const SESSION_TOOLS: ReadonlySet<AgentTool> = new Set<AgentTool>([
   "pr_list",
   "pr_items",
   "pr_mark_addressed",
+  "pr_review_submit",
   "snapshot",
   "queue_add",
   "queue_list",
@@ -273,6 +282,13 @@ export class AgentTools {
         return this.automationCreate(id, policy, AgentAutomationCreateArgs.parse(args));
       case "pr_follow":
         return this.prFollow(id, AgentPrFollowArgs.parse(args));
+      case "pr_review_submit": {
+        const r = this.deps.reviews();
+        if (!r) throw new Error("Automatic reviews are not available on this Control Plane.");
+        const posted = await r.submit(id, AgentPrReviewSubmitArgs.parse(args));
+        this.mark(id, tool, `review posted: ${posted.findings} finding${posted.findings === 1 ? "" : "s"}, ${posted.verdict.replace("_", " ")}${posted.url ? ` → ${posted.url}` : ""}`, "prs");
+        return posted;
+      }
       case "pr_followed_list": {
         const p = AgentFollowedPrListArgs.parse(args);
         return {

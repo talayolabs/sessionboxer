@@ -48,7 +48,26 @@ CREATE TABLE IF NOT EXISTS automation_runs (
 );
 CREATE INDEX IF NOT EXISTS automation_runs_automation ON automation_runs (automation_id, queued_at);
 CREATE INDEX IF NOT EXISTS automation_runs_pr ON automation_runs (followed_pr_id, queued_at);
+CREATE TABLE IF NOT EXISTS automation_pr_state (
+  automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+  followed_pr_id TEXT NOT NULL,
+  last_reviewed_sha TEXT,
+  last_run_id TEXT,
+  last_url TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (automation_id, followed_pr_id)
+);
 `;
+
+/** What an automation last did to one PR (the delta of the next review starts here). */
+export interface AutomationPrState {
+  automationId: string;
+  followedPrId: string;
+  lastReviewedSha: string | null;
+  lastRunId: string | null;
+  lastUrl: string | null;
+  updatedAt: string;
+}
 
 interface AutomationRow {
   id: string;
@@ -288,6 +307,29 @@ export class AutomationStore {
         : this.db.prepare("SELECT * FROM automation_runs WHERE status IN ('queued', 'running')").all()
     ) as RunRow[];
     return rows.map(rowToRun);
+  }
+
+  /** The running run whose Session is `sessionId` (the review or QA Session asking to post), if any. */
+  findRunningForSession(sessionId: string): AutomationRun | null {
+    const row = this.db.prepare("SELECT * FROM automation_runs WHERE session_id = ? AND status = 'running' ORDER BY queued_at DESC LIMIT 1").get(sessionId) as RunRow | undefined;
+    return row ? rowToRun(row) : null;
+  }
+
+  getPrState(automationId: string, followedPrId: string): AutomationPrState | null {
+    const row = this.db.prepare("SELECT * FROM automation_pr_state WHERE automation_id = ? AND followed_pr_id = ?").get(automationId, followedPrId) as
+      | { automation_id: string; followed_pr_id: string; last_reviewed_sha: string | null; last_run_id: string | null; last_url: string | null; updated_at: string }
+      | undefined;
+    if (!row) return null;
+    return { automationId: row.automation_id, followedPrId: row.followed_pr_id, lastReviewedSha: row.last_reviewed_sha, lastRunId: row.last_run_id, lastUrl: row.last_url, updatedAt: row.updated_at };
+  }
+
+  setPrState(automationId: string, followedPrId: string, state: { lastReviewedSha: string; lastRunId: string; lastUrl: string | null }): void {
+    this.db
+      .prepare(
+        `INSERT INTO automation_pr_state (automation_id, followed_pr_id, last_reviewed_sha, last_run_id, last_url, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (automation_id, followed_pr_id) DO UPDATE SET last_reviewed_sha = excluded.last_reviewed_sha, last_run_id = excluded.last_run_id, last_url = excluded.last_url, updated_at = excluded.updated_at`,
+      )
+      .run(automationId, followedPrId, state.lastReviewedSha, state.lastRunId, state.lastUrl, new Date().toISOString());
   }
 
   /** Runs of one automation about one PR in the last 24 hours (the per-PR daily cap). */

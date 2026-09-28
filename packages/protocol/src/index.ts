@@ -154,6 +154,24 @@ export const RepoSource = z.discriminatedUnion("type", [
 ]);
 export type RepoSource = z.infer<typeof RepoSource>;
 
+/**
+ * A pull request's head as the platform publishes it on the base repository: `refs/pull/{n}/head` on
+ * GitHub, `refs/pull-requests/{n}/from` on Bitbucket Data Center. As a `RepoSource.ref` it is fetched
+ * after the clone and checked out as the local branch `pr/{n}` (a fork's branch is not clonable).
+ */
+export const PR_REFSPEC = /^refs\/pull(?:-requests)?\/(\d+)\/(?:head|from)$/;
+export function prRefspec(provider: "github" | "bitbucket", number: number): string {
+  return provider === "github" ? `refs/pull/${number}/head` : `refs/pull-requests/${number}/from`;
+}
+export function isPrRefspec(ref: string): boolean {
+  return PR_REFSPEC.test(ref);
+}
+/** The local branch a PR refspec is checked out as (`pr/12`); other refs are their own branch. */
+export function prRefspecBranch(ref: string): string {
+  const m = PR_REFSPEC.exec(ref);
+  return m ? `pr/${m[1]}` : ref;
+}
+
 export const REPO_NAME_MAX_CHARS = 100;
 export const REPO_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 /** Directory name under `/workspace`: one path segment, no leading dot (keeps `.sessionboxer`, `.` and `..` out of reach). */
@@ -2415,6 +2433,7 @@ export const AGENT_TOOLS = [
   "automation_runs",
   "pr_follow",
   "pr_followed_list",
+  "pr_review_submit",
   // other Sessions (policy `all`)
   "sessions_list",
   "session_get",
@@ -3675,6 +3694,27 @@ export const AgentFollowedPrListArgs = z.object({
   state: z.enum(["open", "all"]).default("open"),
 });
 export type AgentFollowedPrListArgs = z.infer<typeof AgentFollowedPrListArgs>;
+
+export const REVIEW_SUMMARY_MAX_CHARS = 4000;
+export const REVIEW_FINDINGS_MAX = 50;
+export const ReviewFindingSeverity = z.enum(["high", "medium", "low"]);
+export type ReviewFindingSeverity = z.infer<typeof ReviewFindingSeverity>;
+/** One inline finding of an automatic review; `line` is in the head (`RIGHT`) or base (`LEFT`) side of the diff. */
+export const ReviewFinding = z.object({
+  path: z.string().min(1).max(500),
+  line: z.number().int().positive(),
+  side: z.enum(["RIGHT", "LEFT"]).default("RIGHT"),
+  severity: ReviewFindingSeverity.default("medium"),
+  body: z.string().min(1).max(2000),
+});
+export type ReviewFinding = z.infer<typeof ReviewFinding>;
+/** `pr_review_submit`: the review an Auto review Session hands to the Control Plane, which posts it. */
+export const AgentPrReviewSubmitArgs = z.object({
+  verdict: ReviewVerdict,
+  summary: z.string().min(1).max(REVIEW_SUMMARY_MAX_CHARS),
+  findings: z.array(ReviewFinding).max(REVIEW_FINDINGS_MAX).default([]),
+});
+export type AgentPrReviewSubmitArgs = z.infer<typeof AgentPrReviewSubmitArgs>;
 
 // ---------------------------------------------------------------------------
 // Sandbox Daemon RPC (Control Plane <-> Daemon, JSON-RPC 2.0 over WebSocket).

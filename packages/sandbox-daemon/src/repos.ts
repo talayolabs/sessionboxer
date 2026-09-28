@@ -11,6 +11,8 @@ import {
   type DaemonReposSetParams,
   type RepoGitState,
   ReposManifest,
+  isPrRefspec,
+  prRefspecBranch,
   repoOriginLabel,
   repoWorkAtRisk,
 } from "@sessionboxer/protocol";
@@ -180,10 +182,15 @@ export class Repos {
       try {
         if (r.source.type === "git") {
           const helper = this.host.credentialHelper(r.account ?? "-");
+          const refspec = r.source.ref !== undefined && isPrRefspec(r.source.ref) ? r.source.ref : null;
           const args = ["-c", `credential.helper=${helper}`, "clone"];
-          if (r.source.ref) args.push("--branch", r.source.ref);
+          if (r.source.ref && refspec === null) args.push("--branch", r.source.ref);
           this.log(`cloning ${r.source.url} into ${abs}${r.account ? ` as @${r.account}` : ""}`);
           await this.git(this.workspace, [...args, "--", r.source.url, abs]);
+          if (refspec !== null) {
+            await this.git(abs, ["-c", `credential.helper=${helper}`, "fetch", "--", "origin", refspec]);
+            await this.git(abs, ["checkout", "-q", "-B", prRefspecBranch(refspec), "FETCH_HEAD"]);
+          }
         } else {
           this.log(`copying ${r.dir} to ${abs}`);
           await this.host.pushDir?.(r.dir);

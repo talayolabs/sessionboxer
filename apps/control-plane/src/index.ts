@@ -105,6 +105,7 @@ import { HostOrSandboxRunner, ProviderLogins } from "./provider-login.js";
 import { PushNotifier } from "./push.js";
 import { Automations, scheduleRunOf } from "./automations.js";
 import { FollowedPrs } from "./followed-prs.js";
+import { PrReviews } from "./pr-reviews.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { WindowsVms } from "./windows.js";
 import { MacosVms } from "./macos.js";
@@ -250,6 +251,17 @@ const followedPrs = new FollowedPrs({
   log,
 });
 sessions.followedPrs = followedPrs;
+const prReviews = new PrReviews({
+  db,
+  automations,
+  followedPrs,
+  settings: () => settings,
+  sessions: { create: (req) => sessions.create(req) },
+  attach: (sessionId, url, by) => sessions.prs.attach(sessionId, url, by),
+  push: (msg) => push.send(msg),
+  log,
+});
+sessions.reviews = prReviews;
 const connectors = new Connectors(
   {
     get: () => settings,

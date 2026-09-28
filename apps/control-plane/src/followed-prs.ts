@@ -1,5 +1,6 @@
 import {
   PR_EVENT_LABELS,
+  prRefspec,
   prUrl,
   type Automation,
   type AutomationRun,
@@ -370,7 +371,7 @@ export class FollowedPrs {
   }
 
   /** The follow of a PR whose login is still connected (the one the detail is read with). */
-  private followFor(pr: StoredFollowedPr): { follow: StoredFollow; cred: BoxCredential } | null {
+  credentialFor(pr: StoredFollowedPr): { follow: StoredFollow; cred: BoxCredential } | null {
     for (const id of pr.follows) {
       const follow = this.deps.db.followedPrs.getFollow(id);
       if (!follow) continue;
@@ -436,6 +437,7 @@ export class FollowedPrs {
     const full = it.headRef !== null;
     const patch: FollowedPrPatch = {
       title: it.title,
+      ...(it.body !== null ? { body: it.body } : {}),
       state: it.state,
       author: it.author,
       labels: it.labels,
@@ -509,7 +511,7 @@ export class FollowedPrs {
     const store = this.deps.db.followedPrs;
     const pr = store.getPr(id);
     if (!pr) return;
-    const via = this.followFor(pr);
+    const via = this.credentialFor(pr);
     if (!via) {
       store.setPrSync(id, { etags: pr.etags, error: "unauthorized", detail: "no connected login can read this PR (Settings → Connectors)" });
       this.broadcastPrs();
@@ -641,7 +643,7 @@ export class FollowedPrs {
       if (t.follows.length > 0 && !t.follows.some((id) => pr.follows.includes(id))) continue;
       for (const e of events) {
         if (!t.events.includes(e.type)) continue;
-        const why = filterReason(t.filters, a.action.type, pr, e, own);
+        const why = filterReason(t.filters, a.action.type, pr, e, own, this.agentOpened(pr));
         if (why) {
           this.deps.log(`automation ${a.name}: ${pr.owner}/${pr.repo}#${pr.number} ${e.type} skipped: ${why}`);
           continue;
@@ -743,18 +745,32 @@ export class FollowedPrs {
     const pr = followedPrId ? this.deps.db.followedPrs.getPr(followedPrId) : null;
     if (!pr) throw new Error(`${repo}#${number} is not a followed pull request; follow its repository on the Pull requests page first.`);
     if (pr.headRef === "" || pr.headRepo === "") throw new Error(`${repo}#${number}: its head is not known yet (the PR has not been read in detail).`);
-    const via = this.followFor(pr);
+    const via = this.credentialFor(pr);
+    // A fork's branch is fetched as the base repository's PR ref (`refs/pull/{n}/head`, `refs/pull-requests/{n}/from`):
+    // the fork may be private or gone, and the box then needs no credential for the fork.
+    const ref = pr.isFork ? prRefspec(pr.provider, pr.number) : pr.headRef;
     if (pr.provider === "github") {
-      return { name: pr.repo, source: { type: "git", url: `https://github.com/${pr.headRepo}.git`, ref: pr.headRef }, account: via?.cred.account ?? null };
+      const full = pr.isFork ? `${pr.owner}/${pr.repo}` : pr.headRepo;
+      return { name: pr.repo, source: { type: "git", url: `https://github.com/${full}.git`, ref }, account: pr.isFork ? null : (via?.cred.account ?? null) };
     }
-    const [project, slug] = pr.headRepo.split("/");
-    return { name: pr.repo, source: { type: "git", url: bitbucketHttpsCloneUrl({ host: pr.host, project: project ?? pr.owner, slug: slug ?? pr.repo }), ref: pr.headRef } };
+    const [project, slug] = pr.isFork ? [pr.owner, pr.repo] : pr.headRepo.split("/");
+    return { name: pr.repo, source: { type: "git", url: bitbucketHttpsCloneUrl({ host: pr.host, project: project ?? pr.owner, slug: slug ?? pr.repo }), ref } };
+  }
+
+  /** Whether an Agent (a Session of this Control Plane) opened the PR: the `not_self` filter skips those, not the user's own hand-made PRs. */
+  private agentOpened(pr: StoredFollowedPr): boolean {
+    return this.deps.db.prs.findAll(pr).some((p) => p.attachedBy === "agent");
   }
 
   // --- broadcasts ----------------------------------------------------------------------------
 
   private broadcastFollows(): void {
     this.deps.broadcast({ type: "pr_follows", follows: this.listFollows() });
+  }
+
+  /** Re-sends the PR list (a run's result changed what a PR shows). */
+  announce(_prId: string): void {
+    this.broadcastPrs();
   }
 
   private broadcastPrs(): void {
@@ -811,14 +827,14 @@ function globToRegExp(glob: string): RegExp {
 }
 
 /** Why the trigger's filters keep an event from firing, or `null` to fire. */
-export function filterReason(filters: PrEventFilters, action: Automation["action"]["type"], pr: StoredFollowedPr, e: PrEvent, own: Set<string>): string | null {
+export function filterReason(filters: PrEventFilters, action: Automation["action"]["type"], pr: StoredFollowedPr, e: PrEvent, own: Set<string>, agentOpened = false): string | null {
   if (pr.state === "draft" && filters.drafts === "skip" && e.type !== "converted_to_draft") return "the PR is a draft";
   if (pr.isFork) {
     if (filters.forks === "skip") return "the PR comes from a fork";
     if (filters.forks === "review_only" && action !== "auto_review" && action !== "notify") return "the PR comes from a fork (only reviews and notifications run on forks)";
   }
   const selfAuthored = own.has(pr.author.toLowerCase());
-  if (filters.authors === "not_self" && selfAuthored) return `@${pr.author} is the follow's own login`;
+  if (filters.authors === "not_self" && selfAuthored && agentOpened) return `@${pr.author} (the follow's own login) opened it from a Session`;
   if (filters.authors === "self_only" && !selfAuthored) return `@${pr.author} is not the follow's own login`;
   if (!filters.includeOwn && e.actor && own.has(e.actor.toLowerCase())) return `@${e.actor} (the follow's own login) caused it`;
   if (filters.baseRef && !globToRegExp(filters.baseRef).test(pr.baseRef)) return `the base branch ${pr.baseRef} does not match ${filters.baseRef}`;

@@ -68,6 +68,32 @@ server.registerTool(
 );
 
 server.registerTool(
+  "pr_review_submit",
+  {
+    description:
+      "Only in a Session an Auto review automation started for a pull request: hand the finished review to the Control Plane, which posts it on the PR under the connected login (GitHub review, Bitbucket comments). Call it exactly once; do not post through gh, the platform's API or git yourself. The verdict may be capped by the automation's settings. Findings use repository-relative paths and lines of the new version of the file; a path outside the diff goes into the review body instead.",
+    inputSchema: {
+      verdict: z.enum(["comment", "approve", "request_changes"]).describe("Your verdict; the automation's maxVerdict caps it (an over-cap verdict is posted as a comment)"),
+      summary: z.string().min(1).max(4000).describe("The review in Markdown: what the change does, what is right, what is wrong; two to ten sentences"),
+      findings: z
+        .array(
+          z.object({
+            path: z.string().min(1).max(500).describe("Repository-relative path"),
+            line: z.number().int().positive().describe("Line number in the head version (RIGHT) or base version (LEFT) of the file"),
+            side: z.enum(["RIGHT", "LEFT"]).optional().describe("Default RIGHT"),
+            severity: z.enum(["high", "medium", "low"]).optional().describe("Default medium; high is a bug or a security issue"),
+            body: z.string().min(1).max(2000).describe("The finding, in Markdown"),
+          }),
+        )
+        .max(50)
+        .optional()
+        .describe("Inline findings, none for a clean review"),
+    },
+  },
+  (args) => tool("pr_review_submit", args),
+);
+
+server.registerTool(
   "pr_list",
   { description: "The pull requests attached to this Session, with their state, checks and unseen review items.", inputSchema: {} },
   () => tool("pr_list", {}),

@@ -61,6 +61,7 @@ interface RestPr {
   head: { ref: string; sha: string; repo: { full_name: string } | null };
   requested_reviewers?: Array<{ login: string }>;
   labels?: Array<{ name: string }>;
+  body?: string | null;
   base: { ref: string };
   user: { login: string } | null;
 }
@@ -135,6 +136,7 @@ export interface PrListItem {
   baseRef: string | null;
   requestedReviewers: string[];
   labels: string[];
+  body: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   closedAt: string | null;
@@ -155,6 +157,7 @@ function listItemFromRest(owner: string, repo: string, pr: RestPr): PrListItem {
     baseRef: pr.base.ref,
     requestedReviewers: (pr.requested_reviewers ?? []).map((u) => u.login),
     labels: (pr.labels ?? []).map((l) => l.name),
+    body: pr.body ?? null,
     createdAt: pr.created_at,
     updatedAt: pr.updated_at,
     closedAt: pr.closed_at,
@@ -180,6 +183,7 @@ interface RestSearchItem {
   closed_at: string | null;
   user: { login: string } | null;
   labels?: Array<{ name: string }>;
+  body?: string | null;
   pull_request?: { merged_at: string | null };
 }
 
@@ -227,6 +231,7 @@ export async function searchOpenPrs(t: GhTransport, query: string, account: stri
         baseRef: null,
         requestedReviewers: [],
         labels: (it.labels ?? []).map((l) => l.name),
+        body: it.body ?? null,
         createdAt: it.created_at,
         updatedAt: it.updated_at,
         closedAt: it.closed_at,
@@ -714,4 +719,79 @@ function rateRemaining(headers: Record<string, string>): number | null {
 
 function isSelf(login: string | undefined, self: string | null): boolean {
   return !!login && !!self && login.toLowerCase() === self.toLowerCase();
+}
+
+// --- Posting (ADR-0065: the Control Plane posts automatic reviews) --------------------------------
+
+export type PostOutcome =
+  | { status: "ok"; url: string | null }
+  /** GitHub would not take it as sent (422: an inline position outside the diff, an empty review); the caller reshapes and retries. */
+  | { status: "refused"; detail: string }
+  | { status: "error"; kind: PrSyncError; detail: string; retryAt: string | null };
+
+export interface ReviewCommentInput {
+  path: string;
+  line: number;
+  side: "RIGHT" | "LEFT";
+  body: string;
+}
+
+export interface ReviewInput {
+  commitId: string;
+  event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+  body: string;
+  comments: ReviewCommentInput[];
+}
+
+/** `POST …/pulls/{n}/reviews`: one review with its inline comments, pinned to `commitId`. */
+export async function submitReview(t: GhTransport, ref: PrRef, account: string | null, input: ReviewInput): Promise<PostOutcome> {
+  let res: DaemonGhApiResult;
+  try {
+    res = await t.request({
+      method: "POST",
+      path: `repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/reviews`,
+      headers: {},
+      body: JSON.stringify({
+        commit_id: input.commitId,
+        event: input.event,
+        body: input.body,
+        comments: input.comments.map((c) => ({ path: c.path, line: c.line, side: c.side, body: c.body })),
+      }),
+      account,
+    });
+  } catch (e) {
+    return { status: "error", kind: "error", detail: e instanceof Error ? e.message : String(e), retryAt: null };
+  }
+  if (res.status === 200 || res.status === 201) {
+    const body = JSON.parse(res.body) as { html_url?: string };
+    return { status: "ok", url: body.html_url ?? null };
+  }
+  if (res.status === 422) return { status: "refused", detail: message(res.body) ?? "HTTP 422" };
+  const c = classify(res);
+  return { status: "error", kind: c.kind, detail: c.detail, retryAt: c.retryAt };
+}
+
+const FILES_PAGES_MAX = 30;
+
+/** The paths the PR touches (`…/pulls/{n}/files`, up to GitHub's 3,000-file cap): inline comments must land on one of them. */
+export async function fetchPrFiles(t: GhTransport, ref: PrRef, account: string | null): Promise<GhOutcome<string[]>> {
+  const out: string[] = [];
+  let remaining: number | null = null;
+  for (let page = 1; page <= FILES_PAGES_MAX; page++) {
+    let res: DaemonGhApiResult;
+    try {
+      res = await t.request({ method: "GET", path: `repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/files?per_page=100&page=${page}`, headers: {}, body: null, account });
+    } catch (e) {
+      return { status: "error", kind: "error", detail: e instanceof Error ? e.message : String(e), retryAt: null };
+    }
+    remaining = rateRemaining(res.headers);
+    if (res.status !== 200) return classify(res);
+    const parsed = JSON.parse(res.body) as Array<{ filename: string; previous_filename?: string }>;
+    for (const f of parsed) {
+      out.push(f.filename);
+      if (f.previous_filename) out.push(f.previous_filename);
+    }
+    if (parsed.length < 100) break;
+  }
+  return { status: "ok", value: out, etag: null, remaining };
 }

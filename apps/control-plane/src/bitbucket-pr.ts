@@ -12,7 +12,13 @@ import type { PrCheckInput, PrItemInput } from "./pr-store.js";
  */
 export interface BbTransport {
   /** `path` is relative to `https://host/`, e.g. `rest/api/latest/projects/K/repos/s/pull-requests/12`. */
-  request(path: string, query?: Record<string, string>): Promise<{ status: number; headers: Record<string, string>; body: string }>;
+  request(path: string, query?: Record<string, string>, init?: BbRequestInit): Promise<{ status: number; headers: Record<string, string>; body: string }>;
+}
+
+/** A write (`POST` / `PUT` with a JSON body); omitted is a `GET`. */
+export interface BbRequestInit {
+  method: "POST" | "PUT";
+  body: string;
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -20,11 +26,18 @@ const REQUEST_TIMEOUT_MS = 30_000;
 /** A transport that calls the Data Center itself with an HTTP access token (the Connector's). */
 export function bitbucketTokenTransport(host: string, token: string, fetchImpl: typeof fetch = fetch): BbTransport {
   return {
-    async request(path, query) {
+    async request(path, query, init) {
       const url = new URL(`https://${host}/${path}`);
       for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, v);
       const res = await fetchImpl(url, {
-        headers: { authorization: `Bearer ${token}`, accept: "application/json", "user-agent": "sessionboxer" },
+        method: init?.method ?? "GET",
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/json",
+          "user-agent": "sessionboxer",
+          ...(init ? { "content-type": "application/json" } : {}),
+        },
+        body: init?.body,
         redirect: "manual",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -60,6 +73,7 @@ interface BbPr {
   title: string;
   state: "OPEN" | "MERGED" | "DECLINED";
   draft?: boolean;
+  description?: string;
   closedDate?: number;
   createdDate?: number;
   updatedDate: number;
@@ -197,6 +211,7 @@ function listItemFromBb(host: string, pr: BbPr): PrListItem {
     baseRef: pr.toRef.displayId,
     requestedReviewers: pr.reviewers.filter((p) => !p.approved && p.status !== "NEEDS_WORK").map((p) => p.user.name),
     labels: [],
+    body: pr.description ?? null,
     createdAt: pr.createdDate ? iso(pr.createdDate) : null,
     updatedAt: iso(pr.updatedDate),
     closedAt: pr.closedDate ? iso(pr.closedDate) : null,
@@ -454,4 +469,47 @@ function isSelf(user: BbUser, self: string | null): boolean {
   if (!self) return false;
   const s = self.toLowerCase();
   return user.name.toLowerCase() === s || (user.slug ?? "").toLowerCase() === s;
+}
+
+// --- Posting (ADR-0065: the Control Plane posts automatic reviews) --------------------------------
+
+export type BbPostOutcome = { status: "ok"; url: string | null } | { status: "refused"; detail: string } | { status: "error"; kind: PrSyncError; detail: string; retryAt: string | null };
+
+/** `POST …/pull-requests/{id}/comments`: a general comment, or an inline one on `anchor` (a line of the head side of the effective diff). */
+export async function postBbComment(t: BbTransport, host: string, ref: PrRef, text: string, anchor?: { path: string; line: number }): Promise<BbPostOutcome> {
+  const body = {
+    text,
+    ...(anchor ? { anchor: { path: anchor.path, line: anchor.line, lineType: "ADDED", fileType: "TO", diffType: "EFFECTIVE" } } : {}),
+  };
+  let res: { status: number; headers: Record<string, string>; body: string };
+  try {
+    res = await t.request(`${prPath(ref)}/comments`, undefined, { method: "POST", body: JSON.stringify(body) });
+  } catch (e) {
+    return { status: "error", kind: "error", detail: describeNetworkError(e), retryAt: null };
+  }
+  if (res.status === 201 || res.status === 200) {
+    let id: number | null = null;
+    try {
+      id = (JSON.parse(res.body) as { id?: number }).id ?? null;
+    } catch {
+      id = null;
+    }
+    const url = `https://${host}/${repoPath(ref)}/pull-requests/${ref.number}/overview${id !== null ? `?commentId=${id}` : ""}`;
+    return { status: "ok", url };
+  }
+  if (res.status === 400 || res.status === 409) return { status: "refused", detail: message(res.body) ?? `HTTP ${res.status}` };
+  return classify(res);
+}
+
+/** `PUT …/participants/{userSlug}` with `status`: the token's user approves or asks for work (`UNAPPROVED` withdraws). */
+export async function setBbParticipantStatus(t: BbTransport, ref: PrRef, userSlug: string, status: "APPROVED" | "NEEDS_WORK" | "UNAPPROVED"): Promise<BbPostOutcome> {
+  let res: { status: number; headers: Record<string, string>; body: string };
+  try {
+    res = await t.request(`${prPath(ref)}/participants/${encodeURIComponent(userSlug)}`, undefined, { method: "PUT", body: JSON.stringify({ status }) });
+  } catch (e) {
+    return { status: "error", kind: "error", detail: describeNetworkError(e), retryAt: null };
+  }
+  if (res.status === 200) return { status: "ok", url: null };
+  if (res.status === 400 || res.status === 409) return { status: "refused", detail: message(res.body) ?? `HTTP ${res.status}` };
+  return classify(res);
 }

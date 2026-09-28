@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS followed_prs (
   is_fork INTEGER NOT NULL DEFAULT 0,
   requested_reviewers TEXT NOT NULL DEFAULT '[]',
   labels TEXT NOT NULL DEFAULT '[]',
+  body TEXT NOT NULL DEFAULT '',
   review_decision TEXT,
   remote_created_at TEXT,
   remote_updated_at TEXT,
@@ -146,6 +147,7 @@ interface PrRow {
   is_fork: number;
   requested_reviewers: string;
   labels: string;
+  body: string;
   review_decision: string | null;
   remote_created_at: string | null;
   remote_updated_at: string | null;
@@ -184,6 +186,8 @@ export interface StoredFollow extends PrFollow {
 
 /** A `followed_prs` row with the polling state the UI does not see; `attached` and `runs` are filled in by the service. */
 export interface StoredFollowedPr extends Omit<FollowedPr, "attached" | "runs"> {
+  /** The PR's description as the platform gives it (the review prompt fences it). */
+  body: string;
   etags: PrEtags;
   retryAt: string | null;
   /** The list saw it change (or never read its detail): read comments, reviews and checks next. */
@@ -240,6 +244,7 @@ function rowToPr(r: PrRow): StoredFollowedPr {
     isFork: r.is_fork === 1,
     requestedReviewers: parseJson<string[]>(r.requested_reviewers, []),
     labels: parseJson<string[]>(r.labels, []),
+    body: r.body,
     reviewDecision: r.review_decision === null ? null : PrReviewDecision.parse(r.review_decision),
     checksFailed: r.checks_failed,
     checksPending: r.checks_pending,
@@ -270,7 +275,7 @@ function rowToEvent(r: EventRow): PrEvent {
 export type FollowedPrPatch = Partial<
   Pick<
     StoredFollowedPr,
-    "title" | "state" | "author" | "headRef" | "headSha" | "headRepo" | "baseRef" | "isFork" | "requestedReviewers" | "labels" | "reviewDecision" | "remoteCreatedAt" | "remoteUpdatedAt" | "closedAt" | "needsDetail"
+    "title" | "body" | "state" | "author" | "headRef" | "headSha" | "headRepo" | "baseRef" | "isFork" | "requestedReviewers" | "labels" | "reviewDecision" | "remoteCreatedAt" | "remoteUpdatedAt" | "closedAt" | "needsDetail"
   >
 >;
 
@@ -283,6 +288,8 @@ export class FollowedPrStore extends PrItemsStore {
   constructor(db: Database.Database) {
     super(db, { prs: "followed_prs", items: "followed_pr_items", checks: "followed_pr_checks" });
     this.db.exec(FOLLOWED_SCHEMA);
+    const cols = (this.db.prepare("PRAGMA table_info(followed_prs)").all() as Array<{ name: string }>).map((c) => c.name);
+    if (!cols.includes("body")) this.db.exec("ALTER TABLE followed_prs ADD COLUMN body TEXT NOT NULL DEFAULT ''");
   }
 
   // --- follows -------------------------------------------------------------------------------
@@ -400,6 +407,7 @@ export class FollowedPrStore extends PrItemsStore {
     if (patch.isFork !== undefined) set("is_fork", patch.isFork ? 1 : 0);
     if (patch.requestedReviewers !== undefined) set("requested_reviewers", JSON.stringify(patch.requestedReviewers));
     if (patch.labels !== undefined) set("labels", JSON.stringify(patch.labels));
+    if (patch.body !== undefined) set("body", patch.body);
     if (patch.reviewDecision !== undefined) set("review_decision", patch.reviewDecision);
     if (patch.remoteCreatedAt !== undefined) set("remote_created_at", patch.remoteCreatedAt);
     if (patch.remoteUpdatedAt !== undefined) set("remote_updated_at", patch.remoteUpdatedAt);

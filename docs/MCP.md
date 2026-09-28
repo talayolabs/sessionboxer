@@ -259,6 +259,7 @@ The wait tools (`session_wait`, `approval_wait`) block for at most **20 s** per 
 | [`pr_followed_list`](#pr_followed_list) | The follows and followed PRs | all |
 | [`pr_items`](#pr_items) | A PR's review comments and checks | session |
 | [`pr_mark_addressed`](#pr_mark_addressed) | Mark items as dealt with | session |
+| [`pr_review_submit`](#pr_review_submit) | Hand a finished review to the Control Plane, which posts it (Auto review runs only) | session |
 | [`snapshot`](#snapshot) | Snapshot the box now | session |
 | [`queue_add`](#queue_add) | Queue a prompt for itself | session |
 | [`queue_list`](#queue_list) | The queue | session |
@@ -408,6 +409,18 @@ No parameters. Returns the prompts queued for the session, in order, with their 
 | `title` | string, 1–200 characters, *required* | The new name (sidebar and browser tab) |
 
 Marker: "renamed the Session to …".
+
+#### `pr_review_submit`
+
+Only in a Session an **Auto review** automation started for a pull request: the review the Agent wrote, posted by the Control Plane under the connected login (a GitHub review pinned to the head commit, or Bitbucket comments plus the participant status). The box never holds the token. Any other Session gets an error and nothing is posted; a run posts once.
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `verdict` | `comment`, `approve` or `request_changes` | Capped by the automation's *Strongest verdict*: a verdict above the cap is posted as a comment and the body says which one the Agent wanted |
+| `summary` | string, ≤4,000 characters | The review in Markdown |
+| `findings` | array, ≤50, optional | `{ path, line, side?, severity?, body }`: repository-relative path, line in the head (`RIGHT`, default) or base (`LEFT`) version, `high` / `medium` (default) / `low`, the finding in Markdown (≤2,000 characters). A path outside the PR's diff, or a position the platform refuses, goes into the review body instead |
+
+Returns `{ url, verdict, findings, inline, note }`: the review's URL, the verdict as posted, how many findings, how many of them inline, and a note ("posted", "verdict capped to comment", what was folded). Marker: "review posted: 3 findings, comment → link".
 
 #### `verify`
 

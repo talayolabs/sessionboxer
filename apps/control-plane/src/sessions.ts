@@ -65,6 +65,8 @@ import {
   type RepoSpec,
   type SessionRepo,
   WORKSPACE_ROOT_REPO,
+  isPrRefspec,
+  prRefspecBranch,
   repoDir,
   repoNameFromSource,
   repoOriginLabel,
@@ -114,7 +116,7 @@ import {
   classifyUsageLimit,
   mergeUsageWindows,
 } from "@sessionboxer/protocol";
-import { AgentTools, type AgentAutomations, type AgentFollowedPrs } from "./agent-tools.js";
+import { AgentTools, type AgentAutomations, type AgentFollowedPrs, type AgentPrReviews } from "./agent-tools.js";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
   PUBLIC_URL,
@@ -198,6 +200,7 @@ export class SessionManager {
   automations: AgentAutomations | null = null;
   /** The followed pull requests (`pr_follow`, `pr_followed_list`); wired by the server. */
   followedPrs: AgentFollowedPrs | null = null;
+  reviews: AgentPrReviews | null = null;
   /** Handoffs being written, by origin Session: settled by the end of the hidden turn, or aborted when the origin goes away. */
   private readonly handoffs = new Map<string, { forkId: string; settle: (outcome: { text: string } | { error: string }) => void }>();
   /** Turns ended per Session, to notice a turn that was over before the prompt RPC even returned. */
@@ -294,6 +297,7 @@ export class SessionManager {
       stopSession: (id) => this.stop(id),
       automations: () => this.automations,
       followedPrs: () => this.followedPrs,
+      reviews: () => this.reviews,
       setTitle: (id, title) => void this.edit(id, { title }),
       terminalList: (id) => this.terminalList(id),
       terminalRead: (id, ptyId, lines) => this.terminalRead(id, ptyId, lines),
@@ -661,11 +665,16 @@ export class SessionManager {
     }
     if (source.type === "git") {
       const plan = planClone(source.url, resolveBoxCredentials(settings, session.settings.mcpEnabled), repo.account);
+      const refspec = source.ref !== undefined && isPrRefspec(source.ref) ? source.ref : null;
       const args = ["git", "clone", "--", plan.url, "."];
-      if (source.ref) args.splice(2, 0, "--branch", source.ref);
-      this.log(`cloning ${plan.url} into ${containerId.slice(0, 12)}:${target}${plan.account !== null ? ` as @${plan.account}` : ""}`);
+      if (source.ref && refspec === null) args.splice(2, 0, "--branch", source.ref);
+      this.log(`cloning ${plan.url} into ${containerId.slice(0, 12)}:${target}${plan.account !== null ? ` as @${plan.account}` : ""}${refspec !== null ? ` at ${refspec}` : ""}`);
       try {
         await this.docker.exec(containerId, args, target, "agent", plan.env);
+        if (refspec !== null) {
+          await this.docker.exec(containerId, ["git", "fetch", "--", "origin", refspec], target, "agent", plan.env);
+          await this.docker.exec(containerId, ["git", "checkout", "-q", "-B", prRefspecBranch(refspec), "FETCH_HEAD"], target, "agent", plan.env);
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         throw new Error(message + cloneFailureHint(source.url, plan));

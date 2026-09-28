@@ -20,6 +20,8 @@ The user wants the Agent to *prove* its work after every turn: look at what chan
 
 **Switch.** `Settings.e2eVerify` (default **on**) and `SessionSettings.e2eVerify: boolean | null` (`null` = follow Settings; ADR-0039: one object, one form, editable live, kept by forks), plus the pane's quick toggle and `sessionboxer new --e2e | --no-e2e`. On by default: a turn whose work is not checked on the desktop is the exception, and the cost (a second turn of model time and a few minutes of desktop work) is what the verification is for; a user who does not want it flips one switch. At the same time `Settings.autoSnapshot` (ADR-0009) turns default **off**: a `docker commit` after every turn was the cheap safety net when nothing else checked the turn; with the verification run in that place, the snapshot becomes the opt-in. Both defaults only decide what a missing key in `config.json` means — an existing install keeps the values it saved.
 
+*Amended after 1.4.0:* `Settings.e2eVerify` now defaults to **off** as well — the second turn of model time and desktop minutes after every turn proved too much as an unasked-for default; a user who wants it flips the switch in Global settings → Verification (per Session in its settings). `autoSnapshot` stays off. Same rule as before: a saved value in `config.json` is kept.
+
 ## Considered Options
 
 - **A Claude Code `Stop` hook** (rejected as the trigger, see above; the skill file it would call is installed anyway so the user can ask for `/e2e-verification` by hand).

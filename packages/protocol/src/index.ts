@@ -436,7 +436,7 @@ export type ProviderOptions = Record<Provider, AgentOption[]>;
 /** Claude aliases Sessionboxer allows by default (Claude's own list plus Fable, which the SDK hides otherwise). */
 export const DEFAULT_CLAUDE_MODELS = ["opus", "sonnet", "haiku", "fable"];
 
-/** Shipped default for `Settings.instructions`. Testing the change is not asked for here: `e2eVerify` runs a verification turn after each turn. */
+/** Shipped default for `Settings.instructions`. Testing the change is not asked for here: `e2eVerify`, when on, runs a verification turn after each turn. */
 export const DEFAULT_INSTRUCTIONS =
   "- Never author git commits as an agent: commits carry the user's git identity only, with no `Co-Authored-By` trailer, no \"generated with\" line and no mention of Claude, Devin or any other agent in commit messages or PR text.";
 
@@ -1750,15 +1750,15 @@ export const Settings = z.object({
   /**
    * After every completed turn, have the Agent verify its work end to end on the desktop (a
    * hidden follow-up turn that plans test cases, records them and fixes what fails; see `E2eRun`).
-   * Default for new Sessions; on unless switched off (ADR-0044).
+   * Default for new Sessions; off unless switched on (ADR-0044).
    */
-  e2eVerify: z.boolean().default(true),
+  e2eVerify: z.boolean().default(false),
   /**
    * What the `sessionboxer` MCP in each Sandbox lets the Agent do (ADR-0062): nothing (`off`, the
-   * server is not passed to it), its own Session (`session`), or every Session (`all`). Default for
-   * new Sessions; each Session can override it.
+   * server is not passed to it), its own Session (`session`), or every Session (`all`, the default).
+   * Default for new Sessions; each Session can override it.
    */
-  agentTools: z.enum(["off", "session", "all"]).default("session"),
+  agentTools: z.enum(["off", "session", "all"]).default("all"),
   /** Each Session an Agent asks to create (under `all`) waits for the user's Allow in the chat; denied after 10 minutes unattended. */
   approveCreate: z.boolean().default(true),
   /** Sessions alive at once that Agents created, over all Sessions (each Agent also has its own cap of `AGENT_CHILDREN_PER_SESSION`). */

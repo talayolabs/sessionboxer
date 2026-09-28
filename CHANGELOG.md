@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- New defaults: *Verify each turn end to end* off, automatic snapshots off, *Agent tools* on **All Sessions**. Only a missing key in `config.json` takes them; a saved value is kept.
+
 ## 1.4.0 — 2026-09-27
 
 Install: `npx sessionboxer@1.4.0 serve`, `brew install talayolabs/tap/sessionboxer`, the installers on the

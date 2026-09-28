@@ -1273,7 +1273,7 @@ function SessionView({
   }, [openPrId, openPr, prItems, onLoadPrItems, session.id]);
   const prUnread = prs.reduce((n, p) => n + p.unread, 0);
   // Verification: the effective switch, whether a run is live (tab badge), and the run a transcript marker asked to see.
-  const e2eEnabled = settings ? resolveSessionSettings(session.settings, settings).e2eVerify : (session.settings.e2eVerify ?? true);
+  const e2eEnabled = settings ? resolveSessionSettings(session.settings, settings).e2eVerify : (session.settings.e2eVerify ?? false);
   const e2eLive = e2eRuns.some(isRunOpen);
   const [e2eFocus, setE2eFocus] = useState<string | null>(null);
   const openE2e = useCallback((runId: string | null) => {
@@ -1770,7 +1770,7 @@ function SessionView({
             session={session}
             runs={e2eRuns}
             enabled={e2eEnabled}
-            globalEnabled={settings?.e2eVerify ?? true}
+            globalEnabled={settings?.e2eVerify ?? false}
             focusRunId={e2eFocus}
             onToggle={setE2eVerify}
             onRunNow={() => void run(() => api.e2eRunNow(session.id))}
@@ -3053,7 +3053,7 @@ function SettingsView({
               </p>
               <label>
                 The Agent may act on
-                <AgentToolsSelect value={agentTools} onChange={(v) => setAgentTools(v ?? "session")} />
+                <AgentToolsSelect value={agentTools} onChange={(v) => setAgentTools(v ?? "all")} />
               </label>
               <label>
                 When the Agent creates a Session

@@ -1,18 +1,20 @@
 import { MERGE_METHODS, PR_PROVIDER_LABEL, type MergeMethod, type PrAction, type PrCheckItem, type PrItem, type PullRequest, type Session } from "@sessionboxer/protocol";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "./api";
+import { ConnectorIcon } from "./ConnectorIcon";
 import { FileLink } from "./FileLink";
 import { Markdown } from "./Markdown";
+import { cx, Menu, MenuItem, Popover, Tip } from "./ui";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
-const STATE_LABEL: Record<PullRequest["state"], string> = { open: "open", draft: "draft", closed: "closed", merged: "merged" };
+const STATE_LABEL: Record<PullRequest["state"], string> = { open: "Open", draft: "Draft", closed: "Closed", merged: "Merged" };
 const DECISION_LABEL: Record<NonNullable<PullRequest["reviewDecision"]>, string> = {
   approved: "approved",
   changes_requested: "changes requested",
   review_required: "review required",
 };
-const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "comment", review_comment: "inline", review: "review" };
+const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "comment", review_comment: "inline comment", review: "review" };
 const ADDRESS_LABEL: Record<PrItem["address"], string> = { none: "", in_prompt: "in prompt", addressing: "addressing…", addressed: "addressed" };
 const ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Address", address_reply: "Address & reply" };
 /** The same actions on a failed check: there is nobody to reply to, the push makes the checks run again. */
@@ -132,6 +134,69 @@ function checksSummary(pr: PullRequest): Array<{ text: string; level: "error" | 
   return out;
 }
 
+// --- Shared bits ---------------------------------------------------------------------------
+
+const ACTIONS = ["prompt", "address", "address_reply"] as const;
+const DECISION_GLYPH: Record<NonNullable<PullRequest["reviewDecision"]>, string> = { approved: "\u2713", changes_requested: "\u2717", review_required: "\u25CC" };
+const CHECK_GLYPH: Record<PrCheckItem["state"], string> = { failed: "\u2717", pending: "\u25CF", passed: "\u2713" };
+const LEVEL_OF_CHECK: Record<PrCheckItem["state"], "error" | "warn" | "ok"> = { failed: "error", pending: "warn", passed: "ok" };
+
+function prRef(pr: PullRequest): string {
+  return `${pr.owner}/${pr.repo}#${pr.number}`;
+}
+
+function finished(pr: PullRequest): boolean {
+  return pr.state === "merged" || pr.state === "closed";
+}
+
+/** Something new to look at: unread comments, or a check that failed. Those rows sort first and carry the dot. */
+function needsAttention(pr: PullRequest): boolean {
+  return pr.unread > 0 || pr.checksFailed > 0;
+}
+
+/** State and review decision in one chip: the label is the state, the review folds in as colour and glyph. */
+function StateChip({ pr }: { pr: PullRequest }) {
+  const d = pr.state === "open" || pr.state === "draft" ? pr.reviewDecision : null;
+  const tip = d ? `${STATE_LABEL[pr.state]} \u00b7 ${DECISION_LABEL[d]}` : STATE_LABEL[pr.state];
+  return (
+    <Tip text={tip}>
+      <span className={cx("pill pr-chip", `pr-state-${pr.state}`, d && `pr-decision-${d}`)}>
+        {d && <span aria-hidden="true">{DECISION_GLYPH[d]} </span>}
+        {STATE_LABEL[pr.state]}
+      </span>
+    </Tip>
+  );
+}
+
+function Ellipsis({ text, className }: { text: string; className?: string }) {
+  return (
+    <Tip text={text}>
+      <span className={cx("pr-ellipsis", className)}>{text}</span>
+    </Tip>
+  );
+}
+
+/** A plain element, not a component: Radix merges the trigger props onto it (`asChild` needs a ref). */
+function moreButton(label: string) {
+  return (
+    <button type="button" className="icon-button pr-more" aria-label={label} title={label} onClick={(e) => e.stopPropagation()}>
+      {"\u22ef"}
+    </button>
+  );
+}
+
+function confirmDetach(pr: PullRequest): boolean {
+  return confirm(`Detach ${prRef(pr)} from this Session? Its comments are forgotten here (nothing changes on ${PR_PROVIDER_LABEL[pr.provider]}).`);
+}
+
+function confirmAutoMerge(pr: PullRequest): boolean {
+  return confirm(`Merge ${prRef(pr)} into ${pr.baseRef || "its base branch"} (${METHOD_LABEL[pr.mergeMethod]}) as soon as GitHub allows it? The Control Plane checks every 10 seconds while this is on.`);
+}
+
+function externalTitle(pr: PullRequest): string {
+  return `Open on ${PR_PROVIDER_LABEL[pr.provider]}${pr.provider === "bitbucket" ? ` (${pr.host})` : ""}, in a new tab (leaves Sessionboxer)`;
+}
+
 // --- Overview pane -------------------------------------------------------------------------
 
 export function PrsPane({
@@ -147,6 +212,7 @@ export function PrsPane({
 }) {
   const [ref, setRef] = useState("");
   const [attaching, setAttaching] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationPermission | "unsupported">(() =>
     typeof Notification === "undefined" ? "unsupported" : Notification.permission,
   );
@@ -157,159 +223,206 @@ export function PrsPane({
     void run(async () => {
       await api.attachPr(session.id, r);
       setRef("");
+      setAttachOpen(false);
     }).finally(() => setAttaching(false));
   };
+  // Needs-attention first, then the most recent activity.
+  const sorted = useMemo(
+    () =>
+      [...prs].sort(
+        (a, b) =>
+          Number(needsAttention(b)) - Number(needsAttention(a)) ||
+          (b.lastActivityAt ? Date.parse(b.lastActivityAt) : 0) - (a.lastActivityAt ? Date.parse(a.lastActivityAt) : 0) ||
+          Date.parse(b.attachedAt) - Date.parse(a.attachedAt),
+      ),
+    [prs],
+  );
+  const showAttach = attachOpen || prs.length === 0;
   return (
     <div className="pane prs-pane">
       <nav className="pr-crumbs" aria-label="Pull requests">
         <span aria-current="page">Pull requests{prs.length > 0 && <span className="muted"> ({prs.length})</span>}</span>
-      </nav>
-      <div className="pane-toolbar prs-toolbar">
-        <input
-          placeholder="PR URL (GitHub or Bitbucket Data Center), owner/repo#123, or #123"
-          value={ref}
-          onChange={(e) => setRef(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") attach();
-          }}
-        />
-        <button onClick={attach} disabled={!ref.trim() || attaching}>
-          {attaching ? "Attaching…" : "Attach"}
-        </button>
+        <span className="spacer" />
         {notifications === "default" && (
-          <button
-            className="small"
-            title="Also show a browser notification when feedback arrives while the Agent is idle"
-            onClick={() => void Notification.requestPermission().then(setNotifications)}
-          >
-            Enable browser notifications
+          <button className="small" title="Also show a browser notification when feedback arrives while the Agent is idle" onClick={() => void Notification.requestPermission().then(setNotifications)}>
+            Notifications
           </button>
         )}
-      </div>
+        {prs.length > 0 && (
+          <button className="small" aria-expanded={showAttach} onClick={() => setAttachOpen((v) => !v)} title="Attach a pull request by URL or owner/repo#123">
+            {showAttach ? "Close" : "+ Attach"}
+          </button>
+        )}
+      </nav>
+      {showAttach && (
+        <div className="pane-toolbar prs-toolbar">
+          <input
+            placeholder="PR URL (GitHub or Bitbucket Data Center), owner/repo#123, or #123"
+            value={ref}
+            autoFocus={prs.length > 0}
+            onChange={(e) => setRef(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") attach();
+            }}
+          />
+          <button onClick={attach} disabled={!ref.trim() || attaching}>
+            {attaching ? "Attaching\u2026" : "Attach"}
+          </button>
+        </div>
+      )}
       {prs.length === 0 ? (
         <p className="muted prs-empty">
           No pull requests attached. Paste a PR URL in a prompt, ask the Agent to open one, or attach one above; new comments and reviews then show up
           here and as a notification when the Agent is idle.
         </p>
       ) : (
-        <table className="prs-table">
-          <thead>
-            <tr>
-              <th>PR</th>
-              <th>State</th>
-              <th>Review</th>
-              <th>Unread</th>
-              <th>Threads</th>
-              <th>Checks</th>
-              <th>Activity</th>
-              <th>Watch</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {prs.map((pr) => {
-              const note = syncNote(pr);
-              return (
-                <tr
-                  key={pr.id}
-                  className={pr.unread > 0 ? "unread prs-row" : "prs-row"}
-                  title="Open this PR's comments, reviews and checks here"
-                  onClick={(e) => {
-                    if (e.target instanceof Element && e.target.closest("a, button, input, label")) return;
-                    onOpen(pr.id);
-                  }}
-                >
-                  <td className="prs-title">
-                    <button className="link" onClick={() => onOpen(pr.id)} title="Open this PR here">
-                      <strong>
-                        {pr.owner}/{pr.repo}#{pr.number}
-                      </strong>{" "}
-                      {pr.title || <span className="muted">(loading…)</span>}
-                    </button>
-                    <div className="muted small-text">
-                      {pr.headRef && (
-                        <>
-                          <code>{pr.headRef}</code> → <code>{pr.baseRef}</code> ·{" "}
-                        </>
-                      )}
-                      {pr.author && <>by @{pr.author} · </>}
-                      attached {pr.attachedBy === "prompt" ? "from a prompt" : pr.attachedBy === "agent" ? "by the Agent" : "manually"} ·{" "}
-                      <span className={note.level === "ok" ? "" : note.level}>{note.text}</span>
-                      {!pr.local && <> · not this Workspace's repository</>}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`pill pr-state-${pr.state}`}>{STATE_LABEL[pr.state]}</span>
-                    {pr.autoMerge && pr.state !== "closed" && (
-                      <div className={`small-text ${mergeNote(pr).level}`} title={mergeNote(pr).text}>
-                        auto-merge
-                      </div>
-                    )}
-                  </td>
-                  <td>{pr.reviewDecision ? <span className={`pill pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span> : <span className="muted">—</span>}</td>
-                  <td>{pr.unread > 0 ? <span className="count">{pr.unread}</span> : <span className="muted">0</span>}</td>
-                  <td>{pr.openThreads > 0 ? pr.openThreads : <span className="muted">0</span>}</td>
-                  <td className="nowrap small-text">
-                    {checksSummary(pr).length === 0 ? (
-                      <span className="muted">—</span>
-                    ) : (
-                      checksSummary(pr).map((c, i) => (
-                        <span key={c.level}>
-                          {i > 0 && <span className="muted"> · </span>}
-                          <span className={c.level}>{c.text}</span>
-                        </span>
-                      ))
-                    )}
-                  </td>
-                  <td className="muted" title={pr.lastActivityAt ?? undefined}>
-                    {ago(pr.lastActivityAt)}
-                  </td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={pr.watch}
-                      title={`Poll ${PR_PROVIDER_LABEL[pr.provider]} for new comments, reviews and ${pr.provider === "bitbucket" ? "build" : "check"} results`}
-                      onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { watch: e.target.checked }))}
-                    />
-                  </td>
-                  <td className="prs-actions">
-                    <button className="small primary" onClick={() => onOpen(pr.id)} title="Open this PR here: comments, reviews, checks">
-                      Details
-                    </button>
-                    <a
-                      href={pr.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="button small"
-                      title={`Open on ${PR_PROVIDER_LABEL[pr.provider]}${pr.provider === "bitbucket" ? ` (${pr.host})` : ""}, in a new tab (leaves Sessionboxer)`}
-                    >
-                      {PR_PROVIDER_LABEL[pr.provider]} ↗
-                    </a>
-                    <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${PR_PROVIDER_LABEL[pr.provider]} now`}>
-                      Refresh
-                    </button>
-                    <button
-                      className="small danger"
-                      onClick={() => {
-                        if (confirm(`Detach ${pr.owner}/${pr.repo}#${pr.number} from this Session? Its comments are forgotten here (nothing changes on ${PR_PROVIDER_LABEL[pr.provider]}).`)) {
-                          void run(() => api.detachPr(session.id, pr.id));
-                        }
-                      }}
-                    >
-                      Detach
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <ul className="pr-list">
+          {sorted.map((pr) => (
+            <PrRow key={pr.id} session={session} pr={pr} run={run} onOpen={() => onOpen(pr.id)} />
+          ))}
+        </ul>
       )}
     </div>
   );
 }
 
+function PrRow({ session, pr, run, onOpen }: { session: Session; pr: PullRequest; run: Runner; onOpen: () => void }) {
+  const note = syncNote(pr);
+  const merge = mergeNote(pr);
+  const done = finished(pr);
+  const attn = needsAttention(pr);
+  const facts: ReactNode[] = [];
+  if (pr.unread > 0) facts.push(<span key="unread" className="pr-fact pr-fact-unread">{pr.unread} unread</span>);
+  if (pr.openThreads > 0) facts.push(<span key="threads" className="pr-fact">{pr.openThreads} open {pr.openThreads === 1 ? "thread" : "threads"}</span>);
+  for (const c of checksSummary(pr)) if (c.level !== "ok") facts.push(<span key={c.level} className={cx("pr-fact", c.level)}>{c.text}</span>);
+  if (pr.autoMerge && !done)
+    facts.push(
+      <Tip key="am" text={merge.text}>
+        <span className={cx("pr-fact", merge.level === "muted" ? "" : merge.level)}>auto-merge</span>
+      </Tip>,
+    );
+  if (note.level !== "ok")
+    facts.push(
+      <span key="sync" className={cx("pr-fact", note.level)}>
+        {note.text}
+      </span>,
+    );
+  if (!pr.local) facts.push(<span key="local" className="pr-fact">not this Workspace's repository</span>);
+  return (
+    <li
+      className={cx("pr-row", attn && "attn", done && "done")}
+      title="Open this PR's comments, reviews and checks here"
+      onClick={(e) => {
+        if (e.target instanceof Element && e.target.closest("a, button, input, label, [role='menu'], [role='menuitem'], .popover, .tooltip")) return;
+        onOpen();
+      }}
+    >
+      <div className="pr-row-main">
+        <span className="pr-row-icon" aria-hidden="true">
+          <ConnectorIcon kind={pr.provider} size={14} />
+          {attn && <span className="pr-dot" />}
+        </span>
+        <span className="pr-row-ref muted" title={prRef(pr)}>{prRef(pr)}</span>
+        {pr.title ? (
+          <Tip text={pr.title}>
+            <button className="link pr-row-title" onClick={onOpen}>
+              {pr.title}
+            </button>
+          </Tip>
+        ) : (
+          <span className="pr-row-title muted">{"(loading\u2026)"}</span>
+        )}
+        <StateChip pr={pr} />
+        <PrRowMenu session={session} pr={pr} run={run} onOpen={onOpen} />
+      </div>
+      <div className="pr-row-sub muted small-text">
+        {facts}
+        <span className="spacer" />
+        <span title={pr.lastActivityAt ?? undefined}>{ago(pr.lastActivityAt)}</span>
+      </div>
+    </li>
+  );
+}
+
+function PrRowMenu({ session, pr, run, onOpen }: { session: Session; pr: PullRequest; run: Runner; onOpen: () => void }) {
+  const label = PR_PROVIDER_LABEL[pr.provider];
+  return (
+    <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for ${prRef(pr)}`)}>
+      <MenuItem onSelect={onOpen} title="Open this PR here: comments, reviews, checks">
+        Open
+      </MenuItem>
+      <MenuItem onSelect={() => window.open(pr.url, "_blank", "noopener,noreferrer")} title={externalTitle(pr)}>
+        Open on {label} {"\u2197"}
+      </MenuItem>
+      <MenuItem onSelect={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${label} now`}>
+        Refresh
+      </MenuItem>
+      <MenuItem disabled={pr.unread === 0} onSelect={() => void run(() => api.prSeen(session.id, pr.id))} title="Mark every comment and failed check of this PR as read">
+        Mark seen
+      </MenuItem>
+      <MenuItem
+        onSelect={() => void run(() => api.updatePr(session.id, pr.id, { watch: !pr.watch }))}
+        title={`Poll ${label} for new comments, reviews and ${pr.provider === "bitbucket" ? "build" : "check"} results`}
+      >
+        {pr.watch ? "Stop watching" : "Watch"}
+      </MenuItem>
+      {pr.provider === "github" && !finished(pr) && (
+        <MenuItem
+          onSelect={() => {
+            if (!pr.autoMerge && !confirmAutoMerge(pr)) return;
+            void run(() => api.updatePr(session.id, pr.id, { autoMerge: !pr.autoMerge }));
+          }}
+          title={pr.autoMerge ? mergeNote(pr).text : `Merge it (${METHOD_LABEL[pr.mergeMethod]}) as soon as every check passed and nothing else blocks it`}
+        >
+          {pr.autoMerge ? "Auto-merge off" : "Auto-merge on"}
+        </MenuItem>
+      )}
+      <MenuItem
+        className="danger"
+        onSelect={() => {
+          if (confirmDetach(pr)) void run(() => api.detachPr(session.id, pr.id));
+        }}
+      >
+        Detach
+      </MenuItem>
+    </Menu>
+  );
+}
+
 // --- One PR ---------------------------------------------------------------------------------
+
+type Thread = { key: string; path: string | null; line: number | null; outdated: boolean; resolved: boolean; items: PrItem[]; latest: number };
+
+/** Inline comments grouped by review thread (or `path:line` when the provider has no thread id); everything else is the conversation. */
+function groupThreads(items: PrItem[]): Thread[] {
+  const map = new Map<string, Thread>();
+  for (const it of items) {
+    const key = it.path ? `t:${it.threadId ?? `${it.path}:${it.line ?? ""}`}` : "conversation";
+    let t = map.get(key);
+    if (!t) {
+      t = { key, path: it.path, line: it.line, outdated: false, resolved: true, items: [], latest: 0 };
+      map.set(key, t);
+    }
+    t.items.push(it);
+    t.outdated ||= it.outdated;
+    t.resolved &&= it.resolved;
+    t.latest = Math.max(t.latest, Date.parse(it.createdAt));
+  }
+  const out = [...map.values()];
+  for (const t of out) t.items.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  return out.sort((a, b) => b.latest - a.latest);
+}
+
+function kindGlyph(it: PrItem): { glyph: string; label: string; className: string } {
+  if (it.kind === "review") {
+    const st = (it.reviewState ?? "").toUpperCase();
+    if (st === "APPROVED") return { glyph: "\u2713", label: "approved", className: "ok" };
+    if (st === "CHANGES_REQUESTED") return { glyph: "\u2717", label: "changes requested", className: "error" };
+    return { glyph: "\u25CE", label: st ? `review: ${st.toLowerCase().replace(/_/g, " ")}` : "review", className: "" };
+  }
+  if (it.kind === "review_comment") return { glyph: "\u2039/\u203A", label: it.inReplyTo !== null ? "reply on the code" : "comment on the code", className: "" };
+  return { glyph: "\u275D", label: "conversation comment", className: "" };
+}
 
 export function PrPane({
   session,
@@ -336,11 +449,11 @@ export function PrPane({
   const [busy, setBusy] = useState<PrAction | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  // The Checks list opens by itself when something fails and stays as the user left it otherwise.
-  const [checksOpen, setChecksOpen] = useState(pr.checksFailed > 0);
+  // The Checks list opens by itself when something fails or runs and stays as the user left it otherwise.
+  const [checksOpen, setChecksOpen] = useState(pr.checksFailed > 0 || pr.checksPending > 0);
   useEffect(() => {
-    if (pr.checksFailed > 0) setChecksOpen(true);
-  }, [pr.checksFailed]);
+    if (pr.checksFailed > 0 || pr.checksPending > 0) setChecksOpen(true);
+  }, [pr.checksFailed, pr.checksPending]);
 
   // Looking at the tab reads the items and the failed checks.
   useEffect(() => {
@@ -349,9 +462,9 @@ export function PrPane({
 
   const visible = useMemo(() => {
     const all = items ?? [];
-    const shown = showResolved ? all : all.filter((i) => !i.resolved);
-    return [...shown].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    return showResolved ? all : all.filter((i) => !i.resolved);
   }, [items, showResolved]);
+  const threads = useMemo(() => groupThreads(visible), [visible]);
   const hidden = (items?.length ?? 0) - visible.length;
   // Failed first, then running, then passed; a failed check can be picked, the others only read.
   const sortedChecks = useMemo(() => {
@@ -404,304 +517,320 @@ export function PrPane({
   const note = syncNote(pr);
   const merge = mergeNote(pr);
   const n = selected.size;
-  const finished = pr.state === "merged" || pr.state === "closed";
+  const done = finished(pr);
+  const label = PR_PROVIDER_LABEL[pr.provider];
   const setAutoMerge = (on: boolean) => {
-    if (on && !confirm(`Merge ${pr.owner}/${pr.repo}#${pr.number} into ${pr.baseRef || "its base branch"} (${METHOD_LABEL[pr.mergeMethod]}) as soon as GitHub allows it? The Control Plane checks every 10 seconds while this is on.`)) return;
+    if (on && !confirmAutoMerge(pr)) return;
     void run(() => api.updatePr(session.id, pr.id, { autoMerge: on }));
   };
+  const summary = checksSummary(pr);
+  const allGreen = checks !== null && checks.length > 0 && pr.checksFailed === 0 && pr.checksPending === 0;
 
   return (
-    <div className="pane prs-pane">
+    <div className={cx("pane prs-pane pr-detail", n > 0 && "pr-picking")}>
       <nav className="pr-crumbs" aria-label="Pull requests">
         <button className="link" onClick={onBack} title="All pull requests attached to this Session">
           Pull requests
         </button>
         <span className="muted" aria-hidden="true">
-          ›
+          {"\u203A"}
         </span>
-        <span aria-current="page" className={`pr-tab-${pr.state}`}>
-          {pr.owner}/{pr.repo}#{pr.number}
+        <span aria-current="page" className={cx("pr-ellipsis", `pr-tab-${pr.state}`)}>
+          {prRef(pr)}
         </span>
-      </nav>
-      <div className="pr-head">
-        <div className="pr-head-title">
-          <a href={pr.url} target="_blank" rel="noreferrer">
-            <strong>
-              {pr.owner}/{pr.repo}#{pr.number}
-            </strong>{" "}
-            {pr.title}
-          </a>
-          <div className="muted small-text">
-            <span className={`pill pr-state-${pr.state}`}>{STATE_LABEL[pr.state]}</span>
-            {pr.reviewDecision && (
-              <>
-                {" · "}
-                <span className={`pill pr-decision-${pr.reviewDecision}`}>{DECISION_LABEL[pr.reviewDecision]}</span>
-              </>
-            )}
-            {pr.headRef && (
-              <>
-                {" · "}
-                <code>{pr.headRef}</code> → <code>{pr.baseRef}</code>
-              </>
-            )}
-            {pr.provider === "bitbucket" && (
-              <>
-                {" · "}
-                <span title="A Bitbucket Data Center, read with its Connector's token">{pr.host}</span>
-              </>
-            )}
-            {" · "}
-            <span className={note.level === "ok" ? "" : note.level}>{note.text}</span>
-            {!pr.local && <span className="warn"> · not this Workspace's repository: Address is off</span>}
-          </div>
-        </div>
         <span className="spacer" />
-        <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${PR_PROVIDER_LABEL[pr.provider]} now`}>
-          Refresh
-        </button>
-        <button
-          className="small danger"
-          onClick={() => {
-            if (confirm(`Detach ${pr.owner}/${pr.repo}#${pr.number} from this Session?`)) {
-              void run(() => api.detachPr(session.id, pr.id));
-              onBack();
-            }
-          }}
-        >
-          Detach
-        </button>
-      </div>
-      {pr.provider === "github" && (
-        <div className="pr-merge">
-          <label className="check" title="Merge this PR automatically once every check passed and nothing else blocks it">
-            <input type="checkbox" checked={pr.autoMerge} disabled={finished} onChange={(e) => setAutoMerge(e.target.checked)} />
-            Auto-merge when checks pass
-          </label>
-          <select
-            value={pr.mergeMethod}
-            disabled={finished}
-            title="How GitHub merges it"
-            onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { mergeMethod: e.target.value as MergeMethod }))}
+        <a href={pr.url} target="_blank" rel="noreferrer" className="pr-ext" title={externalTitle(pr)}>
+          {label} {"\u2197"}
+        </a>
+      </nav>
+
+      <header className="pr-head">
+        <h2 className="pr-title" title={pr.title}>
+          {pr.title || <span className="muted">{"(loading\u2026)"}</span>}
+        </h2>
+        <div className="pr-chips">
+          <StateChip pr={pr} />
+          {pr.headRef && (
+            <Tip text={`${pr.headRef} \u2192 ${pr.baseRef}`}>
+              <span className="pill pr-chip pr-branches">
+                <code>{pr.baseRef}</code>
+                <span className="muted" aria-hidden="true">
+                  {" \u2190 "}
+                </span>
+                <code>{pr.headRef}</code>
+              </span>
+            </Tip>
+          )}
+          {pr.author && <span className="pill pr-chip pr-ellipsis">@{pr.author}</span>}
+          <Tip text={pr.provider === "bitbucket" ? `A Bitbucket Data Center (${pr.host}), read with its Connector's token` : externalTitle(pr)}>
+            <a href={pr.url} target="_blank" rel="noreferrer" className="pill pr-chip pr-provider">
+              <ConnectorIcon kind={pr.provider} size={12} />
+              <span className="pr-ellipsis">{pr.provider === "bitbucket" ? pr.host : label}</span>
+              {"\u2197"}
+            </a>
+          </Tip>
+        </div>
+        <div className="pr-toolbar">
+          <button className="small" onClick={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${label} now`}>
+            Refresh
+          </button>
+          <button className="small" disabled={pr.unread === 0} onClick={() => void run(() => api.prSeen(session.id, pr.id))} title="Mark every comment and failed check as read">
+            Mark all seen
+          </button>
+          {pr.provider === "github" && (
+            <Popover
+              className="pr-merge-pop"
+              trigger={
+                <button className={cx("small", pr.autoMerge && !done && "primary")} title="Merge this PR automatically once every check passed and nothing else blocks it">
+                  {done ? "Merge" : pr.autoMerge ? "Auto-merge: on" : "Auto-merge"}
+                </button>
+              }
+            >
+              <label className="check">
+                <input type="checkbox" checked={pr.autoMerge} disabled={done} onChange={(e) => setAutoMerge(e.target.checked)} />
+                Auto-merge when checks pass
+              </label>
+              <label className="pr-merge-method">
+                <span className="muted">Method</span>
+                <select
+                  value={pr.mergeMethod}
+                  disabled={done}
+                  title="How GitHub merges it"
+                  onChange={(e) => void run(() => api.updatePr(session.id, pr.id, { mergeMethod: e.target.value as MergeMethod }))}
+                >
+                  {MERGE_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {METHOD_LABEL[m]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className={cx("pr-merge-note", merge.level)}>{merge.text}</p>
+              {pr.mergeState && !done && (
+                <p className="muted small-text" title={pr.mergeState.headSha}>
+                  checked {ago(pr.mergeState.checkedAt)} on {pr.mergeState.headSha.slice(0, 7)}
+                </p>
+              )}
+            </Popover>
+          )}
+          <span className="spacer" />
+          <button
+            className="small danger"
+            onClick={() => {
+              if (confirmDetach(pr)) {
+                void run(() => api.detachPr(session.id, pr.id));
+                onBack();
+              }
+            }}
           >
-            {MERGE_METHODS.map((m) => (
-              <option key={m} value={m}>
-                {METHOD_LABEL[m]}
-              </option>
-            ))}
-          </select>
-          <span className={`pr-merge-note ${merge.level}`}>{merge.text}</span>
-          {pr.mergeState && !finished && (
-            <span className="muted small-text" title={pr.mergeState.headSha}>
-              checked {ago(pr.mergeState.checkedAt)}
+            Detach
+          </button>
+        </div>
+        <div className="pr-status small-text">
+          <span className={note.level === "ok" ? "muted" : note.level}>{note.text}</span>
+          {pr.provider === "github" && (pr.autoMerge || (done && pr.mergeState?.merged)) && (
+            <span className={merge.level === "muted" ? "muted" : merge.level}>
+              {" \u00b7 auto-merge: "}
+              {merge.text}
             </span>
           )}
+          {!pr.local && <span className="warn"> {"\u00b7"} not this Workspace's repository: Address is off</span>}
         </div>
-      )}
-      {checks !== null && checks.length > 0 && !finished && (
-        <details className="pr-checks" open={checksOpen} onToggle={(e) => setChecksOpen(e.currentTarget.open)}>
+      </header>
+
+      {checks !== null && checks.length > 0 && !done && (
+        <details className="pr-section pr-checks" open={checksOpen} onToggle={(e) => setChecksOpen(e.currentTarget.open)}>
           <summary>
-            <span className="pr-checks-title">Checks</span>
-            {checksSummary(pr).map((c, i) => (
-              <span key={c.level} className="small-text">
-                {i > 0 && <span className="muted"> · </span>}
-                <span className={c.level}>{c.text}</span>
-              </span>
-            ))}
-            {failedChecks.length > 0 && <span className="muted small-text">{" — "}pick failed checks and let the Agent fix them</span>}
+            <span className={cx("pr-check-glyph", allGreen ? "ok" : pr.checksFailed > 0 ? "error" : "warn")} aria-hidden="true">
+              {allGreen ? CHECK_GLYPH.passed : pr.checksFailed > 0 ? CHECK_GLYPH.failed : CHECK_GLYPH.pending}
+            </span>
+            <span className="pr-section-title">
+              {allGreen
+                ? `${checks.length} ${checks.length === 1 ? "check" : "checks"} passed`
+                : summary.map((c, i) => (
+                    <span key={c.level}>
+                      {i > 0 && <span className="muted"> {"\u00b7"} </span>}
+                      <span className={c.level}>{c.text}</span>
+                    </span>
+                  ))}
+            </span>
+            <span className="spacer" />
+            {failedChecks.length > 0 && (
+              <label className="check small-text muted" onClick={(e) => e.stopPropagation()}>
+                <input type="checkbox" checked={allChecksSelected} onChange={(e) => toggleAllChecks(e.target.checked)} />
+                all failed
+              </label>
+            )}
           </summary>
-          <div className="pr-check-scroll">
-            <table className="prs-table pr-check-rows">
-              <thead>
-                <tr>
-                  <th>
-                    <input
-                      type="checkbox"
-                      checked={allChecksSelected}
-                      disabled={failedChecks.length === 0}
-                      title={failedChecks.length === 0 ? "No failed checks" : "Select every failed check"}
-                      onChange={(e) => toggleAllChecks(e.target.checked)}
-                    />
-                  </th>
-                  <th>Check</th>
-                  <th>Result</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedChecks.map((c) => (
-                  <tr key={c.id} className={[!c.seen && c.state === "failed" ? "unread" : "", `pr-check-${c.state}`].join(" ")}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selected.has(c.id)}
-                        disabled={c.state !== "failed"}
-                        title={c.state !== "failed" ? "Only failed checks can be addressed" : undefined}
-                        onChange={(e) => toggle(c.id, e.target.checked)}
-                      />
-                    </td>
-                    <td className="pr-check-name">
-                      {c.url ? (
-                        <a href={c.url} target="_blank" rel="noreferrer" title="Open the log / details">
-                          {c.name}
-                        </a>
-                      ) : (
-                        c.name
-                      )}
-                      <div className="muted small-text">
-                        {c.source ?? (c.kind === "status" ? "commit status" : c.kind === "build" ? "build status" : "check")}
-                        {c.required && " · required"}
-                        {" · "}
-                        <span title={c.headSha}>{c.headSha.slice(0, 7)}</span>
-                      </div>
-                    </td>
-                    <td className="nowrap" title={checkResultTitle(c)}>
-                      <span className={`pr-check-state ${c.state === "failed" ? "error" : c.state === "pending" ? "warn" : "ok"}`}>
-                        {c.state === "failed" && c.conclusion && c.conclusion !== "failure" && c.conclusion !== "failed" ? c.conclusion.replace(/_/g, " ") : CHECK_STATE_LABEL[c.state]}
-                      </span>
-                      {c.completedAt ? (
-                        <div className="muted small-text">{ago(c.completedAt)}</div>
-                      ) : (
-                        c.startedAt && <div className="muted small-text">since {ago(c.startedAt)}</div>
-                      )}
-                    </td>
-                    <td className="nowrap small-text">
-                      {!c.seen && c.state === "failed" && <div className="count">new</div>}
-                      {c.address !== "none" && <div className={c.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[c.address]}</div>}
-                    </td>
-                    <td className="prs-actions">
-                      {c.state === "failed" && (
-                        <div className="pr-row-actions">
-                          {(["prompt", "address", "address_reply"] as const).map((a) => (
-                            <button key={a} className="small" disabled={busy !== null || (a !== "prompt" && !pr.local)} title={checkActionTitle(a, pr, 1)} onClick={() => act(a, [c.id])}>
-                              {CHECK_ACTION_LABEL[a]}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      )}
-      <div className="pr-bulk">
-        <label className="check">
-          <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} disabled={visible.length === 0} />
-          {n > 0 ? `${n} selected${nChecks > 0 ? ` (${nChecks} ${nChecks === 1 ? "check" : "checks"})` : ""}` : "Select all"}
-        </label>
-        {(["prompt", "address", "address_reply"] as const).map((a) => (
-          <button
-            key={a}
-            className="small"
-            disabled={n === 0 || busy !== null || (a !== "prompt" && !pr.local)}
-            title={onlyChecks ? checkActionTitle(a, pr, n) : actionTitle(a, pr, n)}
-            onClick={() => act(a, [...selected])}
-          >
-            {busy === a ? "…" : onlyChecks ? CHECK_ACTION_LABEL[a] : ACTION_LABEL[a]}
-            {n > 0 ? ` (${n})` : ""}
-          </button>
-        ))}
-        <span className="spacer" />
-        {hidden > 0 && (
-          <label className="check muted">
-            <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
-            show {hidden} resolved
-          </label>
-        )}
-      </div>
-      {items === null ? (
-        <p className="muted prs-empty">Loading…</p>
-      ) : visible.length === 0 ? (
-        <p className="muted prs-empty">{items.length === 0 ? "No comments or reviews yet." : "All threads resolved."}</p>
-      ) : (
-        <table className="prs-table pr-items">
-          <thead>
-            <tr>
-              <th></th>
-              <th>Kind</th>
-              <th>Author</th>
-              <th>Comment</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((it) => {
-              const open = expanded.has(it.id);
-              const long = it.body.length > 300 || it.body.split("\n").length > 4;
+          <ul className="pr-check-list">
+            {sortedChecks.map((c) => {
+              const failed = c.state === "failed";
+              const result = failed && c.conclusion && c.conclusion !== "failure" && c.conclusion !== "failed" ? c.conclusion.replace(/_/g, " ") : CHECK_STATE_LABEL[c.state];
               return (
-                <tr key={it.id} className={[!it.seen ? "unread" : "", it.resolved ? "resolved" : ""].join(" ")}>
-                  <td>
-                    <input type="checkbox" checked={selected.has(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} />
-                  </td>
-                  <td className="nowrap">
-                    <span className={`pill pr-kind-${it.kind}`}>{KIND_LABEL[it.kind]}</span>
-                    {it.reviewState && it.kind === "review" && <div className={`small-text pr-review-${it.reviewState.toLowerCase()}`}>{it.reviewState.toLowerCase().replace("_", " ")}</div>}
-                    {it.inReplyTo !== null && <div className="muted small-text">reply</div>}
-                  </td>
-                  <td className="pr-author">
-                    <span title={it.self ? "written with the login this PR is watched with" : undefined}>@{it.author}</span>
-                    {it.self && <span className="muted"> (you)</span>}
-                    <div className="muted small-text" title={new Date(it.createdAt).toLocaleString()}>
-                      {ago(it.createdAt)}
-                    </div>
-                  </td>
-                  <td className="pr-body">
-                    {it.path && (
-                      <div className="pr-where">
-                        <FileLink fileRef={it.line !== null ? { path: it.path, line: it.line } : { path: it.path }}>
-                          <code>
-                            {it.path}
-                            {it.line !== null ? `:${it.line}` : ""}
-                          </code>
-                        </FileLink>
-                        {it.outdated && <span className="muted"> (outdated)</span>}
-                      </div>
-                    )}
-                    <div className={long && !open ? "pr-text clamped" : "pr-text"}>
-                      <Markdown text={it.body || "*(no text)*"} html />
-                    </div>
-                    {long && (
-                      <button
-                        className="link small-text"
-                        onClick={() =>
-                          setExpanded((prev) => {
-                            const next = new Set(prev);
-                            if (!next.delete(it.id)) next.add(it.id);
-                            return next;
-                          })
-                        }
-                      >
-                        {open ? "less" : "more"}
-                      </button>
-                    )}
-                  </td>
-                  <td className="nowrap small-text">
-                    {!it.seen && <div className="count">new</div>}
-                    {it.resolved && <div className="muted">resolved</div>}
-                    {it.address !== "none" && <div className={it.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[it.address]}</div>}
-                    <a href={it.htmlUrl} target="_blank" rel="noreferrer" className="muted">
-                      {PR_PROVIDER_LABEL[pr.provider]} ↗
+                <li key={c.id} className={cx("pr-check", `pr-check-${c.state}`, !c.seen && failed && "unread", selected.has(c.id) && "picked")}>
+                  {failed ? (
+                    <input type="checkbox" className="pr-pick" checked={selected.has(c.id)} onChange={(e) => toggle(c.id, e.target.checked)} aria-label={`Select ${c.name}`} />
+                  ) : (
+                    <span className="pr-pick" aria-hidden="true" />
+                  )}
+                  <span className={cx("pr-check-glyph", LEVEL_OF_CHECK[c.state])} aria-hidden="true">
+                    {CHECK_GLYPH[c.state]}
+                  </span>
+                  <span className="pr-check-main">
+                    <Ellipsis className="pr-check-name" text={c.name} />
+                    <span className="muted small-text pr-check-src">
+                      {c.source ?? (c.kind === "status" ? "commit status" : c.kind === "build" ? "build status" : "check")}
+                      {c.required && " \u00b7 required"}
+                    </span>
+                  </span>
+                  <span className="pr-check-status small-text" title={checkResultTitle(c)}>
+                    {!c.seen && failed && <span className="count">new</span>}
+                    {c.address !== "none" && <span className={c.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[c.address]}</span>}
+                    <span className={cx("pr-check-result", LEVEL_OF_CHECK[c.state])}>{result}</span>
+                    <span className="muted">{c.completedAt ? ago(c.completedAt) : c.startedAt ? `since ${ago(c.startedAt)}` : ""}</span>
+                  </span>
+                  {c.url && (
+                    <a href={c.url} target="_blank" rel="noreferrer" className="pr-ext" title="Open the log / details">
+                      {"\u2197"}
                     </a>
-                  </td>
-                  <td className="prs-actions">
-                    <div className="pr-row-actions">
-                      {(["prompt", "address", "address_reply"] as const).map((a) => (
-                        <button key={a} className="small" disabled={busy !== null || (a !== "prompt" && !pr.local)} title={actionTitle(a, pr, 1)} onClick={() => act(a, [it.id])}>
-                          {ACTION_LABEL[a]}
-                        </button>
+                  )}
+                  {failed ? (
+                    <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for ${c.name}`)}>
+                      {ACTIONS.map((a) => (
+                        <MenuItem key={a} disabled={busy !== null || (a !== "prompt" && !pr.local)} title={checkActionTitle(a, pr, 1)} onSelect={() => act(a, [c.id])}>
+                          {CHECK_ACTION_LABEL[a]}
+                        </MenuItem>
                       ))}
-                    </div>
-                  </td>
-                </tr>
+                    </Menu>
+                  ) : (
+                    <span className="pr-more" aria-hidden="true" />
+                  )}
+                </li>
               );
             })}
-          </tbody>
-        </table>
+          </ul>
+        </details>
+      )}
+
+      <section className="pr-section pr-threads" aria-label="Comments and reviews">
+        <div className="pr-section-head">
+          <label className="check" title={visible.length === 0 ? undefined : allSelected ? "Unselect all" : "Select every comment shown"}>
+            <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} disabled={visible.length === 0} />
+            <span className="pr-section-title">Comments &amp; reviews{items && items.length > 0 && <span className="muted"> ({visible.length})</span>}</span>
+          </label>
+          <span className="spacer" />
+          {hidden > 0 && (
+            <label className="check muted small-text">
+              <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
+              show {hidden} resolved
+            </label>
+          )}
+        </div>
+        {items === null ? (
+          <p className="muted prs-empty">{"Loading\u2026"}</p>
+        ) : visible.length === 0 ? (
+          <p className="muted prs-empty">{items.length === 0 ? "No comments or reviews yet." : "All threads resolved."}</p>
+        ) : (
+          threads.map((t) => (
+            <div key={t.key} className={cx("pr-thread", t.resolved && "resolved")}>
+              <div className="pr-thread-head small-text">
+                {t.path ? (
+                  <FileLink fileRef={t.line !== null ? { path: t.path, line: t.line } : { path: t.path }} className="pr-thread-path">
+                    <code title={t.path}>
+                      {t.path}
+                      {t.line !== null ? `:${t.line}` : ""}
+                    </code>
+                  </FileLink>
+                ) : (
+                  <span className="pr-thread-path muted">Conversation</span>
+                )}
+                {t.outdated && <span className="muted">outdated</span>}
+                {t.resolved && <span className="muted">resolved</span>}
+                {t.items.length > 1 && <span className="muted">{t.items.length}</span>}
+              </div>
+              {t.items.map((it) => {
+                const open = expanded.has(it.id);
+                const long = it.body.length > 300 || it.body.split("\n").length > 4;
+                const k = kindGlyph(it);
+                return (
+                  <article key={it.id} className={cx("pr-comment", !it.seen && "unread", it.resolved && "resolved", selected.has(it.id) && "picked")}>
+                    <input type="checkbox" className="pr-pick" checked={selected.has(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} aria-label={`Select the comment by ${it.author}`} />
+                    <span className="pr-avatar" aria-hidden="true">
+                      {(it.author[0] ?? "?").toUpperCase()}
+                    </span>
+                    <div className="pr-comment-body">
+                      <div className="pr-comment-meta small-text">
+                        <span className="pr-comment-author" title={it.self ? "written with the login this PR is watched with" : undefined}>
+                          @{it.author}
+                          {it.self && <span className="muted"> (you)</span>}
+                        </span>
+                        <Tip text={k.label}>
+                          <span className={cx("pr-kind", k.className)}>{k.glyph}</span>
+                        </Tip>
+                        <span className="muted" title={new Date(it.createdAt).toLocaleString()}>
+                          {ago(it.createdAt)}
+                        </span>
+                        {!it.seen && <span className="count">new</span>}
+                        {it.address !== "none" && <span className={it.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[it.address]}</span>}
+                        <span className="spacer" />
+                        <a href={it.htmlUrl} target="_blank" rel="noreferrer" className="pr-ext" title={`Open this ${KIND_LABEL[it.kind]} on ${label}`}>
+                          {"\u2197"}
+                        </a>
+                        <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for the comment by ${it.author}`)}>
+                          {ACTIONS.map((a) => (
+                            <MenuItem key={a} disabled={busy !== null || (a !== "prompt" && !pr.local)} title={actionTitle(a, pr, 1)} onSelect={() => act(a, [it.id])}>
+                              {ACTION_LABEL[a]}
+                            </MenuItem>
+                          ))}
+                        </Menu>
+                      </div>
+                      <div className={cx("pr-text", long && !open && "clamped")}>
+                        <Markdown text={it.body || "*(no text)*"} html />
+                      </div>
+                      {long && (
+                        <button
+                          className="link small-text"
+                          onClick={() =>
+                            setExpanded((prev) => {
+                              const next = new Set(prev);
+                              if (!next.delete(it.id)) next.add(it.id);
+                              return next;
+                            })
+                          }
+                        >
+                          {open ? "less" : "more"}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ))
+        )}
+      </section>
+
+      {n > 0 && (
+        <div className="pr-bulk" role="toolbar" aria-label="Selected items">
+          <span className="pr-bulk-count">
+            {n} selected{nChecks > 0 && nChecks < n ? ` (${nChecks} ${nChecks === 1 ? "check" : "checks"})` : ""}
+          </span>
+          {ACTIONS.map((a) => (
+            <button
+              key={a}
+              className={cx("small", a === "address_reply" && "primary")}
+              disabled={busy !== null || (a !== "prompt" && !pr.local)}
+              title={onlyChecks ? checkActionTitle(a, pr, n) : actionTitle(a, pr, n)}
+              onClick={() => act(a, [...selected])}
+            >
+              {busy === a ? "\u2026" : onlyChecks ? CHECK_ACTION_LABEL[a] : ACTION_LABEL[a]}
+            </button>
+          ))}
+          <span className="spacer" />
+          <button className="link small-text" onClick={() => setSelected(new Set())}>
+            clear
+          </button>
+        </div>
       )}
     </div>
   );

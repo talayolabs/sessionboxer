@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- PRs pane redesigned for narrow panes and phones: the overview is a row list (provider, `repo#number`, one-line title, one state/review chip, a needs-you line, a ⋯ menu) sorted needs-attention first; a PR opens as one column — chips, toolbar, auto-merge in a popover, Checks folded when green, comments grouped by thread, a selection bar only while something is ticked. No horizontal scrolling at 360 px. ([COMMIT](https://github.com/talayolabs/sessionboxer/commit/COMMIT))
+
 ## 1.4.1 — 2026-09-25
 
 Install: `npx sessionboxer@1.4.1 serve`, `brew install talayolabs/tap/sessionboxer`, the installers on the

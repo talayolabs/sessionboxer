@@ -114,7 +114,7 @@ import {
   classifyUsageLimit,
   mergeUsageWindows,
 } from "@sessionboxer/protocol";
-import { AgentTools, type AgentAutomations } from "./agent-tools.js";
+import { AgentTools, type AgentAutomations, type AgentFollowedPrs } from "./agent-tools.js";
 import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
   PUBLIC_URL,
@@ -196,6 +196,8 @@ export class SessionManager {
   private readonly agentInflight = new Map<string, Set<string>>();
   /** Who can create and schedule Sessions on the Agent's behalf; wired by the server. */
   automations: AgentAutomations | null = null;
+  /** The followed pull requests (`pr_follow`, `pr_followed_list`); wired by the server. */
+  followedPrs: AgentFollowedPrs | null = null;
   /** Handoffs being written, by origin Session: settled by the end of the hidden turn, or aborted when the origin goes away. */
   private readonly handoffs = new Map<string, { forkId: string; settle: (outcome: { text: string } | { error: string }) => void }>();
   /** Turns ended per Session, to notice a turn that was over before the prompt RPC even returned. */
@@ -291,6 +293,7 @@ export class SessionManager {
       waitSession: (id, timeoutMs) => this.waitForTurn(id, timeoutMs),
       stopSession: (id) => this.stop(id),
       automations: () => this.automations,
+      followedPrs: () => this.followedPrs,
       setTitle: (id, title) => void this.edit(id, { title }),
       terminalList: (id) => this.terminalList(id),
       terminalRead: (id, ptyId, lines) => this.terminalRead(id, ptyId, lines),

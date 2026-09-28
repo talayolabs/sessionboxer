@@ -29,7 +29,12 @@ import {
   ConnectorStartRequest,
   Provider,
   ProviderLoginCodeRequest,
+  AttachFollowedPrRequest,
   CreateAutomationRequest,
+  CreatePrFollowRequest,
+  RunPrAutomationRequest,
+  StartPrSessionRequest,
+  UpdatePrFollowRequest,
   CreateScheduleRequest,
   CreateSessionRequest,
   ForkSessionRequest,
@@ -82,6 +87,7 @@ import {
   loadSettings,
   newAccessToken,
   remoteAccess,
+  resolveBoxCredentials,
   saveSettings,
   toPublicSettings,
 } from "./config.js";
@@ -98,6 +104,7 @@ import { banner, log } from "./log.js";
 import { HostOrSandboxRunner, ProviderLogins } from "./provider-login.js";
 import { PushNotifier } from "./push.js";
 import { Automations, scheduleRunOf } from "./automations.js";
+import { FollowedPrs } from "./followed-prs.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { WindowsVms } from "./windows.js";
 import { MacosVms } from "./macos.js";
@@ -228,6 +235,21 @@ const publicSettings = async () =>
   );
 sessions.publicSettings = publicSettings;
 sessions.automations = automations;
+const followedPrs = new FollowedPrs({
+  db,
+  credentials: () =>
+    resolveBoxCredentials(
+      settings,
+      settings.mcpServers.map((m) => m.id),
+    ),
+  automations,
+  sessions: { list: () => sessions.list(), get: (id) => db.getSession(id), create: (req) => sessions.create(req) },
+  attach: (sessionId, url, by) => sessions.prs.attach(sessionId, url, by),
+  broadcast: (msg) => sessions.notify(msg),
+  push: (msg) => push.send(msg),
+  log,
+});
+sessions.followedPrs = followedPrs;
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -595,6 +617,31 @@ api.delete("/automations/:id", (c) => {
 api.post("/automations/:id/run", async (c) => c.json(await automations.runNow(c.req.param("id")), 202));
 api.get("/automations/:id/runs", (c) => c.json(automations.listRuns(c.req.param("id"))));
 
+// Followed pull requests (ADR-0064): `/prs/follows*` before `/prs/:id`.
+api.get("/prs/accounts", (c) => c.json(followedPrs.accounts()));
+api.get("/prs/follows", (c) => c.json(followedPrs.listFollows()));
+api.post("/prs/follows", async (c) => c.json(followedPrs.follow(CreatePrFollowRequest.parse(await c.req.json())), 201));
+api.patch("/prs/follows/:id", async (c) => c.json(followedPrs.setFollowEnabled(c.req.param("id"), UpdatePrFollowRequest.parse(await c.req.json()).enabled)));
+api.delete("/prs/follows/:id", (c) => {
+  followedPrs.unfollow(c.req.param("id"));
+  return c.body(null, 204);
+});
+api.post("/prs/follows/:id/poll", async (c) => {
+  await followedPrs.pollFollowNow(c.req.param("id"));
+  return c.json(followedPrs.listFollows());
+});
+api.get("/prs", (c) => c.json(followedPrs.list({ state: c.req.query("state") === "open" ? "open" : "all", ...(c.req.query("repo") ? { repo: c.req.query("repo")! } : {}) })));
+api.get("/prs/:id", (c) => c.json(followedPrs.get(c.req.param("id"))));
+api.get("/prs/:id/items", (c) => c.json(followedPrs.items(c.req.param("id"))));
+api.get("/prs/:id/checks", (c) => c.json(followedPrs.checks(c.req.param("id"))));
+api.get("/prs/:id/events", (c) => c.json(followedPrs.events(c.req.param("id"))));
+api.get("/prs/:id/runs", (c) => c.json(followedPrs.runs(c.req.param("id"))));
+api.post("/prs/:id/refresh", async (c) => c.json(await followedPrs.refresh(c.req.param("id"))));
+api.post("/prs/:id/seen", (c) => c.json(followedPrs.markSeen(c.req.param("id"))));
+api.post("/prs/:id/attach", async (c) => c.json(await followedPrs.attachTo(c.req.param("id"), AttachFollowedPrRequest.parse(await c.req.json()).sessionId), 201));
+api.post("/prs/:id/session", async (c) => c.json(await followedPrs.startSession(c.req.param("id"), StartPrSessionRequest.parse(await c.req.json())), 201));
+api.post("/prs/:id/run", async (c) => c.json(await followedPrs.runAutomation(c.req.param("id"), RunPrAutomationRequest.parse(await c.req.json()).automationId), 202));
+
 api.get("/schedules", (c) => c.json(automations.listSchedules()));
 api.post("/schedules", async (c) => c.json(automations.createSchedule(CreateScheduleRequest.parse(await c.req.json())), 201));
 api.post("/schedules/preview", async (c) => {
@@ -874,6 +921,7 @@ await windows.init().catch((e: unknown) => log(`windows: ${e instanceof Error ? 
 await macos.init().catch((e: unknown) => log(`macos: ${e instanceof Error ? e.message : String(e)}`));
 await sessions.boot();
 automations.start();
+followedPrs.start();
 void sessions.staged.sweep();
 setInterval(() => void sessions.staged.sweep(), 60 * 60 * 1000).unref();
 if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {
@@ -935,6 +983,7 @@ const shutdown = (): void => {
   const exit = (): void => {
     clearInterval(keepalive);
     automations.stop();
+    followedPrs.stop();
     tunnels.close();
     db.close();
     server.close();

@@ -5,8 +5,10 @@ import {
   AgentApprovalWaitArgs,
   AgentAutomationCreateArgs,
   AgentAutomationRunsArgs,
+  AgentFollowedPrListArgs,
   AgentNotifyArgs,
   AgentPrAttachArgs,
+  AgentPrFollowArgs,
   AgentPrItemsArgs,
   AgentPrMarkAddressedArgs,
   AgentQueueAddArgs,
@@ -37,11 +39,14 @@ import {
   type AutomationLimits,
   type AutomationRun,
   type CreateAutomationRequest,
+  type CreatePrFollowRequest,
   type CreateScheduleRequest,
   type CreateSessionRequest,
+  type FollowedPr,
   type ForkSessionRequest,
   type PtyInfo,
   type PtyListResult,
+  type PrFollow,
   type PublicSettings,
   type PullRequest,
   type SavedMessage,
@@ -70,6 +75,13 @@ export interface AgentAutomations {
   createSchedule(req: CreateScheduleRequest): Schedule;
 }
 
+/** The part of `FollowedPrs` the Agent's `pr_follow` / `pr_followed_list` tools use. */
+export interface AgentFollowedPrs {
+  follow(req: CreatePrFollowRequest, defaultAccount: string | null): PrFollow;
+  listFollows(): PrFollow[];
+  list(filter: { state?: "open" | "all"; repo?: string }): FollowedPr[];
+}
+
 /** What the Control Plane needs to answer the `sessionboxer` MCP's tools for one Session. */
 export interface AgentToolsDeps {
   db: Db;
@@ -91,6 +103,8 @@ export interface AgentToolsDeps {
   stopSession: (id: string) => Promise<Session>;
   /** `null` until the server wires the Automations. */
   automations: () => AgentAutomations | null;
+  /** `null` until the server wires the followed pull requests. */
+  followedPrs: () => AgentFollowedPrs | null;
   /** The `SessionInfo` the Daemon writes to `session.json`, as of now. */
   sessionInfo: (id: string) => SessionInfo;
   /** The policy in force (`Settings.agentTools` with the Session's override). */
@@ -257,6 +271,34 @@ export class AgentTools {
           }));
       case "automation_create":
         return this.automationCreate(id, policy, AgentAutomationCreateArgs.parse(args));
+      case "pr_follow":
+        return this.prFollow(id, AgentPrFollowArgs.parse(args));
+      case "pr_followed_list": {
+        const p = AgentFollowedPrListArgs.parse(args);
+        return {
+          follows: this.followedPrs().listFollows(),
+          prs: this.followedPrs()
+            .list(p)
+            .map((pr) => ({
+              id: pr.id,
+              repo: `${pr.owner}/${pr.repo}`,
+              number: pr.number,
+              url: pr.url,
+              title: pr.title,
+              state: pr.state,
+              author: pr.author,
+              headRef: pr.headRef,
+              headSha: pr.headSha,
+              baseRef: pr.baseRef,
+              isFork: pr.isFork,
+              reviewDecision: pr.reviewDecision,
+              checks: { failed: pr.checksFailed, pending: pr.checksPending, passed: pr.checksPassed },
+              updatedAt: pr.remoteUpdatedAt,
+              attachedTo: pr.attached.map((a) => a.sessionId),
+              lastRuns: pr.runs.map((r) => ({ automationId: r.automationId, status: r.status, finishedAt: r.finishedAt })),
+            })),
+        };
+      }
       case "automation_list":
         return this.automations()
           .list()
@@ -346,6 +388,23 @@ export class AgentTools {
       if (ev.body.type === "user_prompt") break;
     }
     return null;
+  }
+
+  private followedPrs(): AgentFollowedPrs {
+    const f = this.deps.followedPrs();
+    if (!f) throw new Error("Followed pull requests are not available on this Control Plane.");
+    return f;
+  }
+
+  private prFollow(id: string, p: AgentPrFollowArgs): unknown {
+    const provider = p.provider ?? (p.repo && /bitbucket|\/scm\/|\/projects\//i.test(p.repo) && !/github\.com/i.test(p.repo) ? "bitbucket" : "github");
+    const follow = this.followedPrs().follow(
+      { provider, kind: p.kind, ...(p.repo ? { repo: p.repo } : {}), ...(p.account ? { account: p.account } : {}), ...(p.host ? { host: p.host } : {}) },
+      null,
+    );
+    const what = follow.kind === "repo" ? `${follow.owner}/${follow.repo}` : follow.kind === "mine" ? `PRs opened by @${follow.account}` : `reviews requested from @${follow.account}`;
+    this.mark(id, "pr_follow", `followed ${what}`, "prs");
+    return follow;
   }
 
   private automations(): AgentAutomations {

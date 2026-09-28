@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Pull requests: a top-level page (`#/prs`) follows the open PRs of a repository, the ones you opened or the reviews asked of you, without a session: comments, reviews, checks with their output to copy, the events the poller saw, attach to a session or start one on the PR's head. Automations with a *pull request* trigger react to those events (attach, notify, prompt the attached session) within their limits. New MCP tools `pr_follow`, `pr_followed_list`. (ADR-0064)
 - Automations: Scheduled tasks became automations (a trigger, an action, limits, a run history) at `#/automations`; existing tasks migrate with their ids and `#/schedules`, `/api/schedules*`, `schedule_create` and `schedule_list` keep working. New MCP tools `automation_create`, `automation_list`, `automation_runs`. (ADR-0063)
 - PRs pane redesigned for narrow panes and phones: the overview is a row list (provider, `repo#number`, one-line title, one state/review chip, a needs-you line, a ⋯ menu) sorted needs-attention first; a PR opens as one column — chips, toolbar, auto-merge in a popover, Checks folded when green, comments grouped by thread, a selection bar only while something is ticked. No horizontal scrolling at 360 px. ([a86bb3d](https://github.com/talayolabs/sessionboxer/commit/a86bb3d))
 

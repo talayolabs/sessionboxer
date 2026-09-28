@@ -14,15 +14,15 @@ const DECISION_LABEL: Record<NonNullable<PullRequest["reviewDecision"]>, string>
   changes_requested: "changes requested",
   review_required: "review required",
 };
-const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "comment", review_comment: "inline comment", review: "review" };
+export const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "comment", review_comment: "inline comment", review: "review" };
 const ADDRESS_LABEL: Record<PrItem["address"], string> = { none: "", in_prompt: "in prompt", addressing: "addressing…", addressed: "addressed" };
 const ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Address", address_reply: "Address & reply" };
 /** The same actions on a failed check: there is nobody to reply to, the push makes the checks run again. */
 const CHECK_ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Fix", address_reply: "Fix & push" };
-const CHECK_STATE_LABEL: Record<PrCheckItem["state"], string> = { pending: "running", passed: "passed", failed: "failed" };
+export const CHECK_STATE_LABEL: Record<PrCheckItem["state"], string> = { pending: "running", passed: "passed", failed: "failed" };
 const METHOD_LABEL: Record<MergeMethod, string> = { merge: "merge commit", squash: "squash", rebase: "rebase" };
 
-function ago(iso: string | null): string {
+export function ago(iso: string | null): string {
   if (!iso) return "never";
   const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
   if (s < 60) return `${s}s ago`;
@@ -103,7 +103,7 @@ function actionTitle(action: PrAction, pr: PullRequest, n: number): string {
 }
 
 /** Tooltip of a check's result: what the provider literally said, and when it ran. */
-function checkResultTitle(c: PrCheckItem): string {
+export function checkResultTitle(c: PrCheckItem): string {
   const lines = [
     c.conclusion ? `conclusion: ${c.conclusion}` : `status: ${CHECK_STATE_LABEL[c.state]}`,
     c.required ? (c.kind === "build" ? "a required build" : "required by branch protection") : "not required",
@@ -137,9 +137,9 @@ function checksSummary(pr: PullRequest): Array<{ text: string; level: "error" | 
 // --- Shared bits ---------------------------------------------------------------------------
 
 const ACTIONS = ["prompt", "address", "address_reply"] as const;
-const DECISION_GLYPH: Record<NonNullable<PullRequest["reviewDecision"]>, string> = { approved: "\u2713", changes_requested: "\u2717", review_required: "\u25CC" };
-const CHECK_GLYPH: Record<PrCheckItem["state"], string> = { failed: "\u2717", pending: "\u25CF", passed: "\u2713" };
-const LEVEL_OF_CHECK: Record<PrCheckItem["state"], "error" | "warn" | "ok"> = { failed: "error", pending: "warn", passed: "ok" };
+export const DECISION_GLYPH: Record<NonNullable<PullRequest["reviewDecision"]>, string> = { approved: "\u2713", changes_requested: "\u2717", review_required: "\u25CC" };
+export const CHECK_GLYPH: Record<PrCheckItem["state"], string> = { failed: "\u2717", pending: "\u25CF", passed: "\u2713" };
+export const LEVEL_OF_CHECK: Record<PrCheckItem["state"], "error" | "warn" | "ok"> = { failed: "error", pending: "warn", passed: "ok" };
 
 function prRef(pr: PullRequest): string {
   return `${pr.owner}/${pr.repo}#${pr.number}`;
@@ -155,7 +155,7 @@ function needsAttention(pr: PullRequest): boolean {
 }
 
 /** State and review decision in one chip: the label is the state, the review folds in as colour and glyph. */
-function StateChip({ pr }: { pr: PullRequest }) {
+export function StateChip({ pr }: { pr: Pick<PullRequest, "state" | "reviewDecision"> }) {
   const d = pr.state === "open" || pr.state === "draft" ? pr.reviewDecision : null;
   const tip = d ? `${STATE_LABEL[pr.state]} \u00b7 ${DECISION_LABEL[d]}` : STATE_LABEL[pr.state];
   return (
@@ -168,7 +168,7 @@ function StateChip({ pr }: { pr: PullRequest }) {
   );
 }
 
-function Ellipsis({ text, className }: { text: string; className?: string }) {
+export function Ellipsis({ text, className }: { text: string; className?: string }) {
   return (
     <Tip text={text}>
       <span className={cx("pr-ellipsis", className)}>{text}</span>
@@ -177,7 +177,7 @@ function Ellipsis({ text, className }: { text: string; className?: string }) {
 }
 
 /** A plain element, not a component: Radix merges the trigger props onto it (`asChild` needs a ref). */
-function moreButton(label: string) {
+export function moreButton(label: string) {
   return (
     <button type="button" className="icon-button pr-more" aria-label={label} title={label} onClick={(e) => e.stopPropagation()}>
       {"\u22ef"}
@@ -391,10 +391,10 @@ function PrRowMenu({ session, pr, run, onOpen }: { session: Session; pr: PullReq
 
 // --- One PR ---------------------------------------------------------------------------------
 
-type Thread = { key: string; path: string | null; line: number | null; outdated: boolean; resolved: boolean; items: PrItem[]; latest: number };
+export type Thread = { key: string; path: string | null; line: number | null; outdated: boolean; resolved: boolean; items: PrItem[]; latest: number };
 
 /** Inline comments grouped by review thread (or `path:line` when the provider has no thread id); everything else is the conversation. */
-function groupThreads(items: PrItem[]): Thread[] {
+export function groupThreads(items: PrItem[]): Thread[] {
   const map = new Map<string, Thread>();
   for (const it of items) {
     const key = it.path ? `t:${it.threadId ?? `${it.path}:${it.line ?? ""}`}` : "conversation";
@@ -413,7 +413,7 @@ function groupThreads(items: PrItem[]): Thread[] {
   return out.sort((a, b) => b.latest - a.latest);
 }
 
-function kindGlyph(it: PrItem): { glyph: string; label: string; className: string } {
+export function kindGlyph(it: PrItem): { glyph: string; label: string; className: string } {
   if (it.kind === "review") {
     const st = (it.reviewState ?? "").toUpperCase();
     if (st === "APPROVED") return { glyph: "\u2713", label: "approved", className: "ok" };

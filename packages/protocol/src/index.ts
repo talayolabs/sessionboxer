@@ -2159,6 +2159,13 @@ export type SessionBroadcast =
   | { type: "automations"; automations: Automation[] }
   /** The run history of one automation changed. */
   | { type: "automation_runs"; automationId: string; runs: AutomationRun[] }
+  /** The follows changed (one added, paused, removed, or polled). */
+  | { type: "pr_follows"; follows: PrFollow[] }
+  /** Followed PRs appeared, changed or went away. */
+  | { type: "followed_prs"; prs: FollowedPr[] }
+  | { type: "followed_pr_items"; prId: string; items: PrItem[] }
+  | { type: "followed_pr_checks"; prId: string; checks: PrCheckItem[] }
+  | { type: "pr_events"; prId: string; events: PrEvent[] }
   /** A transport came up, went down or failed (`PublicSettings.remote` changed). */
   | { type: "remote"; remote: RemoteAccess }
   /** The shared Windows base disk changed state (install started, progressed, finished or failed). */
@@ -2406,6 +2413,8 @@ export const AGENT_TOOLS = [
   "automation_create",
   "automation_list",
   "automation_runs",
+  "pr_follow",
+  "pr_followed_list",
   // other Sessions (policy `all`)
   "sessions_list",
   "session_get",
@@ -3514,6 +3523,158 @@ export const AUTOMATIONS_ROUTE = "#/automations";
 export function automationRoute(id: string): string {
   return `${AUTOMATIONS_ROUTE}/${id}`;
 }
+
+// ---------------------------------------------------------------------------
+// Followed pull requests (ADR-0064): PRs the Control Plane watches on their own, without a Session.
+// A follow names a scope; the PRs it finds are shared rows; events are derived from polling.
+// ---------------------------------------------------------------------------
+
+export const PrFollowKind = z.enum(["repo", "mine", "requested"]);
+export type PrFollowKind = z.infer<typeof PrFollowKind>;
+export const PR_FOLLOW_KIND_LABELS: Record<PrFollowKind, string> = {
+  repo: "every open PR of a repository",
+  mine: "PRs I opened",
+  requested: "PRs where my review is requested",
+};
+
+/** One scope the Control Plane polls with a Connector's login. */
+export const PrFollow = z.object({
+  id: z.string(),
+  provider: PrProvider,
+  /** `github.com`, or the Bitbucket Data Center host. */
+  host: z.string(),
+  /** The Connector login the scope is read with (`mine` / `requested` are about this login). */
+  account: z.string(),
+  kind: PrFollowKind,
+  /** `repo` follows: owner and repository (Bitbucket: project key and slug); `null` for the others. */
+  owner: z.string().nullable(),
+  repo: z.string().nullable(),
+  enabled: z.boolean(),
+  polledAt: z.string().nullable(),
+  /** Not polled before this when the last poll hit a rate limit or a 5xx. */
+  retryAt: z.string().nullable(),
+  syncError: PrSyncError.nullable(),
+  syncErrorDetail: z.string().nullable(),
+  /** Open PRs this follow currently lists. */
+  prCount: z.number().int().nonnegative(),
+  createdAt: z.string(),
+});
+export type PrFollow = z.infer<typeof PrFollow>;
+
+export const CreatePrFollowRequest = z.object({
+  provider: PrProvider.default("github"),
+  /** Bitbucket: the Data Center host; GitHub: ignored. */
+  host: z.string().optional(),
+  /** A connected login; omitted takes the first Connector of that provider (and host). */
+  account: z.string().min(1).optional(),
+  kind: PrFollowKind.default("repo"),
+  /** `repo` follows: `owner/repo`, or a repository / PR URL. */
+  repo: z.string().max(500).optional(),
+});
+export type CreatePrFollowRequest = z.infer<typeof CreatePrFollowRequest>;
+
+export const UpdatePrFollowRequest = z.object({ enabled: z.boolean() });
+export type UpdatePrFollowRequest = z.infer<typeof UpdatePrFollowRequest>;
+
+/** Something that happened to a followed PR, as polling saw it. One row per (PR, type, head, ref). */
+export const PrEvent = z.object({
+  id: z.string(),
+  followedPrId: z.string(),
+  type: PrEventType,
+  headSha: z.string(),
+  /** Who caused it (the author of the comment, the reviewer), when known. */
+  actor: z.string().nullable(),
+  /** What it is about: the item id of a comment / review, the check name, the reviewer login. */
+  ref: z.string().nullable(),
+  detectedAt: z.string(),
+});
+export type PrEvent = z.infer<typeof PrEvent>;
+
+/** A followed pull request: what the list and the detail view need; comments and checks come separately. */
+export const FollowedPr = z.object({
+  id: z.string(),
+  provider: PrProvider,
+  host: z.string(),
+  owner: z.string(),
+  repo: z.string(),
+  number: z.number().int().positive(),
+  url: z.string(),
+  title: z.string(),
+  state: PrState,
+  author: z.string(),
+  headRef: z.string(),
+  headSha: z.string(),
+  /** `owner/repo` of the head branch (differs from `owner/repo` for forks). */
+  headRepo: z.string(),
+  baseRef: z.string(),
+  isFork: z.boolean(),
+  requestedReviewers: z.array(z.string()),
+  labels: z.array(z.string()),
+  reviewDecision: PrReviewDecision.nullable(),
+  /** Checks on the current head: failed / still running / passed. */
+  checksFailed: z.number().int().nonnegative(),
+  checksPending: z.number().int().nonnegative(),
+  checksPassed: z.number().int().nonnegative(),
+  /** Comments and failed checks not looked at yet (cleared when the PR's page is shown). */
+  unread: z.number().int().nonnegative(),
+  remoteCreatedAt: z.string().nullable(),
+  remoteUpdatedAt: z.string().nullable(),
+  firstSeenAt: z.string(),
+  lastEventAt: z.string().nullable(),
+  closedAt: z.string().nullable(),
+  syncedAt: z.string().nullable(),
+  syncError: PrSyncError.nullable(),
+  syncErrorDetail: z.string().nullable(),
+  /** The follows this PR came in through. */
+  follows: z.array(z.string()),
+  /** Sessions the same PR is attached to (the Session-level PR pane). */
+  attached: z.array(z.object({ sessionId: z.string(), prId: z.string() })),
+  /** The newest automation run per automation on this PR (badges); the full history is `/api/prs/:id/runs`. */
+  runs: z.array(AutomationRun),
+});
+export type FollowedPr = z.infer<typeof FollowedPr>;
+
+/** `POST /api/prs/:id/attach`: attach the followed PR to an existing Session. */
+export const AttachFollowedPrRequest = z.object({ sessionId: z.string().min(1) });
+export type AttachFollowedPrRequest = z.infer<typeof AttachFollowedPrRequest>;
+
+/** `POST /api/prs/:id/session`: a new Session on the PR head (the PR is attached to it). */
+export const StartPrSessionRequest = z.object({
+  provider: Provider.default("claude-code"),
+  settings: SessionSettingsInput.default({}),
+  /** Omitted sends a short brief of the PR. */
+  prompt: z.string().max(SCHEDULE_PROMPT_MAX_CHARS).optional(),
+});
+export type StartPrSessionRequest = z.infer<typeof StartPrSessionRequest>;
+
+/** `POST /api/prs/:id/run`: run a PR-event automation on this PR by hand (filters and caps still apply, dedupe does not). */
+export const RunPrAutomationRequest = z.object({ automationId: z.string().min(1) });
+export type RunPrAutomationRequest = z.infer<typeof RunPrAutomationRequest>;
+
+export const PRS_ROUTE = "#/prs";
+export function followedPrRoute(id: string): string {
+  return `${PRS_ROUTE}/${id}`;
+}
+
+/** `pr_follow` (the `sessionboxer` MCP). */
+export const AgentPrFollowArgs = z.object({
+  kind: PrFollowKind.default("repo"),
+  /** `repo` follows: `owner/repo` or a repository / PR URL (GitHub or Bitbucket Data Center). */
+  repo: z.string().max(500).optional(),
+  /** A connected login; omitted takes the Session's active one, then the first Connector. */
+  account: z.string().min(1).optional(),
+  provider: PrProvider.optional(),
+  host: z.string().optional(),
+});
+export type AgentPrFollowArgs = z.infer<typeof AgentPrFollowArgs>;
+
+/** `pr_followed_list`. */
+export const AgentFollowedPrListArgs = z.object({
+  /** `owner/repo` to narrow down to. */
+  repo: z.string().max(500).optional(),
+  state: z.enum(["open", "all"]).default("open"),
+});
+export type AgentFollowedPrListArgs = z.infer<typeof AgentFollowedPrListArgs>;
 
 // ---------------------------------------------------------------------------
 // Sandbox Daemon RPC (Control Plane <-> Daemon, JSON-RPC 2.0 over WebSocket).

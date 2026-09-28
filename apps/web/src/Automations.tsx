@@ -48,7 +48,7 @@ const CRON_EXAMPLES: Array<[string, string]> = [
   ["@daily", "once a day at midnight"],
 ];
 
-const RUN_LABEL: Record<AutomationRunStatus, string> = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", skipped: "skipped" };
+export const RUN_LABEL: Record<AutomationRunStatus, string> = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", skipped: "skipped" };
 const TRIGGER_LABEL: Record<AutomationRun["trigger"], string> = { cron: "on schedule", manual: "run now", catch_up: "catch-up", pr_event: "PR event" };
 const DEFAULT_LIMITS: AutomationLimits = { maxConcurrent: 2, maxRunsPerDay: 20, maxRunsPerPrPerDay: 4, debounceSeconds: 120, timeoutMinutes: 360 };
 const PR_ACTIONS: ReadonlyArray<AutomationAction["type"]> = ["auto_review", "auto_qa", "attach"];
@@ -278,7 +278,7 @@ export function Automations({
   );
 }
 
-function badgeClass(status: AutomationRunStatus): string {
+export function badgeClass(status: AutomationRunStatus): string {
   return status === "succeeded" ? "passed" : status === "queued" ? "running" : status;
 }
 

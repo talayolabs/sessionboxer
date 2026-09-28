@@ -255,6 +255,8 @@ The wait tools (`session_wait`, `approval_wait`) block for at most **20 s** per 
 | [`settings_get`](#settings_get) | The settings in force, secrets removed | session |
 | [`pr_attach`](#pr_attach) | Attach a pull request to the session | session |
 | [`pr_list`](#pr_list) | The attached PRs | session |
+| [`pr_follow`](#pr_follow) | Follow a repository's, your own or requested PRs | all |
+| [`pr_followed_list`](#pr_followed_list) | The follows and followed PRs | all |
 | [`pr_items`](#pr_items) | A PR's review comments and checks | session |
 | [`pr_mark_addressed`](#pr_mark_addressed) | Mark items as dealt with | session |
 | [`snapshot`](#snapshot) | Snapshot the box now | session |
@@ -348,6 +350,29 @@ No parameters. Returns the pull requests attached to the session with their stat
 | `pr` | string, *required* | The PR's id from `pr_list`, or its URL / `owner/repo#number` |
 
 Returns the review comments, check results and other items of the PR, each with its id and whether it was marked addressed.
+
+#### `pr_follow`
+
+Follow pull requests without attaching them to a session: they appear on the user's **Pull requests** page and their events (opened, new commits, comment, review, failing check…) can trigger automations. The Control Plane polls them with the connected login's token; the agent never sees the token. The follow is enabled at once; following an already followed scope returns the existing follow.
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `kind` | `repo` (default), `mine` or `requested` | Every open PR of one repository; the PRs the login opened; the PRs the login is asked to review |
+| `repo` | string, ≤500 characters | For `repo`: `owner/repo`, a `PROJECT/slug` on Bitbucket Data Center, or a repository / PR URL |
+| `account` | string, optional | A connected login; omitted takes the first connected account of the provider |
+| `provider` | `github` or `bitbucket`, optional | Guessed from `repo` when omitted (GitHub unless the reference looks like a Bitbucket one) |
+| `host` | string, optional | The Bitbucket Data Center host when there are several |
+
+Returns the follow (`id`, `provider`, `host`, `account`, `kind`, `owner`, `repo`, `enabled`, `prCount`, `polledAt`, sync error). Marker: "followed owner/repo" / "followed PRs opened by @login".
+
+#### `pr_followed_list`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `repo` | string, optional | `owner/repo` to narrow down to |
+| `state` | `open` (default) or `all` | `all` includes merged and closed PRs of the last week |
+
+Returns `{ follows, prs }`: the follows as `pr_follow` returns them, and each followed PR with `id`, `repo`, `number`, `url`, `title`, `state`, `author`, `headRef`, `headSha`, `baseRef`, `isFork`, `reviewDecision`, `checks { failed, pending, passed }`, `updatedAt`, `attachedTo` (session ids) and `lastRuns` (the newest run per automation). Use `pr_attach` with the PR's URL to work on one in this session.
 
 #### `pr_mark_addressed`
 

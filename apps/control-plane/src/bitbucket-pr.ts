@@ -1,6 +1,6 @@
 import type { PrReviewDecision, PrRef, PrState, PrSyncError } from "@sessionboxer/protocol";
 import { prUrl } from "@sessionboxer/protocol";
-import type { GhOutcome, PrMeta } from "./github-pr.js";
+import type { GhOutcome, PrListItem, PrMeta } from "./github-pr.js";
 import type { PrCheckInput, PrItemInput } from "./pr-store.js";
 
 /**
@@ -61,6 +61,7 @@ interface BbPr {
   state: "OPEN" | "MERGED" | "DECLINED";
   draft?: boolean;
   closedDate?: number;
+  createdDate?: number;
   updatedDate: number;
   fromRef: BbRef;
   toRef: BbRef;
@@ -164,6 +165,7 @@ export async function fetchBbPr(t: BbTransport, ref: PrRef): Promise<GhOutcome<B
         title: pr.title,
         state: pr.state === "MERGED" ? "merged" : pr.state === "DECLINED" ? "closed" : pr.draft ? "draft" : "open",
         headRef: pr.fromRef.displayId,
+        headSha: pr.fromRef.latestCommit ?? "",
         headRepo: `${pr.fromRef.repository.project.key}/${pr.fromRef.repository.slug}`,
         baseRef: pr.toRef.displayId,
         author: pr.author.user.name,
@@ -174,6 +176,47 @@ export async function fetchBbPr(t: BbTransport, ref: PrRef): Promise<GhOutcome<B
       targetRefId: pr.toRef.id,
     },
   };
+}
+
+// --- Lists (followed PRs, ADR-0064) ---------------------------------------------------------------
+
+function listItemFromBb(host: string, pr: BbPr): PrListItem {
+  const owner = pr.toRef.repository.project.key;
+  const repo = pr.toRef.repository.slug;
+  return {
+    owner,
+    repo,
+    number: pr.id,
+    url: prUrl({ provider: "bitbucket", host, owner, repo, number: pr.id }),
+    title: pr.title,
+    state: pr.state === "MERGED" ? "merged" : pr.state === "DECLINED" ? "closed" : pr.draft ? "draft" : "open",
+    author: pr.author.user.name,
+    headRef: pr.fromRef.displayId,
+    headSha: pr.fromRef.latestCommit ?? null,
+    headRepo: `${pr.fromRef.repository.project.key}/${pr.fromRef.repository.slug}`,
+    baseRef: pr.toRef.displayId,
+    requestedReviewers: pr.reviewers.filter((p) => !p.approved && p.status !== "NEEDS_WORK").map((p) => p.user.name),
+    labels: [],
+    createdAt: pr.createdDate ? iso(pr.createdDate) : null,
+    updatedAt: iso(pr.updatedDate),
+    closedAt: pr.closedDate ? iso(pr.closedDate) : null,
+  };
+}
+
+/** The open PRs of a repository (`pull-requests?state=OPEN`, every page). */
+export async function fetchBbOpenPrs(t: BbTransport, host: string, owner: string, repo: string): Promise<GhOutcome<PrListItem[]>> {
+  const r = await getAll<BbPr>(t, `rest/api/latest/projects/${encodeURIComponent(owner)}/repos/${encodeURIComponent(repo)}/pull-requests`, { state: "OPEN", order: "OLDEST" });
+  if (r.status !== "ok") return r;
+  return { ...r, value: r.value.map((pr) => listItemFromBb(host, pr)) };
+}
+
+/** The token owner's open PRs as author (`mine`) or as a reviewer still to approve (`requested`): the dashboard endpoint. */
+export async function fetchBbDashboardPrs(t: BbTransport, host: string, role: "AUTHOR" | "REVIEWER"): Promise<GhOutcome<PrListItem[]>> {
+  const query: Record<string, string> = { state: "OPEN", role, order: "OLDEST" };
+  if (role === "REVIEWER") query.participantStatus = "UNAPPROVED";
+  const r = await getAll<BbPr>(t, "rest/api/latest/dashboard/pull-requests", query);
+  if (r.status !== "ok") return r;
+  return { ...r, value: r.value.map((pr) => listItemFromBb(host, pr)) };
 }
 
 /**
@@ -351,11 +394,11 @@ async function getJson<T>(t: BbTransport, path: string, query?: Record<string, s
 }
 
 /** Follows Data Center's `start`/`nextPageStart` paging (capped, like GitHub's Link pages). */
-async function getAll<T>(t: BbTransport, path: string): Promise<GhOutcome<T[]>> {
+async function getAll<T>(t: BbTransport, path: string, query: Record<string, string> = {}): Promise<GhOutcome<T[]>> {
   const all: T[] = [];
   let start = 0;
   for (let pages = 0; pages < 10; pages++) {
-    const r = await getJson<BbPage<T>>(t, path, { limit: "100", start: String(start) });
+    const r = await getJson<BbPage<T>>(t, path, { ...query, limit: "100", start: String(start) });
     if (r.status !== "ok") return r;
     all.push(...(r.value.values ?? []));
     if (r.value.isLastPage !== false || r.value.nextPageStart === undefined) break;

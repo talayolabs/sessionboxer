@@ -74,8 +74,12 @@ export interface PrRunContext extends RunContext {
  * itself (`auto_review`, `auto_qa`, `attach`); each returns what the run row should record, or throws.
  */
 export interface ActionRunner {
-  /** Starts the action's Session and returns it with what to track; `null` = nothing to track, the run is over. */
-  start(automation: Automation, run: AutomationRun, ctx: PrRunContext): Promise<{ sessionId: string; stopAfter: boolean; detail: string } | { skipped: string } | null>;
+  /** Starts the action's Session and returns it with what to track; `done` = over already; `null` = nothing to track, the run is over. */
+  start(
+    automation: Automation,
+    run: AutomationRun,
+    ctx: PrRunContext,
+  ): Promise<{ sessionId: string; stopAfter: boolean; detail: string } | { skipped: string } | { done: string; sessionId?: string } | null>;
 }
 
 /** Throws a 400 when the expression or the time zone cannot be read; returns the parsed job otherwise. */
@@ -505,6 +509,7 @@ export class Automations {
       const started = await runner.start(automation, run, ctx);
       if (started === null) return this.finish(run.id, "succeeded", { detail: note ?? null });
       if ("skipped" in started) return this.finish(run.id, "skipped", { detail: join(note, started.skipped) });
+      if ("done" in started) return this.finish(run.id, "succeeded", { detail: join(note, started.done), ...(started.sessionId ? { sessionId: started.sessionId } : {}) });
       this.deps.db.automations.updateRun(run.id, { detail: join(note, started.detail), sessionId: started.sessionId });
       this.broadcastRuns(automation.id);
       this.track(started.sessionId, run.id, automation.id, started.stopAfter, timeoutMs);

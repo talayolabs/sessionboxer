@@ -331,6 +331,33 @@ server.registerTool(
   () => tool("schedule_list", {}),
 );
 
+// --- Followed pull requests (ADR-0064) --------------------------------------------------------
+
+server.registerTool(
+  "pr_follow",
+  {
+    description:
+      "Follow pull requests without attaching them to a Session: every open PR of a repository (kind repo), the PRs a connected login opened (mine) or is asked to review (requested). Followed PRs show on the user's Pull requests page and can trigger automations (automation_create with a pr_event trigger). Say what you followed in your reply.",
+    inputSchema: {
+      kind: z.enum(["repo", "mine", "requested"]).default("repo"),
+      repo: z.string().max(500).optional().describe("For kind repo: owner/repo, or a repository / PR URL (GitHub or Bitbucket Data Center)"),
+      account: z.string().min(1).optional().describe("The connected login to read with; omitted takes the first Connector of the provider"),
+      provider: z.enum(["github", "bitbucket"]).optional().describe("Omitted guesses from the URL, else github"),
+      host: z.string().optional().describe("Bitbucket Data Center host when there is more than one"),
+    },
+  },
+  (args) => tool("pr_follow", args),
+);
+
+server.registerTool(
+  "pr_followed_list",
+  {
+    description: "The follows and the followed pull requests: repository, number, title, state, author, head, review decision, checks, the Sessions each is attached to and its last automation runs.",
+    inputSchema: { repo: z.string().max(500).optional().describe("owner/repo to narrow down to"), state: z.enum(["open", "all"]).default("open") },
+  },
+  (args) => tool("pr_followed_list", args),
+);
+
 // --- Automations (ADR-0063) ------------------------------------------------------------------
 
 const PR_EVENTS = ["opened", "synchronize", "ready_for_review", "converted_to_draft", "review_requested", "review_submitted", "comment", "check_failed", "merged", "closed", "reopened"] as const;

@@ -41,6 +41,9 @@ import {
   type SavedMessage,
   type Automation,
   type AutomationRun,
+  type FollowedPr,
+  type PrEvent,
+  type PrFollow,
   type Session,
   type SessionEvent,
   type SessionStatus,
@@ -111,6 +114,7 @@ import { SnapshotsDialog } from "./SnapshotsDialog";
 import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
 import { UsbDialog } from "./UsbDialog";
 import { Automations, promptsSession } from "./Automations";
+import { PrsPage, followLabel } from "./Prs";
 import { Caption, Modal, Select, cx, Menu, MenuItem, Tab, TabList, TabPanel, Tabs, Tip } from "./ui";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
@@ -168,7 +172,12 @@ function describeCursorLogin(login: CursorLogin): string {
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
-type Route = { view: "session"; id: string | null; pane?: string } | { view: "new" } | { view: "settings"; section?: string } | { view: "automations"; id?: string };
+type Route =
+  | { view: "session"; id: string | null; pane?: string }
+  | { view: "new" }
+  | { view: "settings"; section?: string }
+  | { view: "automations"; id?: string }
+  | { view: "prs"; id?: string };
 
 // Routes live in the URL hash so a reload (or a shared link) lands on the same Session.
 function parseRoute(hash: string): Route {
@@ -180,6 +189,8 @@ function parseRoute(hash: string): Route {
   if (path === "schedules") return { view: "automations" };
   const automations = /^automations(?:\/([^/]+))?$/.exec(path);
   if (automations) return automations[1] ? { view: "automations", id: automations[1] } : { view: "automations" };
+  const prs = /^prs(?:\/([^/]+))?$/.exec(path);
+  if (prs) return prs[1] ? { view: "prs", id: prs[1] } : { view: "prs" };
   const m = /^sessions\/([^/]+)(?:\/(prs)|\/pr\/([^/]+))?$/.exec(path);
   if (!m) return { view: "session", id: null };
   const pane = m[2] ? "prs" : m[3] ? `pr:${m[3]}` : undefined;
@@ -190,6 +201,7 @@ function routeToHash(route: Route): string {
   if (route.view === "new") return "#/new";
   if (route.view === "settings") return route.section ? `#/settings/${route.section}` : "#/settings";
   if (route.view === "automations") return route.id ? `#/automations/${route.id}` : "#/automations";
+  if (route.view === "prs") return route.id ? `#/prs/${route.id}` : "#/prs";
   return route.id ? `#/sessions/${route.id}` : "#/";
 }
 
@@ -244,6 +256,13 @@ export function App() {
   const [e2eRuns, setE2eRuns] = useState<E2eRun[]>([]);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [automationRuns, setAutomationRuns] = useState<Record<string, AutomationRun[]>>({});
+  // Followed pull requests (ADR-0064): the follows, the PRs and, per PR opened on the page, its detail.
+  const [prFollows, setPrFollows] = useState<PrFollow[]>([]);
+  const [followedPrs, setFollowedPrs] = useState<FollowedPr[]>([]);
+  const [fprItems, setFprItems] = useState<Record<string, PrItem[]>>({});
+  const [fprChecks, setFprChecks] = useState<Record<string, PrCheckItem[]>>({});
+  const [fprEvents, setFprEvents] = useState<Record<string, PrEvent[]>>({});
+  const [fprRuns, setFprRuns] = useState<Record<string, AutomationRun[]>>({});
   const e2eRunsRef = useRef<E2eRun[]>([]);
   e2eRunsRef.current = e2eRuns;
   const [toasts, setToasts] = useState<Array<{ id: number; sessionId: string; sessionTitle: string; lines: Array<{ prId: string; text: string }> }>>([]);
@@ -328,7 +347,22 @@ export function App() {
     void run(async () => setModels(await api.models()));
     void run(async () => setOptions(await api.options()));
     void run(async () => setAutomations(await api.automations()));
+    void run(async () => setPrFollows(await api.prFollows()));
+    void run(async () => setFollowedPrs(await api.followedPrs()));
   }, [reloadSessions, run]);
+
+  const loadFollowedPrDetail = useCallback(
+    (prId: string) => {
+      void run(async () => {
+        const [items, checks, events, runs] = await Promise.all([api.followedPrItems(prId), api.followedPrChecks(prId), api.followedPrEvents(prId), api.followedPrRuns(prId)]);
+        setFprItems((prev) => ({ ...prev, [prId]: items }));
+        setFprChecks((prev) => ({ ...prev, [prId]: checks }));
+        setFprEvents((prev) => ({ ...prev, [prId]: events }));
+        setFprRuns((prev) => ({ ...prev, [prId]: runs }));
+      });
+    },
+    [run],
+  );
 
   const loadAutomationRuns = useCallback(
     (automationId: string) => {
@@ -446,6 +480,32 @@ export function App() {
             break;
           case "automation_runs":
             setAutomationRuns((prev) => ({ ...prev, [msg.automationId]: msg.runs }));
+            setFprRuns((prev) => {
+              const touched = Object.keys(prev).filter((prId) => msg.runs.some((r) => r.followedPrId === prId));
+              if (touched.length === 0) return prev;
+              const next = { ...prev };
+              for (const prId of touched) {
+                const fresh = msg.runs.filter((r) => r.followedPrId === prId);
+                const ids = new Set(fresh.map((r) => r.id));
+                next[prId] = [...fresh, ...(prev[prId] ?? []).filter((r) => !ids.has(r.id))].sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
+              }
+              return next;
+            });
+            break;
+          case "pr_follows":
+            setPrFollows(msg.follows);
+            break;
+          case "followed_prs":
+            setFollowedPrs(msg.prs);
+            break;
+          case "followed_pr_items":
+            setFprItems((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.items } : prev));
+            break;
+          case "followed_pr_checks":
+            setFprChecks((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.checks } : prev));
+            break;
+          case "pr_events":
+            setFprEvents((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.events } : prev));
             break;
           case "e2e_changed": {
             if (msg.sessionId !== selectedId) break;
@@ -550,7 +610,7 @@ export function App() {
   const showSetup = settings !== null && (!runtimeReady || !anyTokenSet || (!gitConnected && !gitLater));
 
   const topTitle =
-    route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "automations" ? "Automations" : (selected?.title ?? "Sessionboxer");
+    route.view === "new" ? "New session" : route.view === "settings" ? "Global settings" : route.view === "automations" ? "Automations" : route.view === "prs" ? "Pull requests" : (selected?.title ?? "Sessionboxer");
   const collapseSidebar = (collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
     localStorage.setItem("sessionboxer.sidebarCollapsed", collapsed ? "1" : "0");
@@ -736,6 +796,17 @@ export function App() {
             </div>
           )}
           {runtimeHelp && settings && <RuntimeDialog settings={settings} onClose={() => setRuntimeHelp(false)} />}
+          <button
+            onClick={() => setRoute({ view: "prs" })}
+            title={prFollows.some((f) => f.enabled && f.syncError) ? "A follow cannot be read" : followedPrs.some((p) => p.unread > 0) ? "Pull requests with something new" : undefined}
+          >
+            Pull requests
+            {prFollows.some((f) => f.enabled && f.syncError) ? (
+              <span className="warn-sign" aria-label="A follow cannot be read">⚠</span>
+            ) : (
+              followedPrs.filter((p) => p.unread > 0).length > 0 && <span className="count">{followedPrs.filter((p) => p.unread > 0).length}</span>
+            )}
+          </button>
           <button onClick={() => setRoute({ view: "automations" })} title={automations.some((a) => a.lastStatus === "failed") ? "An automation failed" : undefined}>
             Automations
             {automations.some((a) => a.lastStatus === "failed") && <span className="warn-sign" aria-label="An automation failed">⚠</span>}
@@ -873,6 +944,23 @@ export function App() {
             run={run}
           />
         )}
+        {route.view === "prs" && (
+          <PrsPage
+            prs={followedPrs}
+            follows={prFollows}
+            sessions={sessions}
+            automations={automations}
+            items={fprItems}
+            checks={fprChecks}
+            events={fprEvents}
+            prRuns={fprRuns}
+            loadDetail={loadFollowedPrDetail}
+            onOpenSession={(id) => setRoute({ view: "session", id })}
+            run={run}
+            focusId={route.id ?? null}
+            onFocus={(id) => setRoute(id ? { view: "prs", id } : { view: "prs" })}
+          />
+        )}
         {route.view === "automations" && settings && (
           <Automations
             automations={automations}
@@ -881,6 +969,7 @@ export function App() {
             settings={settings}
             models={models ?? EMPTY_MODELS}
             options={options ?? EMPTY_OPTIONS}
+            follows={prFollows.map((f) => ({ id: f.id, label: followLabel(f) }))}
             onOpenSession={(id) => setRoute({ view: "session", id })}
             loadRuns={loadAutomationRuns}
             run={run}

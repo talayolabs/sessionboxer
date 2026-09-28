@@ -41,6 +41,7 @@ export interface PrMeta {
   title: string;
   state: PrState;
   headRef: string;
+  headSha: string;
   headRepo: string;
   baseRef: string;
   author: string;
@@ -48,12 +49,18 @@ export interface PrMeta {
 }
 
 interface RestPr {
+  number: number;
   title: string;
   state: "open" | "closed";
   draft?: boolean;
+  html_url: string;
   merged_at: string | null;
   closed_at: string | null;
-  head: { ref: string; repo: { full_name: string } | null };
+  created_at: string;
+  updated_at: string;
+  head: { ref: string; sha: string; repo: { full_name: string } | null };
+  requested_reviewers?: Array<{ login: string }>;
+  labels?: Array<{ name: string }>;
   base: { ref: string };
   user: { login: string } | null;
 }
@@ -102,12 +109,132 @@ export async function fetchPrMeta(t: GhTransport, ref: PrRef, etag: string | und
       title: pr.title,
       state: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : pr.draft ? "draft" : "open",
       headRef: pr.head.ref,
+      headSha: pr.head.sha,
       headRepo: pr.head.repo?.full_name ?? `${ref.owner}/${ref.repo}`,
       baseRef: pr.base.ref,
       author: pr.user?.login ?? "ghost",
       closedAt: pr.closed_at,
     },
   };
+}
+
+// --- Lists (followed PRs, ADR-0064) ---------------------------------------------------------------
+
+/** One PR as a list endpoint describes it; the search API knows neither head nor base (`null`). */
+export interface PrListItem {
+  owner: string;
+  repo: string;
+  number: number;
+  url: string;
+  title: string;
+  state: PrState;
+  author: string;
+  headRef: string | null;
+  headSha: string | null;
+  headRepo: string | null;
+  baseRef: string | null;
+  requestedReviewers: string[];
+  labels: string[];
+  createdAt: string | null;
+  updatedAt: string | null;
+  closedAt: string | null;
+}
+
+function listItemFromRest(owner: string, repo: string, pr: RestPr): PrListItem {
+  return {
+    owner,
+    repo,
+    number: pr.number,
+    url: pr.html_url,
+    title: pr.title,
+    state: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : pr.draft ? "draft" : "open",
+    author: pr.user?.login ?? "ghost",
+    headRef: pr.head.ref,
+    headSha: pr.head.sha,
+    headRepo: pr.head.repo?.full_name ?? `${owner}/${repo}`,
+    baseRef: pr.base.ref,
+    requestedReviewers: (pr.requested_reviewers ?? []).map((u) => u.login),
+    labels: (pr.labels ?? []).map((l) => l.name),
+    createdAt: pr.created_at,
+    updatedAt: pr.updated_at,
+    closedAt: pr.closed_at,
+  };
+}
+
+/** The open PRs of a repository (`pulls?state=open`), conditional on `etag`; every page when the first changed. */
+export async function fetchOpenPrs(t: GhTransport, owner: string, repo: string, etag: string | undefined, account: string | null): Promise<GhOutcome<PrListItem[]>> {
+  const r = await conditionalList(t, `repos/${owner}/${repo}/pulls?state=open&sort=created&direction=asc&per_page=100`, etag, account);
+  if (r.status !== "ok") return r;
+  return { ...r, value: (r.value as RestPr[]).map((pr) => listItemFromRest(owner, repo, pr)) };
+}
+
+interface RestSearchItem {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  draft?: boolean;
+  html_url: string;
+  repository_url: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  user: { login: string } | null;
+  labels?: Array<{ name: string }>;
+  pull_request?: { merged_at: string | null };
+}
+
+interface RestSearchResult {
+  total_count: number;
+  incomplete_results: boolean;
+  items: RestSearchItem[];
+}
+
+const SEARCH_PAGES_MAX = 5;
+
+/**
+ * `search/issues` for `is:pr is:open <query>` (`author:@me`, `review-requested:@me`), up to 500
+ * results. The search API does not document conditional requests, so this is always a full read;
+ * it has its own, smaller rate limit (30 requests a minute), which is why a follow polls it once a minute.
+ */
+export async function searchOpenPrs(t: GhTransport, query: string, account: string | null): Promise<GhOutcome<PrListItem[]>> {
+  const out: PrListItem[] = [];
+  let remaining: number | null = null;
+  for (let page = 1; page <= SEARCH_PAGES_MAX; page++) {
+    const q = encodeURIComponent(`is:pr is:open ${query}`);
+    let res: DaemonGhApiResult;
+    try {
+      res = await t.request({ method: "GET", path: `search/issues?q=${q}&per_page=100&page=${page}&advanced_search=true`, headers: {}, body: null, account });
+    } catch (e) {
+      return { status: "error", kind: "error", detail: e instanceof Error ? e.message : String(e), retryAt: null };
+    }
+    remaining = rateRemaining(res.headers);
+    if (res.status !== 200) return classify(res);
+    const parsed = JSON.parse(res.body) as RestSearchResult;
+    for (const it of parsed.items) {
+      const m = /\/repos\/([^/]+)\/([^/]+)$/.exec(it.repository_url);
+      if (!m) continue;
+      out.push({
+        owner: m[1]!,
+        repo: m[2]!,
+        number: it.number,
+        url: it.html_url,
+        title: it.title,
+        state: it.pull_request?.merged_at ? "merged" : it.state === "closed" ? "closed" : it.draft ? "draft" : "open",
+        author: it.user?.login ?? "ghost",
+        headRef: null,
+        headSha: null,
+        headRepo: null,
+        baseRef: null,
+        requestedReviewers: [],
+        labels: (it.labels ?? []).map((l) => l.name),
+        createdAt: it.created_at,
+        updatedAt: it.updated_at,
+        closedAt: it.closed_at,
+      });
+    }
+    if (parsed.items.length < 100 || out.length >= parsed.total_count) break;
+  }
+  return { status: "ok", value: out, etag: null, remaining };
 }
 
 export interface PrRef {

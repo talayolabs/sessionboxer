@@ -16,6 +16,65 @@ import {
   type PullRequest,
 } from "@sessionboxer/protocol";
 
+/** The tables a PR row's items and checks live in: `pull_requests` has one set, `followed_prs` another with the same columns. */
+export interface PrTables {
+  prs: string;
+  items: string;
+  checks: string;
+}
+
+export function itemTablesSchema(t: PrTables): string {
+  return `
+CREATE TABLE IF NOT EXISTS ${t.items} (
+  id TEXT PRIMARY KEY,
+  pr_id TEXT NOT NULL REFERENCES ${t.prs}(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  github_id INTEGER NOT NULL,
+  node_id TEXT NOT NULL,
+  thread_id TEXT,
+  thread_node_id TEXT,
+  in_reply_to INTEGER,
+  author TEXT NOT NULL,
+  self INTEGER NOT NULL DEFAULT 0,
+  body TEXT NOT NULL,
+  path TEXT,
+  line INTEGER,
+  diff_hunk TEXT,
+  html_url TEXT NOT NULL,
+  review_state TEXT,
+  resolved INTEGER NOT NULL DEFAULT 0,
+  outdated INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  seen INTEGER NOT NULL DEFAULT 0,
+  address TEXT NOT NULL DEFAULT 'none',
+  notified INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (pr_id, kind, github_id)
+);
+CREATE INDEX IF NOT EXISTS ${t.items}_pr ON ${t.items} (pr_id);
+CREATE TABLE IF NOT EXISTS ${t.checks} (
+  id TEXT PRIMARY KEY,
+  pr_id TEXT NOT NULL REFERENCES ${t.prs}(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  source TEXT,
+  state TEXT NOT NULL,
+  conclusion TEXT,
+  required INTEGER NOT NULL DEFAULT 0,
+  url TEXT,
+  github_id INTEGER,
+  head_sha TEXT NOT NULL,
+  summary TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  seen INTEGER NOT NULL DEFAULT 0,
+  address TEXT NOT NULL DEFAULT 'none',
+  notified INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ${t.checks}_pr ON ${t.checks} (pr_id);
+`;
+}
+
 export const PR_SCHEMA = `
 CREATE TABLE IF NOT EXISTS pull_requests (
   id TEXT PRIMARY KEY,
@@ -49,53 +108,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
   host TEXT NOT NULL DEFAULT 'github.com',
   UNIQUE (session_id, owner, repo, number)
 );
-CREATE TABLE IF NOT EXISTS pr_items (
-  id TEXT PRIMARY KEY,
-  pr_id TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,
-  github_id INTEGER NOT NULL,
-  node_id TEXT NOT NULL,
-  thread_id TEXT,
-  thread_node_id TEXT,
-  in_reply_to INTEGER,
-  author TEXT NOT NULL,
-  self INTEGER NOT NULL DEFAULT 0,
-  body TEXT NOT NULL,
-  path TEXT,
-  line INTEGER,
-  diff_hunk TEXT,
-  html_url TEXT NOT NULL,
-  review_state TEXT,
-  resolved INTEGER NOT NULL DEFAULT 0,
-  outdated INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  seen INTEGER NOT NULL DEFAULT 0,
-  address TEXT NOT NULL DEFAULT 'none',
-  notified INTEGER NOT NULL DEFAULT 0,
-  UNIQUE (pr_id, kind, github_id)
-);
-CREATE INDEX IF NOT EXISTS pr_items_pr ON pr_items (pr_id);
-CREATE TABLE IF NOT EXISTS pr_checks (
-  id TEXT PRIMARY KEY,
-  pr_id TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  source TEXT,
-  state TEXT NOT NULL,
-  conclusion TEXT,
-  required INTEGER NOT NULL DEFAULT 0,
-  url TEXT,
-  github_id INTEGER,
-  head_sha TEXT NOT NULL,
-  summary TEXT,
-  started_at TEXT,
-  completed_at TEXT,
-  seen INTEGER NOT NULL DEFAULT 0,
-  address TEXT NOT NULL DEFAULT 'none',
-  notified INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS pr_checks_pr ON pr_checks (pr_id);
+${itemTablesSchema({ prs: "pull_requests", items: "pr_items", checks: "pr_checks" })}
 `;
 
 /** Columns added after the tables first shipped. */
@@ -133,102 +146,25 @@ export type PrItemInput = Omit<PrItem, "id" | "prId" | "seen" | "address">;
 /** A check as it comes from the provider, before the Session-side flags. */
 export type PrCheckInput = Omit<PrCheckItem, "id" | "prId" | "seen" | "address" | "headSha">;
 
-export class PrStore {
-  constructor(private readonly db: Database.Database) {
-    this.db.exec(PR_SCHEMA);
-    const columns = new Set((this.db.prepare("PRAGMA table_info(pull_requests)").all() as Array<{ name: string }>).map((c) => c.name));
-    for (const m of PR_MIGRATIONS) if (!columns.has(m.column)) this.db.exec(m.ddl);
-  }
-
-  /** Open PRs whose auto-merge is on. */
-  listAutoMerge(): StoredPr[] {
-    const rows = this.db
-      .prepare(`${PR_SELECT} WHERE p.auto_merge = 1 AND p.state IN ('open', 'draft') ORDER BY p.attached_at ASC`)
-      .all() as PrRow[];
-    return rows.map(rowToPr);
-  }
-
-  list(sessionId: string): StoredPr[] {
-    const rows = this.db
-      .prepare(`${PR_SELECT} WHERE p.session_id = ? ORDER BY p.attached_at ASC`)
-      .all(sessionId) as PrRow[];
-    return rows.map(rowToPr);
-  }
-
-  listWatched(): StoredPr[] {
-    const rows = this.db.prepare(`${PR_SELECT} WHERE p.watch = 1 ORDER BY p.synced_at ASC`).all() as PrRow[];
-    return rows.map(rowToPr);
-  }
-
-  get(id: string): StoredPr | null {
-    const row = this.db.prepare(`${PR_SELECT} WHERE p.id = ?`).get(id) as PrRow | undefined;
-    return row ? rowToPr(row) : null;
-  }
-
-  find(sessionId: string, ref: PrRef): StoredPr | null {
-    const row = this.db
-      .prepare(
-        `${PR_SELECT} WHERE p.session_id = ? AND p.provider = ? AND lower(p.host) = lower(?) AND lower(p.owner) = lower(?) AND lower(p.repo) = lower(?) AND p.number = ?`,
-      )
-      .get(sessionId, ref.provider, ref.host, ref.owner, ref.repo, ref.number) as PrRow | undefined;
-    return row ? rowToPr(row) : null;
-  }
-
-  insert(pr: PrRef & { id: string; sessionId: string; url: string; attachedBy: PullRequest["attachedBy"] }): StoredPr {
-    this.db
-      .prepare(
-        `INSERT INTO pull_requests (id, session_id, provider, host, owner, repo, number, url, attached_by, attached_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(pr.id, pr.sessionId, pr.provider, pr.host, pr.owner, pr.repo, pr.number, pr.url, pr.attachedBy, new Date().toISOString());
-    return this.get(pr.id)!;
-  }
-
-  delete(id: string): boolean {
-    return this.db.prepare("DELETE FROM pull_requests WHERE id = ?").run(id).changes > 0;
-  }
-
-  updateMeta(id: string, patch: PrMetaPatch): void {
-    const sets: string[] = [];
-    const params: Array<string | number | null> = [];
-    const set = (col: string, value: string | number | null): void => {
-      sets.push(`${col} = ?`);
-      params.push(value);
-    };
-    if (patch.title !== undefined) set("title", patch.title);
-    if (patch.state !== undefined) set("state", patch.state);
-    if (patch.headRef !== undefined) set("head_ref", patch.headRef);
-    if (patch.headRepo !== undefined) set("head_repo", patch.headRepo);
-    if (patch.baseRef !== undefined) set("base_ref", patch.baseRef);
-    if (patch.author !== undefined) set("author", patch.author);
-    if (patch.reviewDecision !== undefined) set("review_decision", patch.reviewDecision);
-    if (patch.viaAccount !== undefined) set("via_account", patch.viaAccount);
-    if (patch.watch !== undefined) set("watch", patch.watch ? 1 : 0);
-    if (patch.closedAt !== undefined) set("closed_at", patch.closedAt);
-    if (patch.autoMerge !== undefined) set("auto_merge", patch.autoMerge ? 1 : 0);
-    if (patch.mergeMethod !== undefined) set("merge_method", patch.mergeMethod);
-    if (patch.mergeState !== undefined) set("merge_state", patch.mergeState === null ? null : JSON.stringify(patch.mergeState));
-    if (sets.length === 0) return;
-    params.push(id);
-    this.db.prepare(`UPDATE pull_requests SET ${sets.join(", ")} WHERE id = ?`).run(...params);
-  }
-
-  /** Records the outcome of a poll: cursors, time, error (or none). */
-  setSync(id: string, s: { etags: PrEtags; error: PullRequest["syncError"]; detail: string | null; retryAt?: string | null }): void {
-    this.db
-      .prepare("UPDATE pull_requests SET etags = ?, synced_at = ?, sync_error = ?, sync_error_detail = ?, retry_at = ? WHERE id = ?")
-      .run(JSON.stringify(s.etags), new Date().toISOString(), s.error, s.detail, s.retryAt ?? null, id);
-  }
+/**
+ * Comments, reviews and checks of a PR row. Attached PRs (`pull_requests`) and followed PRs
+ * (`followed_prs`) keep theirs in tables of the same shape; each store says which.
+ */
+export class PrItemsStore {
+  constructor(
+    protected readonly db: Database.Database,
+    protected readonly t: PrTables,
+  ) {}
 
   items(prId: string): PrItem[] {
-    const rows = this.db.prepare("SELECT * FROM pr_items WHERE pr_id = ? ORDER BY created_at ASC").all(prId) as ItemRow[];
+    const rows = this.db.prepare(`SELECT * FROM ${this.t.items} WHERE pr_id = ? ORDER BY created_at ASC`).all(prId) as ItemRow[];
     return rows.map(rowToItem);
   }
 
   getItems(ids: string[]): PrItem[] {
     if (ids.length === 0) return [];
     const rows = this.db
-      .prepare(`SELECT * FROM pr_items WHERE id IN (${ids.map(() => "?").join(",")})`)
+      .prepare(`SELECT * FROM ${this.t.items} WHERE id IN (${ids.map(() => "?").join(",")})`)
       .all(...ids) as ItemRow[];
     const byId = new Map(rows.map((r) => [r.id, rowToItem(r)]));
     return ids.map((id) => byId.get(id)).filter((i): i is PrItem => i !== undefined);
@@ -244,12 +180,12 @@ export class PrStore {
       const fresh: PrItem[] = [];
       const keep = new Set<string>();
       const stmt = this.db.prepare(
-        `INSERT INTO pr_items (id, pr_id, kind, github_id, node_id, thread_id, thread_node_id, in_reply_to, author, self, body, path, line, diff_hunk,
+        `INSERT INTO ${this.t.items} (id, pr_id, kind, github_id, node_id, thread_id, thread_node_id, in_reply_to, author, self, body, path, line, diff_hunk,
            html_url, review_state, resolved, outdated, created_at, updated_at, seen, address, notified)
          VALUES (@id, @pr_id, @kind, @github_id, @node_id, @thread_id, @thread_node_id, @in_reply_to, @author, @self, @body, @path, @line, @diff_hunk,
            @html_url, @review_state, @resolved, @outdated, @created_at, @updated_at, @seen, @address, @notified)
          ON CONFLICT(id) DO UPDATE SET node_id = excluded.node_id, thread_id = excluded.thread_id,
-           thread_node_id = coalesce(excluded.thread_node_id, pr_items.thread_node_id), in_reply_to = excluded.in_reply_to,
+           thread_node_id = coalesce(excluded.thread_node_id, ${this.t.items}.thread_node_id), in_reply_to = excluded.in_reply_to,
            author = excluded.author, self = excluded.self, body = excluded.body, path = excluded.path, line = excluded.line,
            diff_hunk = excluded.diff_hunk, html_url = excluded.html_url, review_state = excluded.review_state,
            resolved = excluded.resolved, outdated = excluded.outdated, updated_at = excluded.updated_at`,
@@ -287,12 +223,12 @@ export class PrStore {
         if (!old && !it.self) fresh.push({ ...it, id, prId, seen: false, address: "none" });
       }
       // Deleted on GitHub: drop rows of the refreshed kinds that came back missing.
-      const del = this.db.prepare("DELETE FROM pr_items WHERE id = ?");
+      const del = this.db.prepare(`DELETE FROM ${this.t.items} WHERE id = ?`);
       for (const old of existing.values()) if (kinds.includes(old.kind) && !keep.has(old.id)) del.run(old.id);
       const newest = items.reduce<string | null>((m, i) => (m === null || i.updatedAt > m ? i.updatedAt : m), null);
       if (newest) {
         this.db
-          .prepare("UPDATE pull_requests SET last_activity_at = max(coalesce(last_activity_at, ''), ?) WHERE id = ?")
+          .prepare(`UPDATE ${this.t.prs} SET last_activity_at = max(coalesce(last_activity_at, ''), ?) WHERE id = ?`)
           .run(newest, prId);
       }
       return fresh;
@@ -303,7 +239,7 @@ export class PrStore {
   /** Sets thread ids and `resolved`/`outdated` of review comments from the GraphQL thread list. */
   setThreads(prId: string, threads: Array<{ nodeId: string; commentIds: number[]; resolved: boolean; outdated: boolean }>): void {
     const stmt = this.db.prepare(
-      "UPDATE pr_items SET thread_id = ?, thread_node_id = ?, resolved = ?, outdated = ? WHERE pr_id = ? AND kind = 'review_comment' AND github_id = ?",
+      "UPDATE ${this.t.items} SET thread_id = ?, thread_node_id = ?, resolved = ?, outdated = ? WHERE pr_id = ? AND kind = 'review_comment' AND github_id = ?",
     );
     const tx = this.db.transaction(() => {
       for (const t of threads) {
@@ -323,31 +259,31 @@ export class PrStore {
   settleAddressed(prId: string): number {
     return this.db
       .prepare(
-        `UPDATE pr_items SET address = 'addressed' WHERE pr_id = ? AND address = 'addressing' AND (
+        `UPDATE ${this.t.items} SET address = 'addressed' WHERE pr_id = ? AND address = 'addressing' AND (
            resolved = 1
-           OR EXISTS (SELECT 1 FROM pr_items r WHERE r.pr_id = pr_items.pr_id AND r.self = 1 AND r.created_at > pr_items.created_at
-                      AND ((pr_items.thread_id IS NOT NULL AND r.thread_id = pr_items.thread_id)
-                           OR (pr_items.thread_id IS NULL AND r.kind = 'issue_comment'))))`,
+           OR EXISTS (SELECT 1 FROM ${this.t.items} r WHERE r.pr_id = ${this.t.items}.pr_id AND r.self = 1 AND r.created_at > ${this.t.items}.created_at
+                      AND ((${this.t.items}.thread_id IS NOT NULL AND r.thread_id = ${this.t.items}.thread_id)
+                           OR (${this.t.items}.thread_id IS NULL AND r.kind = 'issue_comment'))))`,
       )
       .run(prId).changes;
   }
 
   markSeen(prId: string): number {
     return (
-      this.db.prepare("UPDATE pr_items SET seen = 1 WHERE pr_id = ? AND seen = 0").run(prId).changes + this.db.prepare("UPDATE pr_checks SET seen = 1 WHERE pr_id = ? AND seen = 0").run(prId).changes
+      this.db.prepare(`UPDATE ${this.t.items} SET seen = 1 WHERE pr_id = ? AND seen = 0`).run(prId).changes + this.db.prepare(`UPDATE ${this.t.checks} SET seen = 1 WHERE pr_id = ? AND seen = 0`).run(prId).changes
     );
   }
 
   // --- Checks ---------------------------------------------------------------------------------
 
   checks(prId: string): PrCheckItem[] {
-    const rows = this.db.prepare("SELECT * FROM pr_checks WHERE pr_id = ? ORDER BY name ASC").all(prId) as CheckRow[];
+    const rows = this.db.prepare(`SELECT * FROM ${this.t.checks} WHERE pr_id = ? ORDER BY name ASC`).all(prId) as CheckRow[];
     return rows.map(rowToCheck);
   }
 
   getChecks(ids: string[]): PrCheckItem[] {
     if (ids.length === 0) return [];
-    const rows = this.db.prepare(`SELECT * FROM pr_checks WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as CheckRow[];
+    const rows = this.db.prepare(`SELECT * FROM ${this.t.checks} WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as CheckRow[];
     const byId = new Map(rows.map((r) => [r.id, rowToCheck(r)]));
     return ids.map((id) => byId.get(id)).filter((c): c is PrCheckItem => c !== undefined);
   }
@@ -365,7 +301,7 @@ export class PrStore {
       const keep = new Set<string>();
       let changed = false;
       const stmt = this.db.prepare(
-        `INSERT INTO pr_checks (id, pr_id, name, kind, source, state, conclusion, required, url, github_id, head_sha, summary, started_at, completed_at, seen, address, notified)
+        `INSERT INTO ${this.t.checks} (id, pr_id, name, kind, source, state, conclusion, required, url, github_id, head_sha, summary, started_at, completed_at, seen, address, notified)
          VALUES (@id, @pr_id, @name, @kind, @source, @state, @conclusion, @required, @url, @github_id, @head_sha, @summary, @started_at, @completed_at, @seen, @address, @notified)
          ON CONFLICT(id) DO UPDATE SET source = excluded.source, state = excluded.state, conclusion = excluded.conclusion, required = excluded.required,
            url = excluded.url, github_id = excluded.github_id, head_sha = excluded.head_sha, summary = excluded.summary, started_at = excluded.started_at,
@@ -417,9 +353,9 @@ export class PrStore {
           notified: notified ? 1 : 0,
         });
       }
-      const del = this.db.prepare("DELETE FROM pr_checks WHERE id = ?");
+      const del = this.db.prepare(`DELETE FROM ${this.t.checks} WHERE id = ?`);
       const park = this.db.prepare(
-        "UPDATE pr_checks SET state = 'pending', conclusion = NULL, head_sha = ?, url = NULL, github_id = NULL, summary = NULL, started_at = NULL, completed_at = NULL, seen = 1, notified = 1 WHERE id = ?",
+        "UPDATE ${this.t.checks} SET state = 'pending', conclusion = NULL, head_sha = ?, url = NULL, github_id = NULL, summary = NULL, started_at = NULL, completed_at = NULL, seen = 1, notified = 1 WHERE id = ?",
       );
       for (const old of existing.values()) {
         if (keep.has(old.id)) continue;
@@ -433,13 +369,120 @@ export class PrStore {
   }
 
   private checkNotified(id: string): boolean {
-    const row = this.db.prepare("SELECT notified FROM pr_checks WHERE id = ?").get(id) as { notified: number } | undefined;
+    const row = this.db.prepare(`SELECT notified FROM ${this.t.checks} WHERE id = ?`).get(id) as { notified: number } | undefined;
     return row !== undefined && row.notified === 1;
   }
 
   setCheckAddress(ids: string[], state: PrAddressState): void {
     if (ids.length === 0) return;
-    this.db.prepare(`UPDATE pr_checks SET address = ?, seen = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(state, ...ids);
+    this.db.prepare(`UPDATE ${this.t.checks} SET address = ?, seen = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(state, ...ids);
+  }
+
+  markChecksNotified(ids: string[]): void {
+    if (ids.length === 0) return;
+    this.db.prepare(`UPDATE ${this.t.checks} SET notified = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
+  }
+
+  setAddress(ids: string[], state: PrAddressState): void {
+    if (ids.length === 0) return;
+    this.db
+      .prepare(`UPDATE ${this.t.items} SET address = ?, seen = 1 WHERE id IN (${ids.map(() => "?").join(",")})`)
+      .run(state, ...ids);
+  }
+
+  markNotified(ids: string[]): void {
+    if (ids.length === 0) return;
+    this.db.prepare(`UPDATE ${this.t.items} SET notified = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
+  }
+}
+
+export class PrStore extends PrItemsStore {
+  constructor(db: Database.Database) {
+    super(db, { prs: "pull_requests", items: "pr_items", checks: "pr_checks" });
+    this.db.exec(PR_SCHEMA);
+    const columns = new Set((this.db.prepare("PRAGMA table_info(pull_requests)").all() as Array<{ name: string }>).map((c) => c.name));
+    for (const m of PR_MIGRATIONS) if (!columns.has(m.column)) this.db.exec(m.ddl);
+  }
+
+  /** Open PRs whose auto-merge is on. */
+  listAutoMerge(): StoredPr[] {
+    const rows = this.db
+      .prepare(`${PR_SELECT} WHERE p.auto_merge = 1 AND p.state IN ('open', 'draft') ORDER BY p.attached_at ASC`)
+      .all() as PrRow[];
+    return rows.map(rowToPr);
+  }
+
+  list(sessionId: string): StoredPr[] {
+    const rows = this.db
+      .prepare(`${PR_SELECT} WHERE p.session_id = ? ORDER BY p.attached_at ASC`)
+      .all(sessionId) as PrRow[];
+    return rows.map(rowToPr);
+  }
+
+  listWatched(): StoredPr[] {
+    const rows = this.db.prepare(`${PR_SELECT} WHERE p.watch = 1 ORDER BY p.synced_at ASC`).all() as PrRow[];
+    return rows.map(rowToPr);
+  }
+
+  get(id: string): StoredPr | null {
+    const row = this.db.prepare(`${PR_SELECT} WHERE p.id = ?`).get(id) as PrRow | undefined;
+    return row ? rowToPr(row) : null;
+  }
+
+  find(sessionId: string, ref: PrRef): StoredPr | null {
+    const row = this.db
+      .prepare(
+        `${PR_SELECT} WHERE p.session_id = ? AND p.provider = ? AND lower(p.host) = lower(?) AND lower(p.owner) = lower(?) AND lower(p.repo) = lower(?) AND p.number = ?`,
+      )
+      .get(sessionId, ref.provider, ref.host, ref.owner, ref.repo, ref.number) as PrRow | undefined;
+    return row ? rowToPr(row) : null;
+  }
+
+  /** The same PR attached to any Session. */
+  findAll(ref: PrRef): StoredPr[] {
+    const rows = this.db
+      .prepare(`${PR_SELECT} WHERE p.provider = ? AND lower(p.host) = lower(?) AND lower(p.owner) = lower(?) AND lower(p.repo) = lower(?) AND p.number = ? ORDER BY p.attached_at ASC`)
+      .all(ref.provider, ref.host, ref.owner, ref.repo, ref.number) as PrRow[];
+    return rows.map(rowToPr);
+  }
+
+  insert(pr: PrRef & { id: string; sessionId: string; url: string; attachedBy: PullRequest["attachedBy"] }): StoredPr {
+    this.db
+      .prepare(
+        `INSERT INTO pull_requests (id, session_id, provider, host, owner, repo, number, url, attached_by, attached_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(pr.id, pr.sessionId, pr.provider, pr.host, pr.owner, pr.repo, pr.number, pr.url, pr.attachedBy, new Date().toISOString());
+    return this.get(pr.id)!;
+  }
+
+  delete(id: string): boolean {
+    return this.db.prepare("DELETE FROM pull_requests WHERE id = ?").run(id).changes > 0;
+  }
+
+  updateMeta(id: string, patch: PrMetaPatch): void {
+    const sets: string[] = [];
+    const params: Array<string | number | null> = [];
+    const set = (col: string, value: string | number | null): void => {
+      sets.push(`${col} = ?`);
+      params.push(value);
+    };
+    if (patch.title !== undefined) set("title", patch.title);
+    if (patch.state !== undefined) set("state", patch.state);
+    if (patch.headRef !== undefined) set("head_ref", patch.headRef);
+    if (patch.headRepo !== undefined) set("head_repo", patch.headRepo);
+    if (patch.baseRef !== undefined) set("base_ref", patch.baseRef);
+    if (patch.author !== undefined) set("author", patch.author);
+    if (patch.reviewDecision !== undefined) set("review_decision", patch.reviewDecision);
+    if (patch.viaAccount !== undefined) set("via_account", patch.viaAccount);
+    if (patch.watch !== undefined) set("watch", patch.watch ? 1 : 0);
+    if (patch.closedAt !== undefined) set("closed_at", patch.closedAt);
+    if (patch.autoMerge !== undefined) set("auto_merge", patch.autoMerge ? 1 : 0);
+    if (patch.mergeMethod !== undefined) set("merge_method", patch.mergeMethod);
+    if (patch.mergeState !== undefined) set("merge_state", patch.mergeState === null ? null : JSON.stringify(patch.mergeState));
+    if (sets.length === 0) return;
+    params.push(id);
+    this.db.prepare(`UPDATE pull_requests SET ${sets.join(", ")} WHERE id = ?`).run(...params);
   }
 
   /** Failed checks nobody has been told about yet, across the Session's PRs. */
@@ -453,18 +496,6 @@ export class PrStore {
     return rows.map(rowToCheck);
   }
 
-  markChecksNotified(ids: string[]): void {
-    if (ids.length === 0) return;
-    this.db.prepare(`UPDATE pr_checks SET notified = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
-  }
-
-  setAddress(ids: string[], state: PrAddressState): void {
-    if (ids.length === 0) return;
-    this.db
-      .prepare(`UPDATE pr_items SET address = ?, seen = 1 WHERE id IN (${ids.map(() => "?").join(",")})`)
-      .run(state, ...ids);
-  }
-
   /** Items nobody has been told about yet (by other people), across the Session's PRs. */
   unnotified(sessionId: string): PrItem[] {
     const rows = this.db
@@ -476,10 +507,13 @@ export class PrStore {
     return rows.map(rowToItem);
   }
 
-  markNotified(ids: string[]): void {
-    if (ids.length === 0) return;
-    this.db.prepare(`UPDATE pr_items SET notified = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
+  /** Records the outcome of a poll: cursors, time, error (or none). */
+  setSync(id: string, s: { etags: PrEtags; error: PullRequest["syncError"]; detail: string | null; retryAt?: string | null }): void {
+    this.db
+      .prepare("UPDATE pull_requests SET etags = ?, synced_at = ?, sync_error = ?, sync_error_detail = ?, retry_at = ? WHERE id = ?")
+      .run(JSON.stringify(s.etags), new Date().toISOString(), s.error, s.detail, s.retryAt ?? null, id);
   }
+
 }
 
 export function itemId(prId: string, kind: PrItem["kind"], githubId: number): string {

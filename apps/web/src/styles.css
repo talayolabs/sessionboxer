@@ -1204,3 +1204,29 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .git-connect .muted { margin: 0; line-height: 1.5; }
 .git-logos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .git-logos .provider-logo-state { text-align: center; line-height: 1.35; }
+
+/* Followed pull requests (ADR-0064): the top-level Pull requests page. */
+.prs-page { display: flex; flex-direction: column; gap: 12px; }
+.prs-page .pr-list { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.prs-page .pr-row:last-child { border-bottom: 0; }
+.prs-follows { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.prs-follow { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: var(--fs-sm); max-width: 100%; min-width: 0; }
+.prs-follow.disabled { opacity: 0.6; }
+.prs-follow.error { border-color: var(--error); }
+.prs-follow .prs-follow-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prs-follow .icon-button { padding: 0 4px; }
+.prs-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.prs-filters input[type="search"] { flex: 1 1 160px; min-width: 0; max-width: 320px; padding: 4px 8px; }
+.prs-page .pr-head { border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.prs-page .pr-section { border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.pr-labels { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.pr-label { font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.pr-events { list-style: none; margin: 0; padding: 0; }
+.pr-event { display: flex; gap: 10px; align-items: baseline; padding: 4px 12px; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.pr-event:last-child { border-bottom: 0; }
+.pr-event time { flex: none; color: var(--muted); white-space: nowrap; }
+.pr-event code { font-size: 11px; }
+.pr-run-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.prs-page .pr-bulk { position: sticky; bottom: 0; }
+.follow-form { display: flex; flex-direction: column; gap: 10px; }
+.follow-form .segmented { align-self: flex-start; }

@@ -555,8 +555,7 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 
 .instructions-text { white-space: pre-wrap; word-break: break-word; font-size: var(--fs-md); max-height: 40vh; overflow: auto; margin: 0; }
 
-/* Session settings: one form for New Session, the Fork dialog and the header's Session settings dialog */
-.session-settings-dialog { max-height: 85vh; max-width: 720px; }
+/* Session settings: one form for New Session, the Fork dialog and the header's Session settings dialog (a split view like Advanced) */
 .ss-form { display: flex; flex-direction: column; gap: 10px; }
 .ss-section { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); }
 .ss-section .mcp-switches { max-height: 30vh; background: var(--panel); }

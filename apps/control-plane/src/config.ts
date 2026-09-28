@@ -556,13 +556,13 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
 export function providerSetupHint(provider: Provider): string {
   switch (provider) {
     case "claude-code":
-      return "No Claude Code token configured. Run `claude setup-token` on your machine and paste it in Global settings → Provider logins.";
+      return "No Claude Code token configured. Run `claude setup-token` on your machine and paste it in Global settings → Providers.";
     case "devin":
-      return "No Devin token configured. Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml in Global settings → Provider logins.";
+      return "No Devin token configured. Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml in Global settings → Providers.";
     case "codex":
-      return "No Codex login configured. Run `codex login` (ChatGPT account) and paste ~/.codex/auth.json in Global settings → Provider logins.";
+      return "No Codex login configured. Run `codex login` (ChatGPT account) and paste ~/.codex/auth.json in Global settings → Providers.";
     case "cursor":
-      return "No Cursor login configured. Paste a Cursor API key, or run `agent login` and paste Cursor's auth.json, in Global settings → Provider logins.";
+      return "No Cursor login configured. Paste a Cursor API key, or run `agent login` and paste Cursor's auth.json, in Global settings → Providers.";
   }
 }
 

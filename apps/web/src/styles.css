@@ -1054,6 +1054,7 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 /* Advanced settings: section titles on the left, the section on the right. */
 .advanced-dialog { max-width: 860px; height: 82vh; max-height: 82vh; gap: 12px; }
 .advanced-sub { font-size: var(--fs-md); font-weight: normal; }
+.settings-view > .advanced-title { display: flex; align-items: baseline; gap: 10px; margin: 0; }
 .split-body .ss-section { border: 0; padding: 0; background: transparent; }
 .split-body .ss-section h3 { margin: 0 0 4px; }
 
@@ -1062,6 +1063,17 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .settings-view .split-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
 .settings-view .split-body > fieldset.choice { border: 0; padding: 0; gap: 10px; }
 .settings-view .split-body > fieldset.choice > legend { padding: 0; margin-bottom: 6px; }
+/* A component nested in a Global settings section (Git accounts, MCP servers, theme, devices): same rhythm as the section's own fields */
+.ss-block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ss-block > h3 { margin: 0 0 4px; }
+.ss-section .ss-sub:first-child, .ss-block > .ss-sub:first-child { margin-top: 0; }
+.ss-section h3 .caption, .ss-sub .caption { gap: 8px; }
+/* Rarely-needed blocks fold behind a summary (own GitHub OAuth App) */
+.ss-details { display: flex; flex-direction: column; gap: 10px; }
+.ss-details summary { cursor: pointer; color: var(--muted); font-size: var(--fs-md); }
+.ss-details summary .caption { gap: 8px; }
+.ss-details[open] summary { color: var(--text); }
+.ss-details summary .help { pointer-events: auto; }
 .settings-view > .actions.settings-actions { position: static; margin-top: 0; padding: 0; background: transparent; align-items: center; gap: 14px; }
 .settings-actions .muted { font-size: var(--fs-sm); line-height: 1.4; }
 

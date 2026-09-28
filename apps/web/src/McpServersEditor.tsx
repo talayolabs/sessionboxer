@@ -64,14 +64,7 @@ export function McpServersEditor({
   };
 
   return (
-    <fieldset className="choice mcp-registry">
-      <legend>MCP servers</legend>
-      <p className="muted">
-        Available to every Session; each Session picks which ones are on (new Sessions start with the ones marked default) and can
-        switch them at any time. The built-in <code>desktop</code> server is always on. Servers on this machine are reachable as{" "}
-        <code>host.docker.internal</code> (<code>localhost</code> URLs are rewritten). <code>npx</code>, <code>uvx</code>,{" "}
-        <code>python3</code> and <code>node</code> are available in the Sandbox.
-      </p>
+    <div className="ss-block mcp-registry">
       {servers.length === 0 && <p className="muted empty-inline">No MCP servers yet.</p>}
       <ul className="mcp-list">
         {servers.map((s) =>
@@ -137,9 +130,7 @@ export function McpServersEditor({
         <button type="button" onClick={() => setImporting(true)} title='Paste a {"mcpServers": {...}} block (Claude Desktop, Cursor, VS Code style)'>
           Import JSON…
         </button>
-        <span className="muted mcp-hint">
-          Default column = on for new Sessions. Saved with the form below. GitHub and Bitbucket entries come from <em>Git accounts</em> above.
-        </span>
+        <span className="muted mcp-hint">Default column = on for new Sessions. Saved with the form below.</span>
       </div>
       {connectorError && (
         <div className="banner banner-error" role="alert">
@@ -171,7 +162,7 @@ export function McpServersEditor({
           }}
         />
       )}
-    </fieldset>
+    </div>
   );
 }
 

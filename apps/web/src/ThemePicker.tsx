@@ -1,5 +1,6 @@
 import { THEMES, THEME_IDS, type Theme, type ThemeId, type ThemePreference } from "@sessionboxer/protocol";
 import { readThemePreference, setThemePreference, useTheme } from "./theme";
+import { Caption } from "./ui";
 
 /** A theme's look in four strokes: background, panel, accent and text. */
 function Swatch({ theme }: { theme: Theme }) {
@@ -36,12 +37,19 @@ export function ThemeFieldset() {
     setThemePreference({ ...pref, ...patch });
   };
   return (
-    <fieldset className="choice">
-      <legend>Color theme</legend>
-      <p className="muted">
-        A preference of this browser, applied at once. The VS Code in the Code pane takes the same colors: a Session&apos;s editor
-        follows the theme of whoever has its Code pane open.
-      </p>
+    <div className="ss-block">
+      <h4 className="ss-sub">
+        <Caption
+          help={
+            <p>
+              A preference of this browser, applied at once. The VS Code in the Code pane takes the same colors: a Session&apos;s editor follows the
+              theme of whoever has its Code pane open.
+            </p>
+          }
+        >
+          Color theme
+        </Caption>
+      </h4>
       <div className="theme-grid" role="radiogroup" aria-label="Color theme">
         {THEME_IDS.map((id) => {
           const t = THEMES[id];
@@ -90,6 +98,6 @@ export function ThemeFieldset() {
           </label>
         </div>
       )}
-    </fieldset>
+    </div>
   );
 }

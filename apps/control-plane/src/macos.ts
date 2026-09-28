@@ -199,12 +199,12 @@ export class MacosVms implements GuestVms {
     if (status.state === "ready") {
       return status.toolchain
         ? { available: true, reason: null }
-        : { available: false, reason: "The macOS base disk has no agent toolchain yet; reprovision it (Global settings → macOS)." };
+        : { available: false, reason: "The macOS base disk has no agent toolchain yet; reprovision it (Global settings → Environment → macOS VMs)." };
     }
     if (status.reprovisioning) return { available: false, reason: "The macOS base disk is being reprovisioned." };
     if (status.state === "installing" || status.state === "finishing") return { available: false, reason: "The macOS base disk is still installing." };
-    if (status.state === "setup") return { available: false, reason: "The macOS base disk is waiting for you to finish setting it up (Global settings → macOS)." };
-    return { available: false, reason: "Install the macOS base disk first (Global settings → macOS)." };
+    if (status.state === "setup") return { available: false, reason: "The macOS base disk is waiting for you to finish setting it up (Global settings → Environment → macOS VMs)." };
+    return { available: false, reason: "Install the macOS base disk first (Global settings → Environment → macOS VMs)." };
   }
 
   status(): MacosBaseStatus {
@@ -617,7 +617,7 @@ export class MacosVms implements GuestVms {
    * file is the base disk, mounted read-only at the same path in every VM. Returns the id.
    */
   async create(sessionId: string): Promise<string> {
-    if (!this.base?.installedAt) throw new HttpError(409, "The macOS base disk is not installed (Global settings → macOS).");
+    if (!this.base?.installedAt) throw new HttpError(409, "The macOS base disk is not installed (Global settings → Environment → macOS VMs).");
     const { ramGb, cpus } = this.settings().macos;
     const { version, diskGb } = this.base;
     const volume = macosVolumeName(sessionId);

@@ -57,16 +57,7 @@ export function GitAccounts({
   };
 
   return (
-    <fieldset className="choice" id="settings-git">
-      <legend>Git accounts</legend>
-      <p className="muted">
-        Connect the account Sessions use to clone, push and open pull requests.
-        GitHub offers three logins: GitHub CLI (everything your account sees),
-        the Sessionboxer OAuth App (you grant organizations one by one on
-        GitHub's page) and a personal access token (the one that can be limited
-        to a single organization); the dialog explains each. A GitHub account
-        also adds GitHub's MCP server to the list below.
-      </p>
+    <div className="ss-block git-accounts">
       {accounts.length === 0 && (
         <p className="muted empty-inline">No Git account connected yet.</p>
       )}
@@ -145,7 +136,7 @@ export function GitAccounts({
           onServer={stored}
         />
       )}
-    </fieldset>
+    </div>
   );
 }
 
@@ -202,7 +193,7 @@ export function GitConnectDialog({
       <p className="muted">
         The account Sessions clone private repositories with, push as, and
         open pull requests from. Public repositories need none. Optional now:
-        Global settings → Git accounts has this too.
+        Global settings → MCP &amp; connectors has this too.
       </p>
       <div className="provider-logos git-logos">
         {CONNECTOR_KINDS.map((k) => (

@@ -250,7 +250,7 @@ function secretUpdate(provider: Provider, value: string) {
  * "Connect a Provider": the four logos, then for the chosen one "Sign in with …" (the browser
  * login, ADR-0058) and, folded away, the three commands to run on your own machine (for your OS,
  * others one click away) with a field to paste the result into. Saves right away; the same
- * secrets as Global settings → Provider logins.
+ * secrets as Global settings → Providers.
  */
 export function ProviderConnectDialog({
   settings,

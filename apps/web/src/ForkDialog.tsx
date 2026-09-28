@@ -175,7 +175,7 @@ export function ForkDialog({
       </label>
       {!providerTokenSet(settings, provider) && (
         <p className="field-hint warn">
-          No {forkLabel} {providerCredentialNoun(provider)} configured: add it in <a href="#/settings/providers">Global settings → Provider logins</a> first, or
+          No {forkLabel} {providerCredentialNoun(provider)} configured: add it in <a href="#/settings/providers">Global settings → Providers</a> first, or
           pick an Agent you are logged in to.
         </p>
       )}

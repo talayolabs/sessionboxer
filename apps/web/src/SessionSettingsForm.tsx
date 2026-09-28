@@ -165,8 +165,8 @@ export function sessionSettingsSections(provider: Provider): Array<{ id: Session
   ];
 }
 
-const DESKTOP_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/desktop/";
-const SESSIONBOXER_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/the-agent-and-sessionboxer/";
+export const DESKTOP_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/desktop/";
+export const SESSIONBOXER_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/the-agent-and-sessionboxer/";
 
 type OnOff = "default" | "on" | "off";
 const onOff = (v: boolean | null): OnOff => (v === null ? "default" : v ? "on" : "off");
@@ -304,7 +304,7 @@ export function SessionSettingsForm({
                   </p>
                   {vm && (
                     <p>
-                      The {guest} VM has its own RAM and vCPUs, set in Global settings → {guest} VMs.
+                      The {guest} VM has its own RAM and vCPUs, set in Global settings → Environment → {guest} VMs.
                     </p>
                   )}
                 </>
@@ -446,7 +446,7 @@ export function SessionSettingsForm({
               help={
                 <p>
                   Instructions the Agent gets on top of the Sandbox briefing, fixed once the Session exists. {deliveryNote(provider)} The default for
-                  new Sessions is in <a href="#/settings/models">Global settings → Models and instructions</a>.
+                  new Sessions is in <a href="#/settings/agent">Global settings → Agent</a>.
                 </p>
               }
             >
@@ -552,7 +552,7 @@ export function SessionSettingsForm({
               help={
                 <p>
                   A connector logs the Sandbox into GitHub or Bitbucket (git push, <code>gh</code>, pull-request watching) and, for GitHub, gives the
-                  Agent that MCP server too. Log in under <a href="#/settings/mcp">Global settings → MCP servers &amp; connectors</a>.
+                  Agent that MCP server too. Log in under <a href="#/settings/git">Global settings → MCP &amp; connectors</a>.
                   {live ? ` ${applyNote(status, "restart")}` : ""}
                 </p>
               }
@@ -562,7 +562,7 @@ export function SessionSettingsForm({
           </h4>
           {gitServers.length === 0 ? (
             <p className="empty ss-empty">
-              No git connector yet: log in with GitHub or Bitbucket in <a href="#/settings/mcp">Global settings → MCP servers &amp; connectors</a>.
+              No git connector yet: log in with GitHub or Bitbucket in <a href="#/settings/git">Global settings → MCP &amp; connectors</a>.
             </p>
           ) : (
             <ul className="mcp-switches" aria-busy={disabled}>
@@ -612,7 +612,7 @@ export function SessionSettingsForm({
             <Caption
               help={
                 <p>
-                  MCP servers registered once in <a href="#/settings/mcp">Global settings → MCP servers</a>, on or off for this Session. stdio servers
+                  MCP servers registered once in <a href="#/settings/mcp">Global settings → MCP &amp; connectors</a>, on or off for this Session. stdio servers
                   run {vm ? `inside the ${guest} VM` : "inside the Sandbox"}; <code>localhost</code> in an http/sse URL means this machine.
                   {live ? ` ${applyNote(status, "restart")}` : ""}
                 </p>
@@ -623,7 +623,7 @@ export function SessionSettingsForm({
           </h4>
           {customServers.length === 0 ? (
             <p className="empty ss-empty">
-              No MCP servers registered: add them in <a href="#/settings/mcp">Global settings → MCP servers</a>.
+              No MCP servers registered: add them in <a href="#/settings/mcp">Global settings → MCP &amp; connectors</a>.
             </p>
           ) : (
             <ul className="mcp-switches" aria-busy={disabled}>
@@ -698,12 +698,12 @@ function environmentNote(settings: PublicSettings, environment: Environment): Re
         {environment === "qemu-windows" ? (
           <>
             {" "}
-            See <a href="#/settings/windows">Settings › Windows</a>.
+            See <a href="#/settings/windows">Global settings → Environment → Windows VMs</a>.
           </>
         ) : environment === "qemu-macos" ? (
           <>
             {" "}
-            See <a href="#/settings/macos">Settings › macOS</a>.
+            See <a href="#/settings/macos">Global settings → Environment → macOS VMs</a>.
           </>
         ) : null}
       </p>

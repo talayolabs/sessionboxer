@@ -118,7 +118,7 @@ export class WindowsVms implements GuestVms {
     const status = this.status();
     if (status.state === "ready") return { available: true, reason: null };
     if (status.state === "installing") return { available: false, reason: "The Windows base disk is still installing." };
-    return { available: false, reason: "Install the Windows base disk first (Global settings → Windows)." };
+    return { available: false, reason: "Install the Windows base disk first (Global settings → Environment → Windows VMs)." };
   }
 
   status(): WindowsBaseStatus {
@@ -281,7 +281,7 @@ export class WindowsVms implements GuestVms {
    * writes. Returns the container id.
    */
   async create(sessionId: string): Promise<string> {
-    if (!this.base) throw new HttpError(409, "The Windows base disk is not installed (Global settings → Windows).");
+    if (!this.base) throw new HttpError(409, "The Windows base disk is not installed (Global settings → Environment → Windows VMs).");
     const { ramGb, cpus } = this.settings().windows;
     const volume = windowsVolumeName(sessionId);
     await this.host.removeContainer(windowsVmName(sessionId));

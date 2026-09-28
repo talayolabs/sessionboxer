@@ -19,7 +19,7 @@ import {
 } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { disablePush, enablePush, pushState, pushSupport } from "./push";
-import { Menu, MenuItem } from "./ui";
+import { Caption, Help, Menu, MenuItem } from "./ui";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -103,7 +103,7 @@ function TunnelState({ status, enabled, copied, onCopy }: { status: TunnelStatus
   );
 }
 
-/** A transport card: switch in the heading, its fields below, then the state line and a description. */
+/** A transport card: switch in the heading (what it is behind its ?), its fields below, then the state line. */
 function Transport({
   title,
   enabled,
@@ -111,7 +111,7 @@ function Transport({
   status,
   onToggle,
   children,
-  description,
+  help,
 }: {
   title: string;
   enabled: boolean;
@@ -119,19 +119,20 @@ function Transport({
   status: TunnelStatus;
   onToggle: (on: boolean) => void;
   children?: ReactNode;
-  description: ReactNode;
+  help: ReactNode;
 }) {
   return (
     <div className="tunnel">
       <label className="check switch">
         <input type="checkbox" checked={enabled} disabled={busy} onChange={(e) => onToggle(e.target.checked)} />
         <span className="slider" aria-hidden="true" />
-        <strong>{title}</strong>
+        <Caption help={help}>
+          <strong>{title}</strong>
+        </Caption>
         {enabled && status.state === "starting" && <span className="muted"> — starting…</span>}
         {status.version && enabled && <span className="muted small-text">{status.version}</span>}
       </label>
       {children}
-      {description}
     </div>
   );
 }
@@ -344,14 +345,21 @@ export function Devices({
   const sshDirectHttp = ssh.publicUrl.trim() === "" && ssh.host.trim() !== "" && ssh.remoteBind === "all";
 
   return (
-    <fieldset className="choice devices">
-      <legend>Devices and remote access</legend>
-      <p className="muted">
-        Reached at <code>{remote.publicUrl}</code>
-        {remote.tls ? " (HTTPS served by the Control Plane)" : ""}
-        {remote.trustProxy ? ", behind a trusted proxy" : ""}. Every browser logs in once with the access token or a pairing code and keeps a
-        cookie until it is revoked here. Set <code>SESSIONBOXER_PUBLIC_URL</code> when this address is not the one you use from outside.
-      </p>
+    <div className="ss-block devices">
+      <h3>
+        <Caption
+          help={
+            <p>
+              Reached at <code>{remote.publicUrl}</code>
+              {remote.tls ? " (HTTPS served by the Control Plane)" : ""}
+              {remote.trustProxy ? ", behind a trusted proxy" : ""}. Every browser logs in once with the access token or a pairing code and keeps a
+              cookie until it is revoked here. Set <code>SESSIONBOXER_PUBLIC_URL</code> when this address is not the one you use from outside.
+            </p>
+          }
+        >
+          Devices and remote access
+        </Caption>
+      </h3>
       <table className="prs-table devices-table">
         <thead>
           <tr>
@@ -418,9 +426,16 @@ export function Devices({
             )}
           </div>
           <p className="muted small-text">
-            Pick how the phone reaches this machine, then scan the code (or open the link) and it is logged in as its own device — the code works
-            once and for {pairing && left > 0 ? `${left} more second${left === 1 ? "" : "s"}` : "5 minutes"}; the access token never leaves this
-            browser.
+            <Caption
+              help={
+                <p>
+                  Pick how the phone reaches this machine, then scan the code (or open the link) and it is logged in as its own device. The code
+                  works once and for 5 minutes; the access token never leaves this browser.
+                </p>
+              }
+            >
+              {pairing && left > 0 ? `The code works once, for ${left} more second${left === 1 ? "" : "s"}.` : "Scan the code or open the link on the phone."}
+            </Caption>
             {pairing && left > 0 && (
               <>
                 {" "}
@@ -460,8 +475,8 @@ export function Devices({
         busy={switching === "cloudflare"}
         status={statuses.cloudflare}
         onToggle={(on) => void toggle("cloudflare", on)}
-        description={
-          <p className="muted small-text">
+        help={
+          <p>
             A public <code>https://….trycloudflare.com</code> address made by running <code>cloudflared</code> here (downloaded on first use,
             checksum verified) — nothing to install on the phone, no account, no port forwarding. Traffic passes through Cloudflare and the
             address changes every time the tunnel starts; the login is still required.
@@ -477,8 +492,8 @@ export function Devices({
         busy={switching === "sessionboxer" || !sbNameOk}
         status={statuses.sessionboxer}
         onToggle={(on) => void toggle("sessionboxer", on)}
-        description={
-          <p className="muted small-text">
+        help={
+          <p>
             A stable <code>https://&lt;name&gt;.{sbDomain ?? tunnels.sessionboxer.server.replace(/^https?:\/\//, "")}</code> address: <code>frpc</code> here
             (downloaded on first use, checksum verified) keeps an outbound connection to the tunnel server, which takes the name for this machine
             at first login and keeps it bound to a secret generated here{tunnels.sessionboxer.secretSet ? "" : " (missing — restart the Control Plane)"}.
@@ -551,8 +566,8 @@ export function Devices({
         busy={switching === "ssh"}
         status={statuses.ssh}
         onToggle={(on) => void toggle("ssh", on)}
-        description={
-          <p className="muted small-text">
+        help={
+          <p>
             <code>ssh -R</code> from here to a server of yours (the system <code>ssh</code>, key authentication, host key pinned on first use):
             sshd there listens on the remote port and hands every connection back to this machine. Binding all interfaces needs{" "}
             <code>GatewayPorts yes</code> in its <code>sshd_config</code>; with a reverse proxy on the server (Caddy, nginx) bind localhost and
@@ -626,7 +641,16 @@ export function Devices({
             disabled={push === null || pushBusy || support !== "ok" || (push.permission === "denied" && !push.subscribed)}
             onChange={(e) => setNotifications(e.target.checked)}
           />
-          Notify this device when a turn ends or a pull request gets feedback
+          <Caption
+            help={
+              <p>
+                Web Push through the browser's push service: the phone hears about it while the app is closed or the screen is off. A device
+                that is watching the page gets nothing extra. Per browser; revoking a device drops its subscription.
+              </p>
+            }
+          >
+            Notify this device when a turn ends or a pull request gets feedback
+          </Caption>
           {pushBusy && <span className="muted"> — working…</span>}
         </label>
         {push?.subscribed && (
@@ -637,15 +661,15 @@ export function Devices({
             {pushNote && <span className="muted small-text">{pushNote}</span>}
           </div>
         )}
-        <p className="muted small-text">
-          {support === "insecure"
-            ? "Needs HTTPS: open Sessionboxer through a tunnel (or a TLS address) to turn this on."
-            : support === "unsupported"
-              ? "This browser has no Web Push. On iPhone, add Sessionboxer to the Home Screen (Share → Add to Home Screen) and open it from there."
-              : push?.permission === "denied" && !push.subscribed
-                ? "Notifications are blocked for this site in the browser's settings."
-                : "Web Push through the browser's push service: the phone hears about it while the app is closed or the screen is off. A device that is watching the page gets nothing extra. Per browser; revoking a device drops its subscription."}
-        </p>
+        {(support !== "ok" || (push?.permission === "denied" && !push.subscribed)) && (
+          <p className="muted small-text">
+            {support === "insecure"
+              ? "Needs HTTPS: open Sessionboxer through a tunnel (or a TLS address) to turn this on."
+              : support === "unsupported"
+                ? "This browser has no Web Push. On iPhone, add Sessionboxer to the Home Screen (Share → Add to Home Screen) and open it from there."
+                : "Notifications are blocked for this site in the browser's settings."}
+          </p>
+        )}
       </div>
       <div className="actions-left">
         {token === null ? (
@@ -666,14 +690,16 @@ export function Devices({
         <button type="button" className="danger" onClick={rotate} disabled={remote.accessTokenSource === "env"}>
           Rotate token
         </button>
+        <Help label="About the access token">
+          <p>
+            The token logs a browser in on the login screen and authenticates the CLI (<code>SESSIONBOXER_TOKEN</code>, or the config file on
+            the machine that runs the Control Plane).{" "}
+            {remote.accessTokenSource === "env"
+              ? "It comes from SESSIONBOXER_ACCESS_TOKEN in the Control Plane's environment; change it there."
+              : "Rotating it logs every other device out."}
+          </p>
+        </Help>
       </div>
-      <p className="muted small-text">
-        The token logs a browser in on the login screen and authenticates the CLI (<code>SESSIONBOXER_TOKEN</code>, or the config file on the
-        machine that runs the Control Plane).{" "}
-        {remote.accessTokenSource === "env"
-          ? "It comes from SESSIONBOXER_ACCESS_TOKEN in the Control Plane's environment; change it there."
-          : "Rotating it logs every other device out."}
-      </p>
-    </fieldset>
+    </div>
   );
 }

@@ -1,13 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.4.1 — 2026-09-25
 
-- New defaults: *Verify each turn end to end* off, automatic snapshots off, *Agent tools* on **All Sessions**. Only a missing key in `config.json` takes them; a saved value is kept.
-- Session settings opens in the same split view as Global and Advanced settings: section titles on the left, the one section on the right.
-- Attach files (📎, drop, paste) and dictate (🎤) in the top-right corner of the New session prompt box: the files wait in `~/.sessionboxer/staging/` and go into the box with the first prompt (which may be the files alone).
-- Advanced settings and Session settings share one layout: Environment (Linux/Windows/macOS, CPUs, memory, snapshots), Agent (fast mode, effort, system prompt), MCP & connectors (the built-in `desktop` and `sessionboxer` servers shown always on with links to their guides, the sessionboxer policy, Git connectors and author, custom servers), Auto QA, Debug (Inspect LLM, Claude Code only). Explanations moved from paragraphs under the fields into `?` popovers. The Verification pane is now called Auto QA.
-- Global settings grouped like the Session ones: Providers (logins, Claude API), Environment (limits, Docker, snapshots, Windows and macOS VMs, TLS), Agent (Claude model aliases, system prompt), MCP & connectors (built-in `desktop` and `sessionboxer` with the policy under them, Git accounts and author, GitHub OAuth App, custom servers), Auto QA, Interface (theme, dictation), Devices and remote access. Explanations sit behind `?` popovers; old links such as `#/settings/agent-tools` open the right group.
-- `docs/MCP.md`, published as the guide's [MCP tools reference](https://sessionboxer.talayolabs.com/guide/mcp-tools/): every tool of the built-in `desktop` and `sessionboxer` MCP servers with its parameters, limits and what it returns, plus how they run in Linux, Windows and macOS sessions. The "more info" links of the two always-on switches point there.
+Install: `npx sessionboxer@1.4.1 serve`, `brew install talayolabs/tap/sessionboxer`, the installers on the
+release, `docker compose up`, or `curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox
+image did not change.
+
+- New defaults: verification off, automatic snapshots off, Agent tools on All Sessions; saved values are kept. ([716fe44](https://github.com/talayolabs/sessionboxer/commit/716fe44))
+- Advanced, Session and Global settings share one layout — Environment, Agent, MCP & connectors, Auto QA, Debug — with the explanations behind `?` popovers; the Verification pane is now Auto QA. ([8955281](https://github.com/talayolabs/sessionboxer/commit/8955281))
+- Attach files and dictate on the New session screen, sent with the first prompt. ([ab389d7](https://github.com/talayolabs/sessionboxer/commit/ab389d7))
+- [MCP tools reference](https://sessionboxer.talayolabs.com/guide/mcp-tools/): every tool of the built-in `desktop` and `sessionboxer` servers. ([af8f1c6](https://github.com/talayolabs/sessionboxer/commit/af8f1c6))
 
 ## 1.4.0 — 2026-09-27
 

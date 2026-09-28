@@ -1,6 +1,6 @@
 {
   "name": "@sessionboxer/sessionboxer-mcp",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "type": "module",
   "description": "stdio MCP server that lets the Agent in a Sandbox know and act on the Sessionboxer Session it runs in, through the Sandbox Daemon.",

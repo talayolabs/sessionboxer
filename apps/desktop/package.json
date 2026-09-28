@@ -1,6 +1,6 @@
 {
   "name": "@sessionboxer/desktop",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "productName": "Sessionboxer",
   "private": true,
   "type": "module",

@@ -2154,6 +2154,10 @@ function NewSession({
               placeholder="e.g. Read the README, run the tests and fix the one that fails; open a PR when they pass. (Optional: an empty Session waits for you in the chat.)"
               disabled={busy}
             />
+            <div className="toolbar start-attach">
+              <AttachButton disabled={busy} onFiles={attachments.add} />
+              <MicButton control={dictation} disabled={busy} />
+            </div>
             {dragging && <div className="drop-hint">Drop to attach to the first message</div>}
           </div>
           {(attachments.items.length > 0 || dictation.dictation.kind !== "idle") && (
@@ -2163,10 +2167,6 @@ function NewSession({
             </div>
           )}
           <div className="start-tools">
-            <div className="toolbar">
-              <AttachButton disabled={busy} onFiles={attachments.add} />
-              <MicButton control={dictation} disabled={busy} />
-            </div>
             <Select<Environment>
               value={draft.environment}
               onChange={(environment) => {

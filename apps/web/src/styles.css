@@ -1012,12 +1012,12 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .start-prompt { border: 0; background: transparent; border-radius: 12px 12px 0 0; padding: 14px 16px; font-size: var(--fs-lg); line-height: 1.45; min-height: 96px; resize: none; }
 .start-prompt:focus { outline: none; }
 .start-editor { position: relative; display: flex; flex-direction: column; }
-.start-editor .start-prompt { width: 100%; }
+.start-editor .start-prompt { width: 100%; padding-right: 76px; }
+.start-editor .start-attach { position: absolute; top: 8px; right: 8px; gap: 2px; flex-wrap: nowrap; }
 .start-box.dragging { border-color: var(--accent); }
 .start-editor .drop-hint { inset: 6px; border-radius: 10px; }
 .start-extras { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 10px; }
 .start-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid var(--border); }
-.start-tools .toolbar { gap: 2px; margin-right: 2px; }
 .start-tools button.small { padding: 5px 10px; font-size: var(--fs-md); display: inline-flex; align-items: center; gap: 6px; }
 .start-tools button.small.active { border-color: var(--accent); }
 .start-tools button.primary { padding: 6px 16px; }

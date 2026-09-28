@@ -67,7 +67,7 @@ export function runHeadline(run: E2eRun, now: number): string {
 }
 
 /**
- * Side pane "Verification": the current or last end-to-end verification run of the Session, its
+ * Side pane "Auto QA": the current or last end-to-end verification run of the Session, its
  * cases with live timers, the fix cycles, the screenshots and the video; earlier runs folded below.
  */
 export function E2ePane({

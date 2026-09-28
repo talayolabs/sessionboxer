@@ -567,6 +567,15 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .ss-empty { color: var(--muted); font-size: var(--fs-md); margin: 0; padding: 0; text-align: left; }
 .ss-fork { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 4px; border-top: 1px solid var(--border); }
 .ss-fork .ss-note { flex: 1; min-width: 200px; }
+/* A group caption inside a section (Limits, Snapshots, System prompt, Git, MCP servers) */
+.ss-sub { margin: 6px 0 -4px; font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.ss-section .mcp-switches.builtin { max-height: none; overflow: visible; }
+.ss-section .mcp-switches.builtin .switch { flex-wrap: wrap; }
+.mcp-switches.builtin .slider { opacity: 0.55; }
+.ss-always { flex: none; margin-left: auto; font-size: var(--fs-sm); white-space: nowrap; }
+.ss-always a { color: var(--accent); }
+.ss-indent { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 6px 42px; }
+.ss-fixed .help { margin-left: 6px; }
 .fork-settings summary { cursor: pointer; color: var(--muted); }
 .fork-settings[open] summary { margin-bottom: 10px; }
 
@@ -590,7 +599,7 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .prs-actions .button:hover { border-color: var(--accent); }
 .session-provider .count { cursor: pointer; margin-left: 0; }
 
-/* Verification pane (ADR-0044). */
+/* Auto QA pane (ADR-0044). */
 .e2e-toolbar { flex-wrap: wrap; gap: 10px; }
 .e2e-switch { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
 .e2e-switch input { margin: 0; }

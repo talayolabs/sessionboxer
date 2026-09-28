@@ -2700,7 +2700,7 @@ export class SessionManager {
     }
   }
 
-  /** "Run now" in the Verification pane: verifies the work so far against the last user turn of the current branch. */
+  /** "Run now" in the Auto QA pane: verifies the work so far against the last user turn of the current branch. */
   async e2eRunNow(id: string): Promise<E2eRun> {
     this.get(id);
     const visible = this.db.listEvents(id);

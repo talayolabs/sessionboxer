@@ -5,6 +5,7 @@
 export { cx } from "./cx";
 export { Modal } from "./Dialog";
 export { ContextMenu, ContextMenuItem, Menu, MenuItem } from "./Menu";
+export { Caption, Help } from "./Help";
 export { Popover } from "./Popover";
 export { Select, type SelectOption } from "./Select";
 export { Tab, TabList, TabPanel, Tabs } from "./Tabs";

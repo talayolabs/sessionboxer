@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
+  CONNECTORS,
   DOCKER_MODE_LABELS,
   ENVIRONMENTS,
   ENVIRONMENT_LABELS,
@@ -21,7 +22,7 @@ import { summarize } from "./mcp";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { EnvironmentIcon } from "./EnvironmentIcon";
-import { Select } from "./ui";
+import { Caption, Help, Select } from "./ui";
 import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 
 /** How `instructions` reach the Agent of a Provider, in one sentence for the UI. */
@@ -151,26 +152,32 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
 
 export type SessionSettingsMode = "create" | "fork" | "live";
 
-export type SessionSettingsSection = "agent" | "instructions" | "mcp" | "inspect" | "snapshots" | "verification" | "tools" | "sandbox";
+export type SessionSettingsSection = "environment" | "agent" | "mcp" | "qa" | "debug";
 
-/** The sections of the form in display order, for a split view's navigation. */
+/** The sections of the form in display order, for a split view's navigation; Debug (Inspect LLM) is Claude Code only. */
 export function sessionSettingsSections(provider: Provider): Array<{ id: SessionSettingsSection; label: string }> {
   return [
+    { id: "environment", label: "Environment" },
     { id: "agent", label: "Agent" },
-    { id: "instructions", label: "Instructions" },
-    { id: "mcp", label: "MCP servers & connectors" },
-    ...(provider === "claude-code" ? [{ id: "inspect" as const, label: "Inspect LLM" }] : []),
-    { id: "snapshots", label: "Snapshots" },
-    { id: "verification", label: "Verification" },
-    { id: "tools", label: "Agent tools" },
-    { id: "sandbox", label: "Sandbox" },
+    { id: "mcp", label: "MCP & connectors" },
+    { id: "qa", label: "Auto QA" },
+    ...(provider === "claude-code" ? [{ id: "debug" as const, label: "Debug" }] : []),
   ];
 }
+
+const DESKTOP_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/desktop/";
+const SESSIONBOXER_MCP_DOCS = "https://sessionboxer.talayolabs.com/guide/the-agent-and-sessionboxer/";
+
+type OnOff = "default" | "on" | "off";
+const onOff = (v: boolean | null): OnOff => (v === null ? "default" : v ? "on" : "off");
+const fromOnOff = (v: OnOff): boolean | null => (v === "default" ? null : v === "on");
 
 /**
  * The one place a Session is configured: the New Session form (`create`, prefilled from the global
  * Settings), the Fork dialog (`fork`, prefilled from the origin) and the Session settings dialog
  * (`live`, where each control saves as it changes and creation-only values are read-only).
+ * Sections — Environment, Agent, MCP & connectors, Auto QA, Debug — each a group of captions with the
+ * explanations behind a "?".
  */
 export function SessionSettingsForm({
   mode,
@@ -211,250 +218,52 @@ export function SessionSettingsForm({
   const providerLabel = PROVIDER_LABELS[provider];
   const dockerMode = session?.settings.sandbox.dockerMode ?? (value.docker ? settings.dockerModeAvailable : "none");
   const environment = session?.settings.sandbox.environment ?? value.environment;
-  const windows = environment === "qemu-windows";
   const vm = environment !== "docker-linux";
   const guest = environment === "qemu-macos" ? "macOS" : "Windows";
   // A fork keeps the origin's Environment: its snapshot is a disk of that kind.
   const environmentFixed = frozen || mode === "fork";
+  const gitServers = settings.mcpServers.filter((s) => s.connector !== null);
+  const customServers = settings.mcpServers.filter((s) => s.connector === null);
+  const fixed = <span className="ss-lock">(fixed for the Session)</span>;
+
+  const mcpSwitch = (s: PublicSettings["mcpServers"][number]) => (
+    <li key={s.id}>
+      <label className="check switch">
+        <input
+          type="checkbox"
+          checked={enabledMcp.has(s.id)}
+          disabled={disabled}
+          onChange={(e) => onChange({ mcpEnabled: e.target.checked ? [...value.mcpEnabled, s.id] : value.mcpEnabled.filter((id) => id !== s.id) })}
+        />
+        <span className="slider" aria-hidden="true" />
+        <span className="mcp-name">{s.connector ? CONNECTORS[s.connector.kind].label : s.name}</span>
+        {s.connector ? (
+          <span className="muted mcp-summary">{s.connector.account ? `@${s.connector.account}` : "not connected"}{s.connector.host ? ` · ${s.connector.host}` : ""}</span>
+        ) : (
+          <>
+            <span className="muted mcp-transport">{s.transport}</span>
+            <span className="muted mcp-summary" title={summarize(s)}>
+              {summarize(s)}
+            </span>
+          </>
+        )}
+      </label>
+    </li>
+  );
 
   return (
     <div className="ss-form">
-      {show("agent") && (
-      <section className="ss-section">
-        <h3>
-          Agent
-          {(pending?.modelPending || pending?.optionsPending) && <span className="warn-sign">pending</span>}
-        </h3>
-        {live && (
-          <p className="muted ss-fixed">
-            Provider: {providerLabel} <span className="ss-lock">(fixed for the Session)</span>
-          </p>
-        )}
-        {mode === "create" && (
-          <p className="muted ss-fixed">
-            Model: {value.model ?? `${providerLabel}'s default`} <span className="ss-lock">(picked under the prompt box)</span>
-          </p>
-        )}
-        {models.length > 0 || value.model !== null ? (
-          <>
-            {mode !== "create" && (
-              <ModelSelect
-                models={models}
-                value={value.model}
-                onChange={(model) => onChange({ model })}
-                allowDefault={!live}
-                disabled={disabled}
-                pending={pending?.modelPending ?? false}
-              />
-            )}
-            <OptionSelects
-              options={options}
-              values={value.options}
-              allowDefault={!live}
-              disabled={disabled}
-              pending={pending?.optionsPending ?? false}
-              onChange={(id, v) => {
-                const next = { ...value.options };
-                if (v === null) delete next[id];
-                else next[id] = v;
-                onChange({ options: next });
-              }}
-            />
-          </>
-        ) : (
-          <p className="muted">
-            Model: {providerLabel}&apos;s default. The list of models appears once a {providerLabel} session has started
-            {live ? "" : "; you can switch the model from the chat afterwards"}.
-          </p>
-        )}
-        {live && <p className="muted ss-note">{applyNote(status, "immediate")} Also in the composer footer.</p>}
-      </section>
-      )}
-
-      {show("instructions") && (
-      <section className="ss-section">
-        <h3>Instructions</h3>
-        {frozen ? (
-          <>
-            {value.instructions.trim() === "" ? (
-              <p className="empty ss-empty">None: this Session&apos;s Agent only has the Sandbox briefing and the project&apos;s own instruction files.</p>
-            ) : (
-              <pre className="instructions-text">{value.instructions}</pre>
-            )}
-            <p className="muted ss-note">
-              Fixed when the Session was created (on top of the Sandbox briefing). {deliveryNote(provider)} The default for new Sessions is in{" "}
-              <a href="#/settings/models">Global settings → Models and instructions</a>.
-            </p>
-          </>
-        ) : (
-          <>
-            <label>
-              <span className="label-row">
-                Instructions for the Agent (fixed once the Session exists; empty for none)
-                {value.instructions !== settings.instructions && (
-                  <button type="button" className="link" onClick={() => onChange({ instructions: settings.instructions })}>
-                    Reset to the Settings default
-                  </button>
-                )}
-              </span>
-              <textarea rows={4} value={value.instructions} onChange={(e) => onChange({ instructions: e.target.value })} spellCheck={false} disabled={disabled} />
-            </label>
-            <p className="muted ss-note">{deliveryNote(provider)}</p>
-          </>
-        )}
-      </section>
-      )}
-
-      {show("mcp") && (
-      <section className="ss-section">
-        <h3>
-          MCP servers &amp; connectors
-          {pending?.mcpPending && <span className="warn-sign">pending</span>}
-        </h3>
-        <p className="muted ss-note">
-          The built-in <code>desktop</code> server (screen, mouse, keyboard) is always on.
-          {live ? ` ${applyNote(status, "restart")}` : ""}
-        </p>
-        {pending?.mcpPending && (
-          <div className="banner banner-warn dialog-banner" role="status">
-            Change pending: the Agent is busy, the new set applies when the current turn ends.
-          </div>
-        )}
-        <ul className="mcp-switches" aria-busy={disabled}>
-          {settings.mcpServers.length === 0 && (
-            <li className="empty">
-              No MCP servers registered. Add them in <a href="#/settings/mcp">Global settings → MCP servers</a>.
-            </li>
-          )}
-          {settings.mcpServers.map((s) => (
-            <li key={s.id}>
-              <label className="check switch">
-                <input
-                  type="checkbox"
-                  checked={enabledMcp.has(s.id)}
-                  disabled={disabled}
-                  onChange={(e) =>
-                    onChange({ mcpEnabled: e.target.checked ? [...value.mcpEnabled, s.id] : value.mcpEnabled.filter((id) => id !== s.id) })
-                  }
-                />
-                <span className="slider" aria-hidden="true" />
-                <span className="mcp-name">{s.name}</span>
-                <span className="muted mcp-transport">{s.transport}</span>
-                <span className="muted mcp-summary" title={summarize(s)}>
-                  {summarize(s)}
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-        {settings.mcpServers.length > 0 && (
-          <a className="muted ss-note" href="#/settings/mcp">
-            Manage servers in Global settings
-          </a>
-        )}
-      </section>
-      )}
-
-      {canInspect && show("inspect") && (
+      {show("environment") && (
         <section className="ss-section">
-          <h3>
-            Inspect LLM
-            {pending?.inspectLlmPending && <span className="warn-sign">pending</span>}
-          </h3>
-          <label className="check switch">
-            <input type="checkbox" checked={value.inspectLlm} disabled={disabled} onChange={(e) => onChange({ inspectLlm: e.target.checked })} />
-            <span className="slider" aria-hidden="true" />
-            Record the exact request and response of every call to the model
-          </label>
-          <p className="muted ss-note">
-            The model API calls go through a loopback inspector in the Sandbox; the bodies stay in the Sandbox&apos;s memory (last 40), headers are
-            never recorded, and each Claude bubble gets an LLM #n tab.{live ? ` ${applyNote(status, "restart")}` : ""}
-          </p>
-        </section>
-      )}
-
-      {show("snapshots") && (
-      <section className="ss-section">
-        <h3>Snapshots</h3>
-        <label>
-          Snapshot automatically after every completed turn
-          <Select<"default" | "on" | "off">
-            value={value.autoSnapshot === null ? "default" : value.autoSnapshot ? "on" : "off"}
-            disabled={disabled}
-            onChange={(v) => onChange({ autoSnapshot: v === "default" ? null : v === "on" })}
-            aria-label="Snapshot automatically after every completed turn"
-            options={[
-              { value: "default", label: `Settings default (${settings.autoSnapshot ? "on" : "off"})` },
-              { value: "on", label: "On" },
-              { value: "off", label: "Off" },
-            ]}
-          />
-        </label>
-        <NumberField
-          label="Automatic snapshots to keep"
-          value={value.snapshotKeep}
-          placeholder={`Settings default (${settings.snapshotKeep === 0 ? "all" : settings.snapshotKeep})`}
-          min={0}
-          step={1}
-          disabled={disabled}
-          onCommit={(snapshotKeep) => onChange({ snapshotKeep })}
-        />
-        <p className="muted ss-note">Older automatic snapshots are dropped (never one a fork was started from); 0 keeps them all.</p>
-      </section>
-      )}
-
-      {show("verification") && (
-      <section className="ss-section">
-        <h3>Verification</h3>
-        <label>
-          Verify each turn end to end
-          <Select<"default" | "on" | "off">
-            value={value.e2eVerify === null ? "default" : value.e2eVerify ? "on" : "off"}
-            disabled={disabled}
-            onChange={(v) => onChange({ e2eVerify: v === "default" ? null : v === "on" })}
-            aria-label="Verify each turn end to end"
-            options={[
-              { value: "default", label: `Settings default (${settings.e2eVerify ? "on" : "off"})` },
-              { value: "on", label: "On" },
-              { value: "off", label: "Off" },
-            ]}
-          />
-        </label>
-        <p className="muted ss-note">
-          After each completed turn the Agent checks what it changed, plans 2–5 test cases, runs them on the Sandbox desktop while recording, fixes
-          and reruns what fails, and hands the video to the chat. Answer-only turns are skipped. Watch it in the Verification pane.
-        </p>
-      </section>
-      )}
-
-      {show("tools") && (
-      <section className="ss-section">
-        <h3>Agent tools</h3>
-        <label>
-          The sessionboxer MCP lets the Agent act on
-          <AgentToolsSelect value={value.agentTools} fallback={settings.agentTools} disabled={disabled} onChange={(agentTools) => onChange({ agentTools })} />
-        </label>
-        <label>
-          When the Agent creates a Session
-          <ApproveCreateSelect value={value.approveCreate} fallback={settings.approveCreate} disabled={disabled} onChange={(approveCreate) => onChange({ approveCreate })} />
-        </label>
-        <p className="muted ss-note">
-          Every action shows as a marker in the chat. A change applies to the running Agent at its next turn.
-        </p>
-      </section>
-      )}
-
-      {show("sandbox") && (
-      <section className="ss-section">
-        <h3>Sandbox</h3>
-        {environmentFixed ? (
-          <p className="muted ss-fixed">
-            Environment: {ENVIRONMENT_LABELS[environment]} <span className="ss-lock">(fixed for the Session{mode === "fork" ? " and its forks" : ""})</span>
-          </p>
-        ) : (
-          <>
+          <h3>Environment</h3>
+          {environmentFixed ? (
+            <p className="muted ss-fixed">
+              Environment: {ENVIRONMENT_LABELS[environment]} <span className="ss-lock">(fixed for the Session{mode === "fork" ? " and its forks" : ""})</span>
+              <Help>{environmentNote(settings, environment)}</Help>
+            </p>
+          ) : (
             <label>
-              Environment
+              <Caption help={environmentNote(settings, value.environment)}>Environment</Caption>
               <Select<Environment>
                 value={value.environment}
                 disabled={disabled}
@@ -469,109 +278,422 @@ export function SessionSettingsForm({
                 }))}
               />
             </label>
-            <EnvironmentNote settings={settings} environment={value.environment} />
-          </>
-        )}
-        {windows ? (
-          <p className="muted ss-note">
-            The Agent, its MCP servers, git and the Terminal (PowerShell) run inside the Windows VM, with the repositories in{" "}
-            <code>C:\workspace</code>; the Desktop shows Windows over RDP. Docker inside the Sandbox, VS Code, snapshots, forks and rebuilds are
-            not available for Windows Sessions yet.
-          </p>
-        ) : vm ? (
-          <p className="muted ss-note">
-            The Agent, its MCP servers, git and the Terminal (zsh) run inside the {guest} VM, with the repositories in{" "}
-            <code>/Users/agent/workspace</code>; the Desktop shows {guest} over VNC. Docker inside the Sandbox, VS Code, snapshots, forks and
-            rebuilds are not available for {guest} Sessions yet.
-          </p>
-        ) : frozen ? (
-          <p className="muted ss-fixed">
-            Docker inside the Sandbox: {dockerMode === "none" ? "off" : DOCKER_MODE_LABELS[dockerMode]}{" "}
-            <span className="ss-lock">(fixed for the Session)</span>
-            {dockerMode === "privileged" && <span className="warn"> {PRIVILEGED_WARNING}</span>}
-          </p>
-        ) : (
-          <>
-            <label className="check">
-              <input type="checkbox" checked={value.docker} disabled={disabled} onChange={(e) => onChange({ docker: e.target.checked })} />
-              Docker inside the Sandbox ({DOCKER_MODE_LABELS[settings.dockerModeAvailable]})
-            </label>
-            {value.docker && <DockerModeNote settings={settings} enabled />}
-          </>
-        )}
-        <div className="row">
-          <NumberField
-            label="CPUs"
-            value={value.cpus}
-            placeholder={`Settings default (${settings.sandboxCpus})`}
-            min={0.5}
-            step={0.5}
-            disabled={disabled}
-            onCommit={(cpus) => onChange({ cpus })}
-          />
-          <NumberField
-            label="Memory (GB)"
-            value={value.memoryGb}
-            placeholder={`Settings default (${settings.sandboxMemoryGb})`}
-            min={0.5}
-            step={0.5}
-            disabled={disabled}
-            onCommit={(memoryGb) => onChange({ memoryGb })}
-          />
-        </div>
-        {live && <p className="muted ss-note">{applyNote(status, "next-sandbox")}</p>}
-        {frozen ? (
-          <p className="muted ss-fixed">
-            Git commits as{" "}
-            {value.gitName || value.gitEmail ? `${value.gitName}${value.gitEmail ? ` <${value.gitEmail}>` : ""}` : "git's own fallback (no identity set)"}{" "}
-            <span className="ss-lock">(fixed for the Session)</span>
-          </p>
-        ) : (
-          <>
-            <span className="label-row muted">
-              Git author for commits made in the Sandbox
-              {(value.gitName !== defaultDraft.gitName || value.gitEmail !== defaultDraft.gitEmail) && (
-                <button type="button" className="link" onClick={() => onChange({ gitName: defaultDraft.gitName, gitEmail: defaultDraft.gitEmail })}>
-                  Reset to the global identity
-                </button>
-              )}
-            </span>
-            <div className="row">
-              <label>
-                Name
-                <input value={value.gitName} disabled={disabled} onChange={(e) => onChange({ gitName: e.target.value })} placeholder="Jane Doe" autoComplete="name" />
+          )}
+          {!vm &&
+            (frozen ? (
+              <p className="muted ss-fixed">
+                Docker inside the Sandbox: {dockerMode === "none" ? "off" : DOCKER_MODE_LABELS[dockerMode]} {fixed}
+                {dockerMode === "privileged" && <span className="warn"> {PRIVILEGED_WARNING}</span>}
+              </p>
+            ) : (
+              <label className="check switch">
+                <input type="checkbox" checked={value.docker} disabled={disabled} onChange={(e) => onChange({ docker: e.target.checked })} />
+                <span className="slider" aria-hidden="true" />
+                <Caption help={<DockerModeNote settings={settings} enabled={value.docker} />}>
+                  Docker inside the Sandbox ({DOCKER_MODE_LABELS[settings.dockerModeAvailable]})
+                </Caption>
               </label>
-              <label>
-                Email
-                <input value={value.gitEmail} disabled={disabled} onChange={(e) => onChange({ gitEmail: e.target.value })} placeholder="jane@example.com" autoComplete="email" />
-              </label>
-            </div>
-            <p className="muted ss-note">
-              Used as git&apos;s <code>user.name</code> / <code>user.email</code> inside the Sandbox (author and committer). Prefilled from Settings
-              {!settings.gitUserName && settings.hostGitIdentity.name ? " (blank there, so from this machine's git config)" : ""}; fixed once the Session exists.
-            </p>
-          </>
-        )}
-        {live && onFork && !vm && (
-          <div className="ss-fork">
-            <button type="button" onClick={onFork} disabled={disabled}>
-              Fork with different settings…
-            </button>
-            <span className="muted ss-note">A fork is a new Session from a snapshot of this one; Docker, instructions and the git identity can differ there.</span>
+            ))}
+
+          <h4 className="ss-sub">
+            <Caption
+              help={
+                <>
+                  <p>
+                    Limits of the Sandbox container; empty means the Global settings default. {live ? applyNote(status, "next-sandbox") : ""}
+                  </p>
+                  {vm && (
+                    <p>
+                      The {guest} VM has its own RAM and vCPUs, set in Global settings → {guest} VMs.
+                    </p>
+                  )}
+                </>
+              }
+            >
+              Limits
+            </Caption>
+          </h4>
+          <div className="row">
+            <NumberField
+              label="CPUs"
+              value={value.cpus}
+              placeholder={`Settings default (${settings.sandboxCpus})`}
+              min={0.5}
+              step={0.5}
+              disabled={disabled}
+              onCommit={(cpus) => onChange({ cpus })}
+            />
+            <NumberField
+              label="Memory (GB)"
+              value={value.memoryGb}
+              placeholder={`Settings default (${settings.sandboxMemoryGb})`}
+              min={0.5}
+              step={0.5}
+              disabled={disabled}
+              onCommit={(memoryGb) => onChange({ memoryGb })}
+            />
           </div>
-        )}
-      </section>
+
+          <h4 className="ss-sub">
+            <Caption
+              help={
+                vm ? (
+                  <p>Snapshots, forks and rebuilds are not available for {guest} Sessions yet: the VM disk lives outside the Sandbox image.</p>
+                ) : (
+                  <p>
+                    A snapshot is an image of the whole box (files, installed tools, the agent&apos;s conversation) you can fork from or go back to.
+                    Automatic ones are taken after every completed turn; older ones are dropped down to the number kept (never one a fork was started
+                    from), 0 keeps them all.
+                  </p>
+                )
+              }
+            >
+              Snapshots
+            </Caption>
+          </h4>
+          <label>
+            Snapshot automatically after every completed turn
+            <Select<OnOff>
+              value={onOff(value.autoSnapshot)}
+              disabled={disabled || vm}
+              onChange={(v) => onChange({ autoSnapshot: fromOnOff(v) })}
+              aria-label="Snapshot automatically after every completed turn"
+              options={[
+                { value: "default", label: `Settings default (${settings.autoSnapshot ? "on" : "off"})` },
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
+          </label>
+          <NumberField
+            label="Automatic snapshots to keep"
+            value={value.snapshotKeep}
+            placeholder={`Settings default (${settings.snapshotKeep === 0 ? "all" : settings.snapshotKeep})`}
+            min={0}
+            step={1}
+            disabled={disabled || vm}
+            onCommit={(snapshotKeep) => onChange({ snapshotKeep })}
+          />
+          {live && onFork && !vm && (
+            <div className="ss-fork">
+              <button type="button" onClick={onFork} disabled={disabled}>
+                Fork with different settings…
+              </button>
+              <Help>A fork is a new Session from a snapshot of this one; the Environment, Docker, the system prompt and the git identity can differ there.</Help>
+            </div>
+          )}
+        </section>
+      )}
+
+      {show("agent") && (
+        <section className="ss-section">
+          <h3>
+            Agent
+            {(pending?.modelPending || pending?.optionsPending) && <span className="warn-sign">pending</span>}
+          </h3>
+          {live && (
+            <p className="muted ss-fixed">
+              Provider: {providerLabel} {fixed}
+            </p>
+          )}
+          {mode === "create" && (
+            <p className="muted ss-fixed">
+              Model: {value.model ?? `${providerLabel}'s default`} <span className="ss-lock">(picked under the prompt box)</span>
+            </p>
+          )}
+          {models.length > 0 || value.model !== null ? (
+            <>
+              {mode !== "create" && (
+                <ModelSelect
+                  models={models}
+                  value={value.model}
+                  onChange={(model) => onChange({ model })}
+                  allowDefault={!live}
+                  disabled={disabled}
+                  pending={pending?.modelPending ?? false}
+                />
+              )}
+              <OptionSelects
+                options={options}
+                values={value.options}
+                allowDefault={!live}
+                disabled={disabled}
+                pending={pending?.optionsPending ?? false}
+                onChange={(id, v) => {
+                  const next = { ...value.options };
+                  if (v === null) delete next[id];
+                  else next[id] = v;
+                  onChange({ options: next });
+                }}
+              />
+              {live && (
+                <Help>
+                  {applyNote(status, "immediate")} Also in the composer footer.
+                </Help>
+              )}
+            </>
+          ) : (
+            <p className="muted ss-fixed">
+              Fast mode and effort: {providerLabel}&apos;s defaults{" "}
+              <span className="ss-lock">
+                (the choices appear once a {providerLabel} session has started{live ? "" : "; you can switch them from the chat afterwards"})
+              </span>
+            </p>
+          )}
+
+          <h4 className="ss-sub">
+            <Caption
+              help={
+                <p>
+                  Instructions the Agent gets on top of the Sandbox briefing, fixed once the Session exists. {deliveryNote(provider)} The default for
+                  new Sessions is in <a href="#/settings/models">Global settings → Models and instructions</a>.
+                </p>
+              }
+            >
+              System prompt
+            </Caption>
+          </h4>
+          {frozen ? (
+            value.instructions.trim() === "" ? (
+              <p className="empty ss-empty">None: this Session&apos;s Agent only has the Sandbox briefing and the project&apos;s own instruction files.</p>
+            ) : (
+              <pre className="instructions-text">{value.instructions}</pre>
+            )
+          ) : (
+            <label>
+              <span className="label-row">
+                <span className="muted">Empty for none</span>
+                {value.instructions !== settings.instructions && (
+                  <button type="button" className="link" onClick={() => onChange({ instructions: settings.instructions })}>
+                    Reset to the Settings default
+                  </button>
+                )}
+              </span>
+              <textarea rows={4} value={value.instructions} onChange={(e) => onChange({ instructions: e.target.value })} spellCheck={false} disabled={disabled} />
+            </label>
+          )}
+        </section>
+      )}
+
+      {show("mcp") && (
+        <section className="ss-section">
+          <h3>
+            MCP &amp; connectors
+            {pending?.mcpPending && <span className="warn-sign">pending</span>}
+          </h3>
+          {pending?.mcpPending && (
+            <div className="banner banner-warn dialog-banner" role="status">
+              Change pending: the Agent is busy, the new set applies when the current turn ends.
+            </div>
+          )}
+          <ul className="mcp-switches builtin">
+            <li>
+              <label className="check switch">
+                <input type="checkbox" checked disabled readOnly />
+                <span className="slider" aria-hidden="true" />
+                <span className="mcp-name">desktop</span>
+                <span className="muted mcp-summary">screen, mouse, keyboard</span>
+                <span className="muted ss-always">
+                  Always on ·{" "}
+                  <a href={DESKTOP_MCP_DOCS} target="_blank" rel="noreferrer">
+                    more info
+                  </a>
+                </span>
+              </label>
+            </li>
+            <li>
+              <label className="check switch">
+                <input type="checkbox" checked disabled readOnly />
+                <span className="slider" aria-hidden="true" />
+                <span className="mcp-name">sessionboxer</span>
+                <span className="muted mcp-summary">self-knowledge, other Sessions</span>
+                <span className="muted ss-always">
+                  Always on ·{" "}
+                  <a href={SESSIONBOXER_MCP_DOCS} target="_blank" rel="noreferrer">
+                    more info
+                  </a>
+                </span>
+              </label>
+              <div className="ss-indent">
+                <label>
+                  <Caption
+                    help={
+                      <p>
+                        <strong>Off</strong>: the Agent gets no <code>sessionboxer</code> tools. <strong>This Session only</strong>: self-knowledge and
+                        actions on its own Session, its forks and schedules that target it. <strong>All Sessions</strong>: the cross-Session tools too
+                        (list, message, create, fork, hand off). Every action shows as a marker in the chat; a change applies to the running Agent at
+                        its next turn.
+                      </p>
+                    }
+                  >
+                    The sessionboxer MCP lets the Agent act on
+                  </Caption>
+                  <AgentToolsSelect value={value.agentTools} fallback={settings.agentTools} disabled={disabled} onChange={(agentTools) => onChange({ agentTools })} />
+                </label>
+                <label>
+                  <Caption
+                    help={
+                      <p>
+                        <strong>Ask me</strong>: a card appears in the chat with Allow and Deny and the Agent waits for your answer (a card nobody
+                        answers in 10 minutes is denied). <strong>Do not ask</strong>: the Session is created right away.
+                      </p>
+                    }
+                  >
+                    When the Agent creates a Session
+                  </Caption>
+                  <ApproveCreateSelect value={value.approveCreate} fallback={settings.approveCreate} disabled={disabled} onChange={(approveCreate) => onChange({ approveCreate })} />
+                </label>
+              </div>
+            </li>
+          </ul>
+
+          <h4 className="ss-sub">
+            <Caption
+              help={
+                <p>
+                  A connector logs the Sandbox into GitHub or Bitbucket (git push, <code>gh</code>, pull-request watching) and, for GitHub, gives the
+                  Agent that MCP server too. Log in under <a href="#/settings/mcp">Global settings → MCP servers &amp; connectors</a>.
+                  {live ? ` ${applyNote(status, "restart")}` : ""}
+                </p>
+              }
+            >
+              Git
+            </Caption>
+          </h4>
+          {gitServers.length === 0 ? (
+            <p className="empty ss-empty">
+              No git connector yet: log in with GitHub or Bitbucket in <a href="#/settings/mcp">Global settings → MCP servers &amp; connectors</a>.
+            </p>
+          ) : (
+            <ul className="mcp-switches" aria-busy={disabled}>
+              {gitServers.map(mcpSwitch)}
+            </ul>
+          )}
+          {frozen ? (
+            <p className="muted ss-fixed">
+              Git commits as{" "}
+              {value.gitName || value.gitEmail ? `${value.gitName}${value.gitEmail ? ` <${value.gitEmail}>` : ""}` : "git's own fallback (no identity set)"}{" "}
+              {fixed}
+            </p>
+          ) : (
+            <>
+              <span className="label-row muted">
+                <Caption
+                  help={
+                    <p>
+                      Used as git&apos;s <code>user.name</code> / <code>user.email</code> inside the Sandbox (author and committer). Prefilled from
+                      Settings{!settings.gitUserName && settings.hostGitIdentity.name ? " (blank there, so from this machine's git config)" : ""}; fixed
+                      once the Session exists.
+                    </p>
+                  }
+                >
+                  Git author for commits made in the Sandbox
+                </Caption>
+                {(value.gitName !== defaultDraft.gitName || value.gitEmail !== defaultDraft.gitEmail) && (
+                  <button type="button" className="link" onClick={() => onChange({ gitName: defaultDraft.gitName, gitEmail: defaultDraft.gitEmail })}>
+                    Reset to the global identity
+                  </button>
+                )}
+              </span>
+              <div className="row">
+                <label>
+                  Name
+                  <input value={value.gitName} disabled={disabled} onChange={(e) => onChange({ gitName: e.target.value })} placeholder="Jane Doe" autoComplete="name" />
+                </label>
+                <label>
+                  Email
+                  <input value={value.gitEmail} disabled={disabled} onChange={(e) => onChange({ gitEmail: e.target.value })} placeholder="jane@example.com" autoComplete="email" />
+                </label>
+              </div>
+            </>
+          )}
+
+          <h4 className="ss-sub">
+            <Caption
+              help={
+                <p>
+                  MCP servers registered once in <a href="#/settings/mcp">Global settings → MCP servers</a>, on or off for this Session. stdio servers
+                  run {vm ? `inside the ${guest} VM` : "inside the Sandbox"}; <code>localhost</code> in an http/sse URL means this machine.
+                  {live ? ` ${applyNote(status, "restart")}` : ""}
+                </p>
+              }
+            >
+              MCP servers
+            </Caption>
+          </h4>
+          {customServers.length === 0 ? (
+            <p className="empty ss-empty">
+              No MCP servers registered: add them in <a href="#/settings/mcp">Global settings → MCP servers</a>.
+            </p>
+          ) : (
+            <ul className="mcp-switches" aria-busy={disabled}>
+              {customServers.map(mcpSwitch)}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {show("qa") && (
+        <section className="ss-section">
+          <h3>Auto QA</h3>
+          <label>
+            <Caption
+              help={
+                <p>
+                  After each completed turn the Agent checks what it changed, plans 2–5 test cases, runs them on the Sandbox desktop while recording,
+                  fixes and reruns what fails, and hands the video to the chat. Answer-only turns are skipped. Watch it in the Auto QA pane.
+                  {live ? ` ${applyNote(status, "immediate")}` : ""}
+                </p>
+              }
+            >
+              Verify each turn end to end
+            </Caption>
+            <Select<OnOff>
+              value={onOff(value.e2eVerify)}
+              disabled={disabled}
+              onChange={(v) => onChange({ e2eVerify: fromOnOff(v) })}
+              aria-label="Verify each turn end to end"
+              options={[
+                { value: "default", label: `Settings default (${settings.e2eVerify ? "on" : "off"})` },
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
+          </label>
+        </section>
+      )}
+
+      {show("debug") && canInspect && (
+        <section className="ss-section">
+          <h3>Debug</h3>
+          <label className="check switch">
+            <input type="checkbox" checked={value.inspectLlm} disabled={disabled} onChange={(e) => onChange({ inspectLlm: e.target.checked })} />
+            <span className="slider" aria-hidden="true" />
+            <Caption
+              help={
+                <p>
+                  Records the exact request and response of every call to the model. The calls go through a loopback inspector in the Sandbox; the
+                  bodies stay in the Sandbox&apos;s memory (last 40), headers are never recorded, and each Claude bubble gets an LLM #n tab.
+                  {live ? ` ${applyNote(status, "restart")}` : ""}
+                </p>
+              }
+            >
+              Inspect LLM calls
+              {pending?.inspectLlmPending && <span className="warn-sign">pending</span>}
+            </Caption>
+          </label>
+        </section>
       )}
     </div>
   );
 }
 
-/** Why an Environment cannot be picked on this host, or what picking it means (ADR-0057). */
-function EnvironmentNote({ settings, environment }: { settings: PublicSettings; environment: Environment }) {
+/** What picking an Environment means on this host, or why it cannot be picked (ADR-0057, ADR-0060, ADR-0061). */
+function environmentNote(settings: PublicSettings, environment: Environment): ReactNode {
   const availability = settings.environments[environment];
   if (!availability.available) {
     return (
-      <p className="muted ss-note">
+      <p>
         {ENVIRONMENT_LABELS[environment]} is not available: {availability.reason ?? "not on this host"}
         {environment === "qemu-windows" ? (
           <>
@@ -589,21 +711,38 @@ function EnvironmentNote({ settings, environment }: { settings: PublicSettings; 
   }
   if (environment === "qemu-windows") {
     return (
-      <p className="muted ss-note">
-        A Windows {settings.windows.version} VM (QEMU/KVM, {settings.windows.ramGb} GB RAM, {settings.windows.cpus} vCPUs, its own disk from the
-        shared base) starts next to the Linux Sandbox; the Desktop shows it over RDP.
-      </p>
+      <>
+        <p>
+          A Windows {settings.windows.version} VM (QEMU/KVM, {settings.windows.ramGb} GB RAM, {settings.windows.cpus} vCPUs, its own disk from the
+          shared base) starts next to the Linux Sandbox; the Desktop shows it over RDP.
+        </p>
+        <p>
+          The Agent, its MCP servers, git and the Terminal (PowerShell) run inside the VM, with the repositories in <code>C:\workspace</code>. Docker
+          inside the Sandbox, VS Code, snapshots, forks and rebuilds are not available for Windows Sessions yet.
+        </p>
+      </>
     );
   }
   if (environment === "qemu-macos") {
     return (
-      <p className="muted ss-note">
-        A macOS {settings.macos.version} VM (QEMU/KVM with OpenCore, {settings.macos.ramGb} GB RAM, {settings.macos.cpus} vCPUs, its own disk from the
-        shared base) starts next to the Linux Sandbox; the Desktop shows it over VNC.
-      </p>
+      <>
+        <p>
+          A macOS {settings.macos.version} VM (QEMU/KVM with OpenCore, {settings.macos.ramGb} GB RAM, {settings.macos.cpus} vCPUs, its own disk from the
+          shared base) starts next to the Linux Sandbox; the Desktop shows it over VNC.
+        </p>
+        <p>
+          The Agent, its MCP servers, git and the Terminal (zsh) run inside the VM, with the repositories in <code>/Users/agent/workspace</code>. Docker
+          inside the Sandbox, VS Code, snapshots, forks and rebuilds are not available for macOS Sessions yet.
+        </p>
+      </>
     );
   }
-  return null;
+  return (
+    <p>
+      A Linux desktop (Ubuntu, XFCE) in a Docker container, with the Agent, its MCP servers, git, VS Code and the Terminal inside; the repositories
+      are under <code>/workspace</code>. Snapshots and forks work here.
+    </p>
+  );
 }
 
 /** Optional number: empty means "the Settings default". Commits on blur/Enter so a live dialog does not save every keystroke. */

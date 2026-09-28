@@ -31,21 +31,17 @@ export function AgentToolsSelect({
   disabled?: boolean;
   onChange: (value: AgentToolsPolicy | null) => void;
 }) {
-  const effective = value ?? fallback ?? "session";
   return (
-    <>
-      <Select<AgentToolsPolicy | "default">
-        value={value ?? "default"}
-        disabled={disabled}
-        onChange={(v) => onChange(v === "default" ? null : v)}
-        aria-label="Agent tools"
-        options={[
-          ...(fallback !== undefined ? [{ value: "default" as const, label: `Settings default (${AGENT_TOOLS_LABELS[fallback]})` }] : []),
-          ...POLICIES.map((p) => ({ value: p, label: AGENT_TOOLS_LABELS[p] })),
-        ]}
-      />
-      <p className="muted ss-note">{AGENT_TOOLS_HINTS[effective]}</p>
-    </>
+    <Select<AgentToolsPolicy | "default">
+      value={value ?? "default"}
+      disabled={disabled}
+      onChange={(v) => onChange(v === "default" ? null : v)}
+      aria-label="Agent tools"
+      options={[
+        ...(fallback !== undefined ? [{ value: "default" as const, label: `Settings default (${AGENT_TOOLS_LABELS[fallback]})`, hint: AGENT_TOOLS_HINTS[fallback] }] : []),
+        ...POLICIES.map((p) => ({ value: p, label: AGENT_TOOLS_LABELS[p], hint: AGENT_TOOLS_HINTS[p] })),
+      ]}
+    />
   );
 }
 

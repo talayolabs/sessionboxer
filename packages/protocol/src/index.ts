@@ -2436,7 +2436,7 @@ export const AgentPrMarkAddressedArgs = z.object({ pr: z.string().min(1), items:
 export const AgentQueueAddArgs = z.object({ text: z.string().min(1).max(20_000) });
 export const AgentTitleSetArgs = z.object({ title: z.string().min(1).max(200) });
 export const AgentVerifyArgs = z.object({
-  /** What the run verifies, in the Agent's words; shown in the Verification pane. */
+  /** What the run verifies, in the Agent's words; shown in the Auto QA pane. */
   brief: z.string().min(1).max(2000),
   /** Cases planned at once (else `e2e_plan` follows). */
   cases: z

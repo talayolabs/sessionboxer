@@ -542,7 +542,7 @@ function Item({
       );
     case "e2e_prompt":
       return (
-        <button type="button" className="marker marker-e2e marker-button" title="The Control Plane asked the Agent to verify the turn above end to end. Click to open the Verification pane." onClick={() => onOpenE2e(null)}>
+        <button type="button" className="marker marker-e2e marker-button" title="The Control Plane asked the Agent to verify the turn above end to end. Click to open the Auto QA pane." onClick={() => onOpenE2e(null)}>
           Verifying the turn end to end…
         </button>
       );
@@ -580,7 +580,7 @@ function forkedNote(item: Extract<TranscriptItem, { kind: "forked" }>): string {
   }
 }
 
-/** `Verified: 4/4 passed · 2:13 · video`; opens the Verification pane on that run. */
+/** `Verified: 4/4 passed · 2:13 · video`; opens the Auto QA pane on that run. */
 function E2eMarker({ run, onOpen }: { run: E2eRunSummary; onOpen: () => void }) {
   let text: string;
   switch (run.status) {
@@ -594,7 +594,7 @@ function E2eMarker({ run, onOpen }: { run: E2eRunSummary; onOpen: () => void }) 
       text = `Verified: ${run.passed}/${run.total} passed · ${formatDuration(run.durationMs)}${run.cycles > 1 ? ` · ${run.cycles} cycles` : ""}${run.videoPath ? " · video" : ""}`;
   }
   return (
-    <button type="button" className={`marker marker-e2e marker-button marker-e2e-${run.status}`} title="Open the Verification pane on this run" onClick={onOpen}>
+    <button type="button" className={`marker marker-e2e marker-button marker-e2e-${run.status}`} title="Open the Auto QA pane on this run" onClick={onOpen}>
       {text}
     </button>
   );
@@ -738,7 +738,7 @@ export function Transcript({
   onInspectCompaction: (index: number, compaction: Compaction) => void;
   /** An `LLM #n` tab was clicked. */
   onInspectLlmCall: (call: LlmCall) => void;
-  /** A verification marker was clicked: open the Verification pane on that run (`null` = the latest). */
+  /** A verification marker was clicked: open the Auto QA pane on that run (`null` = the latest). */
   onOpenE2e: (runId: string | null) => void;
   /** An Agent action marker was clicked: open the pane it concerns (`prs`, `pr:<id>`, `terminal`, …). */
   onOpenPane?: (pane: string) => void;

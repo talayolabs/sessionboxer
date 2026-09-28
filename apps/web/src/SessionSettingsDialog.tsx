@@ -51,8 +51,8 @@ export function SessionSettingsDialog({
   onClose: () => void;
 }) {
   const sections = sessionSettingsSections(session.provider);
-  const [section, setSection] = useState<SessionSettingsSection>("agent");
-  const current: SessionSettingsSection = sections.some((s) => s.id === section) ? section : "agent";
+  const [section, setSection] = useState<SessionSettingsSection>("environment");
+  const current: SessionSettingsSection = sections.some((s) => s.id === section) ? section : "environment";
   return (
     <Modal
       className="advanced-dialog"

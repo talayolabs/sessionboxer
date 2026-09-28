@@ -88,10 +88,8 @@ export function AdvancedSettingsDialog({
                   />
                 </label>
                 <p className="muted ss-note">
-                  The other sections tune the Agent (model, instructions, MCP
-                  servers), what is recorded (snapshots, verification, LLM
-                  calls) and the Sandbox (Docker, CPUs, memory, git identity).
-                  All optional: the defaults come from Global settings.
+                  The other sections set the Environment (where the box runs, its limits, snapshots), the Agent (fast mode, effort, system prompt),
+                  the MCP servers and connectors it gets, Auto QA and debugging. All optional: the defaults come from Global settings.
                 </p>
               </section>
             </div>

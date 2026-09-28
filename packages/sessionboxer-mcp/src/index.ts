@@ -127,7 +127,7 @@ server.registerTool(
   "verify",
   {
     description:
-      "Open a verification run for the work of this turn with a one-paragraph brief of what it checks (shown in the Verification pane), optionally with the cases planned at once; then follow the e2e-verification skill (e2e_case_start / e2e_case_end / e2e_finish). Do not call it when Sessionboxer already asked you to verify the turn.",
+      "Open a verification run for the work of this turn with a one-paragraph brief of what it checks (shown in the Auto QA pane), optionally with the cases planned at once; then follow the e2e-verification skill (e2e_case_start / e2e_case_end / e2e_finish). Do not call it when Sessionboxer already asked you to verify the turn.",
     inputSchema: {
       brief: z.string().min(1).max(2000).describe("What the run verifies and how, in two or three sentences"),
       cases: z
@@ -329,7 +329,7 @@ server.registerTool("schedule_list", { description: "The scheduled tasks on this
 
 // --- End-to-end verification runs (ADR-0044) -------------------------------------------------
 // The Control Plane opens a run after a user turn and asks for the `e2e-verification` skill; these
-// tools fill the run in (Daemon → Control Plane) so the user's Verification pane follows along.
+// tools fill the run in (Daemon → Control Plane) so the user's Auto QA pane follows along.
 
 const e2eTool = async (method: E2eMethod, params: unknown) => {
   try {
@@ -344,7 +344,7 @@ server.registerTool(
   "e2e_plan",
   {
     description:
-      "Register the test cases of the current verification run (the e2e-verification skill, step Plan), or skip the run when the turn changed nothing testable. Call it once, before start_recording. Cases are numbered from 1 in the order given; the user sees them in the Verification pane at once.",
+      "Register the test cases of the current verification run (the e2e-verification skill, step Plan), or skip the run when the turn changed nothing testable. Call it once, before start_recording. Cases are numbered from 1 in the order given; the user sees them in the Auto QA pane at once.",
     inputSchema: {
       cases: z
         .array(
@@ -367,7 +367,7 @@ server.registerTool(
   "e2e_case_start",
   {
     description:
-      "Mark a case as running (its timer starts and the user's Verification pane opens on it). Calling it for a case that already passed or failed reruns it as a new cycle, after you fixed the code; at most 3 fix attempts per case. One case runs at a time: end the previous one first.",
+      "Mark a case as running (its timer starts and the user's Auto QA pane opens on it). Calling it for a case that already passed or failed reruns it as a new cycle, after you fixed the code; at most 3 fix attempts per case. One case runs at a time: end the previous one first.",
     inputSchema: { index: z.number().int().positive().describe("Case number from e2e_plan, starting at 1") },
   },
   ({ index }) => e2eTool("case_start", { index }),

@@ -87,7 +87,7 @@ export class E2eVerification {
   }
 
   /**
-   * "Run now" from the Verification pane: opens a run for the last user turn (`turn`, possibly
+   * "Run now" from the Auto QA pane: opens a run for the last user turn (`turn`, possibly
    * empty when nothing was asked yet) regardless of the switch and of what the turn used, and
    * sends the prompt. Needs an idle Session with no open run.
    */

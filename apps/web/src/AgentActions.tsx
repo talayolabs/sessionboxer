@@ -15,7 +15,7 @@ export interface AgentActionItem {
 
 const PANE_LABELS: Record<string, string> = {
   prs: "the PRs pane",
-  e2e: "the Verification pane",
+  e2e: "the Auto QA pane",
   terminal: "the Terminal",
   desktop: "the Desktop",
   code: "the Code pane",

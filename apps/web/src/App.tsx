@@ -1390,7 +1390,7 @@ function SessionView({
       key: "settings",
       icon: "settings",
       label: "Session settings",
-      title: `Session settings: model, instructions, MCP servers, Inspect LLM, snapshots, Sandbox\n${settingsSummary}`,
+      title: `Session settings: Environment, Agent, MCP & connectors, Auto QA, Debug\n${settingsSummary}`,
       disabled: !settings,
       pending: settingsPending,
       count: mcpActive.length,
@@ -1576,10 +1576,10 @@ function SessionView({
             icon="verification"
             active={pane === "e2e"}
             className={e2eLive ? "e2e-tab-live" : undefined}
-            tip={pane === "e2e" ? "Hide the verification runs" : `End-to-end verification of the Agent's turns${e2eLive ? " (running now)" : e2eEnabled ? "" : " (off for this Session)"}`}
+            tip={pane === "e2e" ? "Hide the Auto QA runs" : `End-to-end verification of the Agent's turns${e2eLive ? " (running now)" : e2eEnabled ? "" : " (off for this Session)"}`}
             onClick={() => togglePane("e2e")}
           >
-            Verification{e2eLive && <span className="count live">●</span>}
+            Auto QA{e2eLive && <span className="count live">●</span>}
           </PaneTab>
           <PaneTab
             icon="scheduled"
@@ -2468,7 +2468,7 @@ const GLOBAL_SETTINGS_SECTIONS = [
   { id: "macos", label: "macOS VMs" },
   { id: "git-identity", label: "Git identity" },
   { id: "snapshots", label: "Snapshots" },
-  { id: "verification", label: "Verification" },
+  { id: "verification", label: "Auto QA" },
   { id: "agent-tools", label: "Agent tools" },
   { id: "recordings", label: "Narrated recordings" },
   { id: "dictation", label: "Dictation" },
@@ -3099,10 +3099,10 @@ function SettingsView({
           )}
           {show("verification") && (
             <fieldset className="choice">
-              <legend>Verification</legend>
+              <legend>Auto QA</legend>
               <label className="check">
                 <input type="checkbox" checked={e2eVerify} onChange={(e) => setE2eVerify(e.target.checked)} />
-                Verify each turn end to end. Default for new Sessions; each Session can override it in its Session settings or from the Verification pane.
+                Verify each turn end to end. Default for new Sessions; each Session can override it in its Session settings or from the Auto QA pane.
               </label>
               <p className="muted">
                 After a completed turn the Agent gets a hidden follow-up: it looks at what changed, plans 2–5 test cases (up to 10 for a very large

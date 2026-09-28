@@ -128,6 +128,15 @@
 @media (max-width: 800px) { .select-item { padding: 10px 12px; } .select-trigger { min-height: 36px; } }
 .popover { display: flex; flex-direction: column; gap: 8px; padding: 10px; font-size: var(--fs-md); max-width: calc(100vw - 20px); }
 .popover-header { display: flex; align-items: center; gap: 8px; }
+
+/* ---- Help: a "?" after a caption; the explanation opens in a popover (progressive disclosure) ---- */
+.caption { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+button.help { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; margin: 0; border: 1px solid var(--border); border-radius: 50%; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
+button.help:hover, button.help[data-state="open"] { color: var(--text); border-color: var(--muted); background: var(--hover); }
+.help-popover { max-width: 360px; font-size: var(--fs-sm); line-height: 1.5; color: var(--text); }
+.help-body { display: flex; flex-direction: column; gap: 6px; }
+.help-body p { margin: 0; }
+.help-body a { color: var(--accent); }
 .tooltip { z-index: var(--z-popover); max-width: 320px; padding: 4px 8px; font-size: var(--fs-sm); line-height: 1.4; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow-wrap: anywhere; }
 
 /* ---- Modal dialog: a panel over a backdrop; feature classes set its width ---- */

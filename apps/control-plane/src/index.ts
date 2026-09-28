@@ -474,6 +474,13 @@ api.get("/host/dirs", async (c) => {
 api.get("/models", (c) => c.json(sessions.providerModels()));
 api.get("/options", (c) => c.json(sessions.providerOptions()));
 
+// Files attached on the New session screen, before a Sandbox exists to put them in (see StagedUploads).
+api.put("/uploads", async (c) => c.json(await sessions.staged.store(c.req.raw.body, c.req.query("name") ?? "", c.req.header("content-type"), c.req.header("content-length")), 201));
+api.delete("/uploads/:id", async (c) => {
+  await sessions.staged.remove(c.req.param("id"));
+  return c.body(null, 204);
+});
+
 api.get("/sessions", (c) => c.json(sessions.list()));
 api.post("/sessions", async (c) => {
   const req = CreateSessionRequest.parse(await c.req.json());
@@ -845,6 +852,8 @@ await windows.init().catch((e: unknown) => log(`windows: ${e instanceof Error ? 
 await macos.init().catch((e: unknown) => log(`macos: ${e instanceof Error ? e.message : String(e)}`));
 await sessions.boot();
 scheduler.start();
+void sessions.staged.sweep();
+setInterval(() => void sessions.staged.sweep(), 60 * 60 * 1000).unref();
 if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {
   throw new Error("SESSIONBOXER_TLS_CERT and SESSIONBOXER_TLS_KEY must be set together.");
 }

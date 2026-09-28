@@ -42,6 +42,7 @@ import type {
   PullRequest,
   PtyListResult,
   PromptAttachment,
+  StagedUpload,
   PromptRequest,
   Provider,
   ProviderHostLogin,
@@ -99,6 +100,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+/** `PUT` a file's bytes with upload progress (0..1) and the usual error/401 handling. */
+function putFile<T>(url: string, file: File, onProgress: (frac: number) => void, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `${url}?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onerror = () => reject(new Error("upload failed: network error"));
+    xhr.onabort = () => reject(new DOMException("upload cancelled", "AbortError"));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText) as T);
+        return;
+      }
+      let message = `${xhr.status} ${xhr.statusText}`;
+      try {
+        const body = JSON.parse(xhr.responseText) as { error?: string };
+        if (body.error) message = body.error;
+      } catch {
+        // non-JSON error body
+      }
+      if (xhr.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: message }));
+      reject(new Error(message));
+    };
+    signal.addEventListener("abort", () => xhr.abort());
+    xhr.send(file);
+  });
 }
 
 export const api = {
@@ -177,33 +209,10 @@ export const api = {
     request<{ ok: true }>(`/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify(req) }),
   /** Stores a file in the Session's Workspace for the next prompt; `onProgress` gets 0..1. */
   upload: (id: string, file: File, onProgress: (frac: number) => void, signal: AbortSignal): Promise<PromptAttachment> =>
-    new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", `/api/sessions/${id}/uploads?name=${encodeURIComponent(file.name)}`);
-      xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(e.loaded / e.total);
-      };
-      xhr.onerror = () => reject(new Error("upload failed: network error"));
-      xhr.onabort = () => reject(new DOMException("upload cancelled", "AbortError"));
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(JSON.parse(xhr.responseText) as PromptAttachment);
-          return;
-        }
-        let message = `${xhr.status} ${xhr.statusText}`;
-        try {
-          const body = JSON.parse(xhr.responseText) as { error?: string };
-          if (body.error) message = body.error;
-        } catch {
-          // non-JSON error body
-        }
-        if (xhr.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: message }));
-        reject(new Error(message));
-      };
-      signal.addEventListener("abort", () => xhr.abort());
-      xhr.send(file);
-    }),
+    putFile(`/api/sessions/${id}/uploads`, file, onProgress, signal),
+  /** Stores a file on the Control Plane for a Session that does not exist yet (`CreateSessionRequest.attachments`). */
+  stageUpload: (file: File, onProgress: (frac: number) => void, signal: AbortSignal): Promise<StagedUpload> => putFile("/api/uploads", file, onProgress, signal),
+  unstageUpload: (staged: StagedUpload) => void request<void>(`/uploads/${staged.id}`, { method: "DELETE" }).catch(() => undefined),
   ask: (id: string, text: string) => request<AskResult>(`/sessions/${id}/ask`, { method: "POST", body: JSON.stringify({ text }) }),
   contextReport: (id: string) => request<ContextBreakdown>(`/sessions/${id}/context/report`, { method: "POST" }),
   compactionDetails: (id: string, req: CompactionDetailsRequest) =>

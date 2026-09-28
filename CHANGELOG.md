@@ -4,6 +4,7 @@
 
 - New defaults: *Verify each turn end to end* off, automatic snapshots off, *Agent tools* on **All Sessions**. Only a missing key in `config.json` takes them; a saved value is kept.
 - Session settings opens in the same split view as Global and Advanced settings: section titles on the left, the one section on the right.
+- Attach files (📎, drop, paste) and dictate (🎤) on the New session screen: the files wait in `~/.sessionboxer/staging/` and go into the box with the first prompt (which may be the files alone).
 
 ## 1.4.0 — 2026-09-27
 

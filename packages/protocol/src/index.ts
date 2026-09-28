@@ -685,6 +685,19 @@ export type PromptAttachment = z.infer<typeof PromptAttachment>;
 
 export const MAX_PROMPT_ATTACHMENTS = 20;
 
+/**
+ * A file for a Session that does not exist yet: `PUT /api/uploads?name=` stores it on the Control
+ * Plane, `CreateSessionRequest.attachments` names it by id, and it lands in the new Sandbox as a
+ * `PromptAttachment` of the first prompt. Files nobody claims are swept after a day.
+ */
+export const StagedUpload = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  mimeType: z.string().min(1),
+});
+export type StagedUpload = z.infer<typeof StagedUpload>;
+
 // ---------------------------------------------------------------------------
 // Provider usage limits (ADR-0053). The Daemon meters what the Provider tells it (Anthropic's
 // `anthropic-ratelimit-unified-*` response headers through the LLM inspector, Codex's `/status`)
@@ -870,6 +883,8 @@ export const CreateSessionRequest = z.object({
   gitIdentity: GitIdentity.partial().optional(),
   inspectLlm: z.boolean().optional(),
   prompt: z.string().min(1).optional(),
+  /** Ids of `StagedUpload`s to attach to the first prompt (a prompt of files alone is fine). */
+  attachments: z.array(z.string().min(1)).max(MAX_PROMPT_ATTACHMENTS).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequest>;
 /** What a client sends (defaults not yet filled in). */

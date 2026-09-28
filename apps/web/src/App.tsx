@@ -62,7 +62,8 @@ import { SessionFamily } from "./SessionFamily";
 import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 import { SIDEBAR_MAX_PX, SIDEBAR_MIN_PX, PANE_MAX_FRAC, PANE_MIN_FRAC, clampPane, clampSidebar, loadSize, saveSize, startSplitterDrag } from "./splitter";
 import { AttachmentSession } from "./Attachments";
-import { usePendingAttachments } from "./attachments-pending";
+import { usePendingAttachments, useStagedAttachments } from "./attachments-pending";
+import { AttachButton, AttachList, DictationLine, MicButton, droppedFiles, useDictation } from "./composer-tools";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { useDraftStore } from "./draft";
@@ -2039,7 +2040,22 @@ function NewSession({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [runtimeNeeded, setRuntimeNeeded] = useState<Environment | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const pickedRef = useRef(false);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  const attachError = useCallback((message: string) => void run(() => Promise.reject(new Error(message))), [run]);
+  const attachments = useStagedAttachments(attachError);
+  const appendDictation = useCallback((text: string) => {
+    setPrompt((cur) => (cur.length === 0 || /\s$/.test(cur) ? cur + text : `${cur} ${text}`));
+    requestAnimationFrame(() => {
+      const ta = promptRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    });
+  }, []);
+  const dictation = useDictation(appendDictation);
 
   // A login stored from the connect dialog while this screen is open becomes the selection (unless one was picked by hand).
   useEffect(() => {
@@ -2053,10 +2069,14 @@ function NewSession({
   const providerReady = providerTokenSet(settings, provider);
   const accounts = githubAccounts(settings);
   const repoCount = repos.filter((d) => (d.type === "git" ? d.url.trim() : d.path.trim()) !== "").length;
+  // Files still uploading or failed hold Start back, as they hold Send back in the chat.
+  const filesSettled = attachments.items.length === 0 || attachments.ready;
+  const canStart = !busy && repoError === null && providerReady && filesSettled;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (repoError || !providerReady) return;
+    if (!canStart) return;
+    const files = attachments.attachments;
     setBusy(true);
     void run(async () => {
       const s = await api.createSession({
@@ -2066,10 +2086,19 @@ function NewSession({
         settings: draftToInput(draft),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+        ...(files.length > 0 ? { attachments: files.map((f) => f.id) } : {}),
       });
       onCreated(s);
     }).finally(() => setBusy(false));
   };
+
+  const startTitle = !providerReady
+    ? `Connect ${PROVIDER_LABELS[provider]} first`
+    : attachments.uploading
+      ? "Waiting for the files to upload"
+      : !filesSettled
+        ? "Remove the files that failed to upload"
+        : "Ctrl/\u2318+Enter";
 
   return (
     <div className="start">
@@ -2083,23 +2112,61 @@ function NewSession({
             <ProviderLogos settings={settings} onPick={onConnectProvider} />
           </div>
         )}
-        <form className={`start-box${busy ? " busy" : ""}`} onSubmit={submit}>
-          <textarea
-            className="start-prompt"
-            rows={4}
-            value={prompt}
-            autoFocus={!mobileQuery()}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        <form
+          className={`start-box${busy ? " busy" : ""}${dragging ? " dragging" : ""}`}
+          onSubmit={submit}
+          onDragOver={(e) => {
+            if (busy || !e.dataTransfer.types.includes("Files")) return;
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+          }}
+          onDrop={(e) => {
+            setDragging(false);
+            const files = droppedFiles(e.dataTransfer);
+            if (!files || busy) return;
+            e.preventDefault();
+            attachments.add(files);
+          }}
+        >
+          <div className="start-editor">
+            <textarea
+              ref={promptRef}
+              className="start-prompt"
+              rows={4}
+              value={prompt}
+              autoFocus={!mobileQuery()}
+              onChange={(e) => setPrompt(e.target.value)}
+              onPaste={(e) => {
+                const files = droppedFiles(e.clipboardData);
+                if (!files || busy) return;
                 e.preventDefault();
-                e.currentTarget.form?.requestSubmit();
-              }
-            }}
-            placeholder="e.g. Read the README, run the tests and fix the one that fails; open a PR when they pass. (Optional: an empty Session waits for you in the chat.)"
-            disabled={busy}
-          />
+                attachments.add(files);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder="e.g. Read the README, run the tests and fix the one that fails; open a PR when they pass. (Optional: an empty Session waits for you in the chat.)"
+              disabled={busy}
+            />
+            {dragging && <div className="drop-hint">Drop to attach to the first message</div>}
+          </div>
+          {(attachments.items.length > 0 || dictation.dictation.kind !== "idle") && (
+            <div className="start-extras">
+              <AttachList attachments={attachments} />
+              <DictationLine dictation={dictation.dictation} />
+            </div>
+          )}
           <div className="start-tools">
+            <div className="toolbar">
+              <AttachButton disabled={busy} onFiles={attachments.add} />
+              <MicButton control={dictation} disabled={busy} />
+            </div>
             <Select<Environment>
               value={draft.environment}
               onChange={(environment) => {
@@ -2168,7 +2235,7 @@ function NewSession({
               Advanced…
             </button>
             <span className="spacer" />
-            <button type="submit" className="primary" disabled={busy || repoError !== null || !providerReady} title={providerReady ? "Ctrl/⌘+Enter" : `Connect ${PROVIDER_LABELS[provider]} first`}>
+            <button type="submit" className="primary" disabled={!canStart} title={startTitle}>
               {busy ? "Starting…" : "Start"}
             </button>
           </div>

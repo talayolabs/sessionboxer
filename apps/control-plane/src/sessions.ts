@@ -143,6 +143,7 @@ import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-d
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
 import { PullRequests } from "./pull-requests.js";
+import { StagedUploads, type StagedFile } from "./staged-uploads.js";
 import { UsbDevices } from "./usb.js";
 import type { GuestVms } from "./vm-host.js";
 import type { WindowsVms } from "./windows.js";
@@ -183,7 +184,10 @@ export class SessionManager {
   private readonly clients = new Map<string, DaemonClient>();
   private readonly terminalSinks = new Map<string, Set<TerminalSink>>();
   private readonly stopping = new Set<string>();
-  private readonly pendingPrompts = new Map<string, PromptRequest & { origin?: PromptOrigin }>();
+  /** The first prompt of a Session whose Sandbox is still coming up; `staged` files go into the Sandbox first (New session attachments). */
+  private readonly pendingPrompts = new Map<string, PromptRequest & { origin?: PromptOrigin; staged?: StagedFile[] }>();
+  /** Files attached before the Session existed (ADR-0024). */
+  readonly staged: StagedUploads;
   /** Origin the next `user_prompt` event of a Session is recorded with (set by `prompt` for a hidden prompt). */
   private readonly promptOrigins = new Map<string, PromptOrigin>();
   /** Saved messages another Session's Agent queued (`session_message`), by message id: sent with that origin. */
@@ -237,6 +241,7 @@ export class SessionManager {
     /** Web Push to devices that are not watching (see `PushNotifier`). */
     private readonly push: (msg: PushMessage) => void = () => undefined,
   ) {
+    this.staged = new StagedUploads(log);
     this.prs = new PullRequests({
       db,
       getSession: (id) => db.getSession(id),
@@ -1002,6 +1007,16 @@ export class SessionManager {
   /** `createdBy`: the Session whose Agent asked (`session_create`, ADR-0062); the child counts towards its caps. */
   async create(req: CreateSessionRequest, createdBy?: string): Promise<Session> {
     const settings = this.settings();
+    const staged = req.attachments?.length ? await this.staged.claim(req.attachments) : [];
+    try {
+      return await this.createClaimed(req, staged, settings, createdBy);
+    } catch (e) {
+      await this.staged.release(staged);
+      throw e;
+    }
+  }
+
+  private async createClaimed(req: CreateSessionRequest, staged: StagedFile[], settings: Settings, createdBy?: string): Promise<Session> {
     if (!providerReady(req.provider, settings)) {
       throw new HttpError(400, providerSetupHint(req.provider));
     }
@@ -1068,7 +1083,7 @@ export class SessionManager {
     };
     this.db.insertSession(session);
     this.broadcast({ type: "session", session });
-    if (req.prompt) this.pendingPrompts.set(id, { text: req.prompt });
+    if (req.prompt || staged.length > 0) this.pendingPrompts.set(id, staged.length > 0 ? { text: req.prompt ?? "", staged } : { text: req.prompt ?? "" });
 
     void this.provision(session, settings).catch((e: unknown) => {
       this.log(`provision ${id} failed: ${String(e)}`);
@@ -1345,8 +1360,20 @@ export class SessionManager {
     const pending = this.pendingPrompts.get(id);
     if (pending) {
       this.pendingPrompts.delete(id);
-      const { origin, ...req } = pending;
-      this.prompt(id, req, origin).catch((e: unknown) => this.log(`pending prompt ${id} failed: ${String(e)}`));
+      const { origin, staged, ...req } = pending;
+      const send = async () => {
+        if (staged?.length) {
+          const attachments = await this.staged.pushInto(await this.daemonHttpUrl(id), staged).catch((e: unknown) => {
+            throw new Error(`the attached files could not be copied into the Sandbox: ${e instanceof Error ? e.message : String(e)}`);
+          });
+          req.attachments = [...(req.attachments ?? []), ...attachments];
+        }
+        await this.prompt(id, req, origin);
+      };
+      send().catch((e: unknown) => {
+        this.log(`pending prompt ${id} failed: ${String(e)}`);
+        if (staged?.length) this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
+      });
     } else {
       void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
     }

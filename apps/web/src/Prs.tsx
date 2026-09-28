@@ -262,7 +262,7 @@ function RunBadges({ pr, automations }: { pr: FollowedPr; automations: Map<strin
       {pr.runs.map((r) => {
         const a = automations.get(r.automationId);
         return (
-          <Tip key={r.id} text={`${a?.name ?? "automation"}: ${RUN_LABEL[r.status]}${r.result?.type === "review" ? ` — ${r.result.findings} finding${r.result.findings === 1 ? "" : "s"}${r.result.high > 0 ? ` (${r.result.high} high)` : ""}, ${r.result.verdict.replace("_", " ")}` : ""}${r.detail ? ` — ${r.detail}` : ""}${r.error ? ` — ${r.error}` : ""}`}>
+          <Tip key={r.id} text={`${a?.name ?? "automation"}: ${RUN_LABEL[r.status]}${r.result?.type === "review" ? ` — ${r.result.findings} finding${r.result.findings === 1 ? "" : "s"}${r.result.high > 0 ? ` (${r.result.high} high)` : ""}, ${r.result.verdict.replace("_", " ")}` : ""}${r.result?.type === "qa" ? ` — ${r.result.skipped ? "QA skipped" : `QA ${r.result.passed}/${r.result.total} passed`}${r.result.videoUrl ? ", video" : ""}` : ""}${r.detail ? ` — ${r.detail}` : ""}${r.error ? ` — ${r.error}` : ""}`}>
             <span className={`pill e2e-badge e2e-badge-${badgeClass(r.status)}`}>
               {a?.action.type === "auto_review" ? "review" : a?.action.type === "auto_qa" ? "QA" : (a?.name ?? "run")} {RUN_LABEL[r.status]}
             </span>

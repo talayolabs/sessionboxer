@@ -284,3 +284,41 @@ function killTree(child: ChildProcess): void {
   if (child.exitCode !== null || child.killed) return;
   child.kill("SIGTERM");
 }
+
+/** Whether this `gh` has `gh pr comment --attach` (2.99+): a file attached to the comment, rendered inline. */
+export async function ghSupportsAttach(gh: GhCli): Promise<boolean> {
+  const { stdout, stderr } = await run(gh.path, ["pr", "comment", "--help"], hostEnv(), { allowFailure: true });
+  return /--attach\b/.test(`${stdout}\n${stderr}`);
+}
+
+/**
+ * `gh pr comment <url> --body-file - --attach <file>` as `token`'s login: the comment's URL. The token
+ * goes in as `GH_TOKEN` for this one process; gh's own config is not touched.
+ */
+export async function ghPrCommentAttach(gh: GhCli, token: string, prUrl: string, body: string, file: string, timeoutMs = 10 * 60_000): Promise<string | null> {
+  const env: NodeJS.ProcessEnv = { ...hostEnv(), GH_TOKEN: token, GH_CONFIG_DIR: GH_PRIVATE_CONFIG_DIR };
+  const { stdout } = await runWithInput(gh.path, ["pr", "comment", prUrl, "--body-file", "-", "--attach", file], env, body, timeoutMs);
+  const url = /https:\/\/\S+#issuecomment-\d+/.exec(stdout)?.[0] ?? null;
+  return url;
+}
+
+function runWithInput(cmd: string, args: string[], env: NodeJS.ProcessEnv, input: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (c: Buffer) => (stdout += c.toString("utf8")));
+    child.stderr?.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
+    const timer = setTimeout(() => killTree(child), timeoutMs);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error(`${cmd} ${args.slice(0, 2).join(" ")} failed (${code}): ${stderr.trim() || stdout.trim()}`));
+    });
+    child.stdin?.end(input);
+  });
+}

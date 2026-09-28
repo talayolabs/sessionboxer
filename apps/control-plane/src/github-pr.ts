@@ -795,3 +795,23 @@ export async function fetchPrFiles(t: GhTransport, ref: PrRef, account: string |
   }
   return { status: "ok", value: out, etag: null, remaining };
 }
+
+/** A Conversation-tab comment (`POST issues/:n/comments`); the comment's URL. */
+export async function postIssueComment(t: GhTransport, ref: PrRef, account: string | null, body: string): Promise<PostOutcome> {
+  let res: DaemonGhApiResult;
+  try {
+    res = await t.request({ method: "POST", path: `repos/${ref.owner}/${ref.repo}/issues/${ref.number}/comments`, headers: {}, account, body: JSON.stringify({ body }) });
+  } catch (e) {
+    return { status: "error", kind: "error", detail: e instanceof Error ? e.message : String(e), retryAt: null };
+  }
+  if (res.status === 201 || res.status === 200) {
+    try {
+      const parsed = JSON.parse(res.body) as { html_url?: string };
+      return { status: "ok", url: parsed.html_url ?? null };
+    } catch {
+      return { status: "ok", url: null };
+    }
+  }
+  if (res.status === 422) return { status: "refused", detail: message(res.body) ?? "HTTP 422" };
+  return classify(res);
+}

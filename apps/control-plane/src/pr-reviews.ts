@@ -225,7 +225,8 @@ export function reviewPrompt(pr: StoredFollowedPr, baseRef: string, since: { sha
   return out.join("\n");
 }
 
-function fenceBody(body: string): string {
+/** The PR's description as data: the fence tags stripped, long text cut. */
+export function fenceBody(body: string): string {
   let text = body.replace(/\r\n/g, "\n").replace(/<\/?pr-description>/gi, "").trim();
   if (text === "") text = "(no description)";
   if (text.length > DESCRIPTION_MAX_CHARS) text = `${text.slice(0, DESCRIPTION_MAX_CHARS)}\n[… ${text.length - DESCRIPTION_MAX_CHARS} more characters]`;

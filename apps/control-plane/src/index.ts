@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { Readable } from "node:stream";
 import { createServer as createHttpsServer } from "node:https";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,6 +107,7 @@ import { PushNotifier } from "./push.js";
 import { Automations, scheduleRunOf } from "./automations.js";
 import { FollowedPrs } from "./followed-prs.js";
 import { PrReviews } from "./pr-reviews.js";
+import { PrQa, qaVideoFile } from "./pr-qa.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { WindowsVms } from "./windows.js";
 import { MacosVms } from "./macos.js";
@@ -262,6 +264,17 @@ const prReviews = new PrReviews({
   log,
 });
 sessions.reviews = prReviews;
+new PrQa({
+  db,
+  automations,
+  followedPrs,
+  e2e: sessions.e2e,
+  settings: () => settings,
+  sessions: { create: (req) => sessions.create(req), daemonHttpUrl: (id) => sessions.daemonHttpUrl(id) },
+  attach: (sessionId, url, by) => sessions.prs.attach(sessionId, url, by),
+  push: (msg) => push.send(msg),
+  log,
+});
 const connectors = new Connectors(
   {
     get: () => settings,
@@ -628,6 +641,25 @@ api.delete("/automations/:id", (c) => {
 });
 api.post("/automations/:id/run", async (c) => c.json(await automations.runNow(c.req.param("id")), 202));
 api.get("/automations/:id/runs", (c) => c.json(automations.listRuns(c.req.param("id"))));
+// The video of an Auto QA run, kept on the Control Plane after the run's box is gone (ADR-0066).
+api.on(["GET", "HEAD"], "/automations/runs/:runId/video", (c) => {
+  const file = qaVideoFile(c.req.param("runId"));
+  if (!file) return c.json({ error: "no video was kept for this run" }, 404);
+  const size = statSync(file).size;
+  const headers: Record<string, string> = { "content-type": "video/mp4", "accept-ranges": "bytes", "cache-control": "private, max-age=86400" };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(c.req.header("range") ?? "");
+  let start = 0;
+  let end = size - 1;
+  if (range && (range[1] !== "" || range[2] !== "")) {
+    start = range[1] === "" ? Math.max(0, size - Number(range[2])) : Number(range[1]);
+    end = range[1] !== "" && range[2] !== "" ? Math.min(Number(range[2]), size - 1) : end;
+    if (start > end || start >= size) return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
+    headers["content-range"] = `bytes ${start}-${end}/${size}`;
+  }
+  headers["content-length"] = String(end - start + 1);
+  if (c.req.method === "HEAD") return new Response(null, { status: range ? 206 : 200, headers });
+  return new Response(Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream, { status: range ? 206 : 200, headers });
+});
 
 // Followed pull requests (ADR-0064): `/prs/follows*` before `/prs/:id`.
 api.get("/prs/accounts", (c) => c.json(followedPrs.accounts()));

@@ -2,9 +2,10 @@ import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { estimateNarrationSeconds, narrateVideo, narrationAvailable, narrationPrefs, resolveNarrationVoice, type NarrationOptions } from "./narration.js";
-import type { Display } from "./x11.js";
+import type { Coordinate, Display, PointerTrace, TimedPoint } from "./x11.js";
 
 const WORKSPACE = process.env.SESSIONBOXER_WORKSPACE ?? "/workspace";
 const TMPFS = process.env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
@@ -23,8 +24,19 @@ const FINISH_TIMEOUT_MS = 180_000;
 const FONT_FRACTION = 0.035;
 /** Lines of caption text the band under the desktop is sized for; longer captions stack up over the desktop. */
 const BAND_LINES = 3;
-/** DejaVu Sans line height relative to the font size (libass uses the font's ascent + descent). */
-const LINE_HEIGHT = 1.2;
+/** Inter's line height relative to the font size (libass uses the font's ascent + descent); DejaVu Sans, its fallback, matches. */
+const LINE_HEIGHT = 1.21;
+/** The caption face (fonts-inter-variable in the Sandbox image); fontconfig falls back to DejaVu Sans where it is missing. */
+const CAPTION_FONT = "Inter Variable";
+/** The pointer drawn into the video: an arrow this fraction of the display height tall (42 px at 768, about twice X's). */
+const CURSOR_FRACTION = 0.055;
+/** How much the arrow shrinks while a button is down. */
+const PRESSED_SCALE = 0.8;
+/** Transparent margin around the arrow, so its shadow fits; the tip (the hotspot) sits at (pad, pad). */
+const CURSOR_PAD = 6;
+/** The Sessionboxer mark at the video's top-right corner: its side as a fraction of the display height (28 px at 768), on a rounded dark badge. */
+const LOGO_FRACTION = 0.0365;
+const LOGO_FILE = fileURLToPath(new URL("../assets/logo.png", import.meta.url));
 const MAX_CAPTION_CHARS = 300;
 /** Shortest cue the sidecar track gets, so two annotations inside one collapsed pause both show. */
 const MIN_CUE_SECONDS = 0.5;
@@ -37,6 +49,16 @@ export interface Caption {
   text: string;
 }
 
+/** A pointer position: seconds since the recording started, x, y. */
+type PointerMove = [number, number, number];
+/** A button held: from and until (seconds since the start; `null` while still held), at x, y. */
+interface PointerPress {
+  from: number;
+  until: number | null;
+  x: number;
+  y: number;
+}
+
 interface RecordingState {
   pid: number;
   path: string;
@@ -45,6 +67,9 @@ interface RecordingState {
   height: number;
   fps: number;
   captions: Caption[];
+  /** What the pointer did, in wall-clock time; drawn into the frames when the recording stops (ADR-0072). */
+  moves: PointerMove[];
+  presses: PointerPress[];
 }
 
 export interface RecordingInfo {
@@ -126,6 +151,10 @@ function elapsed(startedAt: string): number {
   return Math.round((Date.now() - Date.parse(startedAt)) / 100) / 10;
 }
 
+function sinceStart(startedAt: string, whenMs: number): number {
+  return Math.round(whenMs - Date.parse(startedAt)) / 1000;
+}
+
 export function currentRecording(): RecordingInfo | null {
   const s = readState();
   return s ? { path: s.path, startedAt: s.startedAt, seconds: elapsed(s.startedAt), captions: s.captions.length } : null;
@@ -146,8 +175,9 @@ export function recordingPath(requested: string | undefined): string {
 /**
  * Starts ffmpeg grabbing the X display into an H.264 .mp4 (yuv420p + faststart, so browsers
  * play it). Detached, so it outlives this MCP server; `stopRecording` finds it through the state file.
+ * The frames carry no pointer: the finishing pass draws one from the trace, starting at `pointer`.
  */
-export async function startRecording(display: Display, requested: string | undefined, fps: number): Promise<RecordingInfo> {
+export async function startRecording(display: Display, requested: string | undefined, fps: number, pointer: Coordinate): Promise<RecordingInfo> {
   const running = readState();
   if (running) throw new Error(`a recording is already running since ${running.startedAt} (${running.path}); stop it first`);
   const path = recordingPath(requested);
@@ -165,7 +195,7 @@ export async function startRecording(display: Display, requested: string | undef
     "-video_size",
     `${display.width}x${display.height}`,
     "-draw_mouse",
-    "1",
+    "0",
     "-i",
     `${display.name}.0+0,0`,
     "-c:v",
@@ -194,10 +224,44 @@ export async function startRecording(display: Display, requested: string | undef
   });
   if (early !== null) throw new Error(`could not start recording: ${early}`);
   child.unref();
-  const state: RecordingState = { pid: child.pid ?? -1, path, startedAt, width: display.width, height: display.height, fps, captions: [] };
+  const state: RecordingState = {
+    pid: child.pid ?? -1,
+    path,
+    startedAt,
+    width: display.width,
+    height: display.height,
+    fps,
+    captions: [],
+    moves: [[0, pointer[0], pointer[1]]],
+    presses: [],
+  };
   writeFileSync(STATE_FILE, JSON.stringify(state));
   return { path, startedAt, seconds: 0, captions: 0 };
 }
+
+/** The running recording's view of the pointer; each action appends to the state file once. */
+export const recordingTrace: PointerTrace = {
+  moved(points: TimedPoint[]): void {
+    const s = readState();
+    if (!s) return;
+    for (const p of points) s.moves.push([sinceStart(s.startedAt, p.when), p.at[0], p.at[1]]);
+    writeFileSync(STATE_FILE, JSON.stringify(s));
+  },
+  pressed(at: Coordinate, when: number, until: number | null): void {
+    const s = readState();
+    if (!s) return;
+    s.presses.push({ from: sinceStart(s.startedAt, when), until: until === null ? null : sinceStart(s.startedAt, until), x: at[0], y: at[1] });
+    writeFileSync(STATE_FILE, JSON.stringify(s));
+  },
+  released(when: number): void {
+    const s = readState();
+    if (!s) return;
+    const held = s.presses.filter((p) => p.until === null);
+    if (held.length === 0) return;
+    for (const p of held) p.until = sinceStart(s.startedAt, when);
+    writeFileSync(STATE_FILE, JSON.stringify(s));
+  },
+};
 
 /** Adds a caption at the current moment of the running recording; it shows until the next one. */
 export function annotateRecording(text: string): Caption & { path: string } {
@@ -231,6 +295,7 @@ export async function stopRecording(opts: StopOptions): Promise<RecordingResult>
   }
   rmSync(STATE_FILE, { force: true });
   if (!existsSync(s.path) || statSync(s.path).size === 0) throw new Error(`recording produced no data at ${s.path}`);
+  const stoppedAt = Date.now();
   const recordedSeconds = elapsed(s.startedAt);
   const captions = opts.captions === "none" ? [] : s.captions;
   const burn = captions.length > 0 && (opts.captions === "both" || opts.captions === "burn");
@@ -238,14 +303,12 @@ export async function stopRecording(opts: StopOptions): Promise<RecordingResult>
   let finished: Finished = { path: s.path, seconds: recordedSeconds, fps: s.fps, captions, track, narrated: false };
   let condensed = false;
   let warning: string | undefined;
-  if (opts.condense || burn) {
-    try {
-      const out = await finish(s, captions, burn, opts.condense ? opts.holdSeconds : null);
-      finished = { ...finished, seconds: out.seconds, captions: captions.map((c) => ({ at: Math.min(out.map(c.at), out.seconds), text: c.text })) };
-      condensed = opts.condense;
-    } catch (e) {
-      warning = `left as recorded: ${e instanceof Error ? e.message : String(e)}`;
-    }
+  try {
+    const out = await finish(s, captions, burn, opts.condense ? opts.holdSeconds : null, sinceStart(s.startedAt, stoppedAt));
+    finished = { ...finished, seconds: out.seconds, captions: captions.map((c) => ({ at: Math.min(out.map(c.at), out.seconds), text: c.text })) };
+    condensed = opts.condense;
+  } catch (e) {
+    warning = `left as recorded, without the pointer: ${e instanceof Error ? e.message : String(e)}`;
   }
   if (track) writeTrack(finished);
   saveFinished(finished);
@@ -370,33 +433,66 @@ async function finishedFromTrack(path: string): Promise<Finished> {
 }
 
 /**
- * Rewrites the video in place. Captions are drawn first (`pad` adds a band under the desktop,
- * `ass` renders them into it anchored at the frame's bottom, so a caption taller than the band
- * grows up into view instead of being cut off);
- * they are authored in wall-clock time like the frames at that point, so condensing carries them
- * along. Condensing: `mpdecimate` drops frames that match the last kept one, `setpts` re-times
- * the survivors so each gap is at most the hold (instead of removing it, which would make states
- * flash by), `tpad` holds the final frame so the end stays readable too. `showinfo` between the
- * two reports which input times survived, which gives the caption track the same re-timing.
+ * Rewrites the video in place. The pointer goes on first: `overlay`s of an arrow (and a smaller
+ * one while a button is down, parked off-frame otherwise) that `sendcmd` moves along the traced
+ * positions, and the Sessionboxer badge at the top-right corner. Then the captions (`pad` adds a
+ * band under the desktop, `ass` renders them into it anchored at the frame's bottom, so a caption
+ * taller than the band grows up into view instead of being cut off); they are authored in
+ * wall-clock time like the frames at that point, so condensing carries them along. Condensing:
+ * `mpdecimate` drops frames that match the last kept one, `setpts` re-times the survivors so each
+ * gap is at most the hold (instead of removing it, which would make states flash by), `tpad`
+ * holds the final frame so the end stays readable too. `showinfo` between the two reports which
+ * input times survived, which gives the caption track the same re-timing.
+ *
+ * ffmpeg's first frame comes some tenths of a second after `startedAt` (it opens the display and
+ * the encoder first): the trace is shifted by the time the recording lasted beyond the video's
+ * length, so the pointer lands where the screen reacts.
  */
-async function finish(s: RecordingState, captions: Caption[], burn: boolean, holdSeconds: number | null): Promise<{ seconds: number; map: (t: number) => number }> {
+async function finish(s: RecordingState, captions: Caption[], burn: boolean, holdSeconds: number | null, recordedSeconds: number): Promise<{ seconds: number; map: (t: number) => number }> {
   const stem = s.path.slice(0, -4);
   const tmp = `${stem}.finishing.mp4`;
-  const assFile = `${TMPFS}/recording-${process.pid}.ass`;
-  const scriptFile = `${TMPFS}/recording-${process.pid}.filter`;
-  const chain: string[] = [];
-  if (burn) {
-    const { band } = captionGeometry(s.height);
-    writeFileSync(assFile, assDocument(s.width, s.height, captions, elapsed(s.startedAt)));
-    chain.push(`pad=iw:ih+${band}:0:0:color=0x1a1a1a`, `ass=filename=${assFile}`);
-  }
-  if (holdSeconds !== null) {
-    const hold = holdSeconds.toFixed(3);
-    chain.push("mpdecimate", "showinfo", `setpts=if(eq(N\\,0)\\,0\\,PREV_OUTPTS+min(PTS-PREV_INPTS\\,${hold}/TB))`, `tpad=stop_mode=clone:stop_duration=${hold}`);
-  }
-  writeFileSync(scriptFile, chain.join(",\n"));
-  rmSync(tmp, { force: true });
+  const work = `${TMPFS}/recording-${process.pid}`;
+  const assFile = `${work}.ass`;
+  const scriptFile = `${work}.filter`;
+  const cmdFile = `${work}.cmd`;
+  const cursorFile = `${work}-cursor.png`;
+  const pressedFile = `${work}-pressed.png`;
+  const badgeFile = `${work}-badge.png`;
+  const inputs = ["-i", s.path];
+  const graph: string[] = [];
+  let last = "0:v";
+  const step = (filters: string, out: string, extraIn = ""): void => {
+    graph.push(`[${last}]${extraIn}${filters}[${out}]`);
+    last = out;
+  };
+  const cleanup = [scriptFile, cmdFile, cursorFile, pressedFile, badgeFile, assFile];
   try {
+    const lead = Math.max(0, recordedSeconds - (await videoSeconds(s.path)));
+    const arrow = Math.round(s.height * CURSOR_FRACTION);
+    await Promise.all([drawArrow(arrow, cursorFile), drawArrow(Math.round(arrow * PRESSED_SCALE), pressedFile), drawBadge(Math.round(s.height * LOGO_FRACTION), badgeFile)]);
+    writeFileSync(cmdFile, pointerCommands(s, lead));
+    inputs.push("-i", cursorFile, "-i", pressedFile);
+    graph.push("[1:v]format=rgba[cursor]", "[2:v]format=rgba[pressed]");
+    step(`sendcmd=f=${cmdFile},format=rgba`, "v1");
+    step(`overlay@cur=x=${OFF}:y=${OFF}`, "v2", "[cursor]");
+    step(`overlay@pressed=x=${OFF}:y=${OFF}`, "v3", "[pressed]");
+    if (existsSync(badgeFile)) {
+      inputs.push("-i", badgeFile);
+      graph.push("[3:v]format=rgba[badge]");
+      step(`overlay=x=W-w-${Math.round(s.height * 0.013)}:y=${Math.round(s.height * 0.013)}`, "v4", "[badge]");
+    }
+    if (burn) {
+      const { band } = captionGeometry(s.height);
+      writeFileSync(assFile, assDocument(s.width, s.height, captions, elapsed(s.startedAt)));
+      step(`pad=iw:ih+${band}:0:0:color=0x1a1a1a,ass=filename=${assFile}`, "v5");
+    }
+    if (holdSeconds !== null) {
+      const hold = holdSeconds.toFixed(3);
+      step(`mpdecimate,showinfo,setpts=if(eq(N\\,0)\\,0\\,PREV_OUTPTS+min(PTS-PREV_INPTS\\,${hold}/TB)),tpad=stop_mode=clone:stop_duration=${hold}`, "v6");
+    }
+    step("format=yuv420p", "out");
+    writeFileSync(scriptFile, graph.join(";\n"));
+    rmSync(tmp, { force: true });
     const { stderr } = await execFileAsync(
       "ffmpeg",
       [
@@ -404,10 +500,11 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
         "-loglevel",
         holdSeconds !== null ? "info" : "error",
         "-nostats",
-        "-i",
-        s.path,
-        "-filter_script:v",
+        ...inputs,
+        "-filter_complex_script",
         scriptFile,
+        "-map",
+        "[out]",
         "-fps_mode",
         holdSeconds !== null ? "vfr" : "passthrough",
         "-c:v",
@@ -416,8 +513,6 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
         "veryfast",
         "-crf",
         "23",
-        "-pix_fmt",
-        "yuv420p",
         "-movflags",
         "+faststart",
         "-y",
@@ -425,9 +520,8 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
       ],
       { timeout: FINISH_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024 },
     );
-    const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", tmp], { timeout: 30_000 });
-    const seconds = Number.parseFloat(stdout.trim());
-    if (!Number.isFinite(seconds) || seconds <= 0 || statSync(tmp).size === 0) throw new Error("finished video is empty");
+    const seconds = await videoSeconds(tmp);
+    if (seconds <= 0 || statSync(tmp).size === 0) throw new Error("finished video is empty");
     renameSync(tmp, s.path);
     const map = holdSeconds !== null ? retiming(keptTimes(stderr), holdSeconds, 1 / s.fps) : (t: number) => t;
     return { seconds, map };
@@ -441,9 +535,82 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
       .join("\n");
     throw new Error(errors || (e instanceof Error ? e.message : String(e)));
   } finally {
-    rmSync(assFile, { force: true });
-    rmSync(scriptFile, { force: true });
+    for (const f of cleanup) rmSync(f, { force: true });
   }
+}
+
+async function videoSeconds(path: string): Promise<number> {
+  const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path], { timeout: 30_000 });
+  const seconds = Number.parseFloat(stdout.trim());
+  return Number.isFinite(seconds) ? seconds : 0;
+}
+
+/** Where an overlay is parked when it is not to be seen. */
+const OFF = -4096;
+
+/**
+ * The `sendcmd` script that moves the two arrows: at every traced moment, the one matching the
+ * button state stands at the position (tip on the hotspot), the other is parked. Times are
+ * shifted by `lead` (see {@link finish}) and clamped to the first frame.
+ */
+function pointerCommands(s: RecordingState, lead: number): string {
+  const presses = s.presses.map((p) => ({ ...p, until: p.until ?? Number.POSITIVE_INFINITY }));
+  // A press is also a position: the pointer may have been moved by hand since the last traced move.
+  const moves = [...s.moves, ...presses.map((p): PointerMove => [p.from, p.x, p.y])].sort((a, b) => a[0] - b[0]);
+  const moments = new Set<number>();
+  for (const [t] of moves) moments.add(t);
+  for (const p of presses) if (Number.isFinite(p.until)) moments.add(p.until);
+  const times = [...moments].sort((a, b) => a - b);
+  const lines: string[] = [];
+  let move = 0;
+  let at: [number, number] = [moves[0]?.[1] ?? 0, moves[0]?.[2] ?? 0];
+  for (const t of times) {
+    while (move < moves.length && (moves[move]?.[0] ?? Infinity) <= t) {
+      const m = moves[move++];
+      if (m) at = [m[1], m[2]];
+    }
+    const held = presses.some((p) => p.from <= t && t < p.until);
+    const shown = held ? "pressed" : "cur";
+    const hidden = held ? "cur" : "pressed";
+    const x = at[0] - CURSOR_PAD;
+    const y = at[1] - CURSOR_PAD;
+    lines.push(`${Math.max(0, t - lead).toFixed(3)} overlay@${shown} x ${x}, overlay@${shown} y ${y}, overlay@${hidden} x ${OFF}, overlay@${hidden} y ${OFF};`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * A white arrow with a dark outline and a soft shadow, `height` px tall, tip at (CURSOR_PAD,
+ * CURSOR_PAD), drawn 4x and scaled down for smooth edges. ImageMagick, like `screenshot` uses.
+ */
+async function drawArrow(height: number, out: string): Promise<void> {
+  const S = 4;
+  const h = height * S;
+  const pad = CURSOR_PAD * S;
+  const shape: [number, number][] = [[0, 0], [0, 27], [6.4, 20.8], [11.6, 31.2], [15.6, 29.5], [10.4, 19.4], [19, 19.4]];
+  const points = shape.map(([x, y]) => `${(pad + (x * h) / 32).toFixed(1)},${(pad + (y * h) / 32).toFixed(1)}`).join(" ");
+  const size = `${Math.ceil((19 * h) / 32 + 2 * pad)}x${h + 2 * pad}`;
+  await execFileAsync("convert", [
+    "-size", size, "xc:none",
+    "(", "-size", size, "xc:none", "-fill", "white", "-stroke", "#1c1c1c", "-strokewidth", String(2 * S), "-draw", `polygon ${points}`, ")",
+    "(", "+clone", "-background", "black", "-shadow", `55x${3 * S}+${2 * S}+${3 * S}`, ")",
+    "-swap", "1,2", "-background", "none", "-layers", "flatten",
+    "-resize", `${100 / S}%`,
+    out,
+  ], { timeout: 30_000 });
+}
+
+/** The Sessionboxer mark, `side` px, centred on a rounded translucent dark badge; nothing when the image is not shipped. */
+async function drawBadge(side: number, out: string): Promise<void> {
+  if (!existsSync(LOGO_FILE)) return;
+  const badge = Math.round(side * 1.45);
+  const radius = Math.round(badge * 0.28);
+  await execFileAsync("convert", [
+    "-size", `${badge}x${badge}`, "xc:none", "-fill", "#11111199", "-draw", `roundrectangle 0,0 ${badge - 1},${badge - 1} ${radius},${radius}`,
+    "(", LOGO_FILE, "-resize", `${side}x${side}`, ")",
+    "-gravity", "center", "-composite",
+    out,
+  ], { timeout: 30_000 });
 }
 
 /** Input timestamps of the frames `mpdecimate` let through, from `showinfo`'s log lines. */
@@ -500,7 +667,7 @@ function assDocument(width: number, height: number, captions: Caption[], endSeco
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Caption,DejaVu Sans,${fontSize},&H00F2F2F2,&H00F2F2F2,&H001A1A1A,&H001A1A1A,0,0,0,0,100,100,0,0,1,1,0,2,${fontSize},${fontSize},${margin},1`,
+    `Style: Caption,${CAPTION_FONT},${fontSize},&H00F4F4F5,&H00F4F4F5,&H001A1A1A,&H001A1A1A,0,0,0,0,100,100,0,0,1,1,0,2,${fontSize},${fontSize},${margin},1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",

@@ -88,7 +88,7 @@ RUN --mount=type=secret,id=extra-ca \
       xvfb xfce4 xfce4-terminal dbus-x11 x11-utils x11-xserver-utils \
       x11vnc novnc websockify \
       xdotool imagemagick ffmpeg \
-      fonts-dejavu fonts-liberation \
+      fonts-dejavu fonts-liberation fonts-inter-variable \
       firefox-esr \
       # Windows Sessions (ADR-0057): the Windows VM's desktop over RDP on this X display,
       # its shell over SSH with the password the Control Plane hands over.
@@ -296,6 +296,7 @@ COPY --chown=agent:agent images/sandbox/macos-briefing.md /home/agent/.sessionbo
 
 # The compiled Sessionboxer code (stage 1): the layers that change with every release, last.
 COPY --from=build --chmod=0755 /src/packages/computer-use-mcp/dist /opt/sessionboxer/computer-use-mcp/dist
+COPY packages/computer-use-mcp/assets /opt/sessionboxer/computer-use-mcp/assets
 COPY --from=build --chmod=0755 /src/packages/sessionboxer-mcp/dist /opt/sessionboxer/sessionboxer-mcp/dist
 COPY --from=build /src/packages/protocol/dist /opt/sessionboxer/protocol/dist
 COPY --from=build --chmod=0755 /src/packages/sandbox-daemon/dist /opt/sessionboxer/sandbox-daemon/dist

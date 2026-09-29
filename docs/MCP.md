@@ -18,7 +18,7 @@ What this means for a Windows or macOS session: screenshots are of the remote-de
 
 ## The `desktop` server
 
-The desktop MCP mirrors Anthropic's computer-use tool set, implemented with xdotool and ffmpeg on the box's X display. Coordinates are integer pixels, `[x, y]`, origin at the top-left of the screen; the `screenshot` tool's description tells the agent the screen size. Every tool that moves the pointer to a target *glides* there (an eased motion of 100–300 ms, about 120 positions a second) so hover effects and drag-and-drop see a moving pointer; `SESSIONBOXER_MOUSE_GLIDE=0` in the server's environment makes it jump. While a recording runs, the pointer and the keys move at a hand's pace instead — glides of 350–700 ms, about 30 keys a second — so the video shows the pointer travel and the text arrive letter by letter rather than in blocks; without a recording the agent works at full speed.
+The desktop MCP mirrors Anthropic's computer-use tool set, implemented with xdotool and ffmpeg on the box's X display. Coordinates are integer pixels, `[x, y]`, origin at the top-left of the screen; the `screenshot` tool's description tells the agent the screen size. Every tool that moves the pointer to a target *glides* there (an eased motion of 100–300 ms, about 120 positions a second) so hover effects and drag-and-drop see a moving pointer; `SESSIONBOXER_MOUSE_GLIDE=0` in the server's environment makes it jump. While a recording runs, the pointer and the keys move at a hand's pace instead — glides of 350–700 ms, about 30 keys a second — so the video shows the pointer travel and the text arrive letter by letter rather than in blocks; without a recording the agent works at full speed. The video does not carry X's small pointer: when the recording stops, a large white arrow is drawn along the path the pointer took — smaller while a button is down, so clicks and drags show — with the Sessionboxer badge at the top-right corner (ADR-0072).
 
 Tools that act (move, click, type, scroll…) return the text `OK`; `screenshot`, `zoom` and `wait` return a PNG image; the recording tools return JSON.
 
@@ -173,7 +173,7 @@ Returns the caption with its time from the start of the recording (`{ at, text, 
 
 #### `stop_recording`
 
-Stop the recording and finish the video. In order: the captions are burned into a band added **under** the desktop (nothing on screen is covered; the band fits about three lines and grows upwards for a longer caption); static stretches are condensed; the `.vtt` is written with the re-timed captions; narration is added when it applies. The tool result reports the recorded and the final length.
+Stop the recording and finish the video. In order: the pointer (the large arrow, small while a button is down) and the Sessionboxer badge are drawn into the frames; the captions are burned into a band added **under** the desktop (nothing on screen is covered; the band fits about three lines and grows upwards for a longer caption); static stretches are condensed; the `.vtt` is written with the re-timed captions; narration is added when it applies. The tool result reports the recorded and the final length.
 
 | Parameter | Type | Meaning |
 | --- | --- | --- |

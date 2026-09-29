@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { NARRATION_LANGUAGES, NARRATION_VOICES } from "./narration.js";
-import { annotateRecording, currentRecording, narrateRecording, startRecording, stopRecording } from "./recording.js";
+import { annotateRecording, currentRecording, narrateRecording, recordingTrace, startRecording, stopRecording } from "./recording.js";
 import {
   click,
   cursorPosition,
@@ -22,14 +22,14 @@ import {
   typeText,
   zoomPng,
   type Coordinate,
-  type Pace,
+  type Hand,
   type Region,
 } from "./x11.js";
 
 const display = displayFromEnv();
 
-/** Actions slow down to a hand's pace while a recording runs, so the video shows them happen. */
-const pace = (): Pace => (currentRecording() ? RECORDED_PACE : FAST_PACE);
+/** While a recording runs, actions slow down to a hand's pace and the pointer's path is traced, so the video shows them happen. */
+const hand = (): Hand => (currentRecording() ? { pace: RECORDED_PACE, trace: recordingTrace } : { pace: FAST_PACE });
 
 const coordinate = z
   .tuple([z.number().int(), z.number().int()])
@@ -73,7 +73,7 @@ server.registerTool(
   "mouse_move",
   { description: "Move the mouse cursor to a coordinate without clicking.", inputSchema: { coordinate } },
   async ({ coordinate: c }) => {
-    await mouseMove(display, pace(), c as Coordinate);
+    await mouseMove(display, hand(), c as Coordinate);
     return okText();
   },
 );
@@ -81,23 +81,23 @@ server.registerTool(
 const clickInput = { coordinate: coordinate.optional().describe("Where to click; omitted = current cursor position") };
 
 server.registerTool("left_click", { description: "Click the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
-  await click(display, pace(), 1, 1, c as Coordinate | undefined);
+  await click(display, hand(), 1, 1, c as Coordinate | undefined);
   return okText();
 });
 server.registerTool("right_click", { description: "Click the right mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
-  await click(display, pace(), 3, 1, c as Coordinate | undefined);
+  await click(display, hand(), 3, 1, c as Coordinate | undefined);
   return okText();
 });
 server.registerTool("middle_click", { description: "Click the middle mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
-  await click(display, pace(), 2, 1, c as Coordinate | undefined);
+  await click(display, hand(), 2, 1, c as Coordinate | undefined);
   return okText();
 });
 server.registerTool("double_click", { description: "Double-click the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
-  await click(display, pace(), 1, 2, c as Coordinate | undefined);
+  await click(display, hand(), 1, 2, c as Coordinate | undefined);
   return okText();
 });
 server.registerTool("triple_click", { description: "Triple-click the left mouse button (selects a line/paragraph in most apps).", inputSchema: clickInput }, async ({ coordinate: c }) => {
-  await click(display, pace(), 1, 3, c as Coordinate | undefined);
+  await click(display, hand(), 1, 3, c as Coordinate | undefined);
   return okText();
 });
 
@@ -108,17 +108,17 @@ server.registerTool(
     inputSchema: { start_coordinate: coordinate, coordinate },
   },
   async ({ start_coordinate, coordinate: c }) => {
-    await drag(display, pace(), start_coordinate as Coordinate, c as Coordinate);
+    await drag(display, hand(), start_coordinate as Coordinate, c as Coordinate);
     return okText();
   },
 );
 
 server.registerTool("left_mouse_down", { description: "Press and hold the left mouse button (pair with left_mouse_up).", inputSchema: clickInput }, async ({ coordinate: c }) => {
-  await mouseDown(display, pace(), 1, c as Coordinate | undefined);
+  await mouseDown(display, hand(), 1, c as Coordinate | undefined);
   return okText();
 });
 server.registerTool("left_mouse_up", { description: "Release the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
-  await mouseUp(display, pace(), 1, c as Coordinate | undefined);
+  await mouseUp(display, hand(), 1, c as Coordinate | undefined);
   return okText();
 });
 
@@ -129,7 +129,7 @@ server.registerTool(
     inputSchema: { text: z.string().min(1) },
   },
   async ({ text }) => {
-    await typeText(display, pace(), text);
+    await typeText(display, hand(), text);
     return okText();
   },
 );
@@ -169,7 +169,7 @@ server.registerTool(
     },
   },
   async ({ coordinate: c, scroll_direction, scroll_amount }) => {
-    await scroll(display, pace(), scroll_direction, scroll_amount, c as Coordinate | undefined);
+    await scroll(display, hand(), scroll_direction, scroll_amount, c as Coordinate | undefined);
     return okText();
   },
 );
@@ -208,7 +208,7 @@ server.registerTool(
       fps: z.number().int().min(1).max(60).default(30).describe("Frames per second (30 shows the pointer travel and typing smoothly; 60 for animations)"),
     },
   },
-  async ({ path, fps }) => okText(JSON.stringify(await startRecording(display, path, fps))),
+  async ({ path, fps }) => okText(JSON.stringify(await startRecording(display, path, fps, await cursorPosition(display)))),
 );
 
 server.registerTool(

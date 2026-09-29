@@ -239,7 +239,7 @@ export class PrItemsStore {
   /** Sets thread ids and `resolved`/`outdated` of review comments from the GraphQL thread list. */
   setThreads(prId: string, threads: Array<{ nodeId: string; commentIds: number[]; resolved: boolean; outdated: boolean }>): void {
     const stmt = this.db.prepare(
-      "UPDATE ${this.t.items} SET thread_id = ?, thread_node_id = ?, resolved = ?, outdated = ? WHERE pr_id = ? AND kind = 'review_comment' AND github_id = ?",
+      `UPDATE ${this.t.items} SET thread_id = ?, thread_node_id = ?, resolved = ?, outdated = ? WHERE pr_id = ? AND kind = 'review_comment' AND github_id = ?`,
     );
     const tx = this.db.transaction(() => {
       for (const t of threads) {
@@ -355,7 +355,7 @@ export class PrItemsStore {
       }
       const del = this.db.prepare(`DELETE FROM ${this.t.checks} WHERE id = ?`);
       const park = this.db.prepare(
-        "UPDATE ${this.t.checks} SET state = 'pending', conclusion = NULL, head_sha = ?, url = NULL, github_id = NULL, summary = NULL, started_at = NULL, completed_at = NULL, seen = 1, notified = 1 WHERE id = ?",
+        `UPDATE ${this.t.checks} SET state = 'pending', conclusion = NULL, head_sha = ?, url = NULL, github_id = NULL, summary = NULL, started_at = NULL, completed_at = NULL, seen = 1, notified = 1 WHERE id = ?`,
       );
       for (const old of existing.values()) {
         if (keep.has(old.id)) continue;

@@ -58,15 +58,19 @@ export interface Pace {
   glideMs: [number, number];
   /** xdotool `--delay` between typed keys. */
   typeDelayMs: number;
+  /** The pointer's speed at the middle of a glide never exceeds this (a long glide takes longer instead). */
+  peakPxPerSecond: number;
 }
 
 /** When nobody watches: as fast as the applications keep up with. */
-export const FAST_PACE: Pace = { glideMs: [100, 300], typeDelayMs: TYPE_DELAY_MS };
+export const FAST_PACE: Pace = { glideMs: [100, 300], typeDelayMs: TYPE_DELAY_MS, peakPxPerSecond: Number.POSITIVE_INFINITY };
 /**
  * While the desktop is recorded: a hand's pace, so a 30 fps video shows the pointer travelling
- * and the text arriving letter by letter (about one per frame) instead of in blocks.
+ * and the text arriving letter by letter (about one per frame) instead of in blocks. The peak
+ * speed keeps a glide under ~40 px per frame at 30 fps, where the eye still reads it as motion
+ * rather than as the pointer appearing in a new place; a move across the screen takes ~1.2 s.
  */
-export const RECORDED_PACE: Pace = { glideMs: [350, 700], typeDelayMs: Math.max(TYPE_DELAY_MS, 64) };
+export const RECORDED_PACE: Pace = { glideMs: [350, 700], typeDelayMs: Math.max(TYPE_DELAY_MS, 64), peakPxPerSecond: 1200 };
 
 /** A pointer position at a moment (`Date.now()` ms). */
 export interface TimedPoint {
@@ -109,9 +113,10 @@ export interface GlideStep {
 /**
  * The intermediate positions of an eased glide from `from` to `to`, one per {@link GLIDE_STEP_MS};
  * the duration grows with the square root of the distance between the pace's bounds (a short
- * hop gets the shortest, ~900 px and more the longest). Consecutive steps that round to the same
- * pixel merge into one longer pause, so a short glide still takes its time. Empty when the two
- * are (nearly) the same point.
+ * hop gets the shortest, ~900 px and more the longest), and stretches further when the eased
+ * motion would otherwise peak (at 1.5x the average speed) above the pace's speed limit.
+ * Consecutive steps that round to the same pixel merge into one longer pause, so a short glide
+ * still takes its time. Empty when the two are (nearly) the same point.
  */
 export function glidePath(from: Coordinate, to: Coordinate, pace: Pace): GlideStep[] {
   const dx = to[0] - from[0];
@@ -119,7 +124,10 @@ export function glidePath(from: Coordinate, to: Coordinate, pace: Pace): GlideSt
   const distance = Math.hypot(dx, dy);
   if (!Number.isFinite(distance) || distance < 3) return [];
   const [minMs, maxMs] = pace.glideMs;
-  const durationMs = Math.min(maxMs, minMs + ((maxMs - minMs) * Math.sqrt(distance)) / 30);
+  const durationMs = Math.max(
+    Math.min(maxMs, minMs + ((maxMs - minMs) * Math.sqrt(distance)) / 30),
+    (1000 * 1.5 * distance) / pace.peakPxPerSecond,
+  );
   const steps = Math.max(2, Math.round(durationMs / GLIDE_STEP_MS));
   const path: GlideStep[] = [];
   for (let i = 1; i < steps; i++) {

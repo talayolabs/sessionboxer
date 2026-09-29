@@ -34,6 +34,14 @@ const CURSOR_FRACTION = 0.055;
 const PRESSED_SCALE = 0.8;
 /** Transparent margin around the arrow, so its shadow fits; the tip (the hotspot) sits at (pad, pad). */
 const CURSOR_PAD = 6;
+/**
+ * The motion smear behind a moving pointer: fainter copies of the arrow drawn where it was these
+ * fractions of a frame earlier (under the arrow, so they only show when it moves).
+ */
+const GHOSTS: { frameBack: number; alpha: number }[] = [
+  { frameBack: 2 / 3, alpha: 0.22 },
+  { frameBack: 1 / 3, alpha: 0.45 },
+];
 /** The Sessionboxer mark at the video's top-right corner: its side as a fraction of the display height (28 px at 768), on a rounded dark badge. */
 const LOGO_FRACTION = 0.0365;
 const LOGO_FILE = fileURLToPath(new URL("../assets/logo.png", import.meta.url));
@@ -435,7 +443,8 @@ async function finishedFromTrack(path: string): Promise<Finished> {
 /**
  * Rewrites the video in place. The pointer goes on first: `overlay`s of an arrow (and a smaller
  * one while a button is down, parked off-frame otherwise) that `sendcmd` moves along the traced
- * positions, and the Sessionboxer badge at the top-right corner. Then the captions (`pad` adds a
+ * positions, two fainter copies a fraction of a frame behind it as a motion smear, and the
+ * Sessionboxer badge at the top-right corner. Then the captions (`pad` adds a
  * band under the desktop, `ass` renders them into it anchored at the frame's bottom, so a caption
  * taller than the band grows up into view instead of being cut off); they are authored in
  * wall-clock time like the frames at that point, so condensing carries them along. Condensing:
@@ -457,6 +466,7 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
   const cmdFile = `${work}.cmd`;
   const cursorFile = `${work}-cursor.png`;
   const pressedFile = `${work}-pressed.png`;
+  const ghostFiles = GHOSTS.map((_, i) => `${work}-ghost${i}.png`);
   const badgeFile = `${work}-badge.png`;
   const inputs = ["-i", s.path];
   const graph: string[] = [];
@@ -465,20 +475,28 @@ async function finish(s: RecordingState, captions: Caption[], burn: boolean, hol
     graph.push(`[${last}]${extraIn}${filters}[${out}]`);
     last = out;
   };
-  const cleanup = [scriptFile, cmdFile, cursorFile, pressedFile, badgeFile, assFile];
+  const cleanup = [scriptFile, cmdFile, cursorFile, pressedFile, ...ghostFiles, badgeFile, assFile];
   try {
     const lead = Math.max(0, recordedSeconds - (await videoSeconds(s.path)));
     const arrow = Math.round(s.height * CURSOR_FRACTION);
     await Promise.all([drawArrow(arrow, cursorFile), drawArrow(Math.round(arrow * PRESSED_SCALE), pressedFile), drawBadge(Math.round(s.height * LOGO_FRACTION), badgeFile)]);
+    await Promise.all(GHOSTS.map((g, i) => fade(cursorFile, g.alpha, ghostFiles[i] ?? "")));
     writeFileSync(cmdFile, pointerCommands(s, lead));
-    inputs.push("-i", cursorFile, "-i", pressedFile);
-    graph.push("[1:v]format=rgba[cursor]", "[2:v]format=rgba[pressed]");
+    const input = (file: string, label: string): void => {
+      graph.push(`[${inputs.length / 2}:v]format=rgba[${label}]`);
+      inputs.push("-i", file);
+    };
     step(`sendcmd=f=${cmdFile},format=rgba`, "v1");
+    ghostFiles.forEach((file, i) => {
+      input(file, `ghost${i}`);
+      step(`overlay@ghost${i}=x=${OFF}:y=${OFF}`, `g${i}`, `[ghost${i}]`);
+    });
+    input(cursorFile, "cursor");
     step(`overlay@cur=x=${OFF}:y=${OFF}`, "v2", "[cursor]");
+    input(pressedFile, "pressed");
     step(`overlay@pressed=x=${OFF}:y=${OFF}`, "v3", "[pressed]");
     if (existsSync(badgeFile)) {
-      inputs.push("-i", badgeFile);
-      graph.push("[3:v]format=rgba[badge]");
+      input(badgeFile, "badge");
       step(`overlay=x=W-w-${Math.round(s.height * 0.013)}:y=${Math.round(s.height * 0.013)}`, "v4", "[badge]");
     }
     if (burn) {
@@ -549,9 +567,10 @@ async function videoSeconds(path: string): Promise<number> {
 const OFF = -4096;
 
 /**
- * The `sendcmd` script that moves the two arrows: at every traced moment, the one matching the
- * button state stands at the position (tip on the hotspot), the other is parked. Times are
- * shifted by `lead` (see {@link finish}) and clamped to the first frame.
+ * The `sendcmd` script that moves the arrows: at every traced moment, the one matching the
+ * button state stands at the position (tip on the hotspot), the other is parked, and each ghost
+ * stands where the pointer was its fraction of a frame earlier (interpolated between traced
+ * positions). Times are shifted by `lead` (see {@link finish}) and clamped to the first frame.
  */
 function pointerCommands(s: RecordingState, lead: number): string {
   const presses = s.presses.map((p) => ({ ...p, until: p.until ?? Number.POSITIVE_INFINITY }));
@@ -561,22 +580,40 @@ function pointerCommands(s: RecordingState, lead: number): string {
   for (const [t] of moves) moments.add(t);
   for (const p of presses) if (Number.isFinite(p.until)) moments.add(p.until);
   const times = [...moments].sort((a, b) => a - b);
+  const place = (name: string, [x, y]: [number, number]): string => `overlay@${name} x ${x - CURSOR_PAD}, overlay@${name} y ${y - CURSOR_PAD}`;
+  const park = (name: string): string => `overlay@${name} x ${OFF}, overlay@${name} y ${OFF}`;
   const lines: string[] = [];
-  let move = 0;
-  let at: [number, number] = [moves[0]?.[1] ?? 0, moves[0]?.[2] ?? 0];
+  const frame = 1 / s.fps;
   for (const t of times) {
-    while (move < moves.length && (moves[move]?.[0] ?? Infinity) <= t) {
-      const m = moves[move++];
-      if (m) at = [m[1], m[2]];
-    }
+    const at = positionAt(moves, t);
     const held = presses.some((p) => p.from <= t && t < p.until);
-    const shown = held ? "pressed" : "cur";
-    const hidden = held ? "cur" : "pressed";
-    const x = at[0] - CURSOR_PAD;
-    const y = at[1] - CURSOR_PAD;
-    lines.push(`${Math.max(0, t - lead).toFixed(3)} overlay@${shown} x ${x}, overlay@${shown} y ${y}, overlay@${hidden} x ${OFF}, overlay@${hidden} y ${OFF};`);
+    const parts = GHOSTS.map((g, i) => place(`ghost${i}`, positionAt(moves, t - g.frameBack * frame)));
+    parts.push(place(held ? "pressed" : "cur", at), park(held ? "cur" : "pressed"));
+    lines.push(`${Math.max(0, t - lead).toFixed(3)} ${parts.join(", ")};`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** Where the pointer was at `t`, on the straight line between the traced positions around it. */
+function positionAt(moves: PointerMove[], t: number): [number, number] {
+  const first = moves[0];
+  if (!first) return [0, 0];
+  let before: PointerMove = first;
+  for (const m of moves) {
+    if (m[0] > t) {
+      if (m === first) return [first[1], first[2]];
+      const span = m[0] - before[0];
+      const f = span > 0 ? (t - before[0]) / span : 1;
+      return [Math.round(before[1] + (m[1] - before[1]) * f), Math.round(before[2] + (m[2] - before[2]) * f)];
+    }
+    before = m;
+  }
+  return [before[1], before[2]];
+}
+
+/** `src` with its opacity multiplied by `alpha`. */
+async function fade(src: string, alpha: number, out: string): Promise<void> {
+  await execFileAsync("convert", [src, "-channel", "A", "-evaluate", "multiply", String(alpha), "+channel", out], { timeout: 30_000 });
 }
 
 /**

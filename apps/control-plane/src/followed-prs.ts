@@ -12,6 +12,7 @@ import {
   type PrCheckItem,
   type PrEvent,
   type PrEventFilters,
+  type PrPeople,
   type PrFollow,
   type PrFollowHook,
   type PrItem,
@@ -142,6 +143,18 @@ export class FollowedPrs {
   /** The Connector logins a follow can be read with. */
   accounts(): Array<Pick<BoxCredential, "kind" | "host" | "account">> {
     return this.deps.credentials().map((c) => ({ kind: c.kind, host: c.host, account: c.account }));
+  }
+
+  /** Every author and requested reviewer (logins, GitHub teams as `org/slug`) seen on followed PRs, for the filter inputs. */
+  people(): PrPeople {
+    const authors = new Set<string>();
+    const reviewers = new Set<string>();
+    for (const pr of this.deps.db.followedPrs.listPrs({ state: "all" })) {
+      if (pr.author) authors.add(pr.author);
+      for (const r of pr.requestedReviewers) reviewers.add(r);
+    }
+    const sorted = (s: Set<string>): string[] => [...s].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    return { authors: sorted(authors), reviewers: sorted(reviewers) };
   }
 
   follow(req: CreatePrFollowRequest, defaultAccount?: string | null): PrFollow {
@@ -972,6 +985,19 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${glob.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
 }
 
+const normLogin = (s: string): string => s.trim().replace(/^@/, "").toLowerCase();
+
+/** `org/slug` matches that team, a bare `slug` that team of any org, a login itself; all case-insensitive. */
+function sameReviewer(wanted: string, actual: string): boolean {
+  const w = normLogin(wanted);
+  const a = normLogin(actual);
+  return w === a || (a.includes("/") && !w.includes("/") && a.endsWith(`/${w}`));
+}
+
+function loginList(list: string[]): string {
+  return list.map((l) => `@${normLogin(l)}`).join(", ");
+}
+
 /** Why the trigger's filters keep an event from firing, or `null` to fire. */
 export function filterReason(filters: PrEventFilters, action: Automation["action"]["type"], pr: StoredFollowedPr, e: PrEvent, own: Set<string>, agentOpened = false): string | null {
   if (pr.state === "draft" && filters.drafts === "skip" && e.type !== "converted_to_draft") return "the PR is a draft";
@@ -982,6 +1008,16 @@ export function filterReason(filters: PrEventFilters, action: Automation["action
   const selfAuthored = own.has(pr.author.toLowerCase());
   if (filters.authors === "not_self" && selfAuthored && agentOpened) return `@${pr.author} (the follow's own login) opened it from a Session`;
   if (filters.authors === "self_only" && !selfAuthored) return `@${pr.author} is not the follow's own login`;
+  if (filters.authorLogins && filters.authorLogins.length > 0 && !filters.authorLogins.some((l) => normLogin(l) === normLogin(pr.author))) {
+    return `@${pr.author} is not among the authors ${loginList(filters.authorLogins)}`;
+  }
+  const wantedReviewers = filters.reviewers ?? [];
+  if (wantedReviewers.length > 0) {
+    const asked = e.type === "review_requested" && e.ref ? [e.ref] : pr.requestedReviewers;
+    if (!asked.some((r) => wantedReviewers.some((w) => sameReviewer(w, r)))) {
+      return e.type === "review_requested" && e.ref ? `the review was asked of @${e.ref}, not of ${loginList(wantedReviewers)}` : `none of ${loginList(wantedReviewers)} is asked to review it`;
+    }
+  }
   if (!filters.includeOwn && e.actor && own.has(e.actor.toLowerCase())) return `@${e.actor} (the follow's own login) caused it`;
   if (filters.baseRef && !globToRegExp(filters.baseRef).test(pr.baseRef)) return `the base branch ${pr.baseRef} does not match ${filters.baseRef}`;
   if (filters.titleMatch) {

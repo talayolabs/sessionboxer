@@ -14,6 +14,7 @@ import {
   type AutomationTrigger,
   type CreateAutomationRequest,
   type PrEventFilters,
+  type PrPeople,
   type Provider,
   type ProviderModels,
   type ProviderOptions,
@@ -28,6 +29,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { formatDuration } from "./E2e";
 import { FollowRepoInline } from "./FollowRepo";
+import { LoginList } from "./LoginList";
 import { RepoEditor, draftsError, draftsToSpecs, githubAccounts, specsToDrafts, type RepoDraft } from "./Repos";
 import { SessionSettingsForm, draftFromDefaults, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
 
@@ -453,6 +455,11 @@ function AutomationForm({
   const words = useMemo(() => describeCron(cron), [cron]);
   const zones = useMemo(timeZones, []);
   const isPr = triggerType === "pr_event";
+  const [people, setPeople] = useState<PrPeople | null>(null);
+  useEffect(() => {
+    if (!isPr) return;
+    void api.prPeople().then(setPeople, () => undefined);
+  }, [isPr]);
 
   useEffect(() => {
     if (triggerType !== "schedule" || cron.trim() === "" || timezone.trim() === "") {
@@ -712,6 +719,26 @@ function AutomationForm({
                 <label>
                   Base branch (glob, optional)
                   <input value={filters.baseRef ?? ""} onChange={(e) => setFilters({ ...filters, baseRef: e.target.value })} placeholder="main, release/*" spellCheck={false} />
+                </label>
+              </div>
+              <div className="row">
+                <label>
+                  Only PRs by these authors (optional)
+                  <LoginList
+                    value={filters.authorLogins ?? []}
+                    onChange={(authorLogins) => setFilters({ ...filters, authorLogins })}
+                    suggestions={people?.authors ?? []}
+                    placeholder="login — Enter adds"
+                  />
+                </label>
+                <label>
+                  Only PRs where one of these is asked to review (optional)
+                  <LoginList
+                    value={filters.reviewers ?? []}
+                    onChange={(reviewers) => setFilters({ ...filters, reviewers })}
+                    suggestions={people?.reviewers ?? []}
+                    placeholder="login, or a team as org/slug"
+                  />
                 </label>
               </div>
               <div className="row">
@@ -1006,6 +1033,8 @@ function cleanFilters(f: PrEventFilters): PrEventFilters {
     forks: f.forks,
     authors: f.authors,
     includeOwn: f.includeOwn,
+    ...(f.authorLogins && f.authorLogins.length > 0 ? { authorLogins: f.authorLogins } : {}),
+    ...(f.reviewers && f.reviewers.length > 0 ? { reviewers: f.reviewers } : {}),
     ...(f.baseRef?.trim() ? { baseRef: f.baseRef.trim() } : {}),
     ...(f.titleMatch?.trim() ? { titleMatch: f.titleMatch.trim() } : {}),
     ...(f.labels && f.labels.length > 0 ? { labels: f.labels } : {}),

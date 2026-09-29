@@ -3332,6 +3332,13 @@ export const PrEventFilters = z.object({
   authors: z.enum(["any", "not_self", "self_only"]).default("not_self"),
   /** Also match events our own connector login caused (our review, our push). */
   includeOwn: z.boolean().default(false),
+  /** Only PRs by one of these logins (case-insensitive, a leading `@` is fine); empty = any author. */
+  authorLogins: z.array(z.string().min(1).max(100)).max(50).optional(),
+  /**
+   * Only PRs where one of these is asked to review: a login, or a GitHub team as `org/slug` (a bare
+   * `slug` matches that team of any org). For `review_requested` the newly asked one must match.
+   */
+  reviewers: z.array(z.string().min(1).max(200)).max(50).optional(),
   /** Glob on the base branch, e.g. `main` or `release/*`. */
   baseRef: z.string().max(200).optional(),
   /** Regular expression the title must match, e.g. `^(?!WIP)`. */
@@ -3349,6 +3356,10 @@ export const PrEventTrigger = z.object({
   filters: PrEventFilters.default({}),
 });
 export type PrEventTrigger = z.infer<typeof PrEventTrigger>;
+
+/** Authors and requested reviewers (logins, teams as `org/slug`) seen on followed PRs: suggestions for the filters (`GET /api/prs/people`). */
+export const PrPeople = z.object({ authors: z.array(z.string()), reviewers: z.array(z.string()) });
+export type PrPeople = z.infer<typeof PrPeople>;
 
 export const AutomationTrigger = z.discriminatedUnion("type", [ScheduleTrigger, PrEventTrigger, ManualTrigger]);
 export type AutomationTrigger = z.infer<typeof AutomationTrigger>;
@@ -3737,6 +3748,7 @@ export const FollowedPr = z.object({
   headRepo: z.string(),
   baseRef: z.string(),
   isFork: z.boolean(),
+  /** Logins asked to review, and GitHub teams as `org/slug`. */
   requestedReviewers: z.array(z.string()),
   labels: z.array(z.string()),
   reviewDecision: PrReviewDecision.nullable(),

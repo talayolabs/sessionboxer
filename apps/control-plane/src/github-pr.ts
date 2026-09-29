@@ -60,6 +60,7 @@ interface RestPr {
   updated_at: string;
   head: { ref: string; sha: string; repo: { full_name: string } | null };
   requested_reviewers?: Array<{ login: string }>;
+  requested_teams?: Array<{ slug: string }>;
   labels?: Array<{ name: string }>;
   body?: string | null;
   base: { ref: string };
@@ -155,7 +156,7 @@ function listItemFromRest(owner: string, repo: string, pr: RestPr): PrListItem {
     headSha: pr.head.sha,
     headRepo: pr.head.repo?.full_name ?? `${owner}/${repo}`,
     baseRef: pr.base.ref,
-    requestedReviewers: (pr.requested_reviewers ?? []).map((u) => u.login),
+    requestedReviewers: [...(pr.requested_reviewers ?? []).map((u) => u.login), ...(pr.requested_teams ?? []).map((t) => `${owner}/${t.slug}`)],
     labels: (pr.labels ?? []).map((l) => l.name),
     body: pr.body ?? null,
     createdAt: pr.created_at,

@@ -672,6 +672,7 @@ api.delete("/repositories/:id", (c) => {
 
 // Followed pull requests (ADR-0064): `/prs/follows*` before `/prs/:id`.
 api.get("/prs/accounts", (c) => c.json(followedPrs.accounts()));
+api.get("/prs/people", (c) => c.json(followedPrs.people()));
 api.get("/prs/follows", (c) => c.json(followedPrs.listFollows()));
 api.post("/prs/follows", async (c) => c.json(followedPrs.follow(CreatePrFollowRequest.parse(await c.req.json())), 201));
 api.patch("/prs/follows/:id", async (c) => c.json(followedPrs.setFollowEnabled(c.req.param("id"), UpdatePrFollowRequest.parse(await c.req.json()).enabled)));

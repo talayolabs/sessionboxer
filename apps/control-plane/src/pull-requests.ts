@@ -99,6 +99,9 @@ export class PullRequests {
   /** Auto-merge checks held back after a rate limit / server error (ms since epoch). */
   private readonly mergeRetryAt = new Map<string, number>();
 
+  /** Told when a poll found checks changed: the followed-PR poller reads them from here instead of on its own timer (ADR-0067). */
+  onChecksChanged: ((ref: PrRef) => void) | null = null;
+
   constructor(private readonly deps: PullRequestDeps) {}
 
   start(): void {
@@ -622,6 +625,7 @@ export class PullRequests {
     if (state === "open" || state === "draft") {
       const checks = await fetchChecks(transport, ref, account);
       if (checks.status === "ok") checksChanged = store.setChecks(pr.id, checks.value.headSha, checks.value.checks);
+      if (checksChanged) this.onChecksChanged?.(prRefOf(pr));
       else if (checks.status === "error") failure ??= { kind: checks.kind, detail: checks.detail, retryAt: checks.retryAt };
     }
 
@@ -698,6 +702,7 @@ export class PullRequests {
     if ((v.meta.state === "open" || v.meta.state === "draft") && v.headSha) {
       const builds = await fetchBbBuilds(t, ref, v.headSha, v.targetRefId);
       if (builds.status === "ok") checksChanged = store.setChecks(pr.id, v.headSha, builds.value);
+      if (checksChanged) this.onChecksChanged?.(prRefOf(pr));
       else if (builds.status === "error") failure ??= { kind: builds.kind, detail: builds.detail, retryAt: builds.retryAt };
     }
 

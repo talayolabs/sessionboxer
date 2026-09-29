@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS pr_follows (
   enabled INTEGER NOT NULL DEFAULT 1,
   webhook_id TEXT,
   webhook_seen_at TEXT,
+  webhook_secret TEXT,
+  webhook_url TEXT,
   etags TEXT NOT NULL DEFAULT '{}',
   polled_at TEXT,
   retry_at TEXT,
@@ -120,6 +122,8 @@ interface FollowRow {
   enabled: number;
   webhook_id: string | null;
   webhook_seen_at: string | null;
+  webhook_secret: string | null;
+  webhook_url: string | null;
   etags: string;
   polled_at: string | null;
   retry_at: string | null;
@@ -182,7 +186,13 @@ interface EventRow {
 /** A `pr_follows` row with its polling cursors. */
 export interface StoredFollow extends PrFollow {
   etags: PrEtags & { list?: string };
+  webhookSecret: string | null;
+  webhookId: string | null;
+  webhookUrl: string | null;
 }
+
+/** A webhook counts as healthy (the list tier slows down) while deliveries keep coming. */
+export const HOOK_HEALTHY_MS = 3_600_000;
 
 /** A `followed_prs` row with the polling state the UI does not see; `attached` and `runs` are filled in by the service. */
 export interface StoredFollowedPr extends Omit<FollowedPr, "attached" | "runs"> {
@@ -220,8 +230,13 @@ function rowToFollow(r: FollowRow): StoredFollow {
     syncError: r.sync_error === null ? null : PrSyncError.parse(r.sync_error),
     syncErrorDetail: r.sync_error_detail,
     prCount: r.pr_count,
+    webhook: r.webhook_secret === null ? "none" : r.webhook_seen_at !== null && Date.now() - Date.parse(r.webhook_seen_at) < HOOK_HEALTHY_MS ? "healthy" : "registered",
+    webhookSeenAt: r.webhook_seen_at,
     createdAt: r.created_at,
     etags: parseJson(r.etags, {}),
+    webhookSecret: r.webhook_secret,
+    webhookId: r.webhook_id,
+    webhookUrl: r.webhook_url,
   };
 }
 
@@ -290,6 +305,8 @@ export class FollowedPrStore extends PrItemsStore {
     this.db.exec(FOLLOWED_SCHEMA);
     const cols = (this.db.prepare("PRAGMA table_info(followed_prs)").all() as Array<{ name: string }>).map((c) => c.name);
     if (!cols.includes("body")) this.db.exec("ALTER TABLE followed_prs ADD COLUMN body TEXT NOT NULL DEFAULT ''");
+    const followCols = (this.db.prepare("PRAGMA table_info(pr_follows)").all() as Array<{ name: string }>).map((c) => c.name);
+    for (const col of ["webhook_secret", "webhook_url"]) if (!followCols.includes(col)) this.db.exec(`ALTER TABLE pr_follows ADD COLUMN ${col} TEXT`);
   }
 
   // --- follows -------------------------------------------------------------------------------
@@ -339,6 +356,16 @@ export class FollowedPrStore extends PrItemsStore {
     }
     params.push(id);
     this.db.prepare(`UPDATE pr_follows SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+  }
+
+  setFollowHook(id: string, hook: { secret: string; url: string; hookId: string | null } | null): void {
+    this.db
+      .prepare("UPDATE pr_follows SET webhook_secret = ?, webhook_url = ?, webhook_id = ?, webhook_seen_at = NULL WHERE id = ?")
+      .run(hook?.secret ?? null, hook?.url ?? null, hook?.hookId ?? null, id);
+  }
+
+  markHookSeen(id: string): void {
+    this.db.prepare("UPDATE pr_follows SET webhook_seen_at = ? WHERE id = ?").run(new Date().toISOString(), id);
   }
 
   /** Makes the follow due now (a webhook, "Poll now"). */

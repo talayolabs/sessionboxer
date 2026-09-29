@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   PR_EVENT_LABELS,
   prRefspec,
@@ -12,6 +13,7 @@ import {
   type PrEvent,
   type PrEventFilters,
   type PrFollow,
+  type PrFollowHook,
   type PrItem,
   type PrRef,
   type PullRequest,
@@ -40,7 +42,9 @@ import {
   type PrListItem,
   type PrMeta,
 } from "./github-pr.js";
+import { PUBLIC_URL } from "./config.js";
 import { HttpError } from "./http-error.js";
+import { bitbucketHookHint, githubHookHint, verifyHookSignature, type HookHint } from "./pr-hooks.js";
 import { itemId, type PrEtags, type PrItemInput } from "./pr-store.js";
 
 export interface FollowedPrDeps {
@@ -63,6 +67,10 @@ export interface FollowedPrDeps {
 const TICK_MS = 10_000;
 /** A follow's list is read this often (search-backed lists have their own 30/min rate limit). */
 const LIST_POLL_MS = 60_000;
+/** …and this often while the repository's webhook is delivering (ADR-0067). */
+const LIST_POLL_HOOK_MS = 5 * 60_000;
+/** A delivery is not read past this. */
+const HOOK_BODY_MAX = 1024 * 1024;
 /** Comments and checks of a PR the list did not report changed are re-read this often anyway. */
 const DETAIL_REFRESH_MS = 30 * 60_000;
 /** A PR with checks still running has them re-read this often. */
@@ -210,6 +218,7 @@ export class FollowedPrs {
     const store = this.deps.db.followedPrs;
     const f = store.getFollow(id);
     if (!f) throw new HttpError(404, `follow ${id} not found`);
+    if (f.webhookId) void this.deleteRegisteredHook(f).catch((e: unknown) => this.deps.log(`followed PRs: removing the webhook of ${describeFollow(f)} failed: ${e instanceof Error ? e.message : String(e)}`));
     store.deleteFollow(id);
     for (const pr of store.orphans()) store.deletePr(pr.id);
     this.deps.log(`unfollowed ${describeFollow(f)}`);
@@ -322,6 +331,133 @@ export class FollowedPrs {
     };
   }
 
+  // --- webhooks (ADR-0067) -----------------------------------------------------------------------
+
+  hookInfo(id: string): PrFollowHook {
+    const f = this.deps.db.followedPrs.getFollow(id);
+    if (!f) throw new HttpError(404, `follow ${id} not found`);
+    return { webhook: f.webhook, url: f.webhookUrl, secret: f.webhookId ? null : f.webhookSecret, registeredId: f.webhookId, seenAt: f.webhookSeenAt };
+  }
+
+  /**
+   * Turns the follow's webhook on: a fresh secret, the URL at `baseUrl` (a tunnel with a stable hostname;
+   * the Control Plane's own URL by default), registered on GitHub for `repo` follows when the login may;
+   * otherwise the URL and secret come back for the user to configure by hand.
+   */
+  async enableHook(id: string, baseUrl?: string): Promise<PrFollowHook> {
+    const f = this.deps.db.followedPrs.getFollow(id);
+    if (!f) throw new HttpError(404, `follow ${id} not found`);
+    if (f.webhookId) await this.deleteRegisteredHook(f).catch(() => undefined);
+    const secret = randomBytes(32).toString("hex");
+    const url = `${(baseUrl ?? PUBLIC_URL).replace(/\/+$/, "")}/api/hooks/${f.provider}/${f.id}`;
+    let hookId: string | null = null;
+    if (f.provider === "github" && f.kind === "repo" && f.owner && f.repo) {
+      const cred = this.credential(f);
+      if (!cred) throw new HttpError(400, `No connected login can register a webhook on ${f.owner}/${f.repo} (Settings → Connectors).`);
+      const res = await tokenTransport(cred.token).request({
+        method: "POST",
+        path: `repos/${f.owner}/${f.repo}/hooks`,
+        headers: {},
+        account: cred.account,
+        body: JSON.stringify({
+          name: "web",
+          active: true,
+          events: ["pull_request", "pull_request_review", "pull_request_review_comment", "issue_comment", "check_run", "check_suite"],
+          config: { url, content_type: "json", secret, insecure_ssl: "0" },
+        }),
+      });
+      if (res.status !== 201) {
+        const detail = ghMessage(res.body);
+        throw new HttpError(res.status === 404 || res.status === 403 ? 400 : 502, `GitHub did not create the webhook (HTTP ${res.status}${detail ? `: ${detail}` : ""}); the login needs admin on the repository (\`repo\` scope, or the Webhooks permission).`);
+      }
+      const parsed = JSON.parse(res.body) as { id?: number };
+      hookId = parsed.id !== undefined ? String(parsed.id) : null;
+    }
+    this.deps.db.followedPrs.setFollowHook(f.id, { secret, url, hookId });
+    this.deps.log(`followed PRs: webhook ${hookId ? "registered" : "configured (paste the URL and secret on the platform)"} for ${describeFollow(f)}`);
+    this.broadcastFollows();
+    return this.hookInfo(f.id);
+  }
+
+  async disableHook(id: string): Promise<PrFollowHook> {
+    const f = this.deps.db.followedPrs.getFollow(id);
+    if (!f) throw new HttpError(404, `follow ${id} not found`);
+    if (f.webhookId) await this.deleteRegisteredHook(f);
+    this.deps.db.followedPrs.setFollowHook(f.id, null);
+    this.broadcastFollows();
+    return this.hookInfo(f.id);
+  }
+
+  private async deleteRegisteredHook(f: StoredFollow): Promise<void> {
+    if (!f.webhookId || f.provider !== "github" || !f.owner || !f.repo) return;
+    const cred = this.credential(f);
+    if (!cred) throw new Error("no connected login for the repository");
+    const res = await tokenTransport(cred.token).request({ method: "DELETE", path: `repos/${f.owner}/${f.repo}/hooks/${f.webhookId}`, headers: {}, account: cred.account, body: null });
+    if (res.status !== 204 && res.status !== 404) throw new Error(`HTTP ${res.status} deleting hook ${f.webhookId}`);
+  }
+
+  /**
+   * A delivery at `POST /api/hooks/{provider}/{followId}`: verified with the follow's secret, then read
+   * only for *which* PRs to poll now — the polling loop stays the source of truth, so a forged or
+   * replayed delivery costs one extra poll at most. Answers `{ status, body }` for the route.
+   */
+  onHook(provider: "github" | "bitbucket", followId: string, h: { signature: string | undefined; event: string | undefined; length: number }, rawBody: string): { status: 202 | 401 | 404 | 413; body: Record<string, unknown> } {
+    const f = this.deps.db.followedPrs.getFollow(followId);
+    if (!f || f.provider !== provider || !f.webhookSecret) return { status: 404, body: { error: "unknown hook" } };
+    if (h.length > HOOK_BODY_MAX || rawBody.length > HOOK_BODY_MAX) return { status: 413, body: { error: "delivery too large" } };
+    if (!verifyHookSignature(f.webhookSecret, rawBody, h.signature)) return { status: 401, body: { error: "bad signature" } };
+    this.deps.db.followedPrs.markHookSeen(f.id);
+    if (h.event === "ping" || h.event === "diagnostics:ping") {
+      this.broadcastFollows();
+      return { status: 202, body: { ok: true, pong: true } };
+    }
+    const hint = provider === "github" ? githubHookHint(rawBody) : bitbucketHookHint(rawBody);
+    const polled = this.pollFromHint(f, hint);
+    return { status: 202, body: { ok: true, polled } };
+  }
+
+  /** The attached-PR poller saw checks change on a PR we also follow: read its detail now instead of on the timer. */
+  pollHint(ref: PrRef): void {
+    const pr = this.deps.db.followedPrs.findPr(ref);
+    if (!pr || pr.follows.length === 0) return;
+    this.deps.db.followedPrs.updatePr(pr.id, { needsDetail: true });
+    void this.enqueue(prAccountKey(pr), `pr:${pr.id}`, () => this.pollPr(pr.id));
+  }
+
+  private pollFromHint(f: StoredFollow, hint: HookHint | null): number {
+    const store = this.deps.db.followedPrs;
+    const listNow = () => {
+      store.touchFollow(f.id);
+      void this.enqueue(accountKey(f), `follow:${f.id}`, () => this.pollFollow(f.id));
+    };
+    if (!hint || hint.numbers.length === 0) {
+      listNow();
+      return 0;
+    }
+    if (f.kind === "repo" && (f.owner?.toLowerCase() !== hint.owner.toLowerCase() || f.repo?.toLowerCase() !== hint.repo.toLowerCase())) return 0;
+    let polled = 0;
+    let missing = false;
+    for (const number of hint.numbers) {
+      const pr = store.findPr({ provider: f.provider, host: f.host, owner: hint.owner, repo: hint.repo, number });
+      if (pr && pr.follows.includes(f.id)) {
+        store.updatePr(pr.id, { needsDetail: true });
+        void this.enqueue(prAccountKey(pr), `pr:${pr.id}`, () => this.pollPr(pr.id));
+        polled++;
+      } else missing = true;
+    }
+    if (missing) listNow();
+    return polled;
+  }
+
+  /** The Session-level poller (every minute while the box is up) already reads this PR's checks. */
+  private attachedToLiveSession(pr: StoredFollowedPr): boolean {
+    return this.deps.db.prs.findAll(pr).some((p) => {
+      if (!p.watch) return false;
+      const s = this.deps.sessions.get(p.sessionId);
+      return s !== null && (s.status === "idle" || s.status === "running");
+    });
+  }
+
   // --- polling -------------------------------------------------------------------------------
 
   private tick(): void {
@@ -330,14 +466,14 @@ export class FollowedPrs {
     for (const f of store.listFollows()) {
       if (!f.enabled) continue;
       if (f.retryAt && Date.parse(f.retryAt) > now) continue;
-      if (f.polledAt && now - Date.parse(f.polledAt) < LIST_POLL_MS) continue;
+      if (f.polledAt && now - Date.parse(f.polledAt) < (f.webhook === "healthy" ? LIST_POLL_HOOK_MS : LIST_POLL_MS)) continue;
       void this.enqueue(accountKey(f), `follow:${f.id}`, () => this.pollFollow(f.id));
     }
     for (const pr of store.listPrs()) {
       if (pr.follows.length === 0) continue;
       if (pr.retryAt && Date.parse(pr.retryAt) > now) continue;
       const age = pr.syncedAt ? now - Date.parse(pr.syncedAt) : Number.POSITIVE_INFINITY;
-      const due = pr.needsDetail || age >= DETAIL_REFRESH_MS || (pr.checksPending > 0 && age >= CHECKS_POLL_MS);
+      const due = pr.needsDetail || age >= DETAIL_REFRESH_MS || (pr.checksPending > 0 && age >= CHECKS_POLL_MS && !this.attachedToLiveSession(pr));
       if (due) void this.enqueue(prAccountKey(pr), `pr:${pr.id}`, () => this.pollPr(pr.id));
     }
     this.retryDeferred();
@@ -781,8 +917,17 @@ export class FollowedPrs {
 // --- helpers ---------------------------------------------------------------------------------
 
 function publicFollow(f: StoredFollow): PrFollow {
-  const { etags: _etags, ...rest } = f;
+  const { etags: _etags, webhookSecret: _secret, webhookId: _hookId, webhookUrl: _url, ...rest } = f;
   return rest;
+}
+
+function ghMessage(body: string): string | null {
+  try {
+    const parsed = JSON.parse(body) as { message?: string };
+    return parsed.message ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function describeFollow(f: Pick<PrFollow, "provider" | "host" | "account" | "kind" | "owner" | "repo">): string {

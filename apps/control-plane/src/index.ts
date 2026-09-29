@@ -36,6 +36,7 @@ import {
   RunPrAutomationRequest,
   StartPrSessionRequest,
   UpdatePrFollowRequest,
+  PrFollowHookRequest,
   CreateScheduleRequest,
   CreateSessionRequest,
   ForkSessionRequest,
@@ -264,6 +265,7 @@ const prReviews = new PrReviews({
   log,
 });
 sessions.reviews = prReviews;
+sessions.prs.onChecksChanged = (ref) => followedPrs.pollHint(ref);
 new PrQa({
   db,
   automations,
@@ -674,6 +676,9 @@ api.post("/prs/follows/:id/poll", async (c) => {
   await followedPrs.pollFollowNow(c.req.param("id"));
   return c.json(followedPrs.listFollows());
 });
+api.get("/prs/follows/:id/hook", (c) => c.json(followedPrs.hookInfo(c.req.param("id"))));
+api.post("/prs/follows/:id/hook", async (c) => c.json(await followedPrs.enableHook(c.req.param("id"), PrFollowHookRequest.parse(await c.req.json().catch(() => ({}))).url), 201));
+api.delete("/prs/follows/:id/hook", async (c) => c.json(await followedPrs.disableHook(c.req.param("id"))));
 api.get("/prs", (c) => c.json(followedPrs.list({ state: c.req.query("state") === "open" ? "open" : "all", ...(c.req.query("repo") ? { repo: c.req.query("repo")! } : {}) })));
 api.get("/prs/:id", (c) => c.json(followedPrs.get(c.req.param("id"))));
 api.get("/prs/:id/items", (c) => c.json(followedPrs.items(c.req.param("id"))));
@@ -951,6 +956,23 @@ api.get(
     };
   }),
 );
+
+// Webhook deliveries (ADR-0067): outside the access-token middleware, verified with the follow's secret;
+// the payload is only a hint of which PRs to poll now.
+app.post("/api/hooks/:provider/:followId", async (c) => {
+  const provider = c.req.param("provider");
+  if (provider !== "github" && provider !== "bitbucket") return c.json({ error: "unknown hook" }, 404);
+  const length = Number(c.req.header("content-length") ?? "0");
+  if (length > 1024 * 1024) return c.json({ error: "delivery too large" }, 413);
+  const raw = await c.req.text();
+  const r = followedPrs.onHook(
+    provider,
+    c.req.param("followId"),
+    { signature: c.req.header(provider === "github" ? "x-hub-signature-256" : "x-hub-signature"), event: c.req.header(provider === "github" ? "x-github-event" : "x-event-key"), length },
+    raw,
+  );
+  return c.json(r.body, r.status);
+});
 
 app.route("/api", api);
 

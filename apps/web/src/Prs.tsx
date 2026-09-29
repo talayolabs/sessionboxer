@@ -10,6 +10,7 @@ import {
   type PrCheckItem,
   type PrEvent,
   type PrFollow,
+  type PrFollowHook,
   type PrFollowKind,
   type PrItem,
   type Provider,
@@ -161,6 +162,7 @@ function FollowedPrList({
   onOpenSession: (id: string) => void;
 }) {
   const [following, setFollowing] = useState(false);
+  const [hookFor, setHookFor] = useState<PrFollow | null>(null);
   const [showClosed, setShowClosed] = useState(false);
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -213,6 +215,9 @@ function FollowedPrList({
                   <MenuItem disabled={busy === f.id} onSelect={() => act(f.id, () => api.updatePrFollow(f.id, !f.enabled))}>
                     {f.enabled ? "Pause" : "Resume"}
                   </MenuItem>
+                  <MenuItem disabled={busy === f.id} onSelect={() => setHookFor(f)}>
+                    Webhook…{f.webhook !== "none" && ` (${f.webhook})`}
+                  </MenuItem>
                   <MenuItem
                     className="danger"
                     disabled={busy === f.id}
@@ -251,6 +256,7 @@ function FollowedPrList({
         </ul>
       )}
       {following && <FollowDialog follows={follows} run={run} onClose={() => setFollowing(false)} />}
+      {hookFor && <HookDialog follow={follows.find((f) => f.id === hookFor.id) ?? hookFor} run={run} onClose={() => setHookFor(null)} />}
     </div>
   );
 }
@@ -319,6 +325,84 @@ function FollowedPrRow({ pr, automations, onOpen, onOpenSession }: { pr: Followe
         <span title={pr.remoteUpdatedAt ?? undefined}>{pr.remoteUpdatedAt ? `updated ${ago(pr.remoteUpdatedAt)}` : `seen ${ago(pr.firstSeenAt)}`}</span>
       </div>
     </li>
+  );
+}
+
+// --- Webhook dialog (ADR-0067) -----------------------------------------------------------------
+
+function HookDialog({ follow, run, onClose }: { follow: PrFollow; run: Runner; onClose: () => void }) {
+  const [hook, setHook] = useState<PrFollowHook | null>(null);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void api.prFollowHook(follow.id).then(setHook, () => setHook(null));
+  }, [follow.id]);
+  const manual = follow.provider === "bitbucket" || follow.kind !== "repo";
+  const act = async (fn: () => Promise<PrFollowHook>) => {
+    setBusy(true);
+    await run(async () => setHook(await fn()));
+    setBusy(false);
+  };
+  const on = hook !== null && hook.webhook !== "none";
+  return (
+    <Modal
+      title={`Webhook for ${followLabel(follow)}`}
+      description="Optional. A delivery only makes the Control Plane poll that PR right away; polling every minute stays the source of truth, so nothing breaks when the hook is down. Worth it when a tunnel with a stable hostname is up."
+      dismissible={!busy}
+      onClose={onClose}
+    >
+      <div className="follow-form">
+        {hook === null && <p className="muted small-text">Loading…</p>}
+        {hook !== null && !on && (
+          <>
+            <label>
+              Public URL of this Control Plane (a tunnel)
+              <input type="url" placeholder={`${location.origin} (this origin)`} value={url} onChange={(e) => setUrl(e.target.value)} autoComplete="off" />
+            </label>
+            <p className="muted small-text">
+              {manual
+                ? `This follow cannot be registered from here: you get a URL and a secret to paste into the repository's webhook settings on ${PR_PROVIDER_LABEL[follow.provider]} (events: pull requests, comments, builds).`
+                : `Registers a repository webhook on ${PR_PROVIDER_LABEL[follow.provider]} as @${follow.account} (needs admin on ${follow.owner}/${follow.repo}); it is removed when you turn it off or unfollow.`}
+            </p>
+            <div className="actions">
+              <button type="button" className="primary" disabled={busy} onClick={() => act(() => api.enablePrFollowHook(follow.id, url.trim() || undefined))}>
+                {manual ? "Create URL and secret" : "Register webhook"}
+              </button>
+              <button type="button" onClick={onClose}>
+                Close
+              </button>
+            </div>
+          </>
+        )}
+        {hook !== null && on && (
+          <>
+            <p className="small-text">
+              {hook.webhook === "healthy" ? "Healthy: " : hook.registeredId ? "Registered: " : "Configured: "}
+              {hook.seenAt ? `last delivery ${ago(hook.seenAt)}` : "no delivery seen yet"}
+              {hook.webhook === "healthy" && " · the list is polled every 5 min while deliveries keep coming"}
+            </p>
+            <label>
+              Payload URL
+              <input type="text" readOnly value={hook.url ?? ""} onFocus={(e) => e.currentTarget.select()} />
+            </label>
+            {hook.secret && (
+              <label>
+                Secret (HMAC-SHA-256; the platform sends it as a sha256= signature header)
+                <input type="text" readOnly value={hook.secret} onFocus={(e) => e.currentTarget.select()} />
+              </label>
+            )}
+            <div className="actions">
+              <button type="button" className="danger" disabled={busy} onClick={() => act(() => api.disablePrFollowHook(follow.id))}>
+                {hook.registeredId ? "Remove webhook" : "Turn off"}
+              </button>
+              <button type="button" onClick={onClose}>
+                Close
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 

@@ -1231,5 +1231,9 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .follow-form { display: flex; flex-direction: column; gap: 10px; }
 .follow-form .segmented { align-self: flex-start; }
 .follow-inline { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.env-pick { position: relative; display: inline-flex; }
+.env-pick-snap { position: absolute; right: -7px; bottom: -5px; font-size: 9px; line-height: 1; }
+.env-pick-menu { max-width: min(420px, 90vw); }
+.env-pick-menu .select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .follow-inline .input-row input { flex: 1; min-width: 0; }
 .follow-inline .input-row select { max-width: 40%; }

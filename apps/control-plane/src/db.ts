@@ -551,6 +551,27 @@ export class Db {
     return row ? rowToSnapshot(row) : null;
   }
 
+  getSnapshotById(id: string): Snapshot | null {
+    const row = this.db.prepare("SELECT * FROM snapshots WHERE id = ?").get(id) as SnapshotRow | undefined;
+    return row ? rowToSnapshot(row) : null;
+  }
+
+  /** The `limit` newest Snapshots of all Sessions plus the `include`d ones (a picker's recent picks), newest first. */
+  listRecentSnapshots(limit: number, include: string[]): Snapshot[] {
+    const rows = this.db.prepare("SELECT * FROM snapshots ORDER BY created_at DESC LIMIT ?").all(limit) as SnapshotRow[];
+    const seen = new Set(rows.map((r) => r.id));
+    for (const id of include) {
+      if (seen.has(id)) continue;
+      const row = this.db.prepare("SELECT * FROM snapshots WHERE id = ?").get(id) as SnapshotRow | undefined;
+      if (row) {
+        rows.push(row);
+        seen.add(id);
+      }
+    }
+    rows.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+    return rows.map(rowToSnapshot);
+  }
+
   nextSnapshotOrdinal(sessionId: string): number {
     const row = this.db
       .prepare("SELECT COALESCE(MAX(ordinal), 0) AS max FROM snapshots WHERE session_id = ?")

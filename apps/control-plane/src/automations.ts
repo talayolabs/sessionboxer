@@ -32,6 +32,14 @@ const TICK_MS = 30_000;
 const MISSED_GRACE_MS = 5 * 60_000;
 const MISSED_COUNT_CAP = 100;
 
+/**
+ * A Session from a snapshot already holds the repository, so nothing is cloned; the prompt opens
+ * with which commit to bring in.
+ */
+function prHeadNote(pr: NonNullable<PrRunContext["pr"]>): string {
+  return `First bring pull request #${pr.number} of ${pr.repo} into its repository directory in the workspace: fetch its head ${pr.headSha} (GitHub: \`git fetch origin pull/${pr.number}/head\`; Bitbucket: \`git fetch origin refs/pull-requests/${pr.number}/from\`) and check it out before anything else.`;
+}
+
 /** What the automations need from the `SessionManager`. */
 export interface AutomationSessions {
   get(id: string): Session;
@@ -501,14 +509,17 @@ export class Automations {
         return this.finish(run.id, "succeeded", { detail: join(note, "Notified."), result: { type: "notify" } });
       }
       if (action.type === "new_session") {
-        const repos = ctx.pr && action.checkoutPrHead ? await this.prHeadRepos(action, ctx) : action.repos;
+        const fromSnapshot = action.snapshotId !== undefined;
+        const repos = fromSnapshot ? [] : ctx.pr && action.checkoutPrHead ? await this.prHeadRepos(action, ctx) : action.repos;
+        const prompt = fillPlaceholders(action.prompt, ctx);
         const session = await this.deps.sessions.create({
           title: action.title ? fillPlaceholders(action.title, ctx) : undefined,
           provider: action.provider,
           repos,
           workspaceSource: { type: "empty" },
+          ...(action.snapshotId !== undefined ? { snapshotId: action.snapshotId } : {}),
           settings: action.settings,
-          prompt: fillPlaceholders(action.prompt, ctx),
+          prompt: fromSnapshot && ctx.pr && action.checkoutPrHead ? `${prHeadNote(ctx.pr)}\n\n${prompt}` : prompt,
         });
         this.deps.db.automations.updateRun(run.id, { detail: join(note, `Session "${session.title}" started.`), sessionId: session.id });
         this.broadcastRuns(automation.id);

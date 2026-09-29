@@ -90,6 +90,7 @@ import { AdvancedSettingsDialog } from "./AdvancedSettingsDialog";
 import { providerTokenSet } from "./providers";
 import { DockerIcon } from "./DockerIcon";
 import { EnvironmentIcon } from "./EnvironmentIcon";
+import { EnvironmentPicker } from "./EnvironmentPicker";
 import { Icon, type IconName } from "./Icons";
 import { MacosBase } from "./MacosBase";
 import { ContextGauge, ContextPane } from "./Context";
@@ -2167,7 +2168,8 @@ function NewSession({
   const repoCount = repos.filter((d) => (d.type === "git" ? d.url.trim() : d.path.trim()) !== "").length;
   // Files still uploading or failed hold Start back, as they hold Send back in the chat.
   const filesSettled = attachments.items.length === 0 || attachments.ready;
-  const canStart = !busy && repoError === null && providerReady && filesSettled;
+  const fromSnapshot = draft.snapshotId !== null;
+  const canStart = !busy && (repoError === null || fromSnapshot) && providerReady && filesSettled;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2177,8 +2179,9 @@ function NewSession({
     void run(async () => {
       const s = await api.createSession({
         provider,
-        repos: repoSpecs,
+        repos: fromSnapshot ? [] : repoSpecs,
         workspaceSource: { type: "empty" },
+        ...(draft.snapshotId ? { snapshotId: draft.snapshotId } : {}),
         settings: draftToInput(draft),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
@@ -2263,29 +2266,21 @@ function NewSession({
             </div>
           )}
           <div className="start-tools">
-            <Select<Environment>
-              value={draft.environment}
-              onChange={(environment) => {
+            <EnvironmentPicker
+              compact
+              value={{ environment: draft.environment, snapshotId: draft.snapshotId }}
+              disabled={busy}
+              environmentOption={(env) => ({ hint: runtimePresent(settings, env) ? undefined : "not installed" })}
+              onEnvironment={(environment) => {
                 if (!runtimePresent(settings, environment)) {
                   setRuntimeNeeded(environment);
                   return;
                 }
                 localStorage.setItem(NEW_ENVIRONMENT_KEY, environment);
-                setDraft((d) => ({ ...d, environment }));
+                setDraft((d) => ({ ...d, environment, snapshotId: null }));
               }}
-              disabled={busy}
-              aria-label="Environment"
-              tip={`Environment: ${ENVIRONMENT_LABELS[draft.environment]}`}
-              className="compact icon-only"
-              options={ENVIRONMENTS.map((env) => ({
-                value: env,
-                label: ENVIRONMENT_LABELS[env],
-                icon: <EnvironmentIcon environment={env} />,
-                hint: runtimePresent(settings, env) ? undefined : "not installed",
-              }))}
-            >
-              <EnvironmentIcon environment={draft.environment} />
-            </Select>
+              onSnapshot={(s) => setDraft((d) => ({ ...d, environment: s.environment, snapshotId: s.id }))}
+            />
             <Select<Provider>
               value={provider}
               onChange={(p) => {
@@ -2320,12 +2315,16 @@ function NewSession({
             <button
               type="button"
               className={`small${reposOpen ? " active" : ""}`}
-              disabled={busy}
+              disabled={busy || fromSnapshot}
               aria-expanded={reposOpen}
               onClick={() => setReposOpen((v) => !v)}
-              title="Git repositories to clone (or host folders to copy) into the Sandbox; more can be added later"
+              title={
+                fromSnapshot
+                  ? "The repositories come with the snapshot; more can be added once the Session runs"
+                  : "Git repositories to clone (or host folders to copy) into the Sandbox; more can be added later"
+              }
             >
-              <Icon name="code" /> {repoCount > 0 ? `${repoCount} repositor${repoCount === 1 ? "y" : "ies"}` : "Repository"}
+              <Icon name="code" /> {fromSnapshot ? "Snapshot's repositories" : repoCount > 0 ? `${repoCount} repositor${repoCount === 1 ? "y" : "ies"}` : "Repository"}
             </button>
             <button type="button" className="small" disabled={busy} onClick={() => setAdvancedOpen(true)} title="Model, instructions, MCP servers, snapshots, Sandbox resources, title">
               Advanced…

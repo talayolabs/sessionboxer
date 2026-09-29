@@ -885,6 +885,12 @@ export const CreateSessionRequest = z.object({
   repos: z.array(RepoSpec).max(50).optional(),
   /** Older clients: a single `git`/`copy` source, taken as one repository when `repos` is omitted. */
   workspaceSource: WorkspaceSource.default({ type: "empty" }),
+  /**
+   * Start the Sandbox from this Snapshot's image instead of a fresh one (ADR-0069): its files,
+   * tools and repositories come along, the conversation starts empty, the Environment is the
+   * Snapshot's (`settings.sandbox.environment` is ignored). `repos` must then be empty.
+   */
+  snapshotId: z.string().min(1).optional(),
   settings: SessionSettingsInput.default({}),
   // Flat forms of `settings.*`, kept for the CLI flags and older clients; `settings` wins where both are given.
   /** Docker daemon inside the Sandbox; defaults to the `dockerInSandbox` setting. */
@@ -1221,6 +1227,10 @@ export const DeleteSnapshotsResult = z.object({
   kept: z.number().int().nonnegative(),
 });
 export type DeleteSnapshotsResult = z.infer<typeof DeleteSnapshotsResult>;
+
+/** A Snapshot with what a picker shows about its Session (`GET /api/snapshots/recent`, ADR-0069). */
+export const RecentSnapshot = Snapshot.extend({ sessionTitle: z.string(), provider: Provider, environment: Environment });
+export type RecentSnapshot = z.infer<typeof RecentSnapshot>;
 
 /**
  * What the fork does with the origin's conversation: `continue` copies the transcript up to the
@@ -3358,6 +3368,8 @@ export const NewSessionAction = z.object({
   title: z.string().min(1).max(200).optional(),
   provider: Provider,
   repos: z.array(RepoSpec).max(50).default([]),
+  /** Start from this Snapshot instead of a fresh Sandbox (ADR-0069); `repos` are then ignored and `checkoutPrHead` becomes a line in the prompt. */
+  snapshotId: z.string().min(1).optional(),
   settings: SessionSettingsInput.default({}),
   prompt: z.string().min(1).max(SCHEDULE_PROMPT_MAX_CHARS),
   /** Stop the Sandbox once the turn (and its verification) has ended, so Sessions do not pile up. */

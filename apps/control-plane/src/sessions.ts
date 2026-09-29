@@ -103,6 +103,7 @@ import {
   type SessionStatus,
   type Settings,
   type Snapshot,
+  type RecentSnapshot,
   createRequestSettings,
   resolveSessionSettings,
   type SnapshotReason,
@@ -172,6 +173,8 @@ const CODE_START_TIMEOUT_MS = 120_000;
 const MANIFEST_TIMEOUT_MS = 300_000;
 /** A repository put into a VM: the VM may still be booting (up to 15 min) before the clone or copy itself. */
 const SEED_TIMEOUT_MS = 40 * 60_000;
+/** Snapshots the New session and automation pickers list (`GET /snapshots/recent`). */
+const RECENT_SNAPSHOTS = 20;
 const REBUILD_HINT = "This Sandbox needs a rebuild before it can be snapshotted again (Snapshots \u2192 Rebuild Sandbox)";
 
 /** One UI connection attached to a terminal. */
@@ -1033,6 +1036,7 @@ export class SessionManager {
     if (!providerReady(req.provider, settings)) {
       throw new HttpError(400, providerSetupHint(req.provider));
     }
+    if (req.snapshotId !== undefined) return this.createFromSnapshot(req, req.snapshotId, staged, createdBy);
     if (createdBy) this.assertChildAllowed(createdBy);
     // Older clients send one `workspaceSource`; it becomes the Session's one repository.
     const legacy = req.workspaceSource;
@@ -1103,6 +1107,46 @@ export class SessionManager {
       this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
     });
     return session;
+  }
+
+  /**
+   * `POST /sessions` with a `snapshotId` (ADR-0069): a fork of the Snapshot's Session with a new
+   * conversation — its files, tools and repositories, the Environment it had, the Agent and
+   * settings asked for — that starts with the request's prompt and files like any new Session.
+   */
+  private async createFromSnapshot(req: CreateSessionRequest, snapshotId: string, staged: StagedFile[], createdBy?: string): Promise<Session> {
+    const snapshot = this.db.getSnapshotById(snapshotId);
+    if (!snapshot) throw new HttpError(404, `snapshot ${snapshotId} not found`);
+    if (req.repos && req.repos.length > 0) throw new HttpError(400, "A Session started from a snapshot takes the snapshot's repositories; add others once it runs.");
+    const origin = this.get(snapshot.sessionId);
+    const input = createRequestSettings(req);
+    const sandbox = input.sandbox ? { ...input.sandbox } : undefined;
+    if (sandbox) delete sandbox.environment;
+    const session = await this.fork(
+      origin.id,
+      {
+        snapshotId: snapshot.id,
+        conversation: "new",
+        provider: req.provider,
+        title: req.title ?? titleFromPrompt(req.prompt) ?? `${origin.title} (from snapshot ${snapshot.ordinal})`,
+        settings: { ...input, ...(sandbox ? { sandbox } : {}) },
+        savedMessages: [],
+      },
+      createdBy,
+    );
+    if (req.prompt || staged.length > 0) this.pendingPrompts.set(session.id, staged.length > 0 ? { text: req.prompt ?? "", staged } : { text: req.prompt ?? "" });
+    return session;
+  }
+
+  /** The newest Snapshots of all Sessions (plus `include`d ones) with their Session's title, Agent and Environment, for the pickers (ADR-0069). */
+  recentSnapshots(include: string[]): RecentSnapshot[] {
+    const out: RecentSnapshot[] = [];
+    for (const s of this.db.listRecentSnapshots(RECENT_SNAPSHOTS, include)) {
+      const origin = this.db.getSession(s.sessionId);
+      if (!origin || VM_NO_SNAPSHOT[origin.settings.sandbox.environment]) continue;
+      out.push({ ...s, sessionTitle: origin.title, provider: origin.provider, environment: origin.settings.sandbox.environment });
+    }
+    return out;
   }
 
   /**

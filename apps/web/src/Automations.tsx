@@ -430,7 +430,9 @@ function AutomationForm({
   const [text, setText] = useState(promptAction?.text ?? "");
   const [provider, setProvider] = useState<Provider>(newAction?.provider ?? reviewAction?.provider ?? qaAction?.provider ?? "claude-code");
   const [repos, setRepos] = useState<RepoDraft[]>(() => specsToDrafts(newAction?.repos ?? []));
-  const [draft, setDraft] = useState<SessionSettingsDraft>(() => (newAction ? draftFromInput(newAction.settings, settings) : draftFromDefaults(settings)));
+  const [draft, setDraft] = useState<SessionSettingsDraft>(() =>
+    newAction ? { ...draftFromInput(newAction.settings, settings), snapshotId: newAction.snapshotId ?? null } : draftFromDefaults(settings),
+  );
   const [title, setTitle] = useState(newAction?.title ?? "");
   const [prompt, setPrompt] = useState(newAction?.prompt ?? "");
   const [stopAfter, setStopAfter] = useState(newAction?.stopAfter ?? reviewAction?.stopAfter ?? qaAction?.stopAfter ?? true);
@@ -521,7 +523,8 @@ function AutomationForm({
         return {
           type: "new_session",
           provider,
-          repos: draftsToSpecs(repos),
+          repos: draft.snapshotId ? [] : draftsToSpecs(repos),
+          ...(draft.snapshotId ? { snapshotId: draft.snapshotId } : {}),
           settings: draftToInput(draft),
           prompt: prompt.trim(),
           stopAfter,
@@ -815,15 +818,21 @@ function AutomationForm({
               {isPr && (
                 <label className="check">
                   <input type="checkbox" checked={checkoutPrHead} onChange={(e) => setCheckoutPrHead(e.target.checked)} />
-                  Clone the PR's repository at the PR head as the first repository
+                  {draft.snapshotId
+                    ? "Open the prompt with fetching the PR head into the snapshot's repository (nothing is cloned)"
+                    : "Clone the PR's repository at the PR head as the first repository"}
                 </label>
               )}
-              <fieldset className="choice">
-                <legend>
-                  {isPr && checkoutPrHead ? "Other repositories" : "Repositories"} (each goes to <code>/workspace/&lt;name&gt;</code>; cloned fresh on every run)
-                </legend>
-                <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} accounts={githubAccounts(settings)} />
-              </fieldset>
+              {draft.snapshotId ? (
+                <p className="field-hint">The repositories come with the snapshot picked under Environment; each run starts a fresh Sandbox from that image.</p>
+              ) : (
+                <fieldset className="choice">
+                  <legend>
+                    {isPr && checkoutPrHead ? "Other repositories" : "Repositories"} (each goes to <code>/workspace/&lt;name&gt;</code>; cloned fresh on every run)
+                  </legend>
+                  <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} accounts={githubAccounts(settings)} />
+                </fieldset>
+              )}
               <SessionSettingsForm
                 mode="create"
                 provider={provider}
@@ -1018,6 +1027,7 @@ function draftFromInput(input: SessionSettingsInput, settings: PublicSettings): 
     agentTools: input.agentTools === undefined ? base.agentTools : input.agentTools,
     approveCreate: input.approveCreate === undefined ? base.approveCreate : input.approveCreate,
     environment: input.sandbox?.environment ?? base.environment,
+    snapshotId: base.snapshotId,
     docker: input.sandbox?.docker ?? base.docker,
     cpus: input.sandbox?.cpus === undefined ? base.cpus : input.sandbox.cpus,
     memoryGb: input.sandbox?.memoryGb === undefined ? base.memoryGb : input.sandbox.memoryGb,

@@ -68,6 +68,7 @@ import type {
   SessionEvent,
   SandboxImageStatus,
   Snapshot,
+  RecentSnapshot,
   SpeechModel,
   SpeechStatus,
   SwitchBranchRequest,
@@ -266,6 +267,7 @@ export const api = {
   continueAfterLimit: (id: string) => request<Session>(`/sessions/${id}/usage/continue`, { method: "POST" }),
   setAutoContinue: (id: string, enabled: boolean) =>
     request<Session>(`/sessions/${id}/usage/auto-continue`, { method: "POST", body: JSON.stringify({ enabled }) }),
+  recentSnapshots: (include: string[]) => request<RecentSnapshot[]>(`/snapshots/recent${include.length > 0 ? `?include=${encodeURIComponent(include.join(","))}` : ""}`),
   snapshots: (id: string) => request<Snapshot[]>(`/sessions/${id}/snapshots`),
   createSnapshot: (id: string) => request<Snapshot>(`/sessions/${id}/snapshots`, { method: "POST" }),
   deleteSnapshot: (id: string, snapshotId: string) => request<void>(`/sessions/${id}/snapshots/${snapshotId}`, { method: "DELETE" }),

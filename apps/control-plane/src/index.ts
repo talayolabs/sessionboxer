@@ -743,6 +743,18 @@ api.post("/sessions/:id/prs/actions", async (c) => {
   return c.json(await sessions.prs.action(c.req.param("id"), req));
 });
 
+// The newest Snapshots of every Session, for the "start from a snapshot" pickers (ADR-0069).
+api.get("/snapshots/recent", (c) =>
+  c.json(
+    sessions.recentSnapshots(
+      (c.req.query("include") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s !== ""),
+    ),
+  ),
+);
+
 // Snapshots (`docker commit` of the Sandbox) and forks started from them.
 api.get("/sessions/:id/snapshots", (c) => c.json(sessions.snapshots(c.req.param("id"))));
 api.post("/sessions/:id/snapshots", async (c) => c.json(await sessions.snapshot(c.req.param("id"), "manual"), 201));

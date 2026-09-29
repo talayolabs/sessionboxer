@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   CONNECTORS,
   DOCKER_MODE_LABELS,
-  ENVIRONMENTS,
   ENVIRONMENT_LABELS,
   PROVIDER_LABELS,
   type Environment,
@@ -21,7 +20,7 @@ import {
 import { summarize } from "./mcp";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
-import { EnvironmentIcon } from "./EnvironmentIcon";
+import { EnvironmentPicker } from "./EnvironmentPicker";
 import { Caption, Help, Select } from "./ui";
 import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 
@@ -76,6 +75,8 @@ export interface SessionSettingsDraft {
   approveCreate: boolean | null;
   /** Where the desktop runs (ADR-0057); fixed once the Session exists, a fork keeps the origin's. */
   environment: Environment;
+  /** Start from this Snapshot's image instead of a fresh one (ADR-0069); `environment` is then the Snapshot's. Creation only. */
+  snapshotId: string | null;
   docker: boolean;
   cpus: number | null;
   memoryGb: number | null;
@@ -97,6 +98,7 @@ export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraf
     agentTools: null,
     approveCreate: null,
     environment: "docker-linux",
+    snapshotId: null,
     docker: settings.dockerInSandbox,
     cpus: null,
     memoryGb: null,
@@ -119,6 +121,7 @@ export function draftFromSettings(s: SessionSettings): SessionSettingsDraft {
     agentTools: s.agentTools,
     approveCreate: s.approveCreate,
     environment: s.sandbox.environment,
+    snapshotId: null,
     docker: s.sandbox.dockerMode !== "none",
     cpus: s.sandbox.cpus,
     memoryGb: s.sandbox.memoryGb,
@@ -264,19 +267,22 @@ export function SessionSettingsForm({
           ) : (
             <label>
               <Caption help={environmentNote(settings, value.environment)}>Environment</Caption>
-              <Select<Environment>
-                value={value.environment}
+              <EnvironmentPicker
+                value={{ environment: value.environment, snapshotId: value.snapshotId }}
                 disabled={disabled}
-                onChange={(environment) => onChange({ environment })}
-                aria-label="Environment"
-                options={ENVIRONMENTS.map((env) => ({
-                  value: env,
-                  label: ENVIRONMENT_LABELS[env],
-                  icon: <EnvironmentIcon environment={env} />,
+                environmentOption={(env) => ({
                   disabled: !settings.environments[env].available,
                   hint: settings.environments[env].available ? undefined : (settings.environments[env].reason ?? "Not available on this host"),
-                }))}
+                })}
+                onEnvironment={(environment) => onChange({ environment, snapshotId: null })}
+                onSnapshot={(s) => onChange({ environment: s.environment, snapshotId: s.id })}
               />
+              {value.snapshotId && (
+                <span className="field-hint">
+                  The Sandbox starts from that snapshot — its files, installed tools and repositories, on {ENVIRONMENT_LABELS[value.environment]} — with an empty conversation for the agent
+                  picked here.
+                </span>
+              )}
             </label>
           )}
           {!vm &&

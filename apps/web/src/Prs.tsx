@@ -5,7 +5,6 @@ import {
   PROVIDER_LABELS,
   type Automation,
   type AutomationRun,
-  type ConnectorKind,
   type FollowedPr,
   type PrCheckItem,
   type PrEvent,
@@ -16,10 +15,12 @@ import {
   type Provider,
   type Session,
 } from "@sessionboxer/protocol";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { RUN_LABEL, RunHistory, badgeClass } from "./Automations";
 import { ConnectorIcon } from "./ConnectorIcon";
+import { accountKey, useFollowAccounts } from "./FollowRepo";
+import { RepoDatalist, followSuggestions, useKnownRepos } from "./RepoSuggest";
 import { FileLink } from "./FileLink";
 import { Markdown } from "./Markdown";
 import { CHECK_GLYPH, CHECK_STATE_LABEL, Ellipsis, KIND_LABEL, LEVEL_OF_CHECK, StateChip, ago, checkResultTitle, groupThreads, kindGlyph, moreButton } from "./PullRequests";
@@ -409,21 +410,17 @@ function HookDialog({ follow, run, onClose }: { follow: PrFollow; run: Runner; o
 // --- Follow dialog ---------------------------------------------------------------------------
 
 function FollowDialog({ follows, run, onClose }: { follows: PrFollow[]; run: Runner; onClose: () => void }) {
-  const [accounts, setAccounts] = useState<Array<{ kind: ConnectorKind; host: string; account: string }> | null>(null);
+  const accounts = useFollowAccounts();
+  const known = useKnownRepos();
+  const listId = useId();
   const [kind, setKind] = useState<PrFollowKind>("repo");
   const [account, setAccount] = useState<string>("");
   const [repo, setRepo] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    void api.prAccounts().then(
-      (a) => {
-        setAccounts(a);
-        if (a.length > 0) setAccount(`${a[0]!.kind}|${a[0]!.host}|${a[0]!.account}`);
-      },
-      () => setAccounts([]),
-    );
-  }, []);
-  const picked = accounts?.find((a) => `${a.kind}|${a.host}|${a.account}` === account) ?? null;
+    if (accounts && accounts.length > 0 && account === "") setAccount(accountKey(accounts[0]!));
+  }, [accounts, account]);
+  const picked = accounts?.find((a) => accountKey(a) === account) ?? null;
   const duplicate = picked && kind !== "repo" && follows.some((f) => f.kind === kind && f.provider === picked.kind && f.account.toLowerCase() === picked.account.toLowerCase());
   const submit = () => {
     if (!picked || busy) return;
@@ -466,8 +463,11 @@ function FollowDialog({ follows, run, onClose }: { follows: PrFollow[]; run: Run
               autoFocus
               placeholder={picked?.kind === "bitbucket" ? "PROJECT/slug, or the repository's URL" : "owner/repo, or the repository's URL"}
               value={repo}
+              list={listId}
+              spellCheck={false}
               onChange={(e) => setRepo(e.target.value)}
             />
+            {picked && <RepoDatalist id={listId} options={followSuggestions(known, picked.kind, picked.host)} />}
           </label>
         )}
         <p className="muted small-text">

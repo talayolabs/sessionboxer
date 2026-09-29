@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   REPO_NAME_PATTERN,
   WORKSPACE_ROOT_REPO,
@@ -13,6 +13,7 @@ import {
 } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { FolderDialog } from "./FolderDialog";
+import { RepoDatalist, folderSuggestions, gitSuggestions, useKnownRepos } from "./RepoSuggest";
 import { SourceIcon } from "./SourceIcon";
 import { Modal } from "./ui";
 
@@ -155,6 +156,8 @@ export function RepoEditor({
   accounts?: string[];
 }) {
   const [browsing, setBrowsing] = useState<number | null>(null);
+  const known = useKnownRepos();
+  const listId = useId();
   const patch = (key: number, p: Partial<RepoDraft>) => onChange(drafts.map((d) => (d.key === key ? { ...d, ...p } : d)));
   const error = draftsError(drafts);
   return (
@@ -179,6 +182,7 @@ export function RepoEditor({
                 disabled={disabled}
                 onChange={(e) => patch(d.key, { url: e.target.value })}
                 placeholder="https://github.com/org/repo.git"
+                list={`${listId}-git`}
                 spellCheck={false}
               />
               <div className="repo-ref-account">
@@ -203,6 +207,7 @@ export function RepoEditor({
                 disabled={disabled}
                 onChange={(e) => patch(d.key, { path: e.target.value })}
                 placeholder="/home/you/project"
+                list={`${listId}-copy`}
                 spellCheck={false}
               />
               <button type="button" disabled={disabled} onClick={() => setBrowsing(d.key)}>
@@ -228,6 +233,8 @@ export function RepoEditor({
           )}
         </div>
       ))}
+      <RepoDatalist id={`${listId}-git`} options={gitSuggestions(known)} />
+      <RepoDatalist id={`${listId}-copy`} options={folderSuggestions(known)} />
       {error && <p className="warn">{error}</p>}
       {!compact && (
         <div className="row repo-add">

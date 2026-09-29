@@ -27,6 +27,7 @@ import cronstrue from "cronstrue";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { formatDuration } from "./E2e";
+import { FollowRepoInline } from "./FollowRepo";
 import { RepoEditor, draftsError, draftsToSpecs, githubAccounts, specsToDrafts, type RepoDraft } from "./Repos";
 import { SessionSettingsForm, draftFromDefaults, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
 
@@ -149,7 +150,7 @@ export function Automations({
   run: Runner;
   /** Set inside a Session: only the automations that prompt it, and new ones target it. */
   forSession?: Session;
-  /** The PR follows a `pr_event` trigger can pick from; empty hides that trigger. */
+  /** The PR follows a `pr_event` trigger can pick from; the form can also follow a repository on the spot. */
   follows?: FollowOption[];
   /** `#/automations/<id>`: that one opens with its history. */
   focusId?: string | null;
@@ -485,8 +486,8 @@ function AutomationForm({
       : triggerType === "pr_event"
         ? prEvents.length === 0
           ? "Pick at least one event."
-          : follows.length === 0
-            ? "Follow a repository or your PRs on the Pull requests page first."
+          : follows.length === 0 && prFollows.length === 0
+            ? "Follow a repository below, or your PRs on the Pull requests page."
             : null
         : null;
   const repoError = draftsError(repos);
@@ -574,9 +575,8 @@ function AutomationForm({
               On a schedule
             </label>
             <label className="check">
-              <input type="radio" name="trigger" checked={triggerType === "pr_event"} onChange={() => setTriggerType("pr_event")} disabled={follows.length === 0} />
+              <input type="radio" name="trigger" checked={triggerType === "pr_event"} onChange={() => setTriggerType("pr_event")} />
               When a followed pull request changes
-              {follows.length === 0 && <span className="muted"> (follow something on the Pull requests page first)</span>}
             </label>
             <label className="check">
               <input type="radio" name="trigger" checked={triggerType === "manual"} onChange={() => setTriggerType("manual")} />
@@ -660,6 +660,12 @@ function AutomationForm({
                   {f.label}
                 </label>
               ))}
+              <FollowRepoInline disabled={busy} onFollowed={(f) => setPrFollows((cur) => (cur.includes(f.id) ? cur : [...cur, f.id]))} />
+              <p className="field-hint">
+                {follows.length === 0
+                  ? "Nothing is followed yet: name a repository to follow every open PR of it. My PRs and Reviews asked of me are followed from the Pull requests page."
+                  : "Follow another repository here, or My PRs and Reviews asked of me from the Pull requests page."}
+              </p>
             </fieldset>
             <fieldset className="choice">
               <legend>Events</legend>

@@ -187,6 +187,7 @@ export class PullRequests {
       url: prUrl(ref),
       attachedBy,
     });
+    this.deps.db.repos.rememberRef(ref, "pr");
     // A repository bound to a login is read (and merged) as that login first; polling still falls back to the others.
     const bound = this.repoAccount(s, ref);
     if (bound !== null) this.deps.db.prs.updateMeta(pr.id, { viaAccount: bound });

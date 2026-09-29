@@ -663,6 +663,13 @@ api.on(["GET", "HEAD"], "/automations/runs/:runId/video", (c) => {
   return new Response(Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream, { status: range ? 206 : 200, headers });
 });
 
+// Repositories named anywhere, for the inputs' suggestions (ADR-0068).
+api.get("/repositories", (c) => c.json(db.repos.list()));
+api.delete("/repositories/:id", (c) => {
+  if (!db.repos.forget(c.req.param("id"))) return c.json({ error: "no such repository" }, 404);
+  return c.body(null, 204);
+});
+
 // Followed pull requests (ADR-0064): `/prs/follows*` before `/prs/:id`.
 api.get("/prs/accounts", (c) => c.json(followedPrs.accounts()));
 api.get("/prs/follows", (c) => c.json(followedPrs.listFollows()));

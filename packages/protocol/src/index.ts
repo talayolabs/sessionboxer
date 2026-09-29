@@ -3618,6 +3618,81 @@ export type CreatePrFollowRequest = z.infer<typeof CreatePrFollowRequest>;
 export const UpdatePrFollowRequest = z.object({ enabled: z.boolean() });
 export type UpdatePrFollowRequest = z.infer<typeof UpdatePrFollowRequest>;
 
+// ---------------------------------------------------------------------------
+// Known repositories (ADR-0068): every repository named anywhere in Sessionboxer — a Session's
+// repositories, a follow, an attached PR, an automation's New Session — remembered so the inputs
+// that take one can suggest it. Nothing is polled or cloned from this list.
+// ---------------------------------------------------------------------------
+
+export const KnownRepoKind = z.enum(["git", "copy"]);
+export type KnownRepoKind = z.infer<typeof KnownRepoKind>;
+/** Where the repository was last named. */
+export const KnownRepoUse = z.enum(["session", "follow", "pr", "automation"]);
+export type KnownRepoUse = z.infer<typeof KnownRepoUse>;
+
+export const KnownRepo = z.object({
+  id: z.string(),
+  kind: KnownRepoKind,
+  /** `git`: the clone URL, canonical when `parseRepoRemote` could read it, as given otherwise; `copy`: the host folder. */
+  location: z.string(),
+  /** `github` / `bitbucket` when the remote is one Sessionboxer talks to; `null` for other hosts and folders. */
+  provider: PrProvider.nullable(),
+  host: z.string().nullable(),
+  /** Bitbucket: project key and slug. */
+  owner: z.string().nullable(),
+  repo: z.string().nullable(),
+  uses: z.number().int().positive(),
+  lastUsedBy: KnownRepoUse,
+  lastUsedAt: z.string(),
+  createdAt: z.string(),
+});
+export type KnownRepo = z.infer<typeof KnownRepo>;
+
+/** A git remote read into coordinates: which provider (when known), host, owner / project and repository, and the canonical clone URL. */
+export interface RepoRemote {
+  provider: PrProvider | null;
+  host: string;
+  owner: string;
+  repo: string;
+  url: string;
+}
+
+const REMOTE_GITHUB = /^(?:(?:https?:\/\/|ssh:\/\/|git:\/\/)(?:[^@/\s]+@)?(?:www\.)?github\.com(?::\d+)?\/|(?:[^@/\s]+@)?github\.com:|github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i;
+/** Data Center: `https://host[/context]/scm/KEY/slug.git`, `https://host[/context]/projects/KEY/repos/slug[/browse]`, `ssh://git@host[:port]/KEY/slug.git`. */
+const REMOTE_BITBUCKET_HTTPS =
+  /^https?:\/\/(?:[^@/\s]+@)?([^/:\s]+)(?::\d+)?(?:\/[^\s]*?)?\/(?:scm\/([^/\s]+)\/([^/\s]+?)(?:\.git)?|projects\/([^/\s]+)\/repos\/([^/\s]+?)(?:\/[^\s]*)?)\/?$/i;
+const REMOTE_GENERIC_URL = /^(?:https?|ssh|git):\/\/(?:[^@/\s]+@)?([^/:\s]+)(?::\d+)?\/(?:.*\/)?([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i;
+const REMOTE_GENERIC_SCP = /^(?:[^@/\s]+@)?([^/:\s]+):(?:.*\/)?([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
+
+/**
+ * Reads a clone URL (https, ssh, scp-style) into coordinates: github.com as `github`, a
+ * `/scm/KEY/slug` or `/projects/KEY/repos/slug` path as `bitbucket`, anything else with at least
+ * `owner/repo` at the end as an unknown provider (a Data Center `ssh://` remote included: nothing
+ * tells it from another host's); `null` for a path or a URL with no such tail.
+ */
+export function parseRepoRemote(text: string): RepoRemote | null {
+  const s = text.trim();
+  const gh = REMOTE_GITHUB.exec(s);
+  if (gh) return { provider: "github", host: "github.com", owner: gh[1]!, repo: gh[2]!, url: `https://github.com/${gh[1]}/${gh[2]}` };
+  const bb = REMOTE_BITBUCKET_HTTPS.exec(s);
+  if (bb) {
+    const host = bb[1]!.toLowerCase();
+    if (host !== "bitbucket.org" && !host.endsWith(".bitbucket.org")) {
+      const owner = (bb[2] ?? bb[4])!;
+      const repo = (bb[3] ?? bb[5])!;
+      return { provider: "bitbucket", host, owner, repo, url: `https://${host}/scm/${owner}/${repo}.git` };
+    }
+  }
+  const m = s.includes("://") ? REMOTE_GENERIC_URL.exec(s) : REMOTE_GENERIC_SCP.exec(s);
+  if (!m) return null;
+  return { provider: null, host: m[1]!.toLowerCase(), owner: m[2]!, repo: m[3]!, url: s.replace(/\/+$/, "") };
+}
+
+/** The HTTPS clone URL of a repository a Connector knows: `https://github.com/o/r`, `https://host/scm/KEY/slug.git`. */
+export function repoCloneUrl(ref: Pick<PrRef, "provider" | "host" | "owner" | "repo">): string {
+  return ref.provider === "github" ? `https://github.com/${ref.owner}/${ref.repo}` : `https://${ref.host}/scm/${ref.owner}/${ref.repo}.git`;
+}
+
 /** Something that happened to a followed PR, as polling saw it. One row per (PR, type, head, ref). */
 export const PrEvent = z.object({
   id: z.string(),

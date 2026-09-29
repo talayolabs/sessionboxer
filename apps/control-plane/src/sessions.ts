@@ -609,6 +609,7 @@ export class SessionManager {
         createdAt: new Date().toISOString(),
       });
     }
+    for (const r of out) this.db.repos.remember(r.source.type === "git" ? { kind: "git", location: r.source.url, by: "session" } : { kind: "copy", location: r.source.path, by: "session" });
     return out;
   }
 

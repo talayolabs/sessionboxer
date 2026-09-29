@@ -258,6 +258,7 @@ export class Automations {
       limits: req.limits,
       nextRunAt: trigger.type === "schedule" && req.enabled ? nextAfter(parseCron(trigger.cron, trigger.timezone), new Date()) : null,
     });
+    this.rememberRepos(req.action);
     this.broadcastList();
     return automation;
   }
@@ -279,8 +280,18 @@ export class Automations {
       nextRunAt,
     });
     if (!next) throw new HttpError(404, `automation ${id} not found`);
+    if (req.action) this.rememberRepos(req.action);
     this.broadcastList();
     return next;
+  }
+
+  /** The repositories a New Session action names go to the suggestions list (ADR-0068). */
+  private rememberRepos(action: AutomationAction): void {
+    if (action.type !== "new_session") return;
+    for (const r of action.repos) {
+      if (r.source.type === "git") this.deps.db.repos.remember({ kind: "git", location: r.source.url, by: "automation" });
+      else if (r.source.type === "copy") this.deps.db.repos.remember({ kind: "copy", location: r.source.path, by: "automation" });
+    }
   }
 
   delete(id: string): void {

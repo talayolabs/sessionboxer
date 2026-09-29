@@ -24,6 +24,7 @@ import type {
   AttachFollowedPrRequest,
   CreatePrFollowRequest,
   FollowedPr,
+  KnownRepo,
   PrEvent,
   PrFollow,
   PrFollowHook,
@@ -198,6 +199,8 @@ export const api = {
   providerLoginCode: (id: string, code: string) =>
     request<ProviderLoginFlow>(`/providers/login/${id}/code`, { method: "POST", body: JSON.stringify({ code }) }),
   providerLoginCancel: (id: string) => request<void>(`/providers/login/${id}`, { method: "DELETE" }),
+  repositories: () => request<KnownRepo[]>("/repositories"),
+  forgetRepository: (id: string) => request<void>(`/repositories/${id}`, { method: "DELETE" }),
   prAccounts: () => request<Array<{ kind: ConnectorKind; host: string; account: string }>>("/prs/accounts"),
   prFollows: () => request<PrFollow[]>("/prs/follows"),
   createPrFollow: (req: CreatePrFollowRequest) => request<PrFollow>("/prs/follows", { method: "POST", body: JSON.stringify(req) }),

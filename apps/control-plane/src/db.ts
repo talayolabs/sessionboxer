@@ -32,6 +32,7 @@ import {
 import { PrStore } from "./pr-store.js";
 import { FollowedPrStore } from "./followed-pr-store.js";
 import { AutomationStore } from "./automation-store.js";
+import { RepoStore } from "./repo-store.js";
 
 const BRANCH_TITLE_MAX = 40;
 
@@ -317,6 +318,8 @@ export class Db {
   /** Automations (scheduled tasks, PR reactions) and their run history. */
   readonly automations: AutomationStore;
   readonly followedPrs: FollowedPrStore;
+  /** Every repository named somewhere, for the inputs' suggestions (ADR-0068). */
+  readonly repos: RepoStore;
 
   constructor(file: string) {
     this.db = new Database(file);
@@ -329,6 +332,8 @@ export class Db {
     this.prs = new PrStore(this.db);
     this.automations = new AutomationStore(this.db);
     this.followedPrs = new FollowedPrStore(this.db);
+    this.repos = new RepoStore(this.db);
+    if (this.repos.isEmpty()) this.repos.backfill();
   }
 
   /** The connection, for stores that live in their own module (devices). */

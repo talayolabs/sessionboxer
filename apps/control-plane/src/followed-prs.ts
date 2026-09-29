@@ -154,6 +154,7 @@ export class FollowedPrs {
       return publicFollow(store.getFollow(existing.id)!);
     }
     const f = store.insertFollow(key);
+    if (f.kind === "repo" && f.owner !== null && f.repo !== null) this.deps.db.repos.rememberRef({ provider: f.provider, host: f.host, owner: f.owner, repo: f.repo }, "follow");
     this.deps.log(`following ${describeFollow(f)}`);
     this.broadcastFollows();
     this.enqueue(accountKey(f), `follow:${f.id}`, () => this.pollFollow(f.id));

@@ -1230,3 +1230,6 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .prs-page .pr-bulk { position: sticky; bottom: 0; }
 .follow-form { display: flex; flex-direction: column; gap: 10px; }
 .follow-form .segmented { align-self: flex-start; }
+.follow-inline { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.follow-inline .input-row input { flex: 1; min-width: 0; }
+.follow-inline .input-row select { max-width: 40%; }

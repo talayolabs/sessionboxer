@@ -1095,6 +1095,7 @@ export class SessionManager {
       usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
       usb: null,
       createdBy: createdBy ? { sessionId: createdBy } : null,
+      pinned: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -1241,6 +1242,7 @@ export class SessionManager {
       usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
       usb: null,
       createdBy: createdBy ? { sessionId: createdBy } : null,
+      pinned: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -2336,6 +2338,7 @@ export class SessionManager {
     };
     const s = this.update(id, {
       ...(req.title !== undefined ? { title: req.title } : {}),
+      ...(req.pinned !== undefined ? { pinned: req.pinned } : {}),
       ...(Object.keys(patch).length > 0 ? { settings: next } : {}),
     });
     const policyChanged = patch.agentTools !== undefined && this.agentToolsPolicy(current.settings) !== this.agentToolsPolicy(next);

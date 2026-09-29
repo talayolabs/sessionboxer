@@ -873,6 +873,8 @@ export const Session = z.object({
   usb: SessionUsb.nullable().default(null),
   /** The Session whose Agent created this one (`session_create` / `session_fork`, ADR-0062); `null` when the user did. */
   createdBy: z.object({ sessionId: z.string() }).nullable().default(null),
+  /** Listed before the others, whatever its age (ADR-0071). */
+  pinned: z.boolean().default(false),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -933,6 +935,8 @@ export function createRequestSettings(req: CreateSessionRequest): SessionSetting
 
 export const UpdateSessionRequest = z.object({
   title: z.string().min(1).max(200).optional(),
+  /** Keep the Session at the top of the list (`true`) or let it back in date order. */
+  pinned: z.boolean().optional(),
   settings: SessionSettingsPatch.optional(),
   // Flat forms of `settings.*`, kept for older clients; `settings` wins where both are given.
   mcpEnabled: z.array(z.string()).optional(),

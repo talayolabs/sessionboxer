@@ -35,6 +35,11 @@
 .session-list li.empty { color: var(--muted); cursor: default; }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .session-provider { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--muted); }
+.session-pin { display: none; flex: none; padding: 0; background: none; border: none; color: var(--muted); line-height: 0; cursor: pointer; }
+.session-pin .icon { display: block; }
+.session-pin.pinned { display: inline-flex; color: var(--accent); }
+.session-list li:hover .session-pin, .session-list li:focus-within .session-pin, .app.mobile .session-pin.pinned { display: inline-flex; }
+.session-pin:hover { color: var(--text); }
 .provider-icon { display: block; color: var(--text); opacity: 0.8; }
 .provider-badge { display: inline-flex; align-items: center; gap: 6px; cursor: help; }
 .provider-badge .provider-icon { opacity: 1; }

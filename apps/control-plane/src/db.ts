@@ -71,6 +71,7 @@ interface SessionRow {
   usb: string | null;
   /** Id of the Session whose Agent created this one, or NULL. */
   created_by: string | null;
+  pinned: number;
   created_at: string;
   updated_at: string;
 }
@@ -191,6 +192,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   usage TEXT NOT NULL DEFAULT '{}',
   usb TEXT,
   created_by TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -300,6 +302,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },
   { table: "sessions", column: "usb", ddl: "ALTER TABLE sessions ADD COLUMN usb TEXT" },
   { table: "sessions", column: "created_by", ddl: "ALTER TABLE sessions ADD COLUMN created_by TEXT" },
+  { table: "sessions", column: "pinned", ddl: "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0" },
   { table: "e2e_runs", column: "brief", ddl: "ALTER TABLE e2e_runs ADD COLUMN brief TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
@@ -431,7 +434,7 @@ export class Db {
   }
 
   listSessions(): Session[] {
-    const rows = this.db.prepare(`${SESSION_SELECT} ORDER BY s.created_at DESC`).all() as SessionQueryRow[];
+    const rows = this.db.prepare(`${SESSION_SELECT} ORDER BY s.pinned DESC, s.created_at DESC`).all() as SessionQueryRow[];
     const branches = new Map<string, Branch[]>();
     for (const row of this.db.prepare("SELECT * FROM branches ORDER BY created_at ASC").all() as BranchRow[]) {
       const list = branches.get(row.session_id) ?? [];
@@ -449,8 +452,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_by, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_by, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_by, pinned, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_by, @pinned, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -464,7 +467,7 @@ export class Db {
         `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, error=@error,
            queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
            options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
-           active_branch_id=@active_branch_id, usage=@usage, usb=@usb, updated_at=@updated_at
+           active_branch_id=@active_branch_id, usage=@usage, usb=@usb, pinned=@pinned, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
@@ -935,6 +938,7 @@ export type SessionPatch = Partial<
     | "activeBranchId"
     | "usage"
     | "usb"
+    | "pinned"
   >
 >;
 
@@ -1005,6 +1009,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     usage: JSON.parse(row.usage),
     usb: row.usb === null ? null : SessionUsb.parse(JSON.parse(row.usb)),
     createdBy: row.created_by === null ? null : { sessionId: row.created_by },
+    pinned: row.pinned === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -1052,6 +1057,7 @@ function sessionToRow(s: Session): SessionRow {
     usage: JSON.stringify(s.usage),
     usb: s.usb === null ? null : JSON.stringify(s.usb),
     created_by: s.createdBy?.sessionId ?? null,
+    pinned: s.pinned ? 1 : 0,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };

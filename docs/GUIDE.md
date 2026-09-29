@@ -292,6 +292,10 @@ If you allow it, the agent works across sessions: **list** them and **read** ano
 
 **Policy.** **Global settings → MCP & connectors → sessionboxer** sets the default for new sessions and each session's **Advanced… → Agent tools** overrides it: **Off** (the agent gets no `sessionboxer` MCP at all; the briefing still tells it what Sessionboxer is), **This Session only** (self-knowledge and the actions above on its own session, forks of itself, automations that prompt itself, attach or notify) or **All Sessions** (the default: the cross-session tools too). **When the Agent creates a Session** — **Ask me** (default) or **Do not ask**: with *Ask me* the agent gets *pending* and a card appears in the chat, "Claude Code wants to create a Session 'Backend tests'" with **Allow** and **Deny**; the agent waits for your answer (`approval_wait`), and a card nobody answers in 10 minutes is denied as *expired*. Settled cards stay in the transcript with a link to the session they created. A change of policy applies to the running agent at its next turn; **Off** removes the server from the agent's MCP list then. Windows and macOS sessions have the same server and file: the MCP runs in the Linux box and the agent in the VM reaches it through the same bridge as `desktop`. Every tool of the server, with its parameters, limits and what it returns, is in the [MCP tools reference](MCP.md#the-sessionboxer-server).
 
+### Pin a session to the top
+
+The sidebar lists sessions newest first. To keep one at hand whatever its age — the project you come back to every day, a long-running agent — hover it and click the **pin** that appears at the right of its row, or pick **Pin to top** in the session's ⋯ menu. Pinned sessions sit above the others (newest first among themselves) with the pin shown in colour; click it again, or **Unpin**, to let the session back into date order. The pin belongs to the session, not to the browser: every device and `sessionboxer list` see the same order.
+
 ### Stop, resume, delete
 
 - **Stop** pauses the box. It uses no CPU or memory while stopped; the conversation, files, installed packages and everything else in the container are kept.

@@ -18,7 +18,8 @@ export type IconName =
   | "image"
   | "usb"
   | "windows"
-  | "apple";
+  | "apple"
+  | "pin";
 
 /** Feather-style outline glyphs (24-unit grid, `currentColor` strokes). */
 const GLYPHS: Record<IconName, ReactNode> = {
@@ -98,6 +99,12 @@ const GLYPHS: Record<IconName, ReactNode> = {
       <circle cx="17" cy="7.5" r="1.5" />
       <rect x="5.5" y="10" width="3" height="3" />
       <circle cx="12" cy="20" r="2" />
+    </>
+  ),
+  pin: (
+    <>
+      <path d="M9 3h6l-1 7 3 3H7l3-3-1-7z" />
+      <path d="M12 13v8" />
     </>
   ),
   windows: (

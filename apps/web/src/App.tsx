@@ -138,6 +138,11 @@ function mergeEvents(prev: SessionEvent[], fetched: SessionEvent[]): SessionEven
 }
 
 /** What a status dot means, spelled out: `idle` in particular is the Agent's turn being over. */
+/** The sidebar's order: pinned Sessions first, then newest first (the Control Plane lists them the same way). */
+function sortSessions(list: Session[]): Session[] {
+  return [...list].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt.localeCompare(a.createdAt));
+}
+
 function statusTitle(status: SessionStatus): string {
   return status === "idle" ? "waiting for you: the Agent finished its turn" : status;
 }
@@ -318,7 +323,7 @@ export function App() {
     () =>
       run(async () => {
         const list = await api.sessions();
-        setSessions(list);
+        setSessions(sortSessions(list));
         const all = await Promise.all(list.map(async (s) => [s.id, await api.prs(s.id).catch((): PullRequest[] => [])] as const));
         setPrs(Object.fromEntries(all));
       }),
@@ -424,10 +429,10 @@ export function App() {
           case "session":
             setSessions((prev) => {
               const i = prev.findIndex((s) => s.id === msg.session.id);
-              if (i < 0) return [msg.session, ...prev];
+              if (i < 0) return sortSessions([msg.session, ...prev]);
               const next = [...prev];
               next[i] = msg.session;
-              return next;
+              return sortSessions(next);
             });
             break;
           case "session_deleted":
@@ -684,6 +689,19 @@ export function App() {
                 )}
                 <span className="session-title">{s.title}</span>
                 <span className="session-provider">
+                  <button
+                    type="button"
+                    className={`session-pin${s.pinned ? " pinned" : ""}`}
+                    title={s.pinned ? "Pinned to the top of the list. Click to unpin." : "Pin to the top of the list"}
+                    aria-label={s.pinned ? "Unpin" : "Pin to top"}
+                    aria-pressed={s.pinned}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void run(() => api.updateSession(s.id, { pinned: !s.pinned }));
+                    }}
+                  >
+                    <Icon name="pin" size={12} />
+                  </button>
                   {(prs[s.id] ?? []).some((p) => p.unread > 0) && (
                     <span
                       className="count"
@@ -1482,6 +1500,14 @@ function SessionView({
         : "Give the Agent one USB device of this machine (its /dev/bus/usb node in the Sandbox; one Session per device)",
       active: session.usb !== null,
       onPick: () => setUsbOpen(true),
+    },
+    {
+      key: "pin",
+      icon: "pin",
+      label: session.pinned ? "Unpin" : "Pin to top",
+      title: session.pinned ? "Let the Session back into date order in the list" : "Keep the Session at the top of the list, whatever its age",
+      active: session.pinned,
+      onPick: () => void run(() => api.updateSession(session.id, { pinned: !session.pinned })),
     },
     {
       key: "settings",

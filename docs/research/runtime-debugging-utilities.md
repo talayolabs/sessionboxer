@@ -121,10 +121,11 @@ export const UtilityDef = z.object({
 
 Notes on the choices:
 
-- **`environment` is the owner's word, and it collides with Sessionboxer's "Environment" (Docker/Windows/macOS).** In the
-  Utilities page the column is still labelled *Environment* because that is what an on-call engineer says ("the staging
-  Grafana"); in code the field is `environment` on `UtilityDef` and the list is `Settings.utilityEnvironments`, and the New
-  Session form keeps its runtime selector as "Runtime"… or not — see open question §10.1. Environments are plain strings
+- **`environment` is the owner's word, and it collided with Sessionboxer's "Environment" (Docker/Windows/macOS) — decided:
+  the Docker/Windows/macOS axis is renamed "Machine"** (New Session selector, the settings section that also holds CPUs,
+  memory and Docker-in-box; `machine: "linux" | "windows" | "macos"` in code), so *Environment* means prod/staging/qa
+  everywhere, which is what an on-call engineer says ("the staging Grafana"). In code the field is `environment` on
+  `UtilityDef` and the list is `Settings.utilityEnvironments`. Environments are plain strings
   the user creates once (`prod`, `staging`, `qa`); a Utility belongs to exactly one. The *same* Grafana in two environments
   is two Utilities sharing a preset, which is what makes "enable only the staging utilities for this Session" a one-click thing.
 - **`credentials` reuses `McpKeyValue`** (`name/value/secret`), so the write-only round trip, the `null` = keep
@@ -348,9 +349,10 @@ Later, if needed: a policy proxy (option B) for servers without read-only flags;
 
 ## 10. Open questions for the owner (with the recommended default)
 
-1. **Naming the environment axis.** `environment` clashes with the runtime selector. **Default: keep "Environment" in
-   the Utilities UI (it is the on-call vocabulary), and label the New Session Docker/Windows/macOS selector "Runtime" — the
-   word the Windows/macOS ADRs already reach for.** Alternative: call the utility axis "Target".
+1. ~~**Naming the environment axis.**~~ **Decided (2026-09-29): "Environment" = prod/staging/qa; the Docker/Windows/macOS
+   selector and its settings section become "Machine"** (rejected: Runtime, Platform — reads as language/framework; OS —
+   too narrow for a section that also sizes CPUs/memory). The rename of the existing UI/ADR wording is part of increment 1.
+   (The concept itself was named *Utility*, not *Tool*, so it never collides with MCP tools.)
 2. **Where do MCP servers that are Utilities appear?** **Default: only in Utilities; the MCP page shows a one-line "3 servers
    managed in Utilities".** Alternative: show them read-only in both.
 3. **Production write access.** **Default: production environments force read-only; per-Utility override with a confirm.**

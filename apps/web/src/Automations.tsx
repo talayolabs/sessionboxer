@@ -1049,6 +1049,7 @@ function draftFromInput(input: SessionSettingsInput, settings: PublicSettings): 
     options: input.options ?? base.options,
     inspectLlm: input.inspectLlm ?? base.inspectLlm,
     mcpEnabled: input.mcpEnabled ?? base.mcpEnabled,
+    utilitiesEnabled: input.utilitiesEnabled ?? base.utilitiesEnabled,
     instructions: input.instructions ?? base.instructions,
     autoSnapshot: input.autoSnapshot === undefined ? base.autoSnapshot : input.autoSnapshot,
     snapshotKeep: input.snapshotKeep === undefined ? base.snapshotKeep : input.snapshotKeep,

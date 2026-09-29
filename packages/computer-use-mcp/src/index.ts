@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { NARRATION_LANGUAGES, NARRATION_VOICES } from "./narration.js";
 import { annotateRecording, currentRecording, narrateRecording, recordingTrace, startRecording, stopRecording } from "./recording.js";
+import { fillUtilityPlaceholders, hasUtilityPlaceholder } from "./utilities.js";
 import {
   click,
   cursorPosition,
@@ -125,11 +126,14 @@ server.registerTool("left_mouse_up", { description: "Release the left mouse butt
 server.registerTool(
   "type",
   {
-    description: "Type a string of text at the current focus, as a keyboard would. Use `key` for shortcuts and special keys.",
+    description:
+      "Type a string of text at the current focus, as a keyboard would. Use `key` for shortcuts and special keys. `${util:<utility>.<credential>}` (or `.otp` for a one-time code) is replaced by that Utility's credential as it is typed (see .sessionboxer/utilities.json); you never see the value.",
     inputSchema: { text: z.string().min(1) },
   },
   async ({ text }) => {
-    await typeText(display, hand(), text);
+    const filled = fillUtilityPlaceholders(text);
+    await typeText(display, hand(), filled);
+    if (hasUtilityPlaceholder(text)) return okText(filled === text ? "OK (a ${util:…} placeholder was typed as written: no such Utility or credential is enabled)" : "OK (Utility credentials filled in)");
     return okText();
   },
 );

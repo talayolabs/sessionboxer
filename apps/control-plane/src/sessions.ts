@@ -29,6 +29,8 @@ import {
   type StopReason,
   DaemonMcpSetResult,
   type DaemonMcpSetParams,
+  type DaemonUtilitiesSetParams,
+  type UpdateSettingsRequest,
   type AgentToolsPolicy,
   type AgentPromptOrigin,
   AGENT_CHILDREN_PER_SESSION,
@@ -145,6 +147,7 @@ import { MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./d
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
+import { daemonUtilitiesParams, defaultUtilitiesEnabled, knownUtilityIds, resolveUtilities } from "./utilities.js";
 import { PullRequests } from "./pull-requests.js";
 import { StagedUploads, type StagedFile } from "./staged-uploads.js";
 import { UsbDevices } from "./usb.js";
@@ -284,6 +287,8 @@ export class SessionManager {
       sessionInfo: (id) => this.sessionInfoOf(this.get(id)),
       policy: (id) => this.agentToolsPolicy(this.get(id).settings),
       publicSettings: () => this.publicSettings?.() ?? null,
+      applySettings: (update) => this.applySettings(update),
+      setUtilitiesEnabled: (id, ids) => this.setUtilitiesEnabled(id, ids),
       prs: this.prs,
       e2e: this.e2e,
       snapshot: (id) => this.snapshot(id, "agent"),
@@ -1043,6 +1048,7 @@ export class SessionManager {
     const specs: RepoSpec[] = req.repos ?? (legacy.type === "git" || legacy.type === "copy" ? [{ source: legacy }] : []);
     const input = createRequestSettings(req);
     const mcpEnabled = this.mcpEnabledFor(settings, input.mcpEnabled ? knownMcpIds(settings, input.mcpEnabled) : defaultMcpEnabled(settings), specs);
+    const utilitiesEnabled = input.utilitiesEnabled ? knownUtilityIds(settings, input.utilitiesEnabled) : defaultUtilitiesEnabled(settings);
     const repos = await this.normalizeRepos(specs, [], resolveBoxCredentials(settings, mcpEnabled));
     const workspaceSource: WorkspaceSource = { type: "empty" };
     await this.docker.ensureImage();
@@ -1065,6 +1071,7 @@ export class SessionManager {
         options: input.options ?? {},
         inspectLlm: req.provider === "claude-code" && (input.inspectLlm ?? true),
         mcpEnabled,
+        utilitiesEnabled,
         instructions: (input.instructions ?? settings.instructions).trim(),
         autoSnapshot: input.autoSnapshot ?? null,
         snapshotKeep: input.snapshotKeep ?? null,
@@ -1212,6 +1219,7 @@ export class SessionManager {
         options: input.options ?? (sameAgent ? base.options : {}),
         inspectLlm: provider === "claude-code" && (input.inspectLlm ?? (sameAgent ? base.inspectLlm : true)),
         mcpEnabled: knownMcpIds(settings, input.mcpEnabled ?? base.mcpEnabled),
+        utilitiesEnabled: knownUtilityIds(settings, input.utilitiesEnabled ?? base.utilitiesEnabled),
         instructions: (input.instructions ?? base.instructions).trim(),
         autoSnapshot: input.autoSnapshot !== undefined ? input.autoSnapshot : base.autoSnapshot,
         snapshotKeep: input.snapshotKeep !== undefined ? input.snapshotKeep : base.snapshotKeep,
@@ -2322,6 +2330,7 @@ export class SessionManager {
     const next: SessionSettings = {
       ...current.settings,
       ...(patch.mcpEnabled !== undefined ? { mcpEnabled: knownMcpIds(this.settings(), patch.mcpEnabled) } : {}),
+      ...(patch.utilitiesEnabled !== undefined ? { utilitiesEnabled: knownUtilityIds(this.settings(), patch.utilitiesEnabled) } : {}),
       ...(patch.model !== undefined ? { model: patch.model } : {}),
       ...(patch.options !== undefined ? { options: { ...current.settings.options, ...patch.options } } : {}),
       ...(patch.inspectLlm !== undefined ? { inspectLlm: patch.inspectLlm && current.provider === "claude-code" } : {}),
@@ -2342,12 +2351,13 @@ export class SessionManager {
       ...(Object.keys(patch).length > 0 ? { settings: next } : {}),
     });
     const policyChanged = patch.agentTools !== undefined && this.agentToolsPolicy(current.settings) !== this.agentToolsPolicy(next);
-    if (patch.mcpEnabled !== undefined || policyChanged) await this.pushMcpServers(id);
+    if (patch.utilitiesEnabled !== undefined) await this.pushUtilities(id);
+    if (patch.mcpEnabled !== undefined || patch.utilitiesEnabled !== undefined || policyChanged) await this.pushMcpServers(id);
     if (req.title !== undefined || patch.agentTools !== undefined) void this.pushSessionInfo(id);
     if (patch.model !== undefined) await this.pushModel(id);
     if (patch.options !== undefined) await this.pushOptions(id, patch.options);
     if (patch.inspectLlm !== undefined) await this.pushLlmInspect(id);
-    return patch.mcpEnabled !== undefined || policyChanged || patch.model !== undefined || patch.options !== undefined || patch.inspectLlm !== undefined
+    return patch.mcpEnabled !== undefined || patch.utilitiesEnabled !== undefined || policyChanged || patch.model !== undefined || patch.options !== undefined || patch.inspectLlm !== undefined
       ? this.get(id)
       : s;
   }
@@ -2512,6 +2522,8 @@ export class SessionManager {
 
   /** A Codex Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
   codexAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
+  /** Stores a Settings change the way `PUT /settings` does; the server wires it (the Agent's `utilities_*` / `procedure_save` use it). */
+  applySettings: (update: UpdateSettingsRequest) => Promise<void> = () => Promise.reject(new Error("Settings are not available yet."));
 
   /**
    * Hands the stored Cursor login to a Cursor Session's Daemon (ADR-0054): an `auth.json` goes on
@@ -2581,7 +2593,8 @@ export class SessionManager {
     const s = this.get(id);
     const client = this.clients.get(id);
     if (!client?.connected) return s;
-    const servers = resolveMcpServers(this.settings(), s.settings.mcpEnabled);
+    const registry = resolveMcpServers(this.settings(), s.settings.mcpEnabled);
+    const servers = [...registry, ...resolveUtilities(this.settings(), s.settings.utilitiesEnabled, registry.map((r) => r.name)).mcpServers];
     const credentials = resolveBoxCredentials(this.settings(), s.settings.mcpEnabled);
     const sessionboxerTools = this.agentToolsPolicy(s.settings) !== "off";
     try {
@@ -2610,6 +2623,39 @@ export class SessionManager {
       if (s.status !== "idle" && s.status !== "running") continue;
       await this.pushMcpServers(s.id).catch((e: unknown) => this.log(`mcp push ${s.id} failed: ${String(e)}`));
     }
+  }
+
+  /**
+   * Sends the Session's enabled Utilities (credentials included, over the Daemon's socket only) and
+   * procedure skills (ADR-0073); the Daemon writes tmpfs credential files, the manifest and the
+   * skills. Older Daemons without the method are left alone. Their MCP facets go with `pushMcpServers`.
+   */
+  async pushUtilities(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (!client?.connected) return;
+    const registry = resolveMcpServers(this.settings(), s.settings.mcpEnabled);
+    const params = daemonUtilitiesParams(this.settings(), s.settings.utilitiesEnabled, registry.map((r) => r.name));
+    try {
+      await client.request(DAEMON_METHODS.utilitiesSet, params satisfies DaemonUtilitiesSetParams);
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === -32601) return;
+      throw e;
+    }
+  }
+
+  /** The Utilities registry, its Environments or the procedures changed: every live Session gets them again (and its MCP set, for the facets). */
+  async pushUtilitiesToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.status !== "idle" && s.status !== "running") continue;
+      await this.pushUtilities(s.id).catch((e: unknown) => this.log(`utilities push ${s.id} failed: ${String(e)}`));
+      await this.pushMcpServers(s.id).catch((e: unknown) => this.log(`mcp push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
+  /** Switches Utilities on or off for a Session by registry id (the `utilities_enable` tool and the `/util` command). */
+  async setUtilitiesEnabled(id: string, ids: string[]): Promise<Session> {
+    return this.edit(id, { settings: { utilitiesEnabled: ids } });
   }
 
   private async connect(id: string, containerId: string): Promise<void> {
@@ -2659,6 +2705,7 @@ export class SessionManager {
       .then(() => this.pushRepos(id))
       .then(() => this.pushCodexAuth(id))
       .then(() => this.pushCursorAuth(id))
+      .then(() => this.pushUtilities(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))
       .then(() => this.pushOptions(id))
@@ -2705,6 +2752,7 @@ export class SessionManager {
     if (cursor && cursor.epoch === ev.epoch && ev.seq <= cursor.lastSeq) return;
     let body = ev.body;
     if (body.type === "llm_call") body = { ...body, call: { ...body.call, ordinal: this.db.countLlmCalls(id) + 1 } };
+    if (body.type === "update") body = { ...body, update: redactUtilityCredentials(body.update) };
     if (body.type === "user_prompt") {
       const origin = this.promptOrigins.get(id);
       if (origin) {
@@ -2824,6 +2872,32 @@ export class SessionManager {
     for (const id of this.usageTimers.keys()) this.clearAutoContinue(id);
     for (const id of this.clients.keys()) this.disconnect(id);
   }
+}
+
+/**
+ * A `utilities_add` / `utilities_update` call carries credentials in its input; the transcript
+ * (stored, shown, replayed) keeps their names, not their values (ADR-0073). The call reached the
+ * Control Plane whole before this; the Agent's own context has what the user pasted anyway.
+ */
+type AcpUpdate = Extract<SessionEventBody, { type: "update" }>["update"];
+function redactUtilityCredentials(update: AcpUpdate): AcpUpdate {
+  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") return update;
+  const input = update.rawInput;
+  if (typeof input !== "object" || input === null || !("credentials" in input) || !Array.isArray(input.credentials)) return update;
+  const mask = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map((kv) => (typeof kv === "object" && kv !== null && "value" in kv ? { ...kv, value: "••••••••" } : kv)) : v;
+  const facet = (v: unknown, keys: string[]): unknown => {
+    if (typeof v !== "object" || v === null) return v;
+    const o = { ...(v as Record<string, unknown>) };
+    for (const k of keys) if (k in o) o[k] = mask(o[k]);
+    return o;
+  };
+  const o = input as Record<string, unknown>;
+  const rawInput: Record<string, unknown> = { ...o, credentials: mask(o.credentials) };
+  if ("http" in o) rawInput.http = facet(o.http, ["headers"]);
+  if ("cli" in o) rawInput.cli = facet(o.cli, ["env"]);
+  if ("mcp" in o) rawInput.mcp = facet(o.mcp, ["env", "headers"]);
+  return { ...update, rawInput };
 }
 
 /** Something was said or done (not status/usage/title bookkeeping). */

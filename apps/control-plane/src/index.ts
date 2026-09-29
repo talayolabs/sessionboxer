@@ -385,19 +385,25 @@ api.post("/auth/token/rotate", (c) => {
 });
 
 api.get("/settings", async (c) => c.json(await publicSettings()));
-api.put("/settings", async (c) => {
-  const update = UpdateSettingsRequest.parse(await c.req.json());
+/** Stores a Settings change and pushes what changed to the live Sessions; `PUT /settings` and the Agent's registry tools. */
+async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void> {
   const agentToolsBefore = settings.agentTools;
   settings = applySettingsUpdate(settings, update);
   saveSettings(settings);
   if (settings.agentTools !== agentToolsBefore) void sessions.agentToolsPolicyChanged();
   if (update.extraCaCerts !== undefined || update.trustHostCaCerts !== undefined) applyTrustedCas(settings);
   if (update.mcpServers) void sessions.pushMcpServersToAll();
+  if (update.utilities || update.utilityEnvironments || update.procedures) void sessions.pushUtilitiesToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   if (update.providerSecrets?.codex?.CODEX_AUTH_JSON !== undefined) void sessions.pushCodexAuthToAll();
   if (update.providerSecrets?.cursor?.CURSOR_LOGIN !== undefined) void sessions.pushCursorAuthToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
+}
+sessions.applySettings = applySettingsRequest;
+
+api.put("/settings", async (c) => {
+  await applySettingsRequest(UpdateSettingsRequest.parse(await c.req.json()));
   return c.json(await publicSettings());
 });
 

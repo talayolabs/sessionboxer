@@ -4,6 +4,8 @@ import {
   DOCKER_MODE_LABELS,
   ENVIRONMENT_LABELS,
   PROVIDER_LABELS,
+  UTILITY_GROUPS,
+  UTILITY_GROUP_LABELS,
   type Environment,
   applyNote,
   instructionsDelivery,
@@ -18,6 +20,7 @@ import {
   type SessionSettingsInput,
 } from "@sessionboxer/protocol";
 import { summarize } from "./mcp";
+import { facetsOf, utilityLabel } from "./UtilitiesEditor";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { EnvironmentPicker } from "./EnvironmentPicker";
@@ -65,6 +68,8 @@ export interface SessionSettingsDraft {
   options: OptionValues;
   inspectLlm: boolean;
   mcpEnabled: string[];
+  /** Utilities on for the Session (ADR-0073), by registry id. */
+  utilitiesEnabled: string[];
   instructions: string;
   autoSnapshot: boolean | null;
   snapshotKeep: number | null;
@@ -84,6 +89,12 @@ export interface SessionSettingsDraft {
   gitEmail: string;
 }
 
+/** The Utilities a new Session starts with: marked default, in an Environment marked default (the Control Plane applies the same rule). */
+export function defaultUtilitiesEnabled(settings: PublicSettings): string[] {
+  const envOn = new Set(settings.utilityEnvironments.filter((e) => e.enabledByDefault).map((e) => e.name));
+  return settings.utilities.filter((u) => u.enabledByDefault && envOn.has(u.environment)).map((u) => u.id);
+}
+
 /** A new Session starts from the global Settings. */
 export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraft {
   return {
@@ -91,6 +102,7 @@ export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraf
     options: {},
     inspectLlm: true,
     mcpEnabled: settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id),
+    utilitiesEnabled: defaultUtilitiesEnabled(settings),
     instructions: settings.instructions,
     autoSnapshot: null,
     snapshotKeep: null,
@@ -114,6 +126,7 @@ export function draftFromSettings(s: SessionSettings): SessionSettingsDraft {
     options: s.options,
     inspectLlm: s.inspectLlm,
     mcpEnabled: s.mcpEnabled,
+    utilitiesEnabled: s.utilitiesEnabled,
     instructions: s.instructions,
     autoSnapshot: s.autoSnapshot,
     snapshotKeep: s.snapshotKeep,
@@ -137,6 +150,7 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
     options: d.options,
     inspectLlm: d.inspectLlm,
     mcpEnabled: d.mcpEnabled,
+    utilitiesEnabled: d.utilitiesEnabled,
     instructions: d.instructions,
     autoSnapshot: d.autoSnapshot,
     snapshotKeep: d.snapshotKeep,
@@ -155,14 +169,15 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
 
 export type SessionSettingsMode = "create" | "fork" | "live";
 
-export type SessionSettingsSection = "environment" | "agent" | "mcp" | "qa" | "debug";
+export type SessionSettingsSection = "environment" | "agent" | "mcp" | "utilities" | "qa" | "debug";
 
 /** The sections of the form in display order, for a split view's navigation; Debug (Inspect LLM) is Claude Code only. */
 export function sessionSettingsSections(provider: Provider): Array<{ id: SessionSettingsSection; label: string }> {
   return [
-    { id: "environment", label: "Environment" },
+    { id: "environment", label: "Machine" },
     { id: "agent", label: "Agent" },
     { id: "mcp", label: "MCP & connectors" },
+    { id: "utilities", label: "Utilities" },
     { id: "qa", label: "Auto QA" },
     ...(provider === "claude-code" ? [{ id: "debug" as const, label: "Debug" }] : []),
   ];
@@ -179,7 +194,7 @@ const fromOnOff = (v: OnOff): boolean | null => (v === "default" ? null : v === 
  * The one place a Session is configured: the New Session form (`create`, prefilled from the global
  * Settings), the Fork dialog (`fork`, prefilled from the origin) and the Session settings dialog
  * (`live`, where each control saves as it changes and creation-only values are read-only).
- * Sections — Environment, Agent, MCP & connectors, Auto QA, Debug — each a group of captions with the
+ * Sections — Machine, Agent, MCP & connectors, Utilities, Auto QA, Debug — each a group of captions with the
  * explanations behind a "?".
  */
 export function SessionSettingsForm({
@@ -229,6 +244,23 @@ export function SessionSettingsForm({
   const customServers = settings.mcpServers.filter((s) => s.connector === null);
   const fixed = <span className="ss-lock">(fixed for the Session)</span>;
 
+  const enabledUtilities = new Set(value.utilitiesEnabled);
+  const productionEnvs = new Set(settings.utilityEnvironments.filter((e) => e.production).map((e) => e.name));
+  const setUtilities = (ids: string[], on: boolean) =>
+    onChange({ utilitiesEnabled: on ? [...new Set([...value.utilitiesEnabled, ...ids])] : value.utilitiesEnabled.filter((id) => !ids.includes(id)) });
+  /** A switch over several Utilities (a group, an Environment): on when all are, dimmed when some. */
+  const utilitySwitch = (ids: string[], label: string, prod = false) => {
+    const on = ids.filter((id) => enabledUtilities.has(id)).length;
+    return (
+      <label className={`check switch${on > 0 && on < ids.length ? " partial" : ""}`} title={on === ids.length ? `All ${ids.length} on` : on === 0 ? "All off" : `${on} of ${ids.length} on`}>
+        <input type="checkbox" checked={on === ids.length} disabled={disabled} onChange={(e) => setUtilities(ids, e.target.checked)} />
+        <span className="slider" aria-hidden="true" />
+        <span className="mcp-name">{label}</span>
+        {prod && <span className="util-prod">production</span>}
+      </label>
+    );
+  };
+
   const mcpSwitch = (s: PublicSettings["mcpServers"][number]) => (
     <li key={s.id}>
       <label className="check switch">
@@ -258,15 +290,15 @@ export function SessionSettingsForm({
     <div className="ss-form">
       {show("environment") && (
         <section className="ss-section">
-          <h3>Environment</h3>
+          <h3>Machine</h3>
           {environmentFixed ? (
             <p className="muted ss-fixed">
-              Environment: {ENVIRONMENT_LABELS[environment]} <span className="ss-lock">(fixed for the Session{mode === "fork" ? " and its forks" : ""})</span>
+              Machine: {ENVIRONMENT_LABELS[environment]} <span className="ss-lock">(fixed for the Session{mode === "fork" ? " and its forks" : ""})</span>
               <Help>{environmentNote(settings, environment)}</Help>
             </p>
           ) : (
             <label>
-              <Caption help={environmentNote(settings, value.environment)}>Environment</Caption>
+              <Caption help={environmentNote(settings, value.environment)}>Machine</Caption>
               <EnvironmentPicker
                 value={{ environment: value.environment, snapshotId: value.snapshotId }}
                 disabled={disabled}
@@ -634,6 +666,80 @@ export function SessionSettingsForm({
           ) : (
             <ul className="mcp-switches" aria-busy={disabled}>
               {customServers.map(mcpSwitch)}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {show("utilities") && (
+        <section className="ss-section">
+          <h3>
+            <Caption
+              help={
+                <p>
+                  The observability systems and applications registered in <a href="#/settings/utilities">Global settings → Utilities</a>, by target
+                  Environment, on or off for this Session. On: the Agent finds it in <code>.sessionboxer/utilities.json</code>, its MCP server (if any)
+                  joins the Session&apos;s, its credentials reach the Sandbox as placeholders (<code>{"${util:<name>.password}"}</code>) and{" "}
+                  <code>sb-util</code>, never the chat. Switch a whole group or Environment at once.
+                  {live ? ` ${applyNote(status, "restart")}` : ""} The Agent can ask for one with <code>utilities_enable</code>.
+                </p>
+              }
+            >
+              Utilities
+            </Caption>
+            {pending?.mcpPending && <span className="warn-sign">pending</span>}
+          </h3>
+          {settings.utilities.length === 0 ? (
+            <p className="empty ss-empty">
+              No Utilities registered: add them in <a href="#/settings/utilities">Global settings → Utilities</a>, or tell the Agent (“add newrelic with user…”).
+            </p>
+          ) : (
+            <ul className="mcp-switches util-switches" aria-busy={disabled}>
+              {UTILITY_GROUPS.map((group) => {
+                const inGroup = settings.utilities.filter((u) => u.group === group);
+                if (inGroup.length === 0) return null;
+                const envs = settings.utilityEnvironments.map((e) => e.name).filter((env) => inGroup.some((u) => u.environment === env));
+                return (
+                  <li key={group}>
+                    <div className="util-group">
+                      {utilitySwitch(inGroup.map((u) => u.id), UTILITY_GROUP_LABELS[group])}
+                      <span className="muted">{inGroup.filter((u) => enabledUtilities.has(u.id)).length} of {inGroup.length} on</span>
+                    </div>
+                    <ul className="mcp-switches util-switches">
+                      {envs.map((env) => {
+                        const inEnv = inGroup.filter((u) => u.environment === env);
+                        const prod = productionEnvs.has(env);
+                        return (
+                          <li key={env} className="util-env-row">
+                            {utilitySwitch(inEnv.map((u) => u.id), env, prod)}
+                            <ul className="mcp-switches util-switches">
+                              {inEnv.map((u) => (
+                                <li key={u.id} className="util-item">
+                                  <label className="check switch">
+                                    <input
+                                      type="checkbox"
+                                      checked={enabledUtilities.has(u.id)}
+                                      disabled={disabled}
+                                      onChange={(e) => setUtilities([u.id], e.target.checked)}
+                                    />
+                                    <span className="slider" aria-hidden="true" />
+                                    <span className="mcp-name">{utilityLabel(u)}</span>
+                                    <span className="muted mcp-transport">{facetsOf(u).join(" · ")}</span>
+                                    <span className="muted mcp-summary" title={u.notes}>
+                                      {u.web?.url || u.http?.baseUrl || u.ssh?.host || ""}
+                                      {u.readOnly ? " · read-only" : ""}
+                                    </span>
+                                  </label>
+                                </li>
+                              ))}
+                            </ul>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

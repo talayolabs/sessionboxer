@@ -37,6 +37,8 @@ import {
   DaemonReposRemoveParams,
   DaemonReposSeedParams,
   SESSION_INFO_PATH,
+  UTILITIES_MANIFEST_PATH,
+  DaemonUtilitiesSetParams,
   SessionInfo,
   DaemonReposSetParams,
   FsManifestParams,
@@ -84,6 +86,7 @@ import { DevinMcpConfig, type BuiltinMcp } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
 import { Repos } from "./repos.js";
 import { SessionInfoFile } from "./session-info.js";
+import { UtilitiesFiles } from "./utilities.js";
 import { Uploads } from "./uploads.js";
 import { Terminals } from "./terminals.js";
 import {
@@ -389,6 +392,29 @@ const sessionInfo = new SessionInfoFile(
     : undefined,
 );
 
+/** The Session's Utilities (ADR-0073): credentials on tmpfs, the manifest in the Workspace, procedures as skills. */
+const utilities = new UtilitiesFiles(
+  workspace,
+  `${home}/.claude/skills`,
+  tmpfsDir,
+  log,
+  (names) => emit({ type: "utilities_changed", utilities: names }),
+  guest
+    ? {
+        manifestPath: guest.guestPath(UTILITIES_MANIFEST_PATH),
+        skillsDir: `${guest.homeDir()}/.claude/skills`,
+        write: async (path, content) => {
+          await guest.waitReady();
+          await guest.writeFile(path, content);
+        },
+        remove: async (path) => {
+          await guest.waitReady();
+          await guest.run(guest.rmDirScript(path));
+        },
+      }
+    : undefined,
+);
+
 /** A `qemu-windows` Session (ADR-0057): the Agent runs inside the Windows VM; its desktop is what the screenshot and input tools act on. */
 const windowsBriefing = (): string => {
   if (guest?.os !== "windows") return "";
@@ -434,7 +460,7 @@ const agent = new AgentManager(
     newConversation: env.SESSIONBOXER_NEW_CONVERSATION === "1",
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
-    workspaceBriefing: () => [sessionInfo.briefing(), repos.briefing(), windowsBriefing(), macosBriefing()].filter((s) => s !== "").join("\n\n"),
+    workspaceBriefing: () => [sessionInfo.briefing(), repos.briefing(), utilities.briefing(), windowsBriefing(), macosBriefing()].filter((s) => s !== "").join("\n\n"),
     writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),
@@ -626,6 +652,9 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.sessionInfoSet:
       await sessionInfo.set(SessionInfo.parse(params));
+      return { ok: true };
+    case DAEMON_METHODS.utilitiesSet:
+      await utilities.set(DaemonUtilitiesSetParams.parse(params));
       return { ok: true };
     case DAEMON_METHODS.reposSeed: {
       const p = DaemonReposSeedParams.parse(params);

@@ -510,6 +510,8 @@ function Item({
           MCP servers now: {item.servers.length === 0 ? "desktop only" : `desktop, ${item.servers.join(", ")}`}
         </div>
       );
+    case "utilities_changed":
+      return <div className="marker">Utilities now: {item.utilities.length === 0 ? "none" : item.utilities.join(", ")}</div>;
     case "model_changed":
       return (
         <div className="marker" title={item.model}>

@@ -61,8 +61,25 @@ import {
   type Settings,
   type Snapshot,
   type UiHint,
+  AgentProcedureSaveArgs,
+  AgentUtilitiesAddArgs,
+  AgentUtilitiesEnableArgs,
+  AgentUtilitiesGetArgs,
+  AgentUtilitiesOpenArgs,
+  AgentUtilitiesUpdateArgs,
+  UTILITY_GROUPS,
+  UTILITY_GROUP_LABELS,
+  UTILITY_PRESETS,
+  applyUtilityPreset,
+  type McpKeyValue,
+  type ProcedureDef,
+  type PublicMcpKeyValue,
+  type PublicUtilityDef,
+  type UpdateSettingsRequest,
+  type UtilityDef,
 } from "@sessionboxer/protocol";
 import { PUBLIC_URL } from "./config.js";
+import { resolveUtilities, toPublicUtility, utilityLabel } from "./utilities.js";
 import type { Db } from "./db.js";
 import type { E2eVerification } from "./e2e.js";
 import type { PullRequests } from "./pull-requests.js";
@@ -119,6 +136,10 @@ export interface AgentToolsDeps {
   policy: (id: string) => AgentToolsPolicy;
   /** Global Settings as the UI sees them (no secrets); `null` until the Control Plane wires it. */
   publicSettings: () => Promise<PublicSettings> | null;
+  /** Stores a Settings change the way the Settings page does (validated, saved, pushed to live Sessions). */
+  applySettings: (update: UpdateSettingsRequest) => Promise<void>;
+  /** The Session's enabled Utilities, by registry id. */
+  setUtilitiesEnabled: (id: string, ids: string[]) => Promise<Session>;
   prs: PullRequests;
   e2e: E2eVerification;
   snapshot: (id: string) => Promise<Snapshot>;
@@ -168,13 +189,20 @@ const SESSION_TOOLS: ReadonlySet<AgentTool> = new Set<AgentTool>([
   "automation_create",
   "automation_list",
   "automation_runs",
+  "utilities_list",
+  "utilities_get",
+  "utilities_open",
+  "utilities_add",
+  "utilities_update",
+  "utilities_enable",
+  "procedure_save",
 ]);
 
 /** An approval the user has not answered yet, with what runs when they allow it. */
 interface PendingApproval {
   sessionId: string;
   approval: AgentApproval;
-  run: () => Promise<{ sessionId: string; title: string }>;
+  run: () => Promise<{ sessionId: string | null; title: string }>;
   timer: NodeJS.Timeout;
   waiters: Set<() => void>;
 }
@@ -245,6 +273,20 @@ export class AgentTools {
       }
       case "ui_open":
         return this.uiOpen(id, AgentUiOpenArgs.parse(args));
+      case "utilities_list":
+        return this.utilitiesList(id);
+      case "utilities_get":
+        return this.utilitiesGet(id, AgentUtilitiesGetArgs.parse(args));
+      case "utilities_open":
+        return this.utilitiesOpen(id, AgentUtilitiesOpenArgs.parse(args));
+      case "utilities_add":
+        return this.utilitiesAdd(id, AgentUtilitiesAddArgs.parse(args));
+      case "utilities_update":
+        return this.utilitiesUpdate(id, AgentUtilitiesUpdateArgs.parse(args));
+      case "utilities_enable":
+        return this.utilitiesEnable(id, AgentUtilitiesEnableArgs.parse(args));
+      case "procedure_save":
+        return this.procedureSave(id, AgentProcedureSaveArgs.parse(args));
       case "sessions_list":
         return this.deps.listSessions().map((s) => this.summarize(id, s));
       case "session_get": {
@@ -505,9 +547,9 @@ export class AgentTools {
    * Puts a card in the chat and answers `{ pending: true, id }`; `settleApproval` (the card's
    * buttons) runs the action, the timeout denies it. Every state is an `agent_approval` event.
    */
-  private requestApproval(sessionId: string, kind: AgentApprovalKind, summary: string, run: PendingApproval["run"]): unknown {
+  private requestApproval(sessionId: string, kind: AgentApprovalKind, summary: string, run: PendingApproval["run"], details: AgentApproval["details"] = []): unknown {
     const id = randomBytes(6).toString("hex");
-    const approval: AgentApproval = { id, kind, summary, status: "pending", expiresAt: new Date(Date.now() + AGENT_APPROVAL_TIMEOUT_MS).toISOString(), result: null, error: null };
+    const approval: AgentApproval = { id, kind, summary, status: "pending", expiresAt: new Date(Date.now() + AGENT_APPROVAL_TIMEOUT_MS).toISOString(), details, result: null, error: null };
     const timer = setTimeout(() => void this.finishApproval(id, "expired"), AGENT_APPROVAL_TIMEOUT_MS);
     this.approvals.set(id, { sessionId, approval, run, timer, waiters: new Set() });
     this.deps.appendEvent(sessionId, { type: "agent_approval", approval });
@@ -578,7 +620,7 @@ export class AgentTools {
       id: stored.id,
       status: stored.status,
       pending: stored.status === "pending",
-      ...(stored.result ? { sessionId: stored.result.sessionId, title: stored.result.title, url: `${PUBLIC_URL}${sessionRoute(stored.result.sessionId)}` } : {}),
+      ...(stored.result ? { ...(stored.result.sessionId ? { sessionId: stored.result.sessionId, url: `${PUBLIC_URL}${sessionRoute(stored.result.sessionId)}` } : {}), title: stored.result.title } : {}),
       ...(stored.error ? { error: stored.error } : {}),
     };
   }
@@ -759,6 +801,264 @@ export class AgentTools {
     }
   }
 
+  // --- Utilities (ADR-0073) -------------------------------------------------------------------
+
+  /** The catalogue as the Agent sees it: no credential values, which are on for this Session, the presets. */
+  private utilitiesList(id: string): unknown {
+    const s = this.session(id);
+    const settings = this.deps.settings();
+    const enabled = new Set(s.settings.utilitiesEnabled);
+    const resolved = resolveUtilities(settings, s.settings.utilitiesEnabled, []);
+    const production = new Set(settings.utilityEnvironments.filter((e) => e.production).map((e) => e.name));
+    return {
+      environments: settings.utilityEnvironments.map((e) => ({ name: e.name, production: e.production })),
+      groups: UTILITY_GROUPS.map((g) => ({ name: g, label: UTILITY_GROUP_LABELS[g] })),
+      utilities: settings.utilities.map((u) => ({
+        name: u.name,
+        label: utilityLabel(u),
+        group: u.group,
+        environment: u.environment,
+        production: production.has(u.environment),
+        readOnly: u.readOnly,
+        enabled: enabled.has(u.id),
+        preset: u.preset,
+        facets: facetsOf(u),
+        credentials: u.credentials.filter((c) => c.value !== "").map((c) => c.name),
+        mcp: resolved.specs.find((r) => r.name === u.name && r.environment === u.environment)?.mcp ?? null,
+        notes: excerpt(u.notes, 200),
+      })),
+      presets: Object.entries(UTILITY_PRESETS).map(([name, p]) => ({ name, label: p.label, group: p.group, credentials: p.credentials, url: p.urlHint })),
+      manifest: ".sessionboxer/utilities.json",
+      hint: "utilities_get gives one in full (notes, facets, MCP server name); utilities_enable switches them on for this Session; utilities_add registers a new one (the user allows it in the chat).",
+    };
+  }
+
+  /** One Utility by `name` (and Environment when the name is in several); every facet, credential names only. */
+  private utility(id: string, name: string, environment?: string): UtilityDef {
+    const settings = this.deps.settings();
+    const ref = name.trim();
+    const [n, envInName] = ref.includes("@") ? (ref.split("@", 2) as [string, string]) : [ref, undefined];
+    const env = environment?.trim() || envInName;
+    const hits = settings.utilities.filter((u) => u.name === n && (env === undefined || u.environment === env));
+    if (hits.length === 1) return hits[0]!;
+    if (hits.length === 0) throw new Error(`No Utility "${ref}"${env ? ` in ${env}` : ""}; utilities_list shows them.`);
+    // Several Environments: the ones on for this Session first, then it is ambiguous.
+    const on = new Set(this.session(id).settings.utilitiesEnabled);
+    const enabled = hits.filter((u) => on.has(u.id));
+    if (enabled.length === 1) return enabled[0]!;
+    throw new Error(`"${n}" exists in ${hits.map((u) => u.environment).join(", ")}; pass environment (or name@environment).`);
+  }
+
+  private utilitiesGet(id: string, p: AgentUtilitiesGetArgs): unknown {
+    const s = this.session(id);
+    const u = this.utility(id, p.name, p.environment);
+    const settings = this.deps.settings();
+    const resolved = resolveUtilities(settings, s.settings.utilitiesEnabled, []);
+    const pub = toPublicUtility(u);
+    const names = (list: PublicMcpKeyValue[]) => list.map((kv) => ({ name: kv.name, set: kv.value === null || kv.value !== "", secret: kv.secret }));
+    return {
+      name: u.name,
+      label: utilityLabel(u),
+      group: u.group,
+      environment: u.environment,
+      production: settings.utilityEnvironments.find((e) => e.name === u.environment)?.production ?? false,
+      readOnly: u.readOnly,
+      enabled: s.settings.utilitiesEnabled.includes(u.id),
+      preset: u.preset,
+      notes: u.notes,
+      credentials: names(pub.credentials),
+      otp: u.credentials.some((c) => c.name === "totp" && c.value !== ""),
+      mcp: pub.mcp ? { ...pub.mcp, env: names(pub.mcp.env), headers: names(pub.mcp.headers), server: resolved.specs.find((r) => r.name === u.name && r.environment === u.environment)?.mcp ?? null } : null,
+      web: u.web,
+      http: pub.http ? { baseUrl: pub.http.baseUrl, headers: names(pub.http.headers) } : null,
+      ssh: u.ssh,
+      cli: pub.cli ? { install: pub.cli.install, env: names(pub.cli.env) } : null,
+      usage: [
+        "Credentials: `${util:" + u.name + ".<credential>}` in the desktop `type` tool; `sb-util env " + u.name + " -- <cmd>` puts them in the environment (UTIL_<NAME>).",
+        ...(u.http ? [`HTTP: sb-util curl ${u.name} <path> [curl args]`] : []),
+        ...(u.ssh ? [`SSH: sb-util ssh ${u.name} [cmd]; sb-util tunnel ${u.name} <local>:<host>:<port>`] : []),
+        ...(u.web ? [`Web: sb-util open ${u.name} (or utilities_open) shows it in the Desktop; log in with the placeholders.`] : []),
+      ],
+    };
+  }
+
+  /** Opens the web facet in the Sandbox's browser (a Terminal runs `sb-util open`) and shows the user the Desktop. */
+  private async utilitiesOpen(id: string, p: AgentUtilitiesOpenArgs): Promise<unknown> {
+    const s = this.session(id);
+    const u = this.utility(id, p.name, p.environment);
+    if (!s.settings.utilitiesEnabled.includes(u.id)) throw new Error(`"${u.name}" is not on for this Session; utilities_enable first.`);
+    if (!u.web || u.web.url === "") throw new Error(`"${u.name}" has no web facet.`);
+    const path = p.path?.trim() ?? "";
+    const pty = await this.deps.terminalOpen(id, TERMINAL_COLS, TERMINAL_ROWS);
+    await this.waitForPrompt(id, pty.id);
+    await this.deps.terminalInput(id, pty.id, `sb-util open ${u.name}@${u.environment}${path ? ` ${shellQuote(path)}` : ""} && exit\r`);
+    this.deps.broadcast({ type: "ui_hint", hint: { sessionId: id, pane: "desktop", terminalId: null } });
+    this.mark(id, "utilities_open", `opened ${utilityLabel(u)} (${u.environment}) in the browser`, "desktop");
+    return { url: u.web.url, login: u.web.login, hint: "The page is in the Desktop; take a screenshot. Sign in by typing `${util:" + u.name + ".user}` / `${util:" + u.name + ".password}` (and `.otp`) with the desktop `type` tool." };
+  }
+
+  /** Registers a Utility once the user allows the card; the credentials never reach the transcript (the card shows names and masks). */
+  private utilitiesAdd(id: string, p: AgentUtilitiesAddArgs): unknown {
+    const s = this.session(id);
+    const settings = this.deps.settings();
+    const preset = p.preset ? UTILITY_PRESETS[p.preset] : undefined;
+    if (p.preset && !preset) throw new Error(`No preset "${p.preset}"; utilities_list names them.`);
+    const environment = p.environment?.trim() || settings.utilityEnvironments.find((e) => !e.production)?.name || settings.utilityEnvironments[0]?.name;
+    if (!environment) throw new Error("No Environment exists; the user adds them in Settings → Utilities.");
+    if (!settings.utilityEnvironments.some((e) => e.name === environment)) throw new Error(`No Environment "${environment}"; the ones there are: ${settings.utilityEnvironments.map((e) => e.name).join(", ")}.`);
+    if (settings.utilities.some((u) => u.name === p.name && u.environment === environment)) throw new Error(`"${p.name}" already exists in ${environment}; utilities_update changes it.`);
+    const url = p.web?.url?.trim() ?? p.http?.baseUrl?.trim() ?? "";
+    const fromPreset = preset ? applyUtilityPreset(preset, url) : { web: null, http: null, cli: null, mcp: null };
+    const secretNames = new Set(["password", "pass", "token", "totp", "secret", "ssh_key", "key", "uri", "api_key", "apikey"]);
+    const creds: McpKeyValue[] = p.credentials.map((c) => ({ name: c.name, value: c.value, secret: secretNames.has(c.name.toLowerCase()) || /pass|secret|token|key/i.test(c.name) }));
+    const kv = (list: Array<{ name: string; value: string }>): McpKeyValue[] => list.map((c) => ({ name: c.name, value: c.value, secret: /pass|secret|token|key|auth/i.test(c.name) }));
+    const def: UtilityDef = {
+      id: randomBytes(6).toString("hex"),
+      name: p.name,
+      label: p.label?.trim() || preset?.label || "",
+      group: p.group ?? preset?.group ?? "observability",
+      environment,
+      preset: p.preset ?? null,
+      credentials: creds,
+      readOnly: p.readOnly ?? true,
+      notes: p.notes?.trim() || preset?.notes || "",
+      enabledByDefault: true,
+      web: p.web ? { url: p.web.url?.trim() ?? fromPreset.web?.url ?? "", login: p.web.login ?? fromPreset.web?.login ?? "form" } : fromPreset.web,
+      http: p.http ? { baseUrl: p.http.baseUrl.trim(), headers: kv(p.http.headers) } : fromPreset.http,
+      ssh: p.ssh ? { host: p.ssh.host ?? "", port: p.ssh.port ?? 22, user: p.ssh.user ?? "", jump: p.ssh.jump ?? "" } : null,
+      cli: p.cli ? { install: p.cli.install, env: kv(p.cli.env) } : fromPreset.cli,
+      mcp: p.mcp
+        ? { transport: p.mcp.transport ?? "stdio", command: p.mcp.command ?? "", args: p.mcp.args ?? [], env: p.mcp.env ?? [], url: p.mcp.url ?? "", headers: p.mcp.headers ?? [] }
+        : fromPreset.mcp,
+    };
+    const details = utilityDetails(def, settings.utilityEnvironments.find((e) => e.name === environment)?.production ?? false);
+    const run = async () => {
+      const current = this.deps.settings();
+      await this.deps.applySettings({ utilities: [...current.utilities.map(toPublicUtility), publicWithValues(def)] });
+      if (p.enable) await this.deps.setUtilitiesEnabled(id, [...this.session(id).settings.utilitiesEnabled, def.id]);
+      this.mark(id, "utilities_add", `registered the Utility ${utilityLabel(def)} (${environment})${p.enable ? " and switched it on" : ""}`);
+      return { sessionId: null, title: `${utilityLabel(def)} (${environment})` };
+    };
+    return this.requestApproval(id, "utility_add", `register the Utility “${utilityLabel(def)}” in ${environment}${p.enable ? " and use it in this Session" : ""}`, run, details);
+  }
+
+  /** Changes a Utility once the user allows the card; credentials given replace the stored ones of the same name. */
+  private utilitiesUpdate(id: string, p: AgentUtilitiesUpdateArgs): unknown {
+    this.session(id);
+    const settings = this.deps.settings();
+    const before = this.utility(id, p.name, p.environment);
+    const kv = (list: Array<{ name: string; value: string }> | undefined, prev: McpKeyValue[]): McpKeyValue[] =>
+      list === undefined ? prev : list.map((c) => ({ name: c.name, value: c.value, secret: prev.find((x) => x.name === c.name)?.secret ?? /pass|secret|token|key|auth/i.test(c.name) }));
+    const creds = [...before.credentials.filter((c) => !p.credentials.some((n) => n.name === c.name)), ...p.credentials.map((c) => ({ name: c.name, value: c.value, secret: before.credentials.find((x) => x.name === c.name)?.secret ?? /pass|secret|token|key|uri/i.test(c.name) }))];
+    const preset = p.preset ? UTILITY_PRESETS[p.preset] : undefined;
+    if (p.preset && !preset) throw new Error(`No preset "${p.preset}"; utilities_list names them.`);
+    const def: UtilityDef = {
+      ...before,
+      ...(p.label !== undefined ? { label: p.label.trim() } : {}),
+      ...(p.group !== undefined ? { group: p.group } : {}),
+      ...(p.preset !== undefined ? { preset: p.preset } : {}),
+      ...(p.readOnly !== undefined ? { readOnly: p.readOnly } : {}),
+      ...(p.notes !== undefined ? { notes: p.notes.trim() } : {}),
+      credentials: creds,
+      web: p.web ? { url: p.web.url?.trim() ?? before.web?.url ?? "", login: p.web.login ?? before.web?.login ?? "form" } : before.web,
+      http: p.http ? { baseUrl: p.http.baseUrl.trim(), headers: kv(p.http.headers, before.http?.headers ?? []) } : before.http,
+      ssh: p.ssh ? { host: p.ssh.host ?? before.ssh?.host ?? "", port: p.ssh.port ?? before.ssh?.port ?? 22, user: p.ssh.user ?? before.ssh?.user ?? "", jump: p.ssh.jump ?? before.ssh?.jump ?? "" } : before.ssh,
+      cli: p.cli ? { install: p.cli.install, env: kv(p.cli.env, before.cli?.env ?? []) } : before.cli,
+      mcp: p.mcp
+        ? {
+            transport: p.mcp.transport ?? before.mcp?.transport ?? "stdio",
+            command: p.mcp.command ?? before.mcp?.command ?? "",
+            args: p.mcp.args ?? before.mcp?.args ?? [],
+            env: p.mcp.env ?? before.mcp?.env ?? [],
+            url: p.mcp.url ?? before.mcp?.url ?? "",
+            headers: p.mcp.headers ?? before.mcp?.headers ?? [],
+          }
+        : before.mcp,
+    };
+    const details = utilityDetails(def, settings.utilityEnvironments.find((e) => e.name === def.environment)?.production ?? false, new Set(p.credentials.map((c) => c.name)));
+    const run = async () => {
+      const current = this.deps.settings();
+      if (!current.utilities.some((u) => u.id === def.id)) throw new Error(`"${before.name}" was deleted meanwhile.`);
+      await this.deps.applySettings({ utilities: current.utilities.map((u) => (u.id === def.id ? publicWithValues(def) : toPublicUtility(u))) });
+      this.mark(id, "utilities_update", `changed the Utility ${utilityLabel(def)} (${def.environment})`);
+      return { sessionId: null, title: `${utilityLabel(def)} (${def.environment})` };
+    };
+    return this.requestApproval(id, "utility_update", `change the Utility “${utilityLabel(def)}” in ${def.environment}`, run, details);
+  }
+
+  /** Switches Utilities on or off for this Session: by name (`name`, `name@env`), an Environment or a group switches all of it. Switching on asks the user. */
+  private async utilitiesEnable(id: string, p: AgentUtilitiesEnableArgs): Promise<unknown> {
+    const s = this.session(id);
+    const settings = this.deps.settings();
+    const targets = new Set<string>();
+    for (const raw of p.names) {
+      const ref = raw.trim();
+      if (settings.utilityEnvironments.some((e) => e.name === ref)) {
+        settings.utilities.filter((u) => u.environment === ref).forEach((u) => targets.add(u.id));
+        continue;
+      }
+      if ((UTILITY_GROUPS as readonly string[]).includes(ref)) {
+        settings.utilities.filter((u) => u.group === ref).forEach((u) => targets.add(u.id));
+        continue;
+      }
+      const [n, env] = ref.includes("@") ? (ref.split("@", 2) as [string, string]) : [ref, undefined];
+      const hits = settings.utilities.filter((u) => u.name === n && (env === undefined || u.environment === env));
+      if (hits.length === 0) throw new Error(`No Utility, Environment or group "${ref}"; utilities_list shows them.`);
+      hits.forEach((u) => targets.add(u.id));
+    }
+    const current = new Set(s.settings.utilitiesEnabled);
+    const next = p.enabled ? [...new Set([...current, ...targets])] : [...current].filter((x) => !targets.has(x));
+    const changed = settings.utilities.filter((u) => targets.has(u.id) && current.has(u.id) !== p.enabled);
+    if (changed.length === 0) return { changed: [], enabled: this.enabledNames(id) };
+    const list = changed.map((u) => `${utilityLabel(u)} (${u.environment})`).join(", ");
+    if (!p.enabled) {
+      await this.deps.setUtilitiesEnabled(id, next);
+      this.mark(id, "utilities_enable", `switched off ${list}`);
+      return { changed: changed.map((u) => `${u.name}@${u.environment}`), enabled: this.enabledNames(id) };
+    }
+    const production = new Set(settings.utilityEnvironments.filter((e) => e.production).map((e) => e.name));
+    const run = async () => {
+      await this.deps.setUtilitiesEnabled(id, next);
+      this.mark(id, "utilities_enable", `switched on ${list}`);
+      return { sessionId: null, title: list };
+    };
+    return this.requestApproval(
+      id,
+      "utility_enable",
+      `use ${list} in this Session${changed.some((u) => production.has(u.environment)) ? " (production)" : ""}`,
+      run,
+      changed.map((u) => ({ name: `${u.name}@${u.environment}`, value: `${UTILITY_GROUP_LABELS[u.group]}${u.readOnly ? " · read-only" : ""}${production.has(u.environment) ? " · production" : ""}`, secret: false })),
+    );
+  }
+
+  private enabledNames(id: string): string[] {
+    const on = new Set(this.session(id).settings.utilitiesEnabled);
+    return this.deps.settings().utilities.filter((u) => on.has(u.id)).map((u) => `${u.name}@${u.environment}`);
+  }
+
+  /** Proposes a procedure (a skill about investigating something with the Utilities); stored once the user allows it, a skill in every Session it applies to. */
+  private procedureSave(id: string, p: AgentProcedureSaveArgs): unknown {
+    this.session(id);
+    const settings = this.deps.settings();
+    const existing = settings.procedures.find((x) => x.name === p.name);
+    const def: ProcedureDef = { id: existing?.id ?? randomBytes(6).toString("hex"), name: p.name, description: p.description.trim(), body: p.body.trim(), utilities: p.utilities, environments: p.environments, source: "agent", enabled: true };
+    const details = [
+      { name: "name", value: def.name, secret: false },
+      { name: "description", value: def.description, secret: false },
+      ...(def.utilities.length > 0 ? [{ name: "utilities", value: def.utilities.join(", "), secret: false }] : []),
+      ...(def.environments.length > 0 ? [{ name: "environments", value: def.environments.join(", "), secret: false }] : []),
+      { name: "body", value: def.body, secret: false },
+    ];
+    const run = async () => {
+      const current = this.deps.settings();
+      const others = current.procedures.filter((x) => x.name !== def.name);
+      await this.deps.applySettings({ procedures: [...others, def] });
+      this.mark(id, "procedure_save", `${existing ? "updated" : "saved"} the procedure ${def.name}`);
+      return { sessionId: null, title: def.name };
+    };
+    return this.requestApproval(id, "procedure_save", `${existing ? "update" : "save"} the procedure “${def.name}” (${excerpt(def.description, 80)})`, run, details);
+  }
+
   private async uiOpen(id: string, p: { pane: UiHint["pane"]; terminal?: { command: string } }): Promise<unknown> {
     let terminalId: string | null = null;
     if (p.pane === "terminal" && p.terminal) {
@@ -818,4 +1118,49 @@ export function scrub(value: unknown): unknown {
     return out;
   }
   return value;
+}
+
+/** The facets a Utility has, by name. */
+function facetsOf(u: UtilityDef): string[] {
+  return [
+    ...(u.mcp ? ["mcp"] : []),
+    ...(u.web && u.web.url !== "" ? ["web"] : []),
+    ...(u.http && u.http.baseUrl !== "" ? ["http"] : []),
+    ...(u.ssh && u.ssh.host !== "" ? ["ssh"] : []),
+    ...(u.cli ? ["cli"] : []),
+  ];
+}
+
+const MASK = "••••••••";
+
+/** The approval card's form for a Utility: every field the Agent proposes, secret values masked. */
+function utilityDetails(u: UtilityDef, production: boolean, changedCredentials?: Set<string>): AgentApproval["details"] {
+  const out: AgentApproval["details"] = [
+    { name: "name", value: u.name, secret: false },
+    ...(u.label ? [{ name: "label", value: u.label, secret: false }] : []),
+    { name: "group", value: UTILITY_GROUP_LABELS[u.group], secret: false },
+    { name: "environment", value: `${u.environment}${production ? " (production)" : ""}`, secret: false },
+    ...(u.preset ? [{ name: "preset", value: u.preset, secret: false }] : []),
+    { name: "access", value: u.readOnly ? "read-only" : "read and write", secret: false },
+  ];
+  for (const c of u.credentials) {
+    if (changedCredentials && !changedCredentials.has(c.name)) continue;
+    out.push({ name: `credential ${c.name}`, value: c.secret ? MASK : c.value, secret: c.secret });
+  }
+  if (u.web && u.web.url) out.push({ name: "web", value: `${u.web.url} (${u.web.login} login)`, secret: false });
+  if (u.http && u.http.baseUrl) out.push({ name: "http", value: `${u.http.baseUrl}${u.http.headers.length > 0 ? ` · headers ${u.http.headers.map((h) => h.name).join(", ")}` : ""}`, secret: false });
+  if (u.ssh && u.ssh.host) out.push({ name: "ssh", value: `${u.ssh.user ? `${u.ssh.user}@` : ""}${u.ssh.host}:${u.ssh.port}${u.ssh.jump ? ` via ${u.ssh.jump}` : ""}`, secret: false });
+  if (u.cli) out.push({ name: "cli", value: `${u.cli.install || "(no install step)"}${u.cli.env.length > 0 ? ` · env ${u.cli.env.map((h) => h.name).join(", ")}` : ""}`, secret: false });
+  if (u.mcp) out.push({ name: "mcp", value: u.mcp.transport === "stdio" ? `${u.mcp.command} ${u.mcp.args.join(" ")}`.trim() : `${u.mcp.transport} ${u.mcp.url}`, secret: false });
+  if (u.notes) out.push({ name: "notes", value: excerpt(u.notes, 300), secret: false });
+  return out;
+}
+
+/** A definition as the Settings update takes it, with the values to store (the merge keeps `null`s, stores strings). */
+function publicWithValues(u: UtilityDef): PublicUtilityDef {
+  return u;
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }

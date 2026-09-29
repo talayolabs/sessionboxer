@@ -35,6 +35,7 @@ import {
 import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
 import { HttpError } from "./http-error.js";
 import { generateVapidKeys } from "./web-push.js";
+import { mergeProcedures, mergeUtilities, mergeUtilityEnvironments, toPublicUtility } from "./utilities.js";
 
 /**
  * Root of this installation: the checkout, or the installed `sessionboxer` npm package, which mirrors
@@ -159,9 +160,12 @@ export function saveSettings(settings: Settings): void {
 }
 
 export function applySettingsUpdate(current: Settings, update: UpdateSettingsRequest): Settings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, tunnels, windows, macos, ...rest } = update;
+  const { providerSecrets, mcpServers, utilities, utilityEnvironments, procedures, connectors, claudeApi, tunnels, windows, macos, ...rest } = update;
   const next: Settings = { ...current, ...stripUndefined(rest) };
   if (mcpServers) next.mcpServers = mergeMcpServers(current.mcpServers, mcpServers);
+  if (utilities) next.utilities = mergeUtilities(current.utilities, utilities, utilityEnvironments ?? current.utilityEnvironments);
+  if (utilityEnvironments) next.utilityEnvironments = mergeUtilityEnvironments(utilityEnvironments, next.utilities);
+  if (procedures) next.procedures = mergeProcedures(procedures);
   if (windows) {
     next.windows = { ...current.windows, ...stripUndefined(windows) };
     next.windows.version = next.windows.version.trim().toLowerCase();
@@ -260,7 +264,7 @@ export function toPublicSettings(
   environments: PublicSettings["environments"],
   dockerReachable: boolean,
 ): PublicSettings {
-  const { providerSecrets, mcpServers, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, windows, macos, ...rest } = settings;
+  const { providerSecrets, mcpServers, utilities, connectors, claudeApi, accessToken: _token, vapid: _vapid, tunnels: tunnelSettings, windows, macos, ...rest } = settings;
   const base = claudeBaseUrl(settings);
   const { secret, ...sessionboxer } = tunnelSettings.sessionboxer;
   const { password: _password, ...publicWindows } = windows;
@@ -273,6 +277,7 @@ export function toPublicSettings(
     dockerReachable,
     tunnels: { ...tunnelSettings, sessionboxer: { ...sessionboxer, secretSet: secret !== "" } },
     mcpServers: mcpServers.map(toPublicMcpServer),
+    utilities: utilities.map(toPublicUtility),
     claudeApi: {
       baseUrl: claudeApi.baseUrl,
       authTokenSet: claudeAuthToken(settings) !== "",

@@ -37,6 +37,9 @@ import {
   type ProviderOptions,
   type PublicMcpServerDef,
   type PublicSettings,
+  type PublicUtilityDef,
+  type ProcedureDef,
+  type UtilityEnvironment,
   type PullRequest,
   type SavedMessage,
   type Automation,
@@ -82,6 +85,8 @@ import { CompactionDialog } from "./CompactionDialog";
 import { LlmCallDialog } from "./LlmCallDialog";
 import { GitAccounts, GitConnectDialog } from "./GitAccounts";
 import { McpServersEditor } from "./McpServersEditor";
+import { UtilitiesEditor, utilityLabel } from "./UtilitiesEditor";
+import { UtilityQuickAdd, parseUtilCommand, type UtilCommand } from "./UtilityQuickAdd";
 import { ModelSelect } from "./ModelSelect";
 import { OptionSelects } from "./OptionSelect";
 import { ProviderIcon } from "./ProviderIcon";
@@ -1001,6 +1006,7 @@ export function App() {
             session={selected}
             sessions={sessions}
             settings={settings}
+            onSettings={setSettings}
             models={models?.[selected.provider] ?? []}
             options={
               selected.status === "idle" || selected.status === "running" ? selected.availableOptions : (options?.[selected.provider] ?? [])
@@ -1256,6 +1262,7 @@ function SessionView({
   session,
   sessions,
   settings,
+  onSettings,
   models,
   options,
   allModels,
@@ -1289,6 +1296,8 @@ function SessionView({
   sessions: Session[];
   /** `null` until loaded; the Session settings dialog needs it (MCP registry, global defaults). */
   settings: PublicSettings | null;
+  /** Settings the Session stored itself (`/util` registers a Utility). */
+  onSettings: (s: PublicSettings) => void;
   models: ModelOption[];
   /** Non-model options (Effort, Fast mode…): what this Session's Agent advertises, else the Provider cache. */
   options: AgentOption[];
@@ -1334,6 +1343,7 @@ function SessionView({
   const [forking, setForking] = useState(false);
   const [branching, setBranching] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [utilQuickAdd, setUtilQuickAdd] = useState<UtilCommand | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [inspecting, setInspecting] = useState<{ index: number; compaction: Compaction } | null>(null);
   const [inspectingCall, setInspectingCall] = useState<LlmCall | null>(null);
@@ -1414,7 +1424,13 @@ function SessionView({
     const files = attachments.attachments;
     if (!canPrompt || (!t && files.length === 0)) return;
     if (attachments.items.length !== files.length) return;
-    draft.set("");
+    // `/util …` registers a Utility from the composer without the credentials ever entering the transcript (ADR-0073).
+    const util = parseUtilCommand(t);
+    if (util) {
+      draft.set("");
+      setUtilQuickAdd(util);
+      return;
+    }
     void run(async () => {
       try {
         await api.prompt(session.id, files.length > 0 ? { text: t, attachments: files } : { text: t });
@@ -1441,9 +1457,11 @@ function SessionView({
   const noSnapshot = VM_NO_SNAPSHOT[session.settings.sandbox.environment];
   const latestSnapshot = snapshots[snapshots.length - 1];
   const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
+  const utilitiesActive = (settings?.utilities ?? []).filter((u) => session.settings.utilitiesEnabled.includes(u.id));
   const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending;
   const settingsSummary = [
     mcpActive.length === 0 ? "MCP: desktop only" : `MCP: desktop, ${mcpActive.map((s) => s.name).join(", ")}`,
+    utilitiesActive.length === 0 ? "Utilities: none" : `Utilities: ${utilitiesActive.map((u) => `${utilityLabel(u)} (${u.environment})`).join(", ")}`,
     session.settings.instructions.trim() === "" ? "Instructions: none" : "Instructions: set",
     ...(session.provider === "claude-code" ? [`Inspect LLM: ${session.settings.inspectLlm ? "on" : "off"}`] : []),
     ...(settingsPending ? ["A change applies when the current turn ends"] : []),
@@ -1515,10 +1533,10 @@ function SessionView({
       key: "settings",
       icon: "settings",
       label: "Session settings",
-      title: `Session settings: Environment, Agent, MCP & connectors, Auto QA, Debug\n${settingsSummary}`,
+      title: `Session settings: Machine, Agent, MCP & connectors, Utilities, Auto QA, Debug\n${settingsSummary}`,
       disabled: !settings,
       pending: settingsPending,
-      count: mcpActive.length,
+      count: mcpActive.length + utilitiesActive.length,
       onPick: () => setSettingsOpen(true),
     },
     ...(canStop
@@ -1746,6 +1764,7 @@ function SessionView({
           onClose={() => setSettingsOpen(false)}
         />
       )}
+      {utilQuickAdd && settings && <UtilityQuickAdd command={utilQuickAdd} session={session} settings={settings} onSettings={onSettings} onClose={() => setUtilQuickAdd(null)} />}
       {inspecting && <CompactionDialog session={session} compaction={inspecting.compaction} index={inspecting.index} onClose={() => setInspecting(null)} />}
       {inspectingCall && <LlmCallDialog session={session} call={inspectingCall} calls={llmCalls} onClose={() => setInspectingCall(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
@@ -2577,11 +2596,14 @@ const DOCKER_POOL_SUGGESTIONS = [
 ];
 
 /** The sections of Global settings, in the order of the left-hand list; `id` is the `#/settings/<id>` route. */
+const UTILITIES_DOCS = "https://sessionboxer.talayolabs.com/guide/#utilities";
+
 const GLOBAL_SETTINGS_SECTIONS = [
   { id: "providers", label: "Providers" },
-  { id: "environment", label: "Environment" },
+  { id: "environment", label: "Machine" },
   { id: "agent", label: "Agent" },
   { id: "mcp", label: "MCP & connectors" },
+  { id: "utilities", label: "Utilities" },
   { id: "verification", label: "Auto QA" },
   { id: "interface", label: "Interface" },
   { id: "devices", label: "Devices and remote access" },
@@ -2602,6 +2624,8 @@ const GLOBAL_SETTINGS_BLOCKS: Record<string, GlobalSettingsSection> = {
   "github-app": "mcp",
   "agent-tools": "mcp",
   recordings: "mcp",
+  environments: "utilities",
+  procedures: "utilities",
   theme: "interface",
   dictation: "interface",
 };
@@ -2684,6 +2708,9 @@ function SettingsView({
   const [speechLanguage, setSpeechLanguage] = useState(settings.speech.language);
   const [narrationAskAbove, setNarrationAskAbove] = useState(String(settings.recordingNarration.askAboveSeconds));
   const [mcpServers, setMcpServers] = useState<PublicMcpServerDef[]>(settings.mcpServers);
+  const [utilities, setUtilities] = useState<PublicUtilityDef[]>(settings.utilities);
+  const [utilityEnvironments, setUtilityEnvironments] = useState<UtilityEnvironment[]>(settings.utilityEnvironments);
+  const [procedures, setProcedures] = useState<ProcedureDef[]>(settings.procedures);
   const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
   const [instructions, setInstructions] = useState(settings.instructions);
   const [trustHostCaCerts, setTrustHostCaCerts] = useState(settings.trustHostCaCerts);
@@ -2752,6 +2779,9 @@ function SettingsView({
         recordingNarration: { mode: narrationMode, askAboveSeconds: Math.max(0, Number(narrationAskAbove) || 0) },
         speech: { model: speechModel, language: speechLanguage },
         mcpServers,
+        utilities,
+        utilityEnvironments,
+        procedures,
         claudeModels: parseAliasList(claudeModels),
         instructions,
         trustHostCaCerts,
@@ -3559,6 +3589,39 @@ function SettingsView({
                 </Caption>
               </h4>
               <McpServersEditor servers={mcpServers} onChange={setMcpServers} onStored={onStored} />
+            </section>
+          )}
+
+          {show("utilities") && (
+            <section className="ss-section" id="settings-utilities">
+              <h3>
+                <Caption
+                  help={
+                    <p>
+                      What Agents may investigate with: observability systems (New Relic, Grafana, Graylog, Argo CD…) and applications (a QA web app, an
+                      admin UI, a database, an SSH host), each in a target Environment (prod, staging, qa) with its credentials and facets (web UI,
+                      HTTP API, SSH, CLI, MCP server). A Session switches them on by group, Environment or one by one; the Agent reads the list in{" "}
+                      <code>.sessionboxer/utilities.json</code> and uses credentials by name (<code>{"${util:<name>.password}"}</code>, <code>sb-util</code>)
+                      without seeing them. Credentials are write-only here and never enter the chat. Agents can register Utilities too
+                      (<code>utilities_add</code>; you allow each in the chat) and propose procedures. See{" "}
+                      <a href={UTILITIES_DOCS} target="_blank" rel="noreferrer">
+                        the guide
+                      </a>
+                      .
+                    </p>
+                  }
+                >
+                  Utilities
+                </Caption>
+              </h3>
+              <UtilitiesEditor
+                utilities={utilities}
+                environments={utilityEnvironments}
+                procedures={procedures}
+                onUtilities={setUtilities}
+                onEnvironments={setUtilityEnvironments}
+                onProcedures={setProcedures}
+              />
             </section>
           )}
 

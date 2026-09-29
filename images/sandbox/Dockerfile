@@ -229,7 +229,8 @@ RUN cd /opt/sessionboxer/protocol \
     && mkdir -p node_modules/@sessionboxer \
     && ln -s /opt/sessionboxer/protocol node_modules/@sessionboxer/protocol \
     && npm cache clean --force \
-    && ln -s /opt/sessionboxer/sandbox-daemon/dist/index.js /usr/local/bin/sessionboxer-daemon
+    && ln -s /opt/sessionboxer/sandbox-daemon/dist/index.js /usr/local/bin/sessionboxer-daemon \
+    && ln -s /opt/sessionboxer/sandbox-daemon/dist/sb-util.js /usr/local/bin/sb-util
 
 # GitHub and Bitbucket logins arrive from the Control Plane while a Connector entry is enabled:
 # the Daemon writes gh's / bb's hosts.yml on tmpfs (nothing in Snapshots); git asks gh for

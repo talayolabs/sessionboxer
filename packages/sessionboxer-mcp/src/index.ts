@@ -357,6 +357,141 @@ server.registerTool(
   () => tool("schedule_list", {}),
 );
 
+// --- Utilities (ADR-0073) ---------------------------------------------------------------------
+// The external systems the user registered for investigating (observability, applications), by
+// target Environment; credentials never come back through these tools.
+
+const UTILITY_REF = z.string().min(1).max(130).describe("A Utility's name from utilities_list (name@environment when the name exists in several Environments)");
+const UTILITY_ENV = z.string().max(64).optional().describe("The target Environment (prod, staging, qa…) when the name exists in several");
+const CREDENTIALS = z
+  .array(z.object({ name: z.string().min(1).max(64).describe("user, password, token, totp (base32 secret), ssh_key, uri…"), value: z.string().max(10_000) }))
+  .max(20)
+  .default([]);
+const KEY_VALUES = z.array(z.object({ name: z.string().min(1).max(200), value: z.string().max(10_000).describe("May contain ${cred:<name>} for one of the credentials") })).max(20).default([]);
+
+server.registerTool(
+  "utilities_list",
+  {
+    description:
+      "The Utilities registered on this Control Plane — the observability systems and applications the user lets Agents investigate with — by target Environment (prod, staging, qa…): name, group, facets (mcp, web, http, ssh, cli), credential names, whether each is on for this Session, plus the presets utilities_add knows. Read .sessionboxer/utilities.json for the ones on right now.",
+    inputSchema: {},
+  },
+  () => tool("utilities_list", {}),
+);
+
+server.registerTool(
+  "utilities_get",
+  {
+    description:
+      "One Utility in full: notes, every facet (its MCP server's name, web URL and login kind, HTTP base URL and header names, SSH host, CLI install step), credential names (never values) and how to use them (${util:name.credential} in the desktop type tool, sb-util in a shell).",
+    inputSchema: { name: UTILITY_REF, environment: UTILITY_ENV },
+  },
+  (args) => tool("utilities_get", args),
+);
+
+server.registerTool(
+  "utilities_open",
+  {
+    description:
+      "Open a Utility's web UI in the Sandbox's browser and show the user the Desktop. Then take a screenshot and sign in by typing ${util:<name>.user}, ${util:<name>.password} (and ${util:<name>.otp} for a one-time code) with the desktop type tool — the real values are typed, you never see them.",
+    inputSchema: { name: UTILITY_REF, environment: UTILITY_ENV, path: z.string().max(4000).optional().describe("A path or URL under the web UI to open instead of its front page") },
+  },
+  (args) => tool("utilities_open", args),
+);
+
+server.registerTool(
+  "utilities_add",
+  {
+    description:
+      "Register a Utility (\"add newrelic with user X password Y at URL Z\"): the user allows it in a card that shows every field with the credentials masked, then it is stored in Settings → Utilities and, by default, switched on for this Session. Pass a preset when one fits (utilities_list names them: newrelic, grafana, graylog, argocd, rabbitmq, mongodb, webapp, ssh) — it fills the facets from the URL; otherwise give the facets. Credentials go in `credentials`, never in notes. When the user pasted credentials in the chat, call this right away and suggest the /util composer command for next time (it keeps them out of the transcript). Returns a pending approval; approval_wait(id) waits for the answer.",
+    inputSchema: {
+      name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).describe("Short lowercase id: newrelic, grafana-payments…"),
+      label: z.string().max(200).optional(),
+      group: z.enum(["observability", "applications"]).optional().describe("observability (dashboards, logs, traces, alerts) or applications (the systems under test, admin UIs, databases)"),
+      environment: z.string().max(64).optional().describe("Target Environment; the first non-production one when omitted"),
+      preset: z.string().max(64).optional(),
+      credentials: CREDENTIALS,
+      readOnly: z.boolean().optional().describe("Default true: for looking, not changing"),
+      notes: z.string().max(20_000).optional().describe("How to use it: what to look for, useful queries, quirks"),
+      web: z.object({ url: z.string().max(4000).optional(), login: z.enum(["form", "basic", "sso", "none"]).optional() }).optional(),
+      http: z.object({ baseUrl: z.string().max(4000), headers: KEY_VALUES }).optional(),
+      ssh: z.object({ host: z.string().max(500).optional(), port: z.number().int().positive().max(65535).optional(), user: z.string().max(200).optional(), jump: z.string().max(500).optional() }).optional(),
+      cli: z.object({ install: z.string().max(4000).default(""), env: KEY_VALUES }).optional(),
+      mcp: z
+        .object({
+          transport: z.enum(["stdio", "http", "sse"]).optional(),
+          command: z.string().max(4000).optional(),
+          args: z.array(z.string().max(4000)).optional(),
+          env: z.array(z.object({ name: z.string(), value: z.string(), secret: z.boolean().default(false) })).optional(),
+          url: z.string().max(4000).optional(),
+          headers: z.array(z.object({ name: z.string(), value: z.string(), secret: z.boolean().default(false) })).optional(),
+        })
+        .optional(),
+      enable: z.boolean().default(true).describe("Switch it on for this Session once stored"),
+    },
+  },
+  (args) => tool("utilities_add", args),
+);
+
+server.registerTool(
+  "utilities_update",
+  {
+    description:
+      "Change a registered Utility (the user allows it in a card): fields given replace the stored ones; credentials given replace the stored ones of the same name, the others stay. Returns a pending approval; approval_wait(id) waits.",
+    inputSchema: {
+      name: UTILITY_REF,
+      environment: UTILITY_ENV,
+      label: z.string().max(200).optional(),
+      group: z.enum(["observability", "applications"]).optional(),
+      preset: z.string().max(64).optional(),
+      credentials: CREDENTIALS,
+      readOnly: z.boolean().optional(),
+      notes: z.string().max(20_000).optional(),
+      web: z.object({ url: z.string().max(4000).optional(), login: z.enum(["form", "basic", "sso", "none"]).optional() }).optional(),
+      http: z.object({ baseUrl: z.string().max(4000), headers: KEY_VALUES }).optional(),
+      ssh: z.object({ host: z.string().max(500).optional(), port: z.number().int().positive().max(65535).optional(), user: z.string().max(200).optional(), jump: z.string().max(500).optional() }).optional(),
+      cli: z.object({ install: z.string().max(4000).default(""), env: KEY_VALUES }).optional(),
+      mcp: z
+        .object({
+          transport: z.enum(["stdio", "http", "sse"]).optional(),
+          command: z.string().max(4000).optional(),
+          args: z.array(z.string().max(4000)).optional(),
+          env: z.array(z.object({ name: z.string(), value: z.string(), secret: z.boolean().default(false) })).optional(),
+          url: z.string().max(4000).optional(),
+          headers: z.array(z.object({ name: z.string(), value: z.string(), secret: z.boolean().default(false) })).optional(),
+        })
+        .optional(),
+    },
+  },
+  (args) => tool("utilities_update", args),
+);
+
+server.registerTool(
+  "utilities_enable",
+  {
+    description:
+      "Switch Utilities on or off for this Session: names (name or name@environment), an Environment name (all of it) or a group (observability, applications). Switching on asks the user in a card (returns a pending approval; approval_wait(id) waits); switching off is immediate. Their MCP facets join or leave your MCP servers once applied; the manifest and sb-util follow at once.",
+    inputSchema: { names: z.array(z.string().min(1).max(130)).min(1).max(100), enabled: z.boolean().default(true) },
+  },
+  (args) => tool("utilities_enable", args),
+);
+
+server.registerTool(
+  "procedure_save",
+  {
+    description:
+      "Propose a procedure — a skill (SKILL.md) that says how to investigate or verify something with the Utilities (which to open, what to query, what a healthy result looks like) — for the user to keep; allowed, it is stored in Settings → Utilities and materialised as a skill in every Session whose Utilities and Environments it names. Write it after an investigation worked, general enough to reuse, never with credentials. Returns a pending approval; approval_wait(id) waits.",
+    inputSchema: {
+      name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).describe("Skill directory name: investigate-5xx-spike, verify-checkout-flow…"),
+      description: z.string().min(1).max(1024).describe("One or two sentences: when to use it (the skill's frontmatter)"),
+      body: z.string().min(1).max(200_000).describe("Markdown: the steps, the Utilities and tools to use (sb-util, MCP servers, the web UIs), what to conclude"),
+      utilities: z.array(z.string().max(64)).max(50).default([]).describe("Utility names it needs; empty = any"),
+      environments: z.array(z.string().max(64)).max(20).default([]).describe("Environments it applies to; empty = any"),
+    },
+  },
+  (args) => tool("procedure_save", args),
+);
+
 // --- Followed pull requests (ADR-0064) --------------------------------------------------------
 
 server.registerTool(

@@ -617,6 +617,79 @@ Returns `{ id, name, cron, timezone, nextRunAt }`. The schedule is enabled at on
 
 No parameters. Returns the automations with a schedule trigger with `id`, `name`, `cron`, `timezone`, `enabled`, `action`, `nextRunAt` and `lastRunAt`.
 
+### Utilities
+
+Utilities (Settings → Utilities; ADR-0073) are the observability systems and applications the user lets agents investigate with, each in a target Environment (`prod`, `staging`, `qa`…) with credentials and facets (web UI, HTTP API, SSH host, CLI, MCP server). Which are on for a session is in `.sessionboxer/utilities.json` in the box; the credentials never travel through these tools — the agent uses them by name (`${util:<name>.password}` in the desktop `type` tool, `sb-util` in a shell). The four that change something return a pending approval the user answers in the chat (`approval_wait(id)` waits); the card shows every field, secrets masked. All of them work under *This Session only*.
+
+#### `utilities_list`
+
+No parameters. Returns `environments` (`name`, `production`), `groups`, `utilities` — for each `name`, `label`, `group`, `environment`, `production`, `readOnly`, `enabled` (on for this session), `preset`, `facets` (`mcp`, `web`, `http`, `ssh`, `cli`), `credentials` (names), `mcp` (the MCP server's name while on), a `notes` excerpt — and `presets` (`newrelic`, `grafana`, `graylog`, `argocd`, `rabbitmq`, `mongodb`, `webapp`, `ssh`, with the credential names each takes).
+
+#### `utilities_get`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `name` | string, *required* | A Utility's name, or `name@environment` |
+| `environment` | string, optional | When the name exists in several Environments |
+
+Returns the Utility in full: `notes`, `credentials` (name, whether set), `otp` (a `totp` credential is stored), `web` (`url`, `login`), `http` (`baseUrl`, header names), `ssh` (`host`, `port`, `user`, `jump`), `cli` (`install`, variable names), `mcp` (transport, command/URL, variable names, `server` name while on) and `usage` lines (`sb-util` commands and placeholders for it).
+
+#### `utilities_open`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `name` | string, *required* | A Utility with a web facet, on for this session |
+| `environment` | string, optional | |
+| `path` | string, optional | A path or URL under the web UI |
+
+Opens the web UI in the box's browser (a Terminal runs `sb-util open`), shows the user the Desktop and returns `url`, `login` and the placeholders to sign in with. Marker: "opened … in the browser".
+
+#### `utilities_add`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `name` | string, `[a-z0-9][a-z0-9_-]{0,63}`, *required* | The placeholder and `sb-util` name |
+| `label` | string, optional | |
+| `group` | `observability` \| `applications`, optional | The preset's, else `observability` |
+| `environment` | string, optional | The first non-production Environment when omitted |
+| `preset` | string, optional | Fills the facets from the URL given in `web.url` or `http.baseUrl` |
+| `credentials` | `[{ name, value }]`, default `[]` | `user`, `password`, `token`, `totp`, `ssh_key`, `uri`, … |
+| `readOnly` | boolean, default `true` | |
+| `notes` | string, optional | |
+| `web` | `{ url?, login? }`, optional | `login` among `form`, `basic`, `sso`, `none` |
+| `http` | `{ baseUrl, headers? }`, optional | Header values may use `${cred:<name>}` |
+| `ssh` | `{ host?, port?, user?, jump? }`, optional | |
+| `cli` | `{ install?, env? }`, optional | |
+| `mcp` | `{ transport?, command?, args?, env?, url?, headers? }`, optional | |
+| `enable` | boolean, default `true` | Switch it on for this session once stored |
+
+Returns a pending approval; allowed, the Utility is stored in Settings → Utilities (and switched on). The call's input is stored in the transcript with the credential values masked. Marker: "registered the Utility …".
+
+#### `utilities_update`
+
+The same fields as `utilities_add` (without `enable`), `name`/`environment` naming the Utility: fields given replace the stored ones; credentials given replace the stored ones of the same name. Returns a pending approval. Marker: "changed the Utility …".
+
+#### `utilities_enable`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `names` | string[], 1–100, *required* | Utility names (`name`, `name@environment`), Environment names (all of it) or groups |
+| `enabled` | boolean, default `true` | |
+
+Switching off is immediate and returns `{ changed, enabled }`; switching on returns a pending approval (the card lists the Utilities, production ones flagged). Their MCP facets join or leave the agent's MCP servers when applied (idle: at once; busy: at the end of the turn); the manifest and `sb-util` follow at once. Marker: "switched on/off …".
+
+#### `procedure_save`
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `name` | string, `[a-z0-9][a-z0-9-]{0,63}`, *required* | The skill directory |
+| `description` | string, 1–1024, *required* | When to use it (frontmatter) |
+| `body` | string, 1–200,000, *required* | Markdown steps |
+| `utilities` | string[], default `[]` | Utility names it needs; empty = any |
+| `environments` | string[], default `[]` | Environments it applies to; empty = all |
+
+Proposes a procedure (a skill) for the user to keep; the card shows name, description and body. Allowed, it is stored in Settings → Utilities → Procedures (source *agent*) and materialised as `~/.claude/skills/<name>/SKILL.md` in every session it applies to. A name that exists is updated. Marker: "saved/updated the procedure …".
+
 ### Auto QA (end-to-end verification) runs
 
 When **Auto QA** is on, Sessionboxer opens a verification run after each of your turns and asks the agent to follow the `e2e-verification` skill; `verify` opens one on the agent's own initiative. These four tools fill the run in so the Auto QA pane follows along as it happens: the cases appear when planned, each turns *running*, *passed*, *failed* or *skipped* with its note and screenshot, and the video is attached at the end. They go through the daemon's `/e2e` endpoint rather than the general bridge and need an open run; without one they error.

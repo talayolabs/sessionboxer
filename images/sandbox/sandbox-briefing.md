@@ -59,6 +59,39 @@ Session); your instructions name them too.
   so when not allowed. A Session another Agent created carries its creator, and
   a message from another Session says so in the chat.
 
+## Utilities
+
+The user may have registered **Utilities**: observability systems (New Relic,
+Grafana, Graylog, Argo CD…) and applications (a QA web app, an admin UI, a
+database, an SSH host) to investigate incidents, verify behaviour or reproduce
+bugs with, each in a target **Environment** (`prod`, `staging`, `qa`…). Which
+ones are on for this Session is in `/workspace/.sessionboxer/utilities.json`
+(names, Environments, facets, credential *names*; it is rewritten when the set
+changes) — read it before investigating anything outside the Sandbox.
+
+- **Credentials never reach you.** Use them by name: `${util:<name>.user}`,
+  `${util:<name>.password}`, `${util:<name>.token}`, `${util:<name>.otp}` (the
+  current 2FA code) typed with the desktop `type` tool are replaced by the
+  real values on the way to the screen; `sb-util env <name> -- <cmd>` runs a
+  command with `UTIL_<CREDENTIAL>` set; `sb-util curl <name> <path>` calls the
+  HTTP facet with its headers and auth; `sb-util ssh <name> [cmd]` and
+  `sb-util tunnel <name> <local>:<host>:<port>` use the SSH facet; `sb-util
+  open <name>` shows the web UI in the Desktop. Never print, echo or paste a
+  credential, and never write one into a file, a skill or a commit.
+- A Utility's **MCP server** (if it has one) is among your MCP tools while the
+  Utility is on, named after it.
+- **Production is read-only**: look, query, screenshot; do not change anything
+  there, and say so if asked to. Non-production Environments are for
+  reproducing and testing.
+- `utilities_list` / `utilities_get` describe the catalogue (notes, how to use
+  each); `utilities_enable` asks the user to switch one on; `utilities_add` /
+  `utilities_update` register one the user describes (a card asks them to
+  allow it, credentials masked); `utilities_open` opens a web UI.
+- **Procedures** are skills (`~/.claude/skills/<name>/SKILL.md`) about
+  investigating something with the Utilities; follow them when one fits, and
+  propose a new or improved one with `procedure_save` once an investigation
+  worked.
+
 ## Desktop
 
 - A 1024x768 X11 desktop (xfce4) is running on `DISPLAY=:1`. The user watches it

@@ -76,6 +76,7 @@ export type TranscriptItem =
       fromProvider?: Provider;
     }
   | { kind: "mcp_changed"; key: string; servers: string[] }
+  | { kind: "utilities_changed"; key: string; utilities: string[] }
   | { kind: "model_changed"; key: string; model: string; name: string }
   | { kind: "option_changed"; key: string; option: string; value: string; valueName: string }
   | { kind: "repo_changed"; key: string; action: "added" | "removed"; name: string; origin: string }
@@ -217,6 +218,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "mcp_changed":
         items.push({ kind: "mcp_changed", key, servers: body.servers });
+        break;
+      case "utilities_changed":
+        items.push({ kind: "utilities_changed", key, utilities: body.utilities });
         break;
       case "model_changed":
         items.push({ kind: "model_changed", key, model: body.model, name: body.name });

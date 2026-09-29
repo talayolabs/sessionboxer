@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { Popover, cx } from "./ui";
 import {
   REPO_NAME_PATTERN,
   WORKSPACE_ROOT_REPO,
@@ -14,7 +15,7 @@ import {
 import { api } from "./api";
 import { FolderDialog } from "./FolderDialog";
 import { RepoDatalist, folderSuggestions, gitSuggestions, useKnownRepos } from "./RepoSuggest";
-import { SourceIcon } from "./SourceIcon";
+import { FolderIcon, GitOutlineIcon, SourceIcon } from "./SourceIcon";
 import { Modal } from "./ui";
 
 /** One row of the repository editor before it is turned into a `RepoSpec`. */
@@ -281,7 +282,75 @@ function repoStatusMark(repo: SessionRepo): { text: string; className: string; t
   return { text: "", className: "", title: repoStateLabel(repo) ?? "ready" };
 }
 
-/** The repositories of a Session, one chip each, as shown in the Session header. */
+function repoDisplayName(repo: SessionRepo): string {
+  return repo.name === WORKSPACE_ROOT_REPO ? "workspace" : repo.name;
+}
+
+function repoPath(repo: SessionRepo): string {
+  return repo.name === WORKSPACE_ROOT_REPO ? "/workspace" : `/workspace/${repo.name}`;
+}
+
+/**
+ * The Session's repositories folded into one header button: git's logo when every one is a clone, a folder
+ * when any is a copied directory, a quiet count when there are several. Click for the list and the way to
+ * the add / remove dialog.
+ */
+export function ReposButton({ session, onManage }: { session: Session; onManage: () => void }) {
+  const [open, setOpen] = useState(false);
+  const repos = session.repos;
+  const allGit = repos.every((r) => r.source.type === "git");
+  const trouble = repos.some((r) => r.status === "error");
+  const label = `${repos.length === 1 ? "Repository" : `${repos.length} repositories`}: ${repos.map(repoDisplayName).join(", ")}`;
+  return (
+    <Popover
+      align="start"
+      className="repos-popover"
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
+        <button type="button" className={cx("repos-button", trouble && "repo-error")} aria-label={label} title={label}>
+          {allGit ? <GitOutlineIcon size={18} label="" /> : <FolderIcon size={18} label="" />}
+          {repos.length > 1 && <span className="repos-count">{repos.length}</span>}
+        </button>
+      }
+    >
+      <ul className="repos-popover-list">
+        {repos.map((r) => {
+          const mark = repoStatusMark(r);
+          return (
+            <li key={r.id} className={`repo-${r.status}`} title={`${repoPath(r)}\n${mark.title}`}>
+              <SourceIcon source={r.source} size={14} />
+              <span className="repo-line">
+                <span className="repo-name">{repoDisplayName(r)}</span>
+                {r.git?.branch && <span className="muted repo-branch">{r.git.branch}</span>}
+                {r.account && (
+                  <span className="muted repo-account-chip" title={`git push and gh act as @${r.account} here`}>
+                    {r.account}
+                  </span>
+                )}
+                {mark.text && <span className={mark.className}>{mark.text}</span>}
+              </span>
+              <span className="muted repo-origin">{repoOriginLabel(r.source)}</span>
+            </li>
+          );
+        })}
+      </ul>
+      <button
+        type="button"
+        className="small"
+        title="Clone a git URL or copy a host folder into /workspace/<name> of this Sandbox, or remove one"
+        onClick={() => {
+          setOpen(false);
+          onManage();
+        }}
+      >
+        Add or remove…
+      </button>
+    </Popover>
+  );
+}
+
+/** The repositories of a Session, one chip each, as listed in the phone's action sheet. */
 export function RepoChips({ session, onClick }: { session: Session; onClick: () => void }) {
   return (
     <button type="button" className="repo-chips" title="Repositories in this Workspace (click to add or remove)" onClick={onClick}>
@@ -289,9 +358,9 @@ export function RepoChips({ session, onClick }: { session: Session; onClick: () 
       {session.repos.map((r) => {
         const mark = repoStatusMark(r);
         return (
-          <span key={r.id} className={`repo-chip repo-${r.status}`} title={`${r.name === WORKSPACE_ROOT_REPO ? "/workspace" : `/workspace/${r.name}`}\n${repoOriginLabel(r.source)}\n${mark.title}`}>
+          <span key={r.id} className={`repo-chip repo-${r.status}`} title={`${repoPath(r)}\n${repoOriginLabel(r.source)}\n${mark.title}`}>
             <SourceIcon source={r.source} size={12} />
-            {r.name === WORKSPACE_ROOT_REPO ? "workspace" : r.name}
+            {repoDisplayName(r)}
             {r.git?.branch && <span className="muted repo-branch">{r.git.branch}</span>}
             {r.account && (
               <span className="muted repo-account-chip" title={`git push and gh act as @${r.account} here`}>

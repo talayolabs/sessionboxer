@@ -112,7 +112,7 @@ import {
   type SessionSettingsDraft,
 } from "./SessionSettingsForm";
 import { SnapshotsDialog } from "./SnapshotsDialog";
-import { RepoChips, RepoEditor, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
+import { RepoChips, RepoEditor, ReposButton, ReposDialog, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
 import { UsbDialog } from "./UsbDialog";
 import { Automations, promptsSession } from "./Automations";
 import { PrsPage, followLabel } from "./Prs";
@@ -1153,16 +1153,17 @@ function SessionSizes({
  * and `hidden` mean the same.
  */
 type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "e2e" | "schedules" | "hidden";
-/** The panes with a tab of their own in the header; Terminal and Context live in the header's "…" menu. */
-const PANES: Array<{ id: "desktop" | "code"; label: string; hint: string }> = [
+/** The panes with a tab of their own in the header; Context and Scheduled live in the header's "…" menu. */
+const PANES: Array<{ id: "desktop" | "terminal" | "code"; label: string; hint: string }> = [
   { id: "desktop", label: "Desktop", hint: "The Sandbox's Linux desktop: browser, editor, whatever the Agent opens" },
+  { id: "terminal", label: "Terminal", hint: "A shell inside the Sandbox, alongside the one the Agent uses" },
   { id: "code", label: "Code", hint: "The files in the Sandbox's workspace, with the Agent's edits" },
 ];
-const MENU_PANES: Array<{ id: "terminal" | "context"; label: string; hint: string }> = [
-  { id: "terminal", label: "Terminal", hint: "A shell inside the Sandbox, alongside the one the Agent uses" },
-  { id: "context", label: "Context", hint: "What the Agent is carrying in its context window, and the model calls behind it" },
-];
 const SCHEDULES_HINT = "Automations that prompt this Session";
+const MENU_PANES: Array<{ id: "context" | "schedules"; icon: IconName; label: string; hint: string }> = [
+  { id: "context", icon: "context", label: "Context", hint: "What the Agent is carrying in its context window, and the model calls behind it" },
+  { id: "schedules", icon: "scheduled", label: "Scheduled", hint: SCHEDULES_HINT },
+];
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
@@ -1226,7 +1227,7 @@ function SessionMenu({ items, mobile, pending }: { items: SessionMenuItem[]; mob
     <Menu
       align="end"
       trigger={
-        <Tip text={pending ? "More (a settings change applies when the current turn ends)" : "Terminal, Context, Snapshot, Fork, Session settings, Stop, Delete"}>
+        <Tip text={pending ? "More (a settings change applies when the current turn ends)" : "Context, Scheduled, Snapshot, Fork, Session settings, Stop, Delete"}>
           <button type="button" className={cx("more-menu", pending && "pending")} aria-label="More">
             {"\u22ef"}
           </button>
@@ -1452,10 +1453,11 @@ function SessionView({
     ...MENU_PANES.map(
       (p): SessionMenuItem => ({
         key: p.id,
-        icon: p.id,
+        icon: p.icon,
         label: p.label,
         title: `${p.hint}. Click to ${pane === p.id ? "hide" : "show"} it.`,
         active: pane === p.id,
+        count: p.id === "schedules" ? sessionSchedules : undefined,
         onPick: () => togglePane(p.id),
       }),
     ),
@@ -1634,14 +1636,18 @@ function SessionView({
           </span>
         )}
         {session.repos.length > 0 ? (
-          <>
-            <RepoChips session={session} onClick={() => setReposOpen(true)} />
-            <Tip text="Add repository…">
-              <button className="icon-button" aria-label="Add repository…" onClick={() => setReposOpen(true)}>
-                +
-              </button>
-            </Tip>
-          </>
+          mobile ? (
+            <>
+              <RepoChips session={session} onClick={() => setReposOpen(true)} />
+              <Tip text="Add repository…">
+                <button className="icon-button" aria-label="Add repository…" onClick={() => setReposOpen(true)}>
+                  +
+                </button>
+              </Tip>
+            </>
+          ) : (
+            <ReposButton session={session} onManage={() => setReposOpen(true)} />
+          )
         ) : (
           <>
             {session.workspaceSource.type !== "empty" && (
@@ -1703,14 +1709,6 @@ function SessionView({
             onClick={() => togglePane("e2e")}
           >
             Auto QA{e2eLive && <span className="count live">●</span>}
-          </PaneTab>
-          <PaneTab
-            icon="scheduled"
-            active={pane === "schedules"}
-            tip={pane === "schedules" ? "Hide the scheduled prompts" : `${SCHEDULES_HINT}${sessionSchedules > 0 ? ` (${sessionSchedules})` : ""}`}
-            onClick={() => togglePane("schedules")}
-          >
-            Scheduled{sessionSchedules > 0 && <span className="count">{sessionSchedules}</span>}
           </PaneTab>
         </div>
         {(session.status === "stopped" || session.status === "error") && (

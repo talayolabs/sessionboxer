@@ -14,24 +14,46 @@ export function sourceTitle(source: WorkspaceSource | RepoSource): string {
   }
 }
 
+/** A host directory: an outlined folder. */
+export function FolderIcon({ size = 16, label }: { size?: number; label: string }) {
+  return (
+    <svg className="source-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+      <title>{label}</title>
+      <path
+        d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6a1.5 1.5 0 0 1 1.1.5L11.8 7h7.7A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path d="M3 10h18" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+/** Git's logo drawn in strokes only, in `currentColor`: no orange fill, so it sits in the chrome without calling for attention. */
+export function GitOutlineIcon({ size = 16, label }: { size?: number; label: string }) {
+  return (
+    <svg className="source-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+      <title>{label}</title>
+      <g fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="4.5" y="4.5" width="15" height="15" rx="2.5" transform="rotate(45 12 12)" />
+        <path d="M9.5 8.6v6.3" />
+        <path d="M9.5 12c2.4 0 4.2-.9 4.9-2.7" />
+        <circle cx="9.5" cy="7" r="1.6" />
+        <circle cx="9.5" cy="16.5" r="1.6" />
+        <circle cx="15" cy="7.8" r="1.6" />
+      </g>
+    </svg>
+  );
+}
+
 /** Folder for a copied host directory, git's branch mark for a clone, a fork sign for a snapshot fork; nothing for empty. */
 export function SourceIcon({ source, size = 16 }: { source: WorkspaceSource | RepoSource; size?: number }) {
   const label = sourceTitle(source);
   switch (source.type) {
     case "copy":
-      return (
-        <svg className="source-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
-          <title>{label}</title>
-          <path
-            d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6a1.5 1.5 0 0 1 1.1.5L11.8 7h7.7A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinejoin="round"
-          />
-          <path d="M3 10h18" fill="none" stroke="currentColor" strokeWidth="1.8" />
-        </svg>
-      );
+      return <FolderIcon size={size} label={label} />;
     case "git":
       return (
         <svg className="source-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>

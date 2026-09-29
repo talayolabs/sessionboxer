@@ -18,7 +18,7 @@ What this means for a Windows or macOS session: screenshots are of the remote-de
 
 ## The `desktop` server
 
-The desktop MCP mirrors Anthropic's computer-use tool set, implemented with xdotool and ffmpeg on the box's X display. Coordinates are integer pixels, `[x, y]`, origin at the top-left of the screen; the `screenshot` tool's description tells the agent the screen size. Every tool that moves the pointer to a target *glides* there (an eased motion of 100–300 ms, about 120 positions a second) so hover effects and drag-and-drop see a moving pointer; `SESSIONBOXER_MOUSE_GLIDE=0` in the server's environment makes it jump.
+The desktop MCP mirrors Anthropic's computer-use tool set, implemented with xdotool and ffmpeg on the box's X display. Coordinates are integer pixels, `[x, y]`, origin at the top-left of the screen; the `screenshot` tool's description tells the agent the screen size. Every tool that moves the pointer to a target *glides* there (an eased motion of 100–300 ms, about 120 positions a second) so hover effects and drag-and-drop see a moving pointer; `SESSIONBOXER_MOUSE_GLIDE=0` in the server's environment makes it jump. While a recording runs, the pointer and the keys move at a hand's pace instead — glides of 350–700 ms, about 30 keys a second — so the video shows the pointer travel and the text arrive letter by letter rather than in blocks; without a recording the agent works at full speed.
 
 Tools that act (move, click, type, scroll…) return the text `OK`; `screenshot`, `zoom` and `wait` return a PNG image; the recording tools return JSON.
 
@@ -105,7 +105,7 @@ Type a string at the current focus, as a keyboard would. For shortcuts and speci
 | --- | --- | --- |
 | `text` | string, at least 1 character, *required* | What to type |
 
-Typed in chunks of 50 characters with a pause between keys (12 ms on a Linux desktop, 40 ms on a Windows or macOS one).
+Typed in chunks of 50 characters with a pause between keys (12 ms on a Linux desktop, 40 ms on a Windows or macOS one; about 32 ms while a recording runs, one key per frame at 30 fps).
 
 #### `key`
 
@@ -157,7 +157,7 @@ Start recording the desktop until `stop_recording`. Fails when a recording is al
 | Parameter | Type | Meaning |
 | --- | --- | --- |
 | `path` | string, optional | Output file, **under `/workspace`** and **ending in `.mp4`**; default `recordings/<timestamp>.mp4` (relative paths resolve against `/workspace`). Anything else is refused |
-| `fps` | integer 1–30, default 15 | Frames per second |
+| `fps` | integer 1–60, default 30 | Frames per second; 30 shows the pointer travel and typing smoothly (~15 % of one core at 1024×768), 60 for animations |
 
 Returns `{ path, startedAt, seconds: 0, captions: 0 }`.
 

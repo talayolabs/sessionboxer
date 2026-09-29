@@ -366,7 +366,7 @@ async function finishedFromTrack(path: string): Promise<Finished> {
   const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "csv=p=0", path], { timeout: 30_000 });
   const seconds = Number.parseFloat(stdout.split("\n").find((l) => /^[0-9.]+$/.test(l.trim())) ?? "");
   if (!Number.isFinite(seconds) || seconds <= 0) throw new Error(`could not read the length of ${path}`);
-  return { path, seconds, fps: 15, captions, track: true, narrated: stdout.includes("audio") };
+  return { path, seconds, fps: 30, captions, track: true, narrated: stdout.includes("audio") };
 }
 
 /**

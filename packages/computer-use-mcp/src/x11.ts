@@ -46,33 +46,64 @@ export async function xdotool(display: Display, ...args: string[]): Promise<stri
 /** The cursor glides to its target (`SESSIONBOXER_MOUSE_GLIDE=0` makes it jump instead). */
 const GLIDE = process.env.SESSIONBOXER_MOUSE_GLIDE !== "0";
 const GLIDE_STEP_MS = 8;
-const GLIDE_MIN_MS = 100;
-const GLIDE_MAX_MS = 300;
+/**
+ * Pause between typed characters, as xdotool's `--delay` (it sleeps half of it per key); a
+ * desktop reached over RDP/VNC drops keys at xdotool's default pace.
+ */
+const TYPE_DELAY_MS = Number(process.env.SESSIONBOXER_TYPE_DELAY_MS ?? 12);
+
+/** How fast the pointer travels and the keys fall. */
+export interface Pace {
+  /** Shortest (a short hop) and longest (across the screen) glide, in ms. */
+  glideMs: [number, number];
+  /** xdotool `--delay` between typed keys. */
+  typeDelayMs: number;
+}
+
+/** When nobody watches: as fast as the applications keep up with. */
+export const FAST_PACE: Pace = { glideMs: [100, 300], typeDelayMs: TYPE_DELAY_MS };
+/**
+ * While the desktop is recorded: a hand's pace, so a 30 fps video shows the pointer travelling
+ * and the text arriving letter by letter (about one per frame) instead of in blocks.
+ */
+export const RECORDED_PACE: Pace = { glideMs: [350, 700], typeDelayMs: Math.max(TYPE_DELAY_MS, 64) };
 
 function easeInOutCubic(p: number): number {
   return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
 }
 
+/** One position of a glide and the pause before the next one. */
+export interface GlideStep {
+  at: Coordinate;
+  pauseMs: number;
+}
+
 /**
- * The intermediate points of an eased glide from `from` to `to`, one per {@link GLIDE_STEP_MS};
- * the duration grows with the square root of the distance (a short hop ~120 ms, across the
- * screen ~300 ms). Empty when the two are (nearly) the same point.
+ * The intermediate positions of an eased glide from `from` to `to`, one per {@link GLIDE_STEP_MS};
+ * the duration grows with the square root of the distance between the pace's bounds (a short
+ * hop gets the shortest, ~900 px and more the longest). Consecutive steps that round to the same
+ * pixel merge into one longer pause, so a short glide still takes its time. Empty when the two
+ * are (nearly) the same point.
  */
-export function glidePath(from: Coordinate, to: Coordinate): Coordinate[] {
+export function glidePath(from: Coordinate, to: Coordinate, pace: Pace): GlideStep[] {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
   const distance = Math.hypot(dx, dy);
   if (!Number.isFinite(distance) || distance < 3) return [];
-  const durationMs = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, 80 + Math.sqrt(distance) * 7));
+  const [minMs, maxMs] = pace.glideMs;
+  const durationMs = Math.min(maxMs, minMs + ((maxMs - minMs) * Math.sqrt(distance)) / 30);
   const steps = Math.max(2, Math.round(durationMs / GLIDE_STEP_MS));
-  const points: Coordinate[] = [];
+  const path: GlideStep[] = [];
   for (let i = 1; i < steps; i++) {
     const e = easeInOutCubic(i / steps);
-    const p: Coordinate = [Math.round(from[0] + dx * e), Math.round(from[1] + dy * e)];
-    const last = points[points.length - 1] ?? from;
-    if ((last[0] !== p[0] || last[1] !== p[1]) && (p[0] !== to[0] || p[1] !== to[1])) points.push(p);
+    const last = path[path.length - 1];
+    let p: Coordinate = [Math.round(from[0] + dx * e), Math.round(from[1] + dy * e)];
+    // The target itself is left to the final `--sync` move, which would otherwise wait on a cursor already there.
+    if (p[0] === to[0] && p[1] === to[1]) p = last?.at ?? from;
+    if (last !== undefined && last.at[0] === p[0] && last.at[1] === p[1]) last.pauseMs += GLIDE_STEP_MS;
+    else path.push({ at: p, pauseMs: GLIDE_STEP_MS });
   }
-  return points;
+  return path;
 }
 
 /**
@@ -81,54 +112,51 @@ export function glidePath(from: Coordinate, to: Coordinate): Coordinate[] {
  * intermediate position is a real motion event for the application under the cursor (hover,
  * drag-over) as with a hand-moved mouse.
  */
-export async function mouseMove(display: Display, c: Coordinate): Promise<void> {
+export async function mouseMove(display: Display, pace: Pace, c: Coordinate): Promise<void> {
   assertOnScreen(display, c);
   const from = await cursorPosition(display);
   // `--sync` waits for the cursor to move; when it already stands on the target it waits for nothing (15 s).
   if (from[0] === c[0] && from[1] === c[1]) return;
-  const path = GLIDE ? glidePath(from, c) : [];
+  const path = GLIDE ? glidePath(from, c, pace) : [];
   const args: string[] = [];
-  for (const [x, y] of path) args.push("mousemove", String(x), String(y), "sleep", (GLIDE_STEP_MS / 1000).toFixed(3));
+  for (const { at: [x, y], pauseMs } of path) args.push("mousemove", String(x), String(y), "sleep", (pauseMs / 1000).toFixed(3));
   args.push("mousemove", "--sync", String(c[0]), String(c[1]));
   await xdotool(display, ...args);
 }
 
 export type MouseButton = 1 | 2 | 3;
 
-export async function click(display: Display, button: MouseButton, repeat = 1, c?: Coordinate): Promise<void> {
-  if (c) await mouseMove(display, c);
+export async function click(display: Display, pace: Pace, button: MouseButton, repeat = 1, c?: Coordinate): Promise<void> {
+  if (c) await mouseMove(display, pace, c);
   const args = ["click"];
   if (repeat > 1) args.push("--repeat", String(repeat), "--delay", "80");
   args.push(String(button));
   await xdotool(display, ...args);
 }
 
-export async function mouseDown(display: Display, button: MouseButton, c?: Coordinate): Promise<void> {
-  if (c) await mouseMove(display, c);
+export async function mouseDown(display: Display, pace: Pace, button: MouseButton, c?: Coordinate): Promise<void> {
+  if (c) await mouseMove(display, pace, c);
   await xdotool(display, "mousedown", String(button));
 }
 
-export async function mouseUp(display: Display, button: MouseButton, c?: Coordinate): Promise<void> {
-  if (c) await mouseMove(display, c);
+export async function mouseUp(display: Display, pace: Pace, button: MouseButton, c?: Coordinate): Promise<void> {
+  if (c) await mouseMove(display, pace, c);
   await xdotool(display, "mouseup", String(button));
 }
 
-export async function drag(display: Display, from: Coordinate, to: Coordinate): Promise<void> {
-  await mouseMove(display, from);
+export async function drag(display: Display, pace: Pace, from: Coordinate, to: Coordinate): Promise<void> {
+  await mouseMove(display, pace, from);
   await xdotool(display, "mousedown", "1");
   await sleep(100);
-  await mouseMove(display, to);
+  await mouseMove(display, pace, to);
   await sleep(100);
   await xdotool(display, "mouseup", "1");
 }
 
-/** Pause between typed characters; a desktop reached over RDP/VNC drops keys at xdotool's default pace. */
-const TYPE_DELAY_MS = Number(process.env.SESSIONBOXER_TYPE_DELAY_MS ?? 12);
-
-export async function typeText(display: Display, text: string): Promise<void> {
+export async function typeText(display: Display, pace: Pace, text: string): Promise<void> {
   const chunk = 50;
   for (let i = 0; i < text.length; i += chunk) {
-    await xdotool(display, "type", "--delay", String(TYPE_DELAY_MS), "--", text.slice(i, i + chunk));
+    await xdotool(display, "type", "--delay", String(pace.typeDelayMs), "--", text.slice(i, i + chunk));
   }
 }
 
@@ -148,8 +176,8 @@ export async function holdKey(display: Display, combo: string, durationSeconds: 
 
 export type ScrollDirection = "up" | "down" | "left" | "right";
 
-export async function scroll(display: Display, direction: ScrollDirection, amount: number, c?: Coordinate): Promise<void> {
-  if (c) await mouseMove(display, c);
+export async function scroll(display: Display, pace: Pace, direction: ScrollDirection, amount: number, c?: Coordinate): Promise<void> {
+  if (c) await mouseMove(display, pace, c);
   const button: Record<ScrollDirection, string> = { up: "4", down: "5", left: "6", right: "7" };
   await xdotool(display, "click", "--repeat", String(amount), "--delay", "40", button[direction]);
 }

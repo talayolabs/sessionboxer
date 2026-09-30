@@ -257,7 +257,9 @@ a.attach-meta:hover { text-decoration: underline; }
 .sketch-width.thin { height: 1px; }
 .sketch-width.med { height: 3px; }
 .sketch-width.bold { height: 6px; }
-.segmented .sketch-label { display: inline-flex; align-items: center; padding: 0 8px; }
+.sketch-actions .icon-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; padding: 0 8px; }
+.sketch-actions .icon-btn.busy svg { animation: pulse 0.9s ease-in-out infinite alternate; }
+.sketch-actions .segmented button { padding: 4px 10px; }
 .attach-open { position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; }
 button.attach-open { cursor: zoom-in; }
 button.attach-open:hover .attach-name { text-decoration: underline; }

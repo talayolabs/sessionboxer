@@ -21,6 +21,27 @@ import {
 const WIDTH_LABELS: Record<Width, string> = { thin: "Thin", med: "Medium", bold: "Bold" };
 const SOFTEN_LABELS: Record<Soften, string> = { low: "Low", med: "Medium", high: "High" };
 
+function Icon({ d }: { d: string }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+const ICONS = {
+  undo: "M6 4L2.5 7.5 6 11M2.5 7.5H10a3.5 3.5 0 0 1 0 7H8",
+  redo: "M10 4l3.5 3.5L10 11M13.5 7.5H6a3.5 3.5 0 0 0 0 7h2",
+  close: "M4 4l8 8M12 4l-8 8",
+  send: "M14 2L2 7l5 2 2 5zM14 2L7 9",
+};
+/** A line drawn with that soften level: sharp corners, rounded ones, a wave. */
+const SOFTEN_ICONS: Record<Soften, string> = {
+  low: "M2 12l4-8 4 8 4-8",
+  med: "M2 12l3-6.5c.5-1 1.5-1 2 0l2 5c.5 1 1.5 1 2 0L14 4",
+  high: "M2 8c2-6 4-6 6 0s4 6 6 0",
+};
+
 /**
  * Full-screen sheet to draw on — blank, or over an attached image — with four colours, three widths
  * (relative to the sheet), a soften level that rounds the strokes, undo/redo, and **Send**, which
@@ -200,32 +221,37 @@ export function SketchDialog({ image, onDone, onClose }: { image: { url: string;
         </div>
         <div className="segmented small" role="radiogroup" aria-label="Width">
           {WIDTHS.map((w) => (
-            <button key={w} type="button" role="radio" aria-checked={width === w} aria-selected={width === w} title={`${WIDTH_LABELS[w]} pencil`} onClick={() => setWidth(w)}>
+            <button key={w} type="button" role="radio" aria-checked={width === w} aria-selected={width === w} title={`${WIDTH_LABELS[w]} pencil`} aria-label={`${WIDTH_LABELS[w]} pencil`} onClick={() => setWidth(w)}>
               <span className={`sketch-width ${w}`} aria-hidden="true" />
-              {WIDTH_LABELS[w]}
             </button>
           ))}
         </div>
         <div className="segmented small" role="radiogroup" aria-label="Soften">
-          <span className="muted small-text sketch-label">Soften</span>
           {SOFTENS.map((s) => (
-            <button key={s} type="button" role="radio" aria-checked={soften === s} aria-selected={soften === s} title={`Soften: ${SOFTEN_LABELS[s].toLowerCase()} — how much each line is rounded`} onClick={() => setSoften(s)}>
-              {SOFTEN_LABELS[s]}
+            <button key={s} type="button" role="radio" aria-checked={soften === s} aria-selected={soften === s} title={`Soften: ${SOFTEN_LABELS[s].toLowerCase()} — how much each line is rounded`} aria-label={`Soften ${SOFTEN_LABELS[s].toLowerCase()}`} onClick={() => setSoften(s)}>
+              <Icon d={SOFTEN_ICONS[s]} />
             </button>
           ))}
         </div>
-        <button type="button" onClick={undo} disabled={strokes.length === 0 || saving} title="Undo (Ctrl+Z)">
-          Undo
+        <button type="button" className="icon-btn" onClick={undo} disabled={strokes.length === 0 || saving} title="Undo (Ctrl+Z)" aria-label="Undo">
+          <Icon d={ICONS.undo} />
         </button>
-        <button type="button" onClick={redoOne} disabled={redo.length === 0 || saving} title="Redo (Ctrl+Shift+Z)">
-          Redo
+        <button type="button" className="icon-btn" onClick={redoOne} disabled={redo.length === 0 || saving} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+          <Icon d={ICONS.redo} />
         </button>
         <span className="spacer" />
-        <button type="button" onClick={onClose} disabled={saving}>
-          Cancel
+        <button type="button" className="icon-btn" onClick={onClose} disabled={saving} title="Cancel" aria-label="Cancel">
+          <Icon d={ICONS.close} />
         </button>
-        <button type="button" className="primary" onClick={() => void send()} disabled={!size || saving || (image === null && strokes.length === 0)} title={image ? "Replace the attachment with this drawing" : "Attach the drawing to the prompt"}>
-          {saving ? "Saving\u2026" : "Send"}
+        <button
+          type="button"
+          className={`primary icon-btn${saving ? " busy" : ""}`}
+          onClick={() => void send()}
+          disabled={!size || saving || (image === null && strokes.length === 0)}
+          title={image ? "Send: replace the attachment with this drawing" : "Send: attach the drawing to the prompt"}
+          aria-label={saving ? "Saving" : "Send"}
+        >
+          <Icon d={ICONS.send} />
         </button>
       </div>
     </Modal>

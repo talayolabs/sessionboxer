@@ -238,6 +238,25 @@ a.attach-meta { color: var(--accent); text-decoration: none; }
 a.attach-meta:hover { text-decoration: underline; }
 .attach-remove { position: relative; padding: 0 4px; border: 0; background: none; color: var(--muted); font-size: var(--fs-base); line-height: 1; }
 .attach-remove:hover { color: var(--text); border: 0; }
+.attach-open { position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; }
+button.attach-open { cursor: zoom-in; }
+button.attach-open:hover .attach-name { text-decoration: underline; }
+.attach-thumb { flex: none; width: 24px; height: 24px; border-radius: 4px; object-fit: cover; background: var(--bg); border: 1px solid var(--border); }
+.attach-thumb.badge { display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; letter-spacing: 0.02em; color: var(--muted); overflow: hidden; }
+.attach-thumb.badge.pdf { color: #d9534f; }
+.attach-thumb.badge.markdown, .attach-thumb.badge.mermaid { color: var(--accent); }
+.attach-thumb.badge.audio { font-size: 13px; }
+/* The preview of a file attached to the next prompt, large enough to tell what it is. */
+.preview-dialog { max-width: min(1100px, 96vw); max-height: 92vh; }
+.preview-dialog .preview-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-dialog .preview-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.preview-dialog img, .preview-dialog video { display: block; margin: 0 auto; max-width: 100%; max-height: min(75vh, 900px); object-fit: contain; }
+.preview-dialog img { background: var(--bg); }
+.preview-dialog video { background: #000; }
+.preview-dialog audio { width: 100%; }
+.preview-dialog iframe { width: 100%; height: min(75vh, 900px); border: 0; background: #fff; }
+.preview-image, .preview-video, .preview-audio { width: max-content; min-width: min(420px, 90vw); }
+.preview-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--fs-md); }
 .attachments.uploaded { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
 .attachments.uploaded .attachment { flex: 1 1 100%; }
 .msg-user .attachments.uploaded:first-child { margin-top: 0; }

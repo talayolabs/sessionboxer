@@ -8,6 +8,8 @@ export type PendingAttachment<A = PromptAttachment> = {
   name: string;
   size: number;
   mimeType: string;
+  /** Object URL of the picked file, for the chip's thumbnail and the preview; revoked when the item goes. */
+  url: string;
   state: { kind: "uploading"; progress: number } | { kind: "ready"; attachment: A } | { kind: "error"; message: string };
 };
 
@@ -52,7 +54,10 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
     return () => {
       for (const c of controllers.current.values()) c.abort();
       controllers.current.clear();
-      for (const a of itemsRef.current) if (a.state.kind === "ready") discard?.(a.state.attachment);
+      for (const a of itemsRef.current) {
+        URL.revokeObjectURL(a.url);
+        if (a.state.kind === "ready") discard?.(a.state.attachment);
+      }
       setItems([]);
     };
   }, [key, discard]);
@@ -77,8 +82,9 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
       const fresh = picked.map((file): PendingAttachment<A> => {
         const id = `u${++nextId}`;
         const mimeType = file.type || "application/octet-stream";
+        const url = URL.createObjectURL(file);
         if (file.size > MAX_UPLOAD_BYTES) {
-          return { id, name: file.name, size: file.size, mimeType, state: { kind: "error", message: `over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` } };
+          return { id, name: file.name, size: file.size, mimeType, url, state: { kind: "error", message: `over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` } };
         }
         const controller = new AbortController();
         controllers.current.set(id, controller);
@@ -89,7 +95,7 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
             patch(id, { kind: "error", message: e instanceof Error ? e.message : String(e) });
           })
           .finally(() => controllers.current.delete(id));
-        return { id, name: file.name, size: file.size, mimeType, state: { kind: "uploading", progress: 0 } };
+        return { id, name: file.name, size: file.size, mimeType, url, state: { kind: "uploading", progress: 0 } };
       });
       count.current += fresh.length;
       setItems((cur) => [...cur, ...fresh]);
@@ -101,6 +107,7 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
     (id: string) => {
       controllers.current.get(id)?.abort();
       const gone = itemsRef.current.find((a) => a.id === id);
+      if (gone) URL.revokeObjectURL(gone.url);
       if (gone?.state.kind === "ready") discard?.(gone.state.attachment);
       setItems((cur) => cur.filter((a) => a.id !== id));
     },
@@ -110,6 +117,7 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
   const clear = useCallback(() => {
     for (const c of controllers.current.values()) c.abort();
     controllers.current.clear();
+    for (const a of itemsRef.current) URL.revokeObjectURL(a.url);
     setItems([]);
   }, []);
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatBytes } from "./format";
 import type { PendingAttachments } from "./attachments-pending";
+import { AttachmentPreviewDialog, AttachmentThumb, previewKind } from "./AttachmentPreview";
 import { MAX_RECORDING_S, micSupport, startRecording, transcribe, type Recording } from "./speech";
 
 // The attach and dictate controls shared by the Session composer and the New session box.
@@ -174,21 +175,42 @@ export function DictationLine({ dictation }: { dictation: Dictation }) {
 /** The picked files as chips with their upload state; nothing while there are none. */
 export function AttachList<A>({ attachments }: { attachments: PendingAttachments<A> }) {
   const files = attachments.items;
+  const [openId, setOpenId] = useState<string | null>(null);
+  const open = files.find((f) => f.id === openId) ?? null;
+  const openKind = open ? previewKind(open.name, open.mimeType) : null;
   if (files.length === 0) return null;
   return (
-    <ul className="attach-list" aria-label="Attached files">
-      {files.map((f) => (
-        <li key={f.id} className={`attach-chip ${f.state.kind}`} title={f.state.kind === "error" ? f.state.message : `${f.mimeType} \u00b7 ${formatBytes(f.size)}`}>
-          {f.state.kind === "uploading" && <span className="attach-bar" style={{ width: `${Math.round(f.state.progress * 100)}%` }} />}
-          <span className="attach-name">{f.name}</span>
-          <span className="attach-meta">
-            {f.state.kind === "uploading" ? `${Math.round(f.state.progress * 100)}%` : f.state.kind === "error" ? f.state.message : formatBytes(f.size)}
-          </span>
-          <button type="button" className="attach-remove" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => attachments.remove(f.id)}>
-            {"\u00d7"}
-          </button>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="attach-list" aria-label="Attached files">
+        {files.map((f) => {
+          const kind = previewKind(f.name, f.mimeType);
+          const label = (
+            <>
+              <AttachmentThumb kind={kind} url={f.url} name={f.name} />
+              <span className="attach-name">{f.name}</span>
+            </>
+          );
+          return (
+            <li key={f.id} className={`attach-chip ${f.state.kind}`} title={f.state.kind === "error" ? f.state.message : `${f.mimeType} \u00b7 ${formatBytes(f.size)}`}>
+              {f.state.kind === "uploading" && <span className="attach-bar" style={{ width: `${Math.round(f.state.progress * 100)}%` }} />}
+              {kind ? (
+                <button type="button" className="attach-open" title={`Preview ${f.name}`} onClick={() => setOpenId(f.id)}>
+                  {label}
+                </button>
+              ) : (
+                <span className="attach-open">{label}</span>
+              )}
+              <span className="attach-meta">
+                {f.state.kind === "uploading" ? `${Math.round(f.state.progress * 100)}%` : f.state.kind === "error" ? f.state.message : formatBytes(f.size)}
+              </span>
+              <button type="button" className="attach-remove" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => attachments.remove(f.id)}>
+                {"\u00d7"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {open && openKind && <AttachmentPreviewDialog item={open} kind={openKind} onClose={() => setOpenId(null)} />}
+    </>
   );
 }

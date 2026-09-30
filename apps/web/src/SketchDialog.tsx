@@ -21,9 +21,9 @@ import {
 const WIDTH_LABELS: Record<Width, string> = { thin: "Thin", med: "Medium", bold: "Bold" };
 const SOFTEN_LABELS: Record<Soften, string> = { low: "Low", med: "Medium", high: "High" };
 
-function Icon({ d }: { d: string }) {
+function Icon({ d, sharp }: { d: string; sharp?: boolean }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={sharp ? 2 : 1.6} strokeLinecap={sharp ? "butt" : "round"} strokeLinejoin={sharp ? "miter" : "round"} aria-hidden="true">
       <path d={d} />
     </svg>
   );
@@ -35,11 +35,11 @@ const ICONS = {
   close: "M4 4l8 8M12 4l-8 8",
   send: "M14 2L2 7l5 2 2 5zM14 2L7 9",
 };
-/** A line drawn with that soften level: sharp corners, rounded ones, a wave. */
+/** The same peak-and-valley line at each soften level: sharp corners, rounded ones, a wave. */
 const SOFTEN_ICONS: Record<Soften, string> = {
-  low: "M1 13L5.5 3L10.5 13L15 3",
-  med: "M1 13L4.6 5Q5.5 3 6.4 5L9.6 11Q10.5 13 11.4 11L15 3",
-  high: "M1 13C3 13 3.5 3 5.5 3S8.5 13 10.5 13S13 3 15 3",
+  low: "M1 13L6 3L10 13L15 3",
+  med: "M1 13L4.3 6.4Q6 3 7.41 6.53L8.59 9.47Q10 13 11.7 9.6L15 3",
+  high: "M1 13C3.5 13 3.5 3 6 3S7.5 13 10 13S12.5 3 15 3",
 };
 
 /**
@@ -229,7 +229,7 @@ export function SketchDialog({ image, onDone, onClose }: { image: { url: string;
         <div className="segmented small" role="radiogroup" aria-label="Soften">
           {SOFTENS.map((s) => (
             <button key={s} type="button" role="radio" aria-checked={soften === s} aria-selected={soften === s} title={`Soften: ${SOFTEN_LABELS[s].toLowerCase()} — how much each line is rounded`} aria-label={`Soften ${SOFTEN_LABELS[s].toLowerCase()}`} onClick={() => setSoften(s)}>
-              <Icon d={SOFTEN_ICONS[s]} />
+              <Icon d={SOFTEN_ICONS[s]} sharp={s === "low"} />
             </button>
           ))}
         </div>

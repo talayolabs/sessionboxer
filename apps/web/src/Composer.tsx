@@ -143,6 +143,12 @@ const ICONS = {
   exitZen: "M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4",
 };
 
+const STYLING_KEY = "sessionboxer.composerStyling";
+/** Whether the formatting tools and the Preview switch are shown; off until the Style button is pressed once. */
+function loadStyling(): boolean {
+  return localStorage.getItem(STYLING_KEY) === "on";
+}
+
 const TOOLS: Array<{ id: ToolAction; label: ReactNode; title: string; className?: string }> = [
   { id: "heading", label: "H", title: "Heading", className: "tb-bold" },
   { id: "bold", label: "B", title: "Bold (Ctrl+B)", className: "tb-bold" },
@@ -412,6 +418,9 @@ export function Composer(props: ComposerProps) {
   const filesSettled = files.length === 0 || attachments.ready;
   const canSend = !disabled && !running && (hasText || attachments.ready) && filesSettled;
   const sized = heightFrac !== null && !zen;
+  const [styling, setStyling] = useState(loadStyling);
+  useEffect(() => localStorage.setItem(STYLING_KEY, styling ? "on" : "off"), [styling]);
+
   const onEnqueueKey = (e: KeyboardEvent): boolean => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
@@ -465,28 +474,43 @@ export function Composer(props: ComposerProps) {
           <span className="tb-sep" role="separator" aria-orientation="vertical" />
           <MicButton control={dictation} disabled={disabled} />
           <span className="tb-sep" role="separator" aria-orientation="vertical" />
-          {TOOLS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`tb${t.className ? ` ${t.className}` : ""}${isActive(t.id) ? " active" : ""}`}
-              title={t.title}
-              disabled={disabled}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => apply(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
+          <button
+            type="button"
+            className={`tb tb-style${styling ? " active" : ""}`}
+            title={styling ? "Style: hide the formatting tools and the Preview switch" : "Style: formatting tools (bold, italic, code, lists, links…) and the Preview switch"}
+            aria-pressed={styling}
+            aria-controls="composer-styling"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setStyling((on) => !on)}
+          >
+            <span aria-hidden="true">A</span>
+          </button>
           <span className="spacer" />
-          <label className="check switch preview-switch" title={mode === "rich" ? "Showing formatted text; switch off for the raw Markdown" : "Showing the raw Markdown; switch on to see it formatted"}>
-            <input type="checkbox" checked={mode === "rich"} onChange={(e) => onModeChange(e.target.checked ? "rich" : "raw")} />
-            <span className="slider" aria-hidden="true" />
-            Preview
-          </label>
           <button type="button" className="tb" title={zen ? "Exit zen mode (Esc)" : "Zen mode"} aria-pressed={zen} onClick={() => onZenChange(!zen)}>
             <Icon d={zen ? ICONS.exitZen : ICONS.zen} />
           </button>
+          {styling && (
+            <span id="composer-styling" className="tb-group" role="group" aria-label="Formatting">
+              {TOOLS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`tb${t.className ? ` ${t.className}` : ""}${isActive(t.id) ? " active" : ""}`}
+                  title={t.title}
+                  disabled={disabled}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => apply(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+              <label className="check switch preview-switch" title={mode === "rich" ? "Showing formatted text; switch off for the raw Markdown" : "Showing the raw Markdown; switch on to see it formatted"}>
+                <input type="checkbox" checked={mode === "rich"} onChange={(e) => onModeChange(e.target.checked ? "rich" : "raw")} />
+                <span className="slider" aria-hidden="true" />
+                Preview
+              </label>
+            </span>
+          )}
         </div>
         <div className="composer-body">
           {mode === "raw" ? (

@@ -336,6 +336,8 @@ li.expanded .saved-text { white-space: normal; }
 .toolbar .tb-mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .toolbar .tb:hover { color: var(--text); background: var(--panel); border-color: var(--border); }
 .toolbar .tb.active { color: var(--text); background: var(--user); border-color: var(--user); }
+.toolbar .tb-style { font-family: Georgia, "Times New Roman", "DejaVu Serif", serif; font-style: italic; font-weight: 600; font-size: 17px; line-height: 1; }
+.toolbar .tb-group { flex: 1 0 100%; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .toolbar .tb-bold { font-weight: 700; }
 .toolbar .tb-italic { font-style: italic; }
 .toolbar .tb-strike { text-decoration: line-through; }

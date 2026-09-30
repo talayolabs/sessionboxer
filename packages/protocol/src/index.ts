@@ -1872,6 +1872,13 @@ export const Transcription = z.object({
 });
 export type Transcription = z.infer<typeof Transcription>;
 
+/** One stretch of speech with its place in the clip, in seconds. */
+export const TranscriptionSegment = z.object({ start: z.number(), end: z.number(), text: z.string() });
+export type TranscriptionSegment = z.infer<typeof TranscriptionSegment>;
+/** A `Transcription` with its segments: what the Agent's `transcribe_media` returns. */
+export const TimedTranscription = Transcription.extend({ segments: z.array(TranscriptionSegment) });
+export type TimedTranscription = z.infer<typeof TimedTranscription>;
+
 /** Largest clip accepted (16 kHz mono 16-bit is 32 kB/s, so about 15 minutes). */
 export const SPEECH_CLIP_MAX_BYTES = 30 * 1024 * 1024;
 
@@ -2877,6 +2884,7 @@ export const AGENT_TOOLS = [
   "notify",
   "terminal_list",
   "terminal_read",
+  "transcribe_media",
   "ui_open",
   "e2e_plan",
   "e2e_case_start",
@@ -2943,6 +2951,12 @@ export const AgentVerifyArgs = z.object({
 });
 export const AgentNotifyArgs = z.object({ text: z.string().min(1).max(500) });
 export const AgentTerminalReadArgs = z.object({ id: z.string().min(1), lines: z.number().int().positive().max(2000).default(100) });
+/**
+ * `transcribe_media`: `path` is a 16 kHz mono 16-bit WAV in the Workspace (the `sessionboxer` MCP
+ * extracts it from the video or audio file with ffmpeg first); the Control Plane reads it from
+ * the Daemon and runs Whisper on the host. `language` is an ISO 639-1 code or `auto`.
+ */
+export const AgentTranscribeMediaArgs = z.object({ path: z.string().min(1).max(4096), language: z.string().min(2).max(8).optional() });
 export const AgentUiOpenArgs = z.object({
   pane: UiPane,
   /** With `pane: "terminal"`: a new Terminal is opened and this runs in it, visibly. */

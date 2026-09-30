@@ -1,6 +1,7 @@
 /**
- * The camera button: a photo or a short video from the device's camera, attached to the prompt like a
- * picked file. `getUserMedia` for the live preview, a canvas for the still, `MediaRecorder` for the clip.
+ * The camera button: a photo or a short video from the device's camera, or a recording of the screen,
+ * attached to the prompt like a picked file. `getUserMedia` for the live preview, `getDisplayMedia` for
+ * the screen, a canvas for the still, `MediaRecorder` for the clip.
  * Needs a secure context like the microphone; without one the button falls back to the browser's own
  * capture picker (`<input capture>`), which phones answer with their camera app.
  */
@@ -36,6 +37,32 @@ export function openCamera(facing: Facing, audio: boolean, deviceId?: string): P
   return navigator.mediaDevices.getUserMedia({ video, audio: audio ? { echoCancellation: true, noiseSuppression: true } : false });
 }
 
+/** Whether the browser lets a page record the screen (desktop browsers do; phones mostly do not). */
+export function canCaptureScreen(): boolean {
+  return typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getDisplayMedia === "function" && canRecordVideo();
+}
+
+/**
+ * The screen, window or tab the user picks in the browser's own dialog, with the microphone for
+ * narration when it can be had (system audio is left out: the browsers disagree on it, and the
+ * recording is meant to carry what the user says about the screen). The caller stops the tracks.
+ */
+export async function openScreen(): Promise<MediaStream> {
+  const display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false });
+  try {
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+    for (const t of mic.getAudioTracks()) display.addTrack(t);
+  } catch {
+    // No microphone, or it was refused: the screen alone.
+  }
+  return display;
+}
+
+export function screenError(e: unknown): string {
+  if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) return "Nothing was shared; choose a screen, window or tab to record.";
+  return cameraError(e);
+}
+
 export function stopStream(stream: MediaStream | null): void {
   stream?.getTracks().forEach((t) => t.stop());
 }
@@ -67,7 +94,7 @@ export interface ClipRecording {
   cancel: () => void;
 }
 
-/** Records the stream until `stop`; the Blob is what the browser produced (mp4 on Safari, webm elsewhere). */
+/** Records the stream until `stop`; the Blob is what the browser produced (mp4 or webm, whichever it records). */
 export function startClip(stream: MediaStream): ClipRecording {
   const mimeType = pickVideoMimeType();
   const recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 4_000_000 } : {});
@@ -124,8 +151,10 @@ function extensionFor(mimeType: string): string {
   return type.startsWith("video/") ? "webm" : "bin";
 }
 
-/** `photo-20260930-113800.jpg`, `video-20260930-113812.webm`: the name the agent will see under uploads/. */
-export function captureFile(blob: Blob, kind: "photo" | "video"): File {
+export type CaptureKind = "photo" | "video" | "screen";
+
+/** `photo-20260930-113800.jpg`, `video-20260930-113812.webm`, `screen-….webm`: the name the agent will see under uploads/. */
+export function captureFile(blob: Blob, kind: CaptureKind): File {
   const type = blob.type || (kind === "photo" ? "image/jpeg" : "video/webm");
   return new File([blob], `${kind}-${stamp()}.${extensionFor(type)}`, { type: type.split(";")[0]?.trim() || type, lastModified: Date.now() });
 }

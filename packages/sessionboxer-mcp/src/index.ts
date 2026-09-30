@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { BridgeError, callTool, e2eCall, type E2eMethod } from "./bridge.js";
+import { extractWav } from "./media.js";
 
 const server = new McpServer({ name: "sessionboxer", version: "0.0.0" });
 
@@ -197,6 +198,40 @@ server.registerTool(
     },
   },
   (args) => tool("terminal_read", args),
+);
+
+server.registerTool(
+  "transcribe_media",
+  {
+    description:
+      "Speech to text for a video or audio file in the Workspace (an attached screen recording, a clip filmed with the camera, a voice note), with timestamps: the audio is extracted here with ffmpeg and transcribed by Whisper on the user's machine. Returns the text and its segments ({ start, end, text } in seconds); when a segment refers to the screen, take the frame at its time with `ffmpeg -ss <start> -i <file> -frames:v 1 frame.png` and look at it.",
+    inputSchema: {
+      path: z.string().min(1).max(4096).describe("The media file, absolute or relative to the Workspace (e.g. .sessionboxer/uploads/ab12cd34/screen-20260930-120000.webm)"),
+      language: z
+        .string()
+        .min(2)
+        .max(8)
+        .optional()
+        .describe("ISO 639-1 code of the speech (en, es, …) or auto to detect it; the user's speech setting when left out"),
+    },
+  },
+  async (args) => {
+    let wav;
+    try {
+      wav = await extractWav(args.path);
+    } catch (e) {
+      return errorText(e instanceof Error ? e.message : String(e));
+    }
+    try {
+      const result = (await callTool("transcribe_media", { path: wav.workspacePath, language: args.language })) as Record<string, unknown> | null;
+      return okText(JSON.stringify({ path: args.path, ...(result ?? {}) }));
+    } catch (e) {
+      if (e instanceof BridgeError) return errorText(e.message);
+      throw e;
+    } finally {
+      wav.remove();
+    }
+  },
 );
 
 server.registerTool(

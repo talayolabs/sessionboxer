@@ -444,6 +444,7 @@ api.post("/sandbox-image/pull", (c) => {
 
 /** Speech to text: the browser posts a 16 kHz mono WAV clip, whisper.cpp on this machine answers with the text. */
 const speech = new Speech(log);
+sessions.transcribeMedia = (wav, language) => speech.transcribeTimed(wav, settings.speech, language);
 api.get("/speech", async (c) => c.json(await speech.status(settings.speech)));
 api.post("/speech/prepare", async (c) => c.json(await speech.prepare(settings.speech)));
 api.post("/speech/transcribe", async (c) => {

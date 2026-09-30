@@ -22,6 +22,7 @@ import {
   AgentSessionSummary,
   AgentSessionWaitArgs,
   AgentTerminalReadArgs,
+  AgentTranscribeMediaArgs,
   AgentTitleSetArgs,
   AgentUiOpenArgs,
   AgentVerifyArgs,
@@ -77,6 +78,7 @@ import {
   type PublicUtilityDef,
   type UpdateSettingsRequest,
   type UtilityDef,
+  type TimedTranscription,
 } from "@sessionboxer/protocol";
 import { PUBLIC_URL } from "./config.js";
 import { resolveUtilities, toPublicUtility, utilityLabel } from "./utilities.js";
@@ -150,6 +152,8 @@ export interface AgentToolsDeps {
   terminalRead: (id: string, ptyId: string, lines: number) => Promise<PtyReadResult>;
   terminalOpen: (id: string, cols: number, rows: number) => Promise<PtyInfo>;
   terminalInput: (id: string, ptyId: string, data: string) => Promise<void>;
+  /** Speech to text with timestamps for a WAV in the Session's Workspace (`transcribe_media`). */
+  transcribeMedia: (id: string, path: string, language: string | null) => Promise<TimedTranscription>;
   /** Panes the connected browsers show for this Session right now. */
   panesOpen: (id: string) => string[];
   /** Appends a transcript event and broadcasts it. */
@@ -177,6 +181,7 @@ const SESSION_TOOLS: ReadonlySet<AgentTool> = new Set<AgentTool>([
   "notify",
   "terminal_list",
   "terminal_read",
+  "transcribe_media",
   "ui_open",
   "e2e_plan",
   "e2e_case_start",
@@ -270,6 +275,11 @@ export class AgentTools {
       case "terminal_read": {
         const p = AgentTerminalReadArgs.parse(args);
         return this.deps.terminalRead(id, p.id, p.lines);
+      }
+      case "transcribe_media": {
+        const p = AgentTranscribeMediaArgs.parse(args);
+        const t = await this.deps.transcribeMedia(id, p.path, p.language ?? null);
+        return { language: t.language, seconds: t.seconds, model: t.model, text: t.text, segments: t.segments };
       }
       case "ui_open":
         return this.uiOpen(id, AgentUiOpenArgs.parse(args));

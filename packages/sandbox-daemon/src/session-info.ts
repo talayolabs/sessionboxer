@@ -63,7 +63,8 @@ export class SessionInfoFile {
       `at another Session right now. Your identity is in \`${this.path}\` (${SESSION_INFO_PATH} in the Workspace) and the`,
       "`sessionboxer` MCP is how you act on Sessionboxer itself: `whoami` (this Session live: status, usage, queue, open",
       "panes, terminals, PRs), `docs` (the user guide), `pr_attach`/`pr_list`/`pr_items`/`pr_mark_addressed`, `snapshot`,",
-      "`queue_add`/`queue_list`, `title_set`, `verify`, `notify`, `terminal_list`/`terminal_read`, `ui_open`, and the `e2e_*`",
+      "`queue_add`/`queue_list`, `title_set`, `verify`, `notify`, `terminal_list`/`terminal_read`, `transcribe_media` (speech to text",
+      "with timestamps for an attached video or audio file), `ui_open`, and the `e2e_*`",
       s.agentTools === "all"
         ? "tools of a verification run. This Session may also list, read, message, create, fork and stop other Sessions (`sessions_list`, `session_*`, `schedule_*`)."
         : "tools of a verification run. Tools that reach other Sessions are not available to this Session.",

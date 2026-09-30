@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
-import { SPEECH_MODEL_INFO, SPEECH_MODELS, type SpeechModel, type SpeechSettings, type SpeechStatus, type Transcription } from "@sessionboxer/protocol";
+import { SPEECH_MODEL_INFO, SPEECH_MODELS, type SpeechModel, type SpeechSettings, type SpeechStatus, type TimedTranscription, type Transcription, type TranscriptionSegment } from "@sessionboxer/protocol";
 import { DATA_DIR } from "./config.js";
 import { HttpError } from "./http-error.js";
 import { BIN_DIR, download, fetchOrExplain, findBinary, probeVersion, untarFile, type Binary } from "./tunnel-base.js";
@@ -171,12 +171,18 @@ export class Speech {
 
   /** Transcribes a 16 kHz mono PCM WAV clip, downloading engine and model first when missing. */
   async transcribe(wav: Buffer, settings: SpeechSettings, languageOverride: string | null): Promise<Transcription> {
+    const { segments: _segments, ...rest } = await this.transcribeTimed(wav, settings, languageOverride, false);
+    return rest;
+  }
+
+  /** `transcribe` with where each stretch of speech sits in the clip (a video's narration, for the Agent). */
+  async transcribeTimed(wav: Buffer, settings: SpeechSettings, languageOverride: string | null, timestamps = true): Promise<TimedTranscription> {
     const seconds = wavSeconds(wav);
     if (seconds < 0.3) throw new HttpError(400, "The clip is too short.");
     this.busy += 1;
     try {
       const [engine] = await Promise.all([this.ensureEngine(), this.ensureModel(settings.model)]);
-      const run = this.queue.then(() => this.run(engine, wav, settings.model, languageOverride ?? settings.language));
+      const run = this.queue.then(() => this.run(engine, wav, settings.model, languageOverride ?? settings.language, timestamps));
       this.queue = run.catch(() => undefined);
       const result = await run;
       return { ...result, seconds };
@@ -257,14 +263,14 @@ export class Speech {
     return job.promise;
   }
 
-  private run(engine: Binary, wav: Buffer, model: SpeechModel, language: string): Promise<Omit<Transcription, "seconds">> {
+  private run(engine: Binary, wav: Buffer, model: SpeechModel, language: string, timestamps: boolean): Promise<Omit<TimedTranscription, "seconds">> {
     const dir = mkdtempSync(join(tmpdir(), "sessionboxer-speech-"));
     const clip = join(dir, "clip.wav");
     const out = join(dir, "out");
     writeFileSync(clip, wav, { mode: 0o600 });
     const started = Date.now();
-    const args = ["-m", modelFile(model), "-f", clip, "-l", language, "-t", String(THREADS), "--no-timestamps", "--no-prints", "--output-json", "--output-file", out];
-    return new Promise<Omit<Transcription, "seconds">>((resolve, reject) => {
+    const args = ["-m", modelFile(model), "-f", clip, "-l", language, "-t", String(THREADS), ...(timestamps ? [] : ["--no-timestamps"]), "--no-prints", "--output-json", "--output-file", out];
+    return new Promise<Omit<TimedTranscription, "seconds">>((resolve, reject) => {
       let stderr = "";
       const child = spawn(engine.path, args, { stdio: ["ignore", "ignore", "pipe"] });
       const timer = setTimeout(() => child.kill("SIGKILL"), RUN_TIMEOUT_MS);
@@ -281,13 +287,22 @@ export class Speech {
           return;
         }
         try {
-          const parsed = JSON.parse(readFileSync(`${out}.json`, "utf8")) as { result?: { language?: string }; transcription?: { text?: string }[] };
-          const text = (parsed.transcription ?? [])
+          const parsed = JSON.parse(readFileSync(`${out}.json`, "utf8")) as {
+            result?: { language?: string };
+            transcription?: { text?: string; offsets?: { from?: number; to?: number } }[];
+          };
+          const parts = parsed.transcription ?? [];
+          const text = parts
             .map((s) => s.text ?? "")
             .join(" ")
             .replace(/\s+/g, " ")
             .trim();
-          resolve({ text, language: parsed.result?.language ?? language, tookMs: Date.now() - started, model });
+          const segments: TranscriptionSegment[] = timestamps
+            ? parts
+                .map((s) => ({ start: (s.offsets?.from ?? 0) / 1000, end: (s.offsets?.to ?? 0) / 1000, text: (s.text ?? "").replace(/\s+/g, " ").trim() }))
+                .filter((s) => s.text !== "")
+            : [];
+          resolve({ text, language: parsed.result?.language ?? language, tookMs: Date.now() - started, model, segments });
         } catch (e) {
           reject(new HttpError(500, `whisper-cli produced no transcript: ${e instanceof Error ? e.message : String(e)}`));
         }

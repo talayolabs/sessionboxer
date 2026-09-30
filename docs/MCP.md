@@ -268,6 +268,7 @@ The wait tools (`session_wait`, `approval_wait`) block for at most **20 s** per 
 | [`notify`](#notify) | Push a notification to you | session |
 | [`terminal_list`](#terminal_list) | Your Terminals | session |
 | [`terminal_read`](#terminal_read) | What a Terminal printed | session |
+| [`transcribe_media`](#transcribe_media) | Speech to text with timestamps for a video or audio file | session |
 | [`ui_open`](#ui_open) | Open a pane in your browser | session |
 | [`sessions_list`](#sessions_list) | Every session | all |
 | [`session_get`](#session_get) | One session and its last reply | all |
@@ -455,6 +456,17 @@ No parameters. Returns the Terminals of the session, yours and the ones `ui_open
 | `lines` | integer 1–2,000, default 100 | How many of the last lines |
 
 Returns `{ id, text, exitCode }`: the last lines of the Terminal's retained output (what you would see scrolling up in the pane) and the shell's exit code, null while it runs.
+
+#### `transcribe_media`
+
+Speech to text for a video or audio file in the Workspace — a screen recording or camera clip attached to a prompt, a voice note — with the time of every stretch of speech. The MCP server extracts the audio with the box's `ffmpeg` (16 kHz mono WAV under `.sessionboxer/tmp/`, removed afterwards); the Control Plane reads it from the Daemon and transcribes it with the same Whisper that powers dictation (**Settings → Speech**: the model, its download on first use, the language). Nothing about the content is logged.
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `path` | string, *required* | The media file, absolute or Workspace-relative (`.sessionboxer/uploads/…/screen-….webm`) |
+| `language` | ISO 639-1 code or `auto`, optional | The speech's language; the speech setting when left out |
+
+Returns `{ path, language, seconds, model, text, segments }`, `segments` being `[{ start, end, text }]` in seconds. About 15 minutes of audio at most per call (longer files are cut with `ffmpeg -ss/-t` first). When a prompt carries a video or audio attachment the Daemon adds to it the way through: transcribe with this tool, and whenever the speaker refers to the screen take the frame at that time with `ffmpeg -ss <start> -i <file> -frames:v 1 frame.png` and look at it.
 
 #### `ui_open`
 

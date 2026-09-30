@@ -58,6 +58,9 @@ import {
   PtyListResult,
   ROOT_BRANCH_ID,
   FS_TAR_PATH,
+  FS_RAW_PATH,
+  SPEECH_CLIP_MAX_BYTES,
+  type TimedTranscription,
   DaemonReposInspectResult,
   type DaemonReposSeedParams,
   DaemonReposSeedResult,
@@ -237,6 +240,8 @@ export class SessionManager {
   private readonly viewers = new Map<object, { sessionId: string; pane: string }>();
   /** Global Settings as the UI sees them, for `settings_get`; wired by the server. */
   publicSettings: (() => Promise<PublicSettings>) | null = null;
+  /** Whisper on the host for the Agent's `transcribe_media`; `null` until the server wires Speech. */
+  transcribeMedia: ((wav: Buffer, language: string | null) => Promise<TimedTranscription>) | null = null;
   /** Told when a turn (verification included) is over and nothing follows it; see `onTurnSettled`. */
   private readonly settledListeners = new Set<(id: string, outcome: TurnOutcome) => void>();
 
@@ -311,6 +316,7 @@ export class SessionManager {
       terminalRead: (id, ptyId, lines) => this.terminalRead(id, ptyId, lines),
       terminalOpen: (id, cols, rows) => this.terminalOpen(id, cols, rows),
       terminalInput: (id, ptyId, data) => this.terminalInput(id, ptyId, Buffer.from(data, "utf8")),
+      transcribeMedia: (id, path, language) => this.transcribeWorkspaceWav(id, path, language),
       panesOpen: (id) => [...new Set([...this.viewers.values()].filter((v) => v.sessionId === id).map((v) => v.pane))],
       appendEvent: (id, body) => {
         const ev = this.db.appendEvent(id, body);
@@ -450,6 +456,22 @@ export class SessionManager {
   }
 
   /** HTTP base URL of a live Sandbox's Daemon (raw Workspace files, VS Code), reachable only from the host. */
+  /** Reads a WAV the Agent left in the Workspace (`transcribe_media`) and runs it through the host's Whisper. */
+  private async transcribeWorkspaceWav(id: string, path: string, language: string | null): Promise<TimedTranscription> {
+    const transcribe = this.transcribeMedia;
+    if (!transcribe) throw new Error("Speech to text is not available on this Control Plane.");
+    const target = new URL(FS_RAW_PATH, await this.daemonHttpUrl(id));
+    target.searchParams.set("path", path);
+    const res = await fetch(target);
+    if (!res.ok) throw new Error(`Could not read ${path} from the Workspace: ${(await res.text()) || res.statusText}`);
+    if (Number(res.headers.get("content-length") ?? 0) > SPEECH_CLIP_MAX_BYTES) {
+      throw new Error(`${path} is larger than ${Math.round(SPEECH_CLIP_MAX_BYTES / 1024 / 1024)} MB; transcribe the audio in parts.`);
+    }
+    const wav = Buffer.from(await res.arrayBuffer());
+    if (wav.length > SPEECH_CLIP_MAX_BYTES) throw new Error(`${path} is larger than ${Math.round(SPEECH_CLIP_MAX_BYTES / 1024 / 1024)} MB; transcribe the audio in parts.`);
+    return transcribe(wav, language);
+  }
+
   async daemonHttpUrl(id: string): Promise<string> {
     const s = this.get(id);
     if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {

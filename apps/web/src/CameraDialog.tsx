@@ -1,17 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MAX_VIDEO_S, cameraError, canRecordVideo, captureFile, listCameras, openCamera, snapPhoto, startClip, stopStream, type ClipRecording, type Facing } from "./camera";
+import {
+  MAX_VIDEO_S,
+  cameraError,
+  canCaptureScreen,
+  canRecordVideo,
+  captureFile,
+  listCameras,
+  openCamera,
+  openScreen,
+  screenError,
+  snapPhoto,
+  startClip,
+  stopStream,
+  type CaptureKind,
+  type ClipRecording,
+  type Facing,
+} from "./camera";
 import { formatBytes } from "./format";
 import { Modal } from "./ui";
 
-type Mode = "photo" | "video";
+type Mode = CaptureKind;
 type Captured = { kind: Mode; blob: Blob; url: string };
+
+const TITLES: Record<Mode, string> = { photo: "Your photo", video: "Your video", screen: "Your screen recording" };
 
 function clock(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 /**
- * Live preview from the camera; **Take photo** or **Record** / **Stop**, then the result to look at,
+ * Live preview from the camera — or the screen, window or tab picked in the browser's dialog, with the
+ * microphone for narration; **Take photo** or **Record** / **Stop**, then the result to look at,
  * **Retake** or **Attach** — which hands a File to the composer's attachment list, like a picked file.
  */
 export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) => void; onClose: () => void }) {
@@ -19,6 +38,8 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
   const [facing, setFacing] = useState<Facing>("environment");
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+  /** Bumped to open the browser's screen picker again. */
+  const [pick, setPick] = useState(0);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState<{ clip: ClipRecording; startedAt: number } | null>(null);
@@ -29,13 +50,14 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
   const capturedRef = useRef<Captured | null>(null);
   capturedRef.current = captured;
 
-  // One stream per (mode, camera): the microphone joins only for a clip.
+  // One stream per (mode, camera or picked screen): the microphone joins only for a clip.
   useEffect(() => {
     let current: MediaStream | null = null;
     let cancelled = false;
     setError(null);
     setStream(null);
-    openCamera(facing, mode === "video", deviceId)
+    const open = mode === "screen" ? openScreen() : openCamera(facing, mode === "video", deviceId);
+    open
       .then(async (s) => {
         if (cancelled) {
           stopStream(s);
@@ -43,16 +65,31 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
         }
         current = s;
         setStream(s);
-        setCameras(await listCameras());
+        if (mode === "screen") {
+          // The browser's own "Stop sharing" ends the track: keep what was recorded, or ask for a screen again.
+          for (const t of s.getVideoTracks()) {
+            t.addEventListener("ended", () => {
+              if (cancelled) return;
+              if (recordingRef.current) void stopRef.current();
+              else {
+                stopStream(s);
+                setStream(null);
+                setError("Sharing stopped.");
+              }
+            });
+          }
+        } else {
+          setCameras(await listCameras());
+        }
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(cameraError(e));
+        if (!cancelled) setError(mode === "screen" ? screenError(e) : cameraError(e));
       });
     return () => {
       cancelled = true;
       stopStream(current);
     };
-  }, [mode, facing, deviceId]);
+  }, [mode, facing, deviceId, pick]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -106,13 +143,15 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
     }
   };
 
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const stopVideo = useCallback(async () => {
     const clip = recordingRef.current;
     if (!clip) return;
     recordingRef.current = null;
     setRecording(null);
     try {
-      keep("video", await clip.stop());
+      keep(modeRef.current === "screen" ? "screen" : "video", await clip.stop());
     } catch (e) {
       setError(cameraError(e));
     }
@@ -123,6 +162,7 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
   const retake = () => {
     if (captured) URL.revokeObjectURL(captured.url);
     setCaptured(null);
+    if (mode === "screen" && !stream) setPick((n) => n + 1);
   };
 
   const attach = () => {
@@ -141,13 +181,15 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
     }
   };
 
-  const mirrored = !deviceId && facing === "user";
+  const screen = mode === "screen";
+  const mirrored = !screen && !deviceId && facing === "user";
   const busy = recording !== null;
   const canSwitch = cameras.length > 1 || cameras.length === 0;
   const elapsed = recording ? Math.max(0, Math.floor((now - recording.startedAt) / 1000)) : 0;
+  const screenTitle = !canRecordVideo() ? "This browser cannot record video (MediaRecorder)." : !canCaptureScreen() ? "This browser cannot record the screen (getDisplayMedia)." : undefined;
 
   return (
-    <Modal className="camera-dialog" title={captured ? (captured.kind === "photo" ? "Your photo" : "Your video") : "Camera"} dismissible={!busy} onClose={onClose}>
+    <Modal className="camera-dialog" title={captured ? TITLES[captured.kind] : screen ? "Screen recording" : "Camera"} dismissible={!busy} onClose={onClose}>
       {!captured && (
         <div className="segmented small camera-modes" role="tablist" aria-label="What to capture">
           <button type="button" role="tab" aria-selected={mode === "photo"} disabled={busy} onClick={() => setMode("photo")}>
@@ -155,6 +197,9 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
           </button>
           <button type="button" role="tab" aria-selected={mode === "video"} disabled={busy || !canRecordVideo()} title={canRecordVideo() ? undefined : "This browser cannot record video (MediaRecorder)."} onClick={() => setMode("video")}>
             Video
+          </button>
+          <button type="button" role="tab" aria-selected={screen} disabled={busy || !canCaptureScreen()} title={screenTitle} onClick={() => setMode("screen")}>
+            Screen
           </button>
         </div>
       )}
@@ -167,9 +212,20 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
           )
         ) : (
           <>
-            <video ref={videoRef} className={mirrored ? "mirrored" : undefined} muted autoPlay playsInline aria-label="Camera preview" />
-            {!stream && !error && <div className="camera-overlay muted">Starting the camera\u2026</div>}
-            {error && <div className="camera-overlay error">{error}</div>}
+            <video ref={videoRef} className={mirrored ? "mirrored" : undefined} muted autoPlay playsInline aria-label={screen ? "Screen preview" : "Camera preview"} />
+            {!stream && !error && <div className="camera-overlay muted">{screen ? "Choose a screen, window or tab\u2026" : "Starting the camera\u2026"}</div>}
+            {error && (
+              <div className="camera-overlay error">
+                <div className="stack">
+                  <span>{error}</span>
+                  {screen && (
+                    <button type="button" onClick={() => setPick((n) => n + 1)}>
+                      Choose screen
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             {recording && (
               <div className="camera-rec" role="status">
                 <span className="rec-dot" aria-hidden="true" />
@@ -193,9 +249,15 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
           </>
         ) : (
           <>
-            <button type="button" onClick={switchCamera} disabled={busy || !stream || !canSwitch} title="Switch camera">
-              Switch camera
-            </button>
+            {screen ? (
+              <button type="button" onClick={() => setPick((n) => n + 1)} disabled={busy} title="Pick another screen, window or tab">
+                Choose screen
+              </button>
+            ) : (
+              <button type="button" onClick={switchCamera} disabled={busy || !stream || !canSwitch} title="Switch camera">
+                Switch camera
+              </button>
+            )}
             <span className="spacer" />
             <button type="button" onClick={onClose} disabled={busy}>
               Cancel

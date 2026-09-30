@@ -165,7 +165,7 @@ export function CameraButton({ disabled, onFiles }: { disabled: boolean; onFiles
       <button
         type="button"
         className="tb"
-        title={support.ok ? "Camera: take a photo or record a video to attach" : `Camera: take a photo or record a video to attach. ${support.reason}`}
+        title={support.ok ? "Camera: take a photo, record a video or record the screen to attach" : `Camera: take a photo, record a video or record the screen to attach. ${support.reason}`}
         disabled={disabled}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => (support.ok ? setOpen(true) : inputRef.current?.click())}

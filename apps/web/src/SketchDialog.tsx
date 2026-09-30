@@ -21,9 +21,9 @@ import {
 const WIDTH_LABELS: Record<Width, string> = { thin: "Thin", med: "Medium", bold: "Bold" };
 const SOFTEN_LABELS: Record<Soften, string> = { low: "Low", med: "Medium", high: "High" };
 
-function Icon({ d, sharp }: { d: string; sharp?: boolean }) {
+function Icon({ d }: { d: string }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={sharp ? 2 : 1.6} strokeLinecap={sharp ? "butt" : "round"} strokeLinejoin={sharp ? "miter" : "round"} aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={d} />
     </svg>
   );
@@ -35,11 +35,40 @@ const ICONS = {
   close: "M4 4l8 8M12 4l-8 8",
   send: "M14 2L2 7l5 2 2 5zM14 2L7 9",
 };
-/** The same peak-and-valley line at each soften level: sharp corners, rounded ones, a wave. */
+const SOFTEN_LINE: Point[] = [
+  [1, 13],
+  [6, 3],
+  [10, 13],
+  [15, 3],
+];
+
+/**
+ * The polyline with each corner replaced by a quadratic curve that leaves the incoming segment `t` of the
+ * way before the corner and rejoins the outgoing one `t` of the way after it: 0 keeps the corners, 0.5 is
+ * the quadratic B-spline through the segment midpoints.
+ */
+function softenedPath(pts: Point[], t: number): string {
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  if (!first || !last) return "";
+  const n = (v: number) => String(Math.round(v * 100) / 100);
+  let d = `M${n(first[0])} ${n(first[1])}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1];
+    const c = pts[i];
+    const next = pts[i + 1];
+    if (!prev || !c || !next) continue;
+    d += `L${n(c[0] + (prev[0] - c[0]) * t)} ${n(c[1] + (prev[1] - c[1]) * t)}`;
+    d += `Q${n(c[0])} ${n(c[1])} ${n(c[0] + (next[0] - c[0]) * t)} ${n(c[1] + (next[1] - c[1]) * t)}`;
+  }
+  return `${d}L${n(last[0])} ${n(last[1])}`;
+}
+
+/** The same A-B-C-D line at each soften level: as drawn, lightly smoothed, fully smoothed. */
 const SOFTEN_ICONS: Record<Soften, string> = {
-  low: "M1 13L6 3L10 13L15 3",
-  med: "M1 13L4.3 6.4Q6 3 7.41 6.53L8.59 9.47Q10 13 11.7 9.6L15 3",
-  high: "M1 13C3.5 13 3.5 3 6 3S7.5 13 10 13S12.5 3 15 3",
+  low: softenedPath(SOFTEN_LINE, 0),
+  med: softenedPath(SOFTEN_LINE, 0.25),
+  high: softenedPath(SOFTEN_LINE, 0.5),
 };
 
 /**
@@ -229,7 +258,7 @@ export function SketchDialog({ image, onDone, onClose }: { image: { url: string;
         <div className="segmented small" role="radiogroup" aria-label="Soften">
           {SOFTENS.map((s) => (
             <button key={s} type="button" role="radio" aria-checked={soften === s} aria-selected={soften === s} title={`Soften: ${SOFTEN_LABELS[s].toLowerCase()} — how much each line is rounded`} aria-label={`Soften ${SOFTEN_LABELS[s].toLowerCase()}`} onClick={() => setSoften(s)}>
-              <Icon d={SOFTEN_ICONS[s]} sharp={s === "low"} />
+              <Icon d={SOFTEN_ICONS[s]} />
             </button>
           ))}
         </div>

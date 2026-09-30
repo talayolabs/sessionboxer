@@ -1426,8 +1426,8 @@ function SessionView({
     if (attachments.items.length !== files.length) return;
     // `/util …` registers a Utility from the composer without the credentials ever entering the transcript (ADR-0073).
     const util = parseUtilCommand(t);
+    draft.set("");
     if (util) {
-      draft.set("");
       setUtilQuickAdd(util);
       return;
     }

@@ -21,7 +21,7 @@ const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
 const ICON = fileURLToPath(new URL("../icons/icon.png", import.meta.url));
 /** Cookies, service worker and storage of the web UI live here, apart from any other Electron session. */
 const PARTITION = "persist:sessionboxer";
-/** What the web UI may ask the window for; everything else (geolocation, camera, USB…) is refused. */
+/** What the web UI may ask the window for (`media` is the microphone for dictation and the camera for photo/video attachments); everything else (geolocation, USB…) is refused. */
 const PERMISSIONS = new Set(["notifications", "media", "clipboard-read", "clipboard-sanitized-write", "fullscreen", "pointerLock"]);
 /** Install Docker for macOS, Windows and Linux, with the engine to pick on each. */
 const DOCKER_DOCS = "https://sessionboxer.talayolabs.com/#docker";
@@ -264,10 +264,7 @@ if (!app.requestSingleInstanceLock()) {
   // `ready` fires only once this module has finished evaluating, so it cannot be awaited at the top level (Electron's ESM caveat).
   void app.whenReady().then(() => {
     const ses = session.fromPartition(PARTITION);
-    ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
-      const camera = permission === "media" && "mediaTypes" in details && details.mediaTypes?.includes("video") === true;
-      callback(sameOrigin(details.requestingUrl) && PERMISSIONS.has(permission) && !camera);
-    });
+    ses.setPermissionRequestHandler((_wc, permission, callback, details) => callback(sameOrigin(details.requestingUrl) && PERMISSIONS.has(permission)));
     ses.setPermissionCheckHandler((_wc, permission, origin) => sameOrigin(origin) && PERMISSIONS.has(permission));
     tray = createTray();
     refreshTray();

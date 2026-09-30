@@ -255,6 +255,15 @@ button.attach-open:hover .attach-name { text-decoration: underline; }
 .preview-dialog video { background: #000; }
 .preview-dialog audio { width: 100%; }
 .preview-dialog iframe { width: 100%; height: min(75vh, 900px); border: 0; background: #fff; }
+.camera-dialog { max-width: min(960px, 96vw); max-height: 92vh; }
+.camera-modes { align-self: flex-start; }
+.camera-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; background: #000; border-radius: var(--radius); overflow: hidden; }
+.camera-stage video, .camera-stage img { display: block; width: 100%; max-height: min(70vh, 800px); object-fit: contain; }
+.camera-stage video.mirrored { transform: scaleX(-1); }
+.camera-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; text-align: center; color: #fff; }
+.camera-overlay.error { color: var(--error); background: rgba(0, 0, 0, 0.6); }
+.camera-rec { position: absolute; top: 10px; left: 10px; display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.camera-actions { flex-wrap: wrap; }
 .preview-image, .preview-video, .preview-audio { width: max-content; min-width: min(420px, 90vw); }
 .preview-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--fs-md); }
 .attachments.uploaded { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }

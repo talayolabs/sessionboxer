@@ -3,8 +3,10 @@ import { formatBytes } from "./format";
 import type { PendingAttachments } from "./attachments-pending";
 import { AttachmentPreviewDialog, AttachmentThumb, previewKind } from "./AttachmentPreview";
 import { MAX_RECORDING_S, micSupport, startRecording, transcribe, type Recording } from "./speech";
+import { cameraSupport } from "./camera";
+import { CameraDialog } from "./CameraDialog";
 
-// The attach and dictate controls shared by the Session composer and the New session box.
+// The attach, camera and dictate controls shared by the Session composer and the New session box.
 
 export function ToolIcon({ d }: { d: string }) {
   return (
@@ -17,6 +19,7 @@ export function ToolIcon({ d }: { d: string }) {
 export const TOOL_ICONS = {
   attach: "M10.5 4.5l-4.8 4.8a1.9 1.9 0 0 0 2.7 2.7l5.3-5.3a3.1 3.1 0 0 0-4.4-4.4L3.6 8a4.3 4.3 0 0 0 6.1 6.1L13 10.8",
   mic: "M8 1.5a2.5 2.5 0 0 1 2.5 2.5v4a2.5 2.5 0 0 1-5 0V4A2.5 2.5 0 0 1 8 1.5zM3.5 8a4.5 4.5 0 0 0 9 0M8 12.5v2M5.5 14.5h5",
+  camera: "M2 5.5A1.5 1.5 0 0 1 3.5 4h1.7l1-1.5h3.6l1 1.5h1.7A1.5 1.5 0 0 1 14 5.5v6A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5zM8 11a2.6 2.6 0 1 0 0-5.2A2.6 2.6 0 0 0 8 11z",
 };
 
 /** Files carried by a drag or a paste (`null` when there are none, e.g. plain text). */
@@ -131,6 +134,45 @@ export function AttachButton({ disabled, onFiles }: { disabled: boolean; onFiles
       <button type="button" className="tb" title="Attach files (or drop / paste them here)" disabled={disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => inputRef.current?.click()}>
         <ToolIcon d={TOOL_ICONS.attach} />
       </button>
+    </>
+  );
+}
+
+/**
+ * Camera: a photo or a video from the device, into the attachment list. With a secure page the dialog
+ * shows the live preview; without one (plain http over the LAN) the browser's capture picker takes over,
+ * which on a phone is its camera app.
+ */
+export function CameraButton({ disabled, onFiles }: { disabled: boolean; onFiles: (files: Iterable<File>) => void }) {
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const support = cameraSupport();
+  return (
+    <>
+      {!support.ok && (
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*,video/*"
+          capture="environment"
+          hidden
+          onChange={(e) => {
+            if (e.target.files) onFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      )}
+      <button
+        type="button"
+        className="tb"
+        title={support.ok ? "Camera: take a photo or record a video to attach" : `Camera: take a photo or record a video to attach. ${support.reason}`}
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => (support.ok ? setOpen(true) : inputRef.current?.click())}
+      >
+        <ToolIcon d={TOOL_ICONS.camera} />
+      </button>
+      {open && <CameraDialog onCapture={(file) => onFiles([file])} onClose={() => setOpen(false)} />}
     </>
   );
 }

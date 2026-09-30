@@ -8,7 +8,7 @@ import { Markdown } from "@tiptap/markdown";
 import { useDraft, type Draft } from "./draft";
 import { lowlight } from "./highlight";
 import type { PendingAttachments } from "./attachments-pending";
-import { AttachButton, AttachList, DictationLine, MicButton, droppedFiles, useDictation } from "./composer-tools";
+import { AttachButton, AttachList, CameraButton, DictationLine, MicButton, droppedFiles, useDictation } from "./composer-tools";
 import { startSplitterDrag } from "./splitter";
 
 export type ComposerMode = "raw" | "rich";
@@ -461,6 +461,7 @@ export function Composer(props: ComposerProps) {
         {above}
         <div className="toolbar" role="toolbar" aria-label="Formatting">
           <AttachButton disabled={disabled} onFiles={addFiles} />
+          <CameraButton disabled={disabled} onFiles={addFiles} />
           <span className="tb-sep" role="separator" aria-orientation="vertical" />
           <MicButton control={dictation} disabled={disabled} />
           <span className="tb-sep" role="separator" aria-orientation="vertical" />

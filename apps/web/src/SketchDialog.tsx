@@ -44,10 +44,11 @@ const SOFTEN_LINE: Point[] = [
 
 /**
  * The polyline with each corner replaced by a quadratic curve that leaves the incoming segment `t` of the
- * way before the corner and rejoins the outgoing one `t` of the way after it: 0 keeps the corners, 0.5 is
- * the quadratic B-spline through the segment midpoints.
+ * way before the corner and rejoins the outgoing one `t` of the way after it (0 keeps the corners, 0.5 is
+ * the quadratic B-spline through the segment midpoints); `pull` moves the curve's control point from the
+ * corner toward the chord between those two points, flattening the peak further.
  */
-function softenedPath(pts: Point[], t: number): string {
+function softenedPath(pts: Point[], t: number, pull = 0): string {
   const first = pts[0];
   const last = pts[pts.length - 1];
   if (!first || !last) return "";
@@ -58,8 +59,10 @@ function softenedPath(pts: Point[], t: number): string {
     const c = pts[i];
     const next = pts[i + 1];
     if (!prev || !c || !next) continue;
-    d += `L${n(c[0] + (prev[0] - c[0]) * t)} ${n(c[1] + (prev[1] - c[1]) * t)}`;
-    d += `Q${n(c[0])} ${n(c[1])} ${n(c[0] + (next[0] - c[0]) * t)} ${n(c[1] + (next[1] - c[1]) * t)}`;
+    const from: Point = [c[0] + (prev[0] - c[0]) * t, c[1] + (prev[1] - c[1]) * t];
+    const to: Point = [c[0] + (next[0] - c[0]) * t, c[1] + (next[1] - c[1]) * t];
+    const ctrl: Point = [c[0] + ((from[0] + to[0]) / 2 - c[0]) * pull, c[1] + ((from[1] + to[1]) / 2 - c[1]) * pull];
+    d += `L${n(from[0])} ${n(from[1])}Q${n(ctrl[0])} ${n(ctrl[1])} ${n(to[0])} ${n(to[1])}`;
   }
   return `${d}L${n(last[0])} ${n(last[1])}`;
 }
@@ -67,8 +70,8 @@ function softenedPath(pts: Point[], t: number): string {
 /** The same A-B-C-D line at each soften level: as drawn, lightly smoothed, fully smoothed. */
 const SOFTEN_ICONS: Record<Soften, string> = {
   low: softenedPath(SOFTEN_LINE, 0),
-  med: softenedPath(SOFTEN_LINE, 0.25),
-  high: softenedPath(SOFTEN_LINE, 0.5),
+  med: softenedPath(SOFTEN_LINE, 0.35, 0.15),
+  high: softenedPath(SOFTEN_LINE, 0.5, 0.45),
 };
 
 /**

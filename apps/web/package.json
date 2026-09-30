@@ -25,6 +25,7 @@
     "cronstrue": "^3.24.0",
     "lowlight": "^3.3.0",
     "mermaid": "~11.17.2",
+    "perfect-freehand": "^1.2.3",
     "qrcode-generator": "^2.0.4",
     "radix-ui": "^1.6.7",
     "react": "^19.1.0",

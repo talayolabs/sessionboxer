@@ -18,6 +18,8 @@ export type PendingAttachments<A = PromptAttachment> = {
   /** Starts uploading the files right away; refused while the target is not live. */
   add: (files: Iterable<File>) => void;
   remove: (id: string) => void;
+  /** Swaps the file of an item for another (an edited image), keeping its place; uploads it right away. */
+  replace: (id: string, file: File) => void;
   clear: () => void;
   /** Every item is stored (and there is at least one). */
   ready: boolean;
@@ -66,6 +68,28 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
     setItems((cur) => cur.map((a) => (a.id === id ? { ...a, state } : a)));
   }, []);
 
+  /** The item for a file, its upload started (unless the file is too large). */
+  const start = useCallback(
+    (id: string, file: File): PendingAttachment<A> => {
+      const mimeType = file.type || "application/octet-stream";
+      const url = URL.createObjectURL(file);
+      if (file.size > MAX_UPLOAD_BYTES) {
+        return { id, name: file.name, size: file.size, mimeType, url, state: { kind: "error", message: `over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` } };
+      }
+      const controller = new AbortController();
+      controllers.current.set(id, controller);
+      upload(file, (progress) => patch(id, { kind: "uploading", progress }), controller.signal)
+        .then((attachment) => patch(id, { kind: "ready", attachment }))
+        .catch((e: unknown) => {
+          if (e instanceof DOMException && e.name === "AbortError") return;
+          patch(id, { kind: "error", message: e instanceof Error ? e.message : String(e) });
+        })
+        .finally(() => controllers.current.delete(id));
+      return { id, name: file.name, size: file.size, mimeType, url, state: { kind: "uploading", progress: 0 } };
+    },
+    [upload, patch],
+  );
+
   const add = useCallback(
     (files: Iterable<File>) => {
       if (!live) {
@@ -79,28 +103,28 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
         onError(`At most ${MAX_PROMPT_ATTACHMENTS} files per message.`);
         picked.splice(Math.max(0, room));
       }
-      const fresh = picked.map((file): PendingAttachment<A> => {
-        const id = `u${++nextId}`;
-        const mimeType = file.type || "application/octet-stream";
-        const url = URL.createObjectURL(file);
-        if (file.size > MAX_UPLOAD_BYTES) {
-          return { id, name: file.name, size: file.size, mimeType, url, state: { kind: "error", message: `over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` } };
-        }
-        const controller = new AbortController();
-        controllers.current.set(id, controller);
-        upload(file, (progress) => patch(id, { kind: "uploading", progress }), controller.signal)
-          .then((attachment) => patch(id, { kind: "ready", attachment }))
-          .catch((e: unknown) => {
-            if (e instanceof DOMException && e.name === "AbortError") return;
-            patch(id, { kind: "error", message: e instanceof Error ? e.message : String(e) });
-          })
-          .finally(() => controllers.current.delete(id));
-        return { id, name: file.name, size: file.size, mimeType, url, state: { kind: "uploading", progress: 0 } };
-      });
+      const fresh = picked.map((file) => start(`u${++nextId}`, file));
       count.current += fresh.length;
       setItems((cur) => [...cur, ...fresh]);
     },
-    [upload, live, onError, patch],
+    [start, live, onError],
+  );
+
+  const replace = useCallback(
+    (id: string, file: File) => {
+      if (!live) {
+        onError("Files can only be attached while the Sandbox is running.");
+        return;
+      }
+      const old = itemsRef.current.find((a) => a.id === id);
+      if (!old) return;
+      controllers.current.get(id)?.abort();
+      URL.revokeObjectURL(old.url);
+      if (old.state.kind === "ready") discard?.(old.state.attachment);
+      const fresh = start(id, file);
+      setItems((cur) => cur.map((a) => (a.id === id ? fresh : a)));
+    },
+    [start, live, onError, discard],
   );
 
   const remove = useCallback(
@@ -126,6 +150,7 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
     items,
     add,
     remove,
+    replace,
     clear,
     ready: items.length > 0 && attachments.length === items.length,
     uploading: items.some((a) => a.state.kind === "uploading"),

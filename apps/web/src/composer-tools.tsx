@@ -5,8 +5,9 @@ import { AttachmentPreviewDialog, AttachmentThumb, previewKind } from "./Attachm
 import { MAX_RECORDING_S, micSupport, startRecording, transcribe, type Recording } from "./speech";
 import { cameraSupport } from "./camera";
 import { CameraDialog } from "./CameraDialog";
+import { SketchDialog } from "./SketchDialog";
 
-// The attach, camera and dictate controls shared by the Session composer and the New session box.
+// The attach, camera, dictate and draw controls shared by the Session composer and the New session box.
 
 export function ToolIcon({ d }: { d: string }) {
   return (
@@ -20,6 +21,7 @@ export const TOOL_ICONS = {
   attach: "M10.5 4.5l-4.8 4.8a1.9 1.9 0 0 0 2.7 2.7l5.3-5.3a3.1 3.1 0 0 0-4.4-4.4L3.6 8a4.3 4.3 0 0 0 6.1 6.1L13 10.8",
   mic: "M8 1.5a2.5 2.5 0 0 1 2.5 2.5v4a2.5 2.5 0 0 1-5 0V4A2.5 2.5 0 0 1 8 1.5zM3.5 8a4.5 4.5 0 0 0 9 0M8 12.5v2M5.5 14.5h5",
   camera: "M2 5.5A1.5 1.5 0 0 1 3.5 4h1.7l1-1.5h3.6l1 1.5h1.7A1.5 1.5 0 0 1 14 5.5v6A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5zM8 11a2.6 2.6 0 1 0 0-5.2A2.6 2.6 0 0 0 8 11z",
+  pencil: "M11.3 2.2l2.5 2.5L5.5 13H3v-2.5zM9.5 4l2.5 2.5M2.5 14.5h11",
 };
 
 /** Files carried by a drag or a paste (`null` when there are none, e.g. plain text). */
@@ -177,6 +179,19 @@ export function CameraButton({ disabled, onFiles }: { disabled: boolean; onFiles
   );
 }
 
+/** Opens a full-screen sheet to draw on; **Send** attaches the drawing as a PNG. */
+export function SketchButton({ disabled, onFiles }: { disabled: boolean; onFiles: (files: Iterable<File>) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="tb" title="Draw: sketch something to attach (a diagram, a mark-up, a rough screen)" disabled={disabled} onClick={() => setOpen(true)}>
+        <ToolIcon d={TOOL_ICONS.pencil} />
+      </button>
+      {open && <SketchDialog image={null} onDone={(file) => onFiles([file])} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
 export function MicButton({ control, disabled }: { control: DictationControl; disabled: boolean }) {
   const { dictation, now, toggle } = control;
   return (
@@ -218,8 +233,10 @@ export function DictationLine({ dictation }: { dictation: Dictation }) {
 export function AttachList<A>({ attachments }: { attachments: PendingAttachments<A> }) {
   const files = attachments.items;
   const [openId, setOpenId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
   const open = files.find((f) => f.id === openId) ?? null;
   const openKind = open ? previewKind(open.name, open.mimeType) : null;
+  const editing = files.find((f) => f.id === editId) ?? null;
   if (files.length === 0) return null;
   return (
     <>
@@ -245,6 +262,11 @@ export function AttachList<A>({ attachments }: { attachments: PendingAttachments
               <span className="attach-meta">
                 {f.state.kind === "uploading" ? `${Math.round(f.state.progress * 100)}%` : f.state.kind === "error" ? f.state.message : formatBytes(f.size)}
               </span>
+              {kind === "image" && f.state.kind !== "uploading" && (
+                <button type="button" className="attach-edit" aria-label={`Draw on ${f.name}`} title="Draw on this image" onClick={() => setEditId(f.id)}>
+                  <ToolIcon d={TOOL_ICONS.pencil} />
+                </button>
+              )}
               <button type="button" className="attach-remove" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => attachments.remove(f.id)}>
                 {"\u00d7"}
               </button>
@@ -253,6 +275,7 @@ export function AttachList<A>({ attachments }: { attachments: PendingAttachments
         })}
       </ul>
       {open && openKind && <AttachmentPreviewDialog item={open} kind={openKind} onClose={() => setOpenId(null)} />}
+      {editing && <SketchDialog image={{ url: editing.url, name: editing.name }} onDone={(file) => attachments.replace(editing.id, file)} onClose={() => setEditId(null)} />}
     </>
   );
 }

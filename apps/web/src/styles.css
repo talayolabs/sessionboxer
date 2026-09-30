@@ -238,6 +238,26 @@ a.attach-meta { color: var(--accent); text-decoration: none; }
 a.attach-meta:hover { text-decoration: underline; }
 .attach-remove { position: relative; padding: 0 4px; border: 0; background: none; color: var(--muted); font-size: var(--fs-base); line-height: 1; }
 .attach-remove:hover { color: var(--text); border: 0; }
+.attach-edit { position: relative; display: inline-flex; padding: 0 3px; border: 0; background: none; color: var(--muted); line-height: 1; }
+.attach-edit:hover { color: var(--text); border: 0; }
+.attach-edit svg { width: 13px; height: 13px; }
+
+/* Sketch: the whole viewport, the sheet in the middle, the tools at the bottom. */
+.modal-backdrop:has(> .sketch-dialog) { padding: 0; }
+.sketch-dialog { display: flex; flex-direction: column; gap: 10px; width: 100vw; height: 100vh; max-width: none; max-height: none; border: 0; border-radius: 0; padding: 12px 16px; }
+.sketch-dialog .modal-title { flex: none; font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sketch-stage { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--bg); border-radius: var(--radius); }
+.sketch-stage canvas { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; touch-action: none; cursor: crosshair; box-shadow: var(--shadow-float); background: #fff; }
+.sketch-stage.image canvas { background: repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0 / 16px 16px; }
+.sketch-actions { flex: none; flex-wrap: wrap; gap: 8px; }
+.sketch-colors { display: inline-flex; gap: 6px; padding: 0 4px; }
+.sketch-color { width: 24px; height: 24px; min-width: 0; padding: 0; border: 2px solid rgba(255, 255, 255, 0.45); border-radius: 50%; }
+.sketch-color.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+.sketch-width { display: inline-block; width: 18px; border-radius: 2px; background: currentColor; }
+.sketch-width.thin { height: 1px; }
+.sketch-width.med { height: 3px; }
+.sketch-width.bold { height: 6px; }
+.segmented .sketch-label { display: inline-flex; align-items: center; padding: 0 8px; }
 .attach-open { position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; }
 button.attach-open { cursor: zoom-in; }
 button.attach-open:hover .attach-name { text-decoration: underline; }

@@ -69,7 +69,7 @@ import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 import { SIDEBAR_MAX_PX, SIDEBAR_MIN_PX, PANE_MAX_FRAC, PANE_MIN_FRAC, clampPane, clampSidebar, loadSize, saveSize, startSplitterDrag } from "./splitter";
 import { AttachmentSession } from "./Attachments";
 import { usePendingAttachments, useStagedAttachments } from "./attachments-pending";
-import { AttachButton, AttachList, CameraButton, DictationLine, MicButton, droppedFiles, useDictation } from "./composer-tools";
+import { AttachButton, AttachList, CameraButton, DictationLine, MicButton, SketchButton, droppedFiles, useDictation } from "./composer-tools";
 import { BranchTree, type DividerRef } from "./BranchTree";
 import { COMPOSER_MAX_FRAC, COMPOSER_MIN_FRAC, Composer, type ComposerMode } from "./Composer";
 import { useDraftStore } from "./draft";
@@ -2300,6 +2300,7 @@ function NewSession({
               <AttachButton disabled={busy} onFiles={attachments.add} />
               <CameraButton disabled={busy} onFiles={attachments.add} />
               <MicButton control={dictation} disabled={busy} />
+              <SketchButton disabled={busy} onFiles={attachments.add} />
             </div>
             {dragging && <div className="drop-hint">Drop to attach to the first message</div>}
           </div>

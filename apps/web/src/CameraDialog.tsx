@@ -17,6 +17,7 @@ import {
   type Facing,
 } from "./camera";
 import { formatBytes } from "./format";
+import { SketchDialog } from "./SketchDialog";
 import { Modal } from "./ui";
 
 type Mode = CaptureKind;
@@ -171,6 +172,13 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
     onClose();
   };
 
+  // Draw on the photo just taken; Send there attaches the annotated PNG.
+  const [drawing, setDrawing] = useState(false);
+  const attachDrawn = (file: File) => {
+    onCapture(file);
+    onClose();
+  };
+
   const switchCamera = () => {
     if (cameras.length > 1) {
       const i = cameras.findIndex((c) => c.deviceId === (deviceId ?? stream?.getVideoTracks()[0]?.getSettings().deviceId));
@@ -189,95 +197,109 @@ export function CameraDialog({ onCapture, onClose }: { onCapture: (file: File) =
   const screenTitle = !canRecordVideo() ? "This browser cannot record video (MediaRecorder)." : !canCaptureScreen() ? "This browser cannot record the screen (getDisplayMedia)." : undefined;
 
   return (
-    <Modal className="camera-dialog" title={captured ? TITLES[captured.kind] : screen ? "Screen recording" : "Camera"} dismissible={!busy} onClose={onClose}>
-      {!captured && (
-        <div className="segmented small camera-modes" role="tablist" aria-label="What to capture">
-          <button type="button" role="tab" aria-selected={mode === "photo"} disabled={busy} onClick={() => setMode("photo")}>
-            Photo
-          </button>
-          <button type="button" role="tab" aria-selected={mode === "video"} disabled={busy || !canRecordVideo()} title={canRecordVideo() ? undefined : "This browser cannot record video (MediaRecorder)."} onClick={() => setMode("video")}>
-            Video
-          </button>
-          <button type="button" role="tab" aria-selected={screen} disabled={busy || !canCaptureScreen()} title={screenTitle} onClick={() => setMode("screen")}>
-            Screen
-          </button>
-        </div>
-      )}
-      <div className="camera-stage">
-        {captured ? (
-          captured.kind === "photo" ? (
-            <img src={captured.url} alt="The photo just taken" />
+    <>
+      <Modal className="camera-dialog" title={captured ? TITLES[captured.kind] : screen ? "Screen recording" : "Camera"} dismissible={!busy} onClose={onClose}>
+        {!captured && (
+          <div className="segmented small camera-modes" role="tablist" aria-label="What to capture">
+            <button type="button" role="tab" aria-selected={mode === "photo"} disabled={busy} onClick={() => setMode("photo")}>
+              Photo
+            </button>
+            <button type="button" role="tab" aria-selected={mode === "video"} disabled={busy || !canRecordVideo()} title={canRecordVideo() ? undefined : "This browser cannot record video (MediaRecorder)."} onClick={() => setMode("video")}>
+              Video
+            </button>
+            <button type="button" role="tab" aria-selected={screen} disabled={busy || !canCaptureScreen()} title={screenTitle} onClick={() => setMode("screen")}>
+              Screen
+            </button>
+          </div>
+        )}
+        <div className="camera-stage">
+          {captured ? (
+            captured.kind === "photo" ? (
+              <img src={captured.url} alt="The photo just taken" />
+            ) : (
+              <video src={captured.url} controls autoPlay playsInline />
+            )
           ) : (
-            <video src={captured.url} controls autoPlay playsInline />
-          )
-        ) : (
-          <>
-            <video ref={videoRef} className={mirrored ? "mirrored" : undefined} muted autoPlay playsInline aria-label={screen ? "Screen preview" : "Camera preview"} />
-            {!stream && !error && <div className="camera-overlay muted">{screen ? "Choose a screen, window or tab\u2026" : "Starting the camera\u2026"}</div>}
-            {error && (
-              <div className="camera-overlay error">
-                <div className="stack">
-                  <span>{error}</span>
-                  {screen && (
-                    <button type="button" onClick={() => setPick((n) => n + 1)}>
-                      Choose screen
-                    </button>
-                  )}
+            <>
+              <video ref={videoRef} className={mirrored ? "mirrored" : undefined} muted autoPlay playsInline aria-label={screen ? "Screen preview" : "Camera preview"} />
+              {!stream && !error && <div className="camera-overlay muted">{screen ? "Choose a screen, window or tab\u2026" : "Starting the camera\u2026"}</div>}
+              {error && (
+                <div className="camera-overlay error">
+                  <div className="stack">
+                    <span>{error}</span>
+                    {screen && (
+                      <button type="button" onClick={() => setPick((n) => n + 1)}>
+                        Choose screen
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
-            {recording && (
-              <div className="camera-rec" role="status">
-                <span className="rec-dot" aria-hidden="true" />
-                {clock(elapsed)}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-      <div className="actions camera-actions">
-        {captured ? (
-          <>
-            <span className="muted small-text">{formatBytes(captured.blob.size)}</span>
-            <span className="spacer" />
-            <button type="button" onClick={retake}>
-              Retake
-            </button>
-            <button type="button" className="primary" onClick={attach}>
-              Attach
-            </button>
-          </>
-        ) : (
-          <>
-            {screen ? (
-              <button type="button" onClick={() => setPick((n) => n + 1)} disabled={busy} title="Pick another screen, window or tab">
-                Choose screen
+              )}
+              {recording && (
+                <div className="camera-rec" role="status">
+                  <span className="rec-dot" aria-hidden="true" />
+                  {clock(elapsed)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="actions camera-actions">
+          {captured ? (
+            <>
+              <span className="muted small-text">{formatBytes(captured.blob.size)}</span>
+              <span className="spacer" />
+              <button type="button" onClick={retake}>
+                Retake
               </button>
-            ) : (
-              <button type="button" onClick={switchCamera} disabled={busy || !stream || !canSwitch} title="Switch camera">
-                Switch camera
+              {captured.kind === "photo" && (
+                <button type="button" onClick={() => setDrawing(true)} title="Draw on the photo, then Send attaches it">
+                  Draw
+                </button>
+              )}
+              <button type="button" className="primary" onClick={attach}>
+                Attach
               </button>
-            )}
-            <span className="spacer" />
-            <button type="button" onClick={onClose} disabled={busy}>
-              Cancel
-            </button>
-            {mode === "photo" ? (
-              <button type="button" className="primary" onClick={() => void takePhoto()} disabled={!stream}>
-                Take photo
+            </>
+          ) : (
+            <>
+              {screen ? (
+                <button type="button" onClick={() => setPick((n) => n + 1)} disabled={busy} title="Pick another screen, window or tab">
+                  Choose screen
+                </button>
+              ) : (
+                <button type="button" onClick={switchCamera} disabled={busy || !stream || !canSwitch} title="Switch camera">
+                  Switch camera
+                </button>
+              )}
+              <span className="spacer" />
+              <button type="button" onClick={onClose} disabled={busy}>
+                Cancel
               </button>
-            ) : recording ? (
-              <button type="button" className="primary stop" onClick={() => void stopVideo()}>
-                Stop
-              </button>
-            ) : (
-              <button type="button" className="primary" onClick={startVideo} disabled={!stream}>
-                Record
-              </button>
-            )}
-          </>
-        )}
-      </div>
-    </Modal>
+              {mode === "photo" ? (
+                <button type="button" className="primary" onClick={() => void takePhoto()} disabled={!stream}>
+                  Take photo
+                </button>
+              ) : recording ? (
+                <button type="button" className="primary stop" onClick={() => void stopVideo()}>
+                  Stop
+                </button>
+              ) : (
+                <button type="button" className="primary" onClick={startVideo} disabled={!stream}>
+                  Record
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </Modal>
+      {drawing && captured && (
+        <SketchDialog
+          image={{ url: captured.url, name: captureFile(captured.blob, captured.kind).name }}
+          onDone={attachDrawn}
+          onClose={() => setDrawing(false)}
+        />
+      )}
+    </>
   );
 }

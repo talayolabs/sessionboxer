@@ -37,9 +37,9 @@ const ICONS = {
 };
 /** A line drawn with that soften level: sharp corners, rounded ones, a wave. */
 const SOFTEN_ICONS: Record<Soften, string> = {
-  low: "M2 12l4-8 4 8 4-8",
-  med: "M2 12l3-6.5c.5-1 1.5-1 2 0l2 5c.5 1 1.5 1 2 0L14 4",
-  high: "M2 8c2-6 4-6 6 0s4 6 6 0",
+  low: "M1 13L5.5 3L10.5 13L15 3",
+  med: "M1 13L4.6 5Q5.5 3 6.4 5L9.6 11Q10.5 13 11.4 11L15 3",
+  high: "M1 13C3 13 3.5 3 5.5 3S8.5 13 10.5 13S13 3 15 3",
 };
 
 /**

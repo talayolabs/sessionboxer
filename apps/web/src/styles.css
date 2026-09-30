@@ -250,16 +250,16 @@ a.attach-meta:hover { text-decoration: underline; }
 .sketch-stage canvas { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; touch-action: none; cursor: crosshair; box-shadow: var(--shadow-float); background: #fff; }
 .sketch-stage.image canvas { background: repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0 / 16px 16px; }
 .sketch-actions { flex: none; flex-wrap: wrap; gap: 8px; }
-.sketch-colors { display: inline-flex; gap: 6px; padding: 0 4px; }
-.sketch-color { width: 24px; height: 24px; min-width: 0; padding: 0; border: 2px solid rgba(255, 255, 255, 0.45); border-radius: 50%; }
+.sketch-colors { display: inline-flex; gap: 8px; padding: 0 4px; }
+.sketch-color { width: 28px; height: 28px; min-width: 0; padding: 0; border: 2px solid rgba(255, 255, 255, 0.45); border-radius: 50%; }
 .sketch-color.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
-.sketch-width { display: inline-block; width: 18px; border-radius: 2px; background: currentColor; }
+.sketch-width { display: inline-block; width: 22px; border-radius: 2px; background: currentColor; }
 .sketch-width.thin { height: 1px; }
 .sketch-width.med { height: 3px; }
-.sketch-width.bold { height: 6px; }
-.sketch-actions .icon-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; padding: 0 8px; }
+.sketch-width.bold { height: 7px; }
+.sketch-actions .icon-btn, .sketch-actions .segmented button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 42px; padding: 0 10px; }
+.sketch-actions .icon-btn svg, .sketch-actions .segmented svg { width: 24px; height: 24px; }
 .sketch-actions .icon-btn.busy svg { animation: pulse 0.9s ease-in-out infinite alternate; }
-.sketch-actions .segmented button { padding: 4px 10px; }
 .attach-open { position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; }
 button.attach-open { cursor: zoom-in; }
 button.attach-open:hover .attach-name { text-decoration: underline; }

@@ -1367,3 +1367,14 @@ code.token { font-size: var(--fs-sm); word-break: break-all; user-select: all; b
 .env-pick-menu .select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .follow-inline .input-row input { flex: 1; min-width: 0; }
 .follow-inline .input-row select { max-width: 40%; }
+
+/* HTML Artifacts (ADR-0078): the card's app frame and the App pane. */
+.artifact-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 10px; border-top: 1px solid var(--border); font-size: var(--fs-sm); }
+.artifact-frame { position: relative; height: 420px; min-height: 160px; max-height: 90vh; resize: vertical; overflow: hidden; border-top: 1px solid var(--border); background: #fff; }
+.artifact-frame:fullscreen { resize: none; max-height: none; }
+.attachment .artifact-frame iframe { display: block; width: 100%; height: 100%; border: 0; border-top: 0; background: #fff; }
+.artifact-stopped { display: flex; align-items: center; justify-content: center; height: 100%; background: var(--sunken); }
+.app-body { position: relative; flex: 1; min-height: 0; display: flex; background: #fff; }
+.app-body:fullscreen { background: #fff; }
+.app-frame { flex: 1; width: 100%; height: 100%; border: 0; background: #fff; }
+.app-pane-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

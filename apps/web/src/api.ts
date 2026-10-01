@@ -8,6 +8,7 @@ import type {
   AuthPairRedeemRequest,
   AuthPrincipal,
   CodeOpenParams,
+  FsWatchParams,
   CodeStartParams,
   CodeThemeParams,
   CodeServerStatus,
@@ -327,6 +328,7 @@ export const api = {
   codeStop: (id: string) => request<CodeServerStatus>(`/sessions/${id}/code-server`, { method: "DELETE" }),
   codeOpen: (id: string, target: CodeOpenParams) =>
     request<{ ok: true }>(`/sessions/${id}/code-server/open`, { method: "POST", body: JSON.stringify(target) }),
+  fsWatch: (id: string, params: FsWatchParams) => request<{ ok: true }>(`/sessions/${id}/fs/watch`, { method: "POST", body: JSON.stringify(params) }),
   prs: (id: string) => request<PullRequest[]>(`/sessions/${id}/prs`),
   attachPr: (id: string, ref: string) => request<PullRequest>(`/sessions/${id}/prs`, { method: "POST", body: JSON.stringify({ ref }) }),
   prItems: (id: string, prId: string) => request<PrItem[]>(`/sessions/${id}/prs/${prId}/items`),

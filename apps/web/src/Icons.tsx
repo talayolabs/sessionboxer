@@ -7,6 +7,7 @@ export type IconName =
   | "verification"
   | "scheduled"
   | "terminal"
+  | "app"
   | "context"
   | "snapshot"
   | "fork"
@@ -55,6 +56,12 @@ const GLYPHS: Record<IconName, ReactNode> = {
     <>
       <path d="M4 17l6-6-6-6" />
       <path d="M12 19h8" />
+    </>
+  ),
+  app: (
+    <>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M2 9h20M6 6.5h.01M9 6.5h.01" />
     </>
   ),
   context: (

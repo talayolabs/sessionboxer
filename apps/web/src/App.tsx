@@ -4,6 +4,7 @@ import {
   CONNECTORS,
   DEFAULT_CLAUDE_MODELS,
   DEFAULT_DOCKER_ADDRESS_POOL,
+  DEFAULT_HTML_APP_CDNS,
   DEFAULT_INSTRUCTIONS,
   DOCKER_ADDRESS_POOL_PATTERN,
   DOCKER_MODE_LABELS,
@@ -72,6 +73,7 @@ import { SessionFamily } from "./SessionFamily";
 import { AgentToolsSelect, ApproveCreateSelect } from "./SessionToolsPolicy";
 import { SIDEBAR_MAX_PX, SIDEBAR_MIN_PX, PANE_MAX_FRAC, PANE_MIN_FRAC, clampPane, clampSidebar, loadSize, saveSize, startSplitterDrag } from "./splitter";
 import { AttachmentSession } from "./Attachments";
+import { AppPane, OpenApp, type FsChange } from "./HtmlArtifact";
 import { usePendingAttachments, useStagedAttachments } from "./attachments-pending";
 import { AttachButton, AttachList, CameraButton, DictationLine, MicButton, SketchButton, droppedFiles, useDictation } from "./composer-tools";
 import { BranchTree, type DividerRef } from "./BranchTree";
@@ -335,6 +337,8 @@ export function App() {
   const clearPaneRequest = useCallback(() => setPaneRequest(null), []);
   /** A Terminal the Agent opened with `ui_open` that the Terminal pane should show. */
   const [terminalFocus, setTerminalFocus] = useState<{ sessionId: string; focus: TerminalFocus } | null>(null);
+  /** The last Workspace file the Daemon reported as changed (`fs/watch`), for the App pane. */
+  const [fsChange, setFsChange] = useState<FsChange | null>(null);
   // Snapshots popup opened from the sidebar; it can be for a Session other than the selected one.
   const [snapshotsFor, setSnapshotsFor] = useState<string | null>(null);
   const [dialogSnapshots, setDialogSnapshots] = useState<Snapshot[] | null>(null);
@@ -586,6 +590,9 @@ export function App() {
             break;
           case "pr_events":
             setFprEvents((prev) => (prev[msg.prId] ? { ...prev, [msg.prId]: msg.events } : prev));
+            break;
+          case "fs_changed":
+            setFsChange({ sessionId: msg.sessionId, path: msg.path, exists: msg.exists, nonce: Date.now() });
             break;
           case "e2e_changed": {
             if (msg.sessionId !== selectedId) break;
@@ -1387,6 +1394,7 @@ export function App() {
             paneRequest={paneRequest?.sessionId === selected.id ? paneRequest.pane : null}
             onPaneRequestHandled={clearPaneRequest}
             terminalFocus={terminalFocus?.sessionId === selected.id ? terminalFocus.focus : null}
+            fsChange={fsChange}
             mobile={mobile}
             run={run}
             onForked={(s) => setRoute({ view: "session", id: s.id })}
@@ -1521,12 +1529,13 @@ function FolderNameDialog({
  * shows at a time and the chat is one of them (`chat`); on a desktop the chat is always there, so `chat`
  * and `hidden` mean the same.
  */
-type Pane = "chat" | "desktop" | "code" | "terminal" | "context" | "prs" | `pr:${string}` | "e2e" | "schedules" | "hidden";
+type Pane = "chat" | "desktop" | "code" | "terminal" | "app" | "context" | "prs" | `pr:${string}` | "e2e" | "schedules" | "hidden";
 /** The panes with a tab of their own in the header; Context and Scheduled live in the header's "…" menu. */
-const PANES: Array<{ id: "desktop" | "terminal" | "code"; label: string; hint: string }> = [
+const PANES: Array<{ id: "desktop" | "terminal" | "code" | "app"; label: string; hint: string }> = [
   { id: "desktop", label: "Desktop", hint: "The Sandbox's Linux desktop: browser, editor, whatever the Agent opens" },
   { id: "terminal", label: "Terminal", hint: "A shell inside the Sandbox, alongside the one the Agent uses" },
   { id: "code", label: "Code", hint: "The files in the Sandbox's workspace, with the Agent's edits" },
+  { id: "app", label: "App", hint: "An HTML file the Agent wrote, running sandboxed; reloads as the file changes" },
 ];
 const SCHEDULES_HINT = "Automations that prompt this Session";
 const MENU_PANES: Array<{ id: "context" | "schedules"; icon: IconName; label: string; hint: string }> = [
@@ -1536,7 +1545,7 @@ const MENU_PANES: Array<{ id: "context" | "schedules"; icon: IconName; label: st
 
 function loadPane(): Pane {
   const v = localStorage.getItem("sessionboxer.pane");
-  return v === "chat" || v === "desktop" || v === "code" || v === "terminal" || v === "context" || v === "prs" || v === "e2e" || v === "schedules" || v === "hidden"
+  return v === "chat" || v === "desktop" || v === "code" || v === "terminal" || v === "app" || v === "context" || v === "prs" || v === "e2e" || v === "schedules" || v === "hidden"
     ? v
     : "desktop";
 }
@@ -1648,6 +1657,7 @@ function SessionView({
   paneRequest,
   onPaneRequestHandled,
   terminalFocus = null,
+  fsChange,
   mobile,
   run,
   onForked,
@@ -1690,6 +1700,8 @@ function SessionView({
   onPaneRequestHandled: () => void;
   /** A Terminal the Agent opened (`ui_open`) to bring to the front. */
   terminalFocus?: TerminalFocus | null;
+  /** A watched Workspace file changed (`fs_changed`); the App pane reloads when it is its file. */
+  fsChange: FsChange | null;
   /** Phone shell: bottom tabs pick one full-width pane, header actions live in a sheet. */
   mobile: boolean;
   run: Runner;
@@ -1733,6 +1745,17 @@ function SessionView({
     setPane("code");
     setCodeTarget({ ...ref, nonce: Date.now() });
   }, []);
+  // The HTML Artifact the App pane shows, remembered per Session (ADR-0078).
+  const appKey = `sessionboxer.app.${session.id}`;
+  const [appTarget, setAppTarget] = useState<string | null>(() => localStorage.getItem(appKey));
+  const openApp = useCallback(
+    (path: string) => {
+      localStorage.setItem(appKey, path);
+      setAppTarget(path);
+      setPane("app");
+    },
+    [appKey],
+  );
   useEffect(() => setTitle(session.title), [session.title]);
   useEffect(() => {
     if (!forkRequest) return;
@@ -1963,6 +1986,7 @@ function SessionView({
   return (
     <AttachmentSession.Provider value={session.id}>
     <OpenFile.Provider value={openFile}>
+    <OpenApp.Provider value={openApp}>
     <div className="session">
       <header className="session-header">
         {editingTitle ? (
@@ -2273,6 +2297,7 @@ function SessionView({
         )}
         {shown === "desktop" && <Desktop session={session} />}
         {shown === "code" && <CodePane session={session} target={codeTarget} />}
+        {shown === "app" && <AppPane session={session} path={appTarget} change={fsChange} />}
         {shown === "terminal" && <TerminalPane session={session} focus={terminalFocus} />}
         {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
         {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
@@ -2330,6 +2355,7 @@ function SessionView({
         </nav>
       )}
     </div>
+    </OpenApp.Provider>
     </OpenFile.Provider>
     </AttachmentSession.Provider>
   );
@@ -2814,6 +2840,22 @@ function parseAliasList(text: string): string[] {
   return [...new Set(text.split(/[\s,]+/).map((s) => s.trim()).filter((s) => s.length > 0))];
 }
 
+/** Origins (`https://host`) from a list typed one per line or separated by spaces/commas; anything that is not a URL is dropped. */
+function parseOriginList(text: string): string[] {
+  const origins: string[] = [];
+  for (const part of text.split(/[\s,]+/)) {
+    const v = part.trim();
+    if (!v) continue;
+    try {
+      const origin = new URL(v.includes("://") ? v : `https://${v}`).origin;
+      if (origin !== "null" && !origins.includes(origin)) origins.push(origin);
+    } catch {
+      // not a URL
+    }
+  }
+  return origins;
+}
+
 /** What is on disk for dictation (whisper-cli and models), with a download-now button and per-model removal. */
 function SpeechAssets({ selected, saved }: { selected: SpeechModel; saved: SpeechModel }) {
   const [status, setStatus] = useState<SpeechStatus | null>(null);
@@ -3113,6 +3155,7 @@ function SettingsView({
   const [procedures, setProcedures] = useState<ProcedureDef[]>(settings.procedures);
   const [claudeModels, setClaudeModels] = useState(settings.claudeModels.join(", "));
   const [instructions, setInstructions] = useState(settings.instructions);
+  const [htmlAppCdns, setHtmlAppCdns] = useState(settings.htmlAppCdns.join("\n"));
   const [trustHostCaCerts, setTrustHostCaCerts] = useState(settings.trustHostCaCerts);
   const [extraCaCerts, setExtraCaCerts] = useState(settings.extraCaCerts);
   const [githubClientId, setGithubClientId] = useState(settings.connectors.github.clientId);
@@ -3212,6 +3255,7 @@ function SettingsView({
         procedures,
         claudeModels: parseAliasList(claudeModels),
         instructions,
+        htmlAppCdns: parseOriginList(htmlAppCdns),
         trustHostCaCerts,
         extraCaCerts,
         connectors: {
@@ -4053,6 +4097,27 @@ function SettingsView({
                   )}
                 </span>
                 <textarea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} spellCheck={false} />
+              </label>
+              <label>
+                <span className="label-row">
+                  <Caption
+                    help={
+                      <p>
+                        A self-contained <code>.html</code> file the Agent writes under the Workspace runs as an app in the chat and in the App pane,
+                        sandboxed: no origin of its own, no network, except scripts, styles, images and fonts from these origins (one per line,
+                        scheme and host). Empty allows none. Applies to apps loaded from now on.
+                      </p>
+                    }
+                  >
+                    HTML app CDN allowlist
+                  </Caption>
+                  {parseOriginList(htmlAppCdns).join("\n") !== DEFAULT_HTML_APP_CDNS.join("\n") && (
+                    <button type="button" className="link" onClick={() => setHtmlAppCdns(DEFAULT_HTML_APP_CDNS.join("\n"))}>
+                      Reset to the shipped default
+                    </button>
+                  )}
+                </span>
+                <textarea rows={4} value={htmlAppCdns} onChange={(e) => setHtmlAppCdns(e.target.value)} spellCheck={false} placeholder="https://cdn.jsdelivr.net" />
               </label>
             </section>
           )}

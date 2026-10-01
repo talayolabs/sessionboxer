@@ -7,10 +7,10 @@ import { Mermaid } from "./Mermaid";
 import { Modal } from "./ui";
 
 /** How a file picked for the next prompt can be shown before it is sent; `null` = name and size only. */
-export type PreviewKind = "image" | "video" | "audio" | "pdf" | "markdown" | "mermaid" | "text";
+export type PreviewKind = "image" | "video" | "audio" | "pdf" | "markdown" | "mermaid" | "html" | "text";
 
 const TEXT_EXTENSIONS = new Set([
-  "txt", "log", "csv", "tsv", "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "xml", "html", "htm", "css", "scss",
+  "txt", "log", "csv", "tsv", "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "xml", "css", "scss",
   "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cpp", "hpp", "cs", "php", "sh", "bash",
   "zsh", "ps1", "bat", "sql", "diff", "patch", "gitignore", "dockerfile", "makefile", "tex", "rst", "adoc", "vtt", "srt",
 ]);
@@ -28,13 +28,14 @@ export function previewKind(name: string, mimeType: string): PreviewKind | null 
   if (type.startsWith("audio/")) return "audio";
   if (type === "application/pdf") return "pdf";
   if (type === "text/markdown") return "markdown";
+  if (type === "text/html") return "html";
   if (type.startsWith("text/") || TEXT_MIMES.has(type)) return "text";
   const base = name.slice(name.lastIndexOf("/") + 1).toLowerCase();
   const ext = base.includes(".") ? base.slice(base.lastIndexOf(".") + 1) : base;
   return TEXT_EXTENSIONS.has(ext) ? "text" : null;
 }
 
-const BADGES: Record<Exclude<PreviewKind, "image" | "video">, string> = { audio: "\u266b", pdf: "PDF", markdown: "MD", mermaid: "MMD", text: "TXT" };
+const BADGES: Record<Exclude<PreviewKind, "image" | "video">, string> = { audio: "\u266b", pdf: "PDF", markdown: "MD", mermaid: "MMD", html: "HTML", text: "TXT" };
 
 /** The small square at the start of a chip: the picture or the video's first frame, else a badge for the type. */
 export function AttachmentThumb({ kind, url, name }: { kind: PreviewKind | null; url: string; name: string }) {
@@ -102,6 +103,7 @@ export function AttachmentPreviewDialog<A>({ item, kind, onClose }: { item: Pend
         {kind === "video" && <video src={item.url} controls autoPlay playsInline />}
         {kind === "audio" && <audio src={item.url} controls autoPlay />}
         {kind === "pdf" && <iframe src={item.url} title={item.name} />}
+        {kind === "html" && <iframe src={item.url} title={item.name} sandbox="" referrerPolicy="no-referrer" />}
         {textual && loaded.state === "loading" && <div className="muted">Loading\u2026</div>}
         {textual && loaded.state === "error" && <div className="attachment-error">{loaded.message}</div>}
         {textual && loaded.state === "ok" && (

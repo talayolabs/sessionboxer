@@ -120,3 +120,12 @@ export function dirOf(path: string): string {
 export function rawFileUrl(sessionId: string, path: string, download = false): string {
   return `/api/sessions/${sessionId}/fs/raw?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
 }
+
+/**
+ * Where an HTML Artifact runs: served with the sandboxing CSP (ADR-0078), so the document has an
+ * opaque origin in the card's iframe, in the App pane and in a tab of its own. `nonce` changes the
+ * URL so a reload fetches the file again.
+ */
+export function appFileUrl(sessionId: string, path: string, nonce?: number): string {
+  return `/api/sessions/${sessionId}/fs/app?path=${encodeURIComponent(path)}${nonce ? `&v=${nonce}` : ""}`;
+}

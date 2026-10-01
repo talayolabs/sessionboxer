@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { captionTrackFor, mediaKind, type PromptAttachment } from "@sessionboxer/protocol";
 import { formatBytes } from "./format";
-import { rawFileUrl, type Attachment } from "./attachment-paths";
+import { appFileUrl, rawFileUrl, type Attachment } from "./attachment-paths";
 import { DocumentView } from "./Document";
+import { HtmlArtifact } from "./HtmlArtifact";
 
 /** Session whose Workspace files the chat may embed; `null` outside a Session. */
 export const AttachmentSession = createContext<string | null>(null);
@@ -11,7 +12,8 @@ type Probe = { state: "loading" } | { state: "ready"; bytes: number | null } | {
 
 /** Video / image / PDF / Markdown document from the Sandbox's Workspace, inline with a download button. */
 export function AttachmentCard({ sessionId, attachment }: { sessionId: string; attachment: Attachment }) {
-  const src = rawFileUrl(sessionId, attachment.path);
+  // HTML runs from the sandboxing `fs/app` route (ADR-0078); `/fs/raw` hands it out as a download only.
+  const src = attachment.kind === "html" ? appFileUrl(sessionId, attachment.path) : rawFileUrl(sessionId, attachment.path);
   const [probe, setProbe] = useState<Probe>({ state: "loading" });
 
   // A HEAD first: it tells missing file from stopped Sandbox apart (a <video> error would not), and gives the size.
@@ -32,7 +34,9 @@ export function AttachmentCard({ sessionId, attachment }: { sessionId: string; a
                 ? "not found in the Workspace"
                 : res.status === 409
                   ? "Sandbox stopped; Resume the Session to view it"
-                  : `cannot load (${res.status})`,
+                  : res.status === 413
+                    ? "too large to run as an app (16 MiB at most)"
+                    : `cannot load (${res.status})`,
           });
         }
       })
@@ -61,13 +65,15 @@ export function AttachmentCard({ sessionId, attachment }: { sessionId: string; a
           </a>
         </span>
       </figcaption>
-      {probe.state === "ready" && <Media sessionId={sessionId} kind={attachment.kind} src={src} path={attachment.path} name={attachment.name} />}
+      {probe.state === "ready" && <Media sessionId={sessionId} kind={attachment.kind} src={src} path={attachment.path} name={attachment.name} bytes={probe.bytes} />}
     </figure>
   );
 }
 
-function Media({ sessionId, kind, src, path, name }: { sessionId: string; kind: Attachment["kind"]; src: string; path: string; name: string }) {
+function Media({ sessionId, kind, src, path, name, bytes }: { sessionId: string; kind: Attachment["kind"]; src: string; path: string; name: string; bytes: number | null }) {
   switch (kind) {
+    case "html":
+      return <HtmlArtifact sessionId={sessionId} path={path} name={name} bytes={bytes} />;
     case "video":
       return <Video src={src} track={rawFileUrl(sessionId, captionTrackFor(path))} />;
     case "audio":

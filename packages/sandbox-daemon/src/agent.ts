@@ -128,16 +128,35 @@ interface PersistedState {
   freshSessionIds?: string[];
 }
 
-/** The prompt response's `usage` as the event carries it, dropping ACP's `_meta`. */
+/**
+ * The prompt response's `usage` as the event carries it, dropping ACP's `_meta`. Agents leave out
+ * what they do not know (fx sends only the counts it has, under `cacheReadTokens`/`cacheWriteTokens`/
+ * `reasoningTokens`, and no total), so missing counts read as 0 and the total is summed when absent.
+ */
 function turnUsage(usage: PromptResponse["usage"]): TurnUsage | undefined {
   if (!usage) return undefined;
+  const raw = usage as Record<string, unknown>;
+  const count = (...keys: string[]): number | null => {
+    for (const key of keys) {
+      const v = raw[key];
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+    }
+    return null;
+  };
+  const inputTokens = count("inputTokens");
+  const outputTokens = count("outputTokens");
+  const thoughtTokens = count("thoughtTokens", "reasoningTokens");
+  const cachedReadTokens = count("cachedReadTokens", "cacheReadTokens");
+  const cachedWriteTokens = count("cachedWriteTokens", "cacheWriteTokens");
+  const totalTokens = count("totalTokens");
+  if (inputTokens === null && outputTokens === null && totalTokens === null) return undefined;
   return {
-    totalTokens: usage.totalTokens,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    thoughtTokens: usage.thoughtTokens ?? null,
-    cachedReadTokens: usage.cachedReadTokens ?? null,
-    cachedWriteTokens: usage.cachedWriteTokens ?? null,
+    totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0) + (thoughtTokens ?? 0),
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    thoughtTokens,
+    cachedReadTokens,
+    cachedWriteTokens,
   };
 }
 

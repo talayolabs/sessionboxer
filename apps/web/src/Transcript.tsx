@@ -130,15 +130,18 @@ function TurnStatsLabel({ stats }: { stats: TurnStats }) {
   if (stats.calls > 0) parts.push({ text: `${stats.calls} model ${stats.calls === 1 ? "call" : "calls"}`, title: "Replies from the model in this turn (one per tool-call round)" });
   const u = stats.usage;
   if (u) {
+    // Events recorded before the Daemon filled in missing counts may lack input/output.
+    const inputTokens = u.inputTokens ?? 0;
+    const outputTokens = u.outputTokens ?? 0;
     const cached = (u.cachedReadTokens ?? 0) > 0 ? ` / cached ${formatTokens(u.cachedReadTokens ?? 0)}` : "";
     const written = (u.cachedWriteTokens ?? 0) > 0 ? ` / written ${formatTokens(u.cachedWriteTokens ?? 0)}` : "";
     parts.push({
-      text: `in ${formatTokens(u.inputTokens)}${cached}${written} / out ${formatTokens(u.outputTokens)}`,
+      text: `in ${formatTokens(inputTokens)}${cached}${written} / out ${formatTokens(outputTokens)}`,
       title:
-        `Tokens this turn — input ${u.inputTokens.toLocaleString()}` +
+        `Tokens this turn — input ${inputTokens.toLocaleString()}` +
         (u.cachedReadTokens ? `, read from cache ${u.cachedReadTokens.toLocaleString()}` : "") +
         (u.cachedWriteTokens ? `, written to cache ${u.cachedWriteTokens.toLocaleString()}` : "") +
-        `, output ${u.outputTokens.toLocaleString()}` +
+        `, output ${outputTokens.toLocaleString()}` +
         (u.thoughtTokens ? ` (thinking ${u.thoughtTokens.toLocaleString()})` : ""),
     });
   }

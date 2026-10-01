@@ -323,6 +323,8 @@ export class McpTeeHub {
       exact: true,
       ...(rec.toolCallId ? { toolCallId: rec.toolCallId } : {}),
       resultIsError: isError,
+      contentBlocks: result.content.length,
+      structuredContentKeys: Object.keys(result.structuredContent ?? {}).sort().slice(0, 200),
     });
     if (execution.success) this.events.emit({ type: "mcp_execution", execution: execution.data });
   }

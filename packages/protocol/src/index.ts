@@ -2689,6 +2689,9 @@ export const McpExecutionTelemetry = z.object({
   exact: z.boolean().optional(),
   toolCallId: z.string().optional(),
   resultIsError: z.boolean().optional(),
+  /** The shape of the exact result: content blocks, and the keys of `structuredContent` (values stay out of telemetry). */
+  contentBlocks: z.number().int().nonnegative().optional(),
+  structuredContentKeys: z.array(z.string().max(200)).max(200).optional(),
 });
 export type McpExecutionTelemetry = z.infer<typeof McpExecutionTelemetry>;
 

@@ -20,6 +20,8 @@ set "CLAUDE_AGENT_ACP_VERSION=0.77.0"
 set "CODEX_ACP_VERSION=1.1.9"
 set "DEVIN_CLI_VERSION=3000.10.27"
 set "CURSOR_CLI_VERSION=2026.09.23-86fc751"
+set "PI_VERSION=0.99.2"
+set "PI_ACP_VERSION=0.0.34"
 set "LOG=C:\sessionboxer-install.log"
 set "DL=%TEMP%\sessionboxer-install"
 mkdir "%DL%" 2>nul
@@ -85,6 +87,13 @@ call npm install -g --no-fund --no-audit ^
   @agentclientprotocol/codex-acp@%CODEX_ACP_VERSION% >> "%LOG%" 2>&1
 call npm cache clean --force >> "%LOG%" 2>&1
 
+rem pi and pi-acp, the adapter that bridges `pi --mode rpc` to ACP (ADR-0075): the same pins as the Sandbox image.
+echo [%time%] pi %PI_VERSION% pi-acp %PI_ACP_VERSION%>> "%LOG%"
+call npm install -g --no-fund --no-audit ^
+  @earendil-works/pi-coding-agent@%PI_VERSION% ^
+  pi-acp@%PI_ACP_VERSION% >> "%LOG%" 2>&1
+call npm cache clean --force >> "%LOG%" 2>&1
+
 rem Devin CLI (`devin acp`): the pinned bundle its installer would fetch, checked against the
 rem manifest's sha256, put where the installer puts it; the installer itself is not run as it ends
 rem in an interactive `devin setup` that would wait for a login here.
@@ -130,6 +139,8 @@ call git --version >> "%LOG%" 2>&1
 call "%USERPROFILE%\.local\bin\uv.exe" --version >> "%LOG%" 2>&1
 call claude-agent-acp --version >> "%LOG%" 2>&1
 call codex-acp --version >> "%LOG%" 2>&1
+set "PI_SKIP_VERSION_CHECK=1"
+call pi --version >> "%LOG%" 2>&1
 call "%LOCALAPPDATA%\devin\cli\bin\devin.exe" --version >> "%LOG%" 2>&1
 call "%LOCALAPPDATA%\Programs\cursor-agent\cursor-agent.cmd" --version >> "%LOG%" 2>&1
 

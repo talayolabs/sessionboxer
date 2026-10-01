@@ -3,6 +3,7 @@ import {
   DAEMON_METHODS,
   DaemonCodexAuthParams,
   DaemonCursorAuthChangedParams,
+  DaemonPiAuthChangedParams,
   DaemonStatus,
   PtyExitParams,
   PtyOutputParams,
@@ -23,6 +24,8 @@ export interface DaemonClientHandlers {
   onCodexAuthChanged: (authJson: string) => void;
   /** The Cursor CLI rewrote its `auth.json` (refreshed tokens); the whole file. */
   onCursorAuthChanged: (authJson: string) => void;
+  /** pi rewrote its `auth.json` (refreshed OAuth tokens); the whole file. */
+  onPiAuthChanged: (authJson: string) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
   /** A request from the Daemon (the Agent's `e2e_*` tools); the result or thrown error is answered back. */
@@ -136,6 +139,8 @@ export class DaemonClient {
         this.handlers.onCodexAuthChanged(DaemonCodexAuthParams.parse(msg.params).authJson);
       } else if (msg.method === DAEMON_METHODS.cursorAuthChanged) {
         this.handlers.onCursorAuthChanged(DaemonCursorAuthChangedParams.parse(msg.params).authJson);
+      } else if (msg.method === DAEMON_METHODS.piAuthChanged) {
+        this.handlers.onPiAuthChanged(DaemonPiAuthChangedParams.parse(msg.params).authJson);
       }
     }
   }

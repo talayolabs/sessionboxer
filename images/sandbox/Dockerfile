@@ -194,6 +194,17 @@ RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; ar
     && test ! -e /opt/cursor-agent/cursor-agent-sea \
     && HOME=/tmp cursor-agent --version && rm -rf /tmp/.cursor /tmp/.cache /tmp/.config
 
+# pi (earendil-works/pi) and pi-acp, the adapter that bridges `pi --mode rpc` to ACP for the Sandbox
+# Daemon (ADR-0075); `pi` itself in the terminal. Root-owned so a Sandbox runs the pinned version.
+# pi 0.99 is the first line with built-in MCP (`~/.pi/agent/mcp.json`), which the Daemon relies on.
+ARG PI_VERSION=0.99.2
+ARG PI_ACP_VERSION=0.0.34
+RUN npm install -g \
+      @earendil-works/pi-coding-agent@${PI_VERSION} \
+      pi-acp@${PI_ACP_VERSION} \
+    && npm cache clean --force \
+    && HOME=/tmp PI_SKIP_VERSION_CHECK=1 pi --version && rm -rf /tmp/.pi
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -280,7 +291,9 @@ COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.confi
 # its global instructions from ~/.codex/AGENTS.md and skills from ~/.agents/skills.
 # Cursor reads AGENTS.md from the workspace and every directory above it, so the
 # briefing sits at /AGENTS.md: above /workspace and every repository, inside none.
+# pi reads ~/.pi/agent/AGENTS.md; its settings trust every project (the Sandbox is the isolation).
 COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
+COPY --chown=agent:agent images/sandbox/pi-settings.json /home/agent/.pi/agent/settings.json
 COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.cursor/cli-config.json
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
@@ -296,6 +309,7 @@ COPY --chown=agent:agent images/sandbox/skills /home/agent/.claude/skills
 RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent/.agents/skills && chown -Rh agent:agent /home/agent/.agents
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.pi/agent/AGENTS.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md

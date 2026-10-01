@@ -38,6 +38,7 @@ const PROVIDER_BLURB: Record<Provider, string> = {
   codex: "OpenAI's Agent; runs on your ChatGPT subscription",
   cursor: "Cursor's Agent; runs on your Cursor subscription",
   devin: "Cognition's Agent; runs on your Devin account",
+  pi: "earendil-works' open-source Agent; runs on your own model API keys or logins",
 };
 
 /** Four big buttons, one per Provider, marked when a login is already stored. */
@@ -192,6 +193,28 @@ function steps(provider: Provider, os: Os): Step[] {
               : ["cat ~/.local/share/devin/credentials.toml"],
         },
       ];
+    case "pi":
+      return [
+        {
+          title: "Install pi (skip if you already use it)",
+          body: "Needs Node.js 22+; in a terminal:",
+          commands: ["npm i -g @earendil-works/pi-coding-agent"],
+        },
+        {
+          title: "Log in to a model provider, or get an API key",
+          body: "Run pi and type /login to sign in (Anthropic, OpenAI, GitHub Copilot, OpenRouter, …); it writes auth.json. Or take an API key from the provider's console instead.",
+          commands: ["pi"],
+        },
+        {
+          title: "Paste the login file, or the API keys, below",
+          body: "The whole auth.json (or use Import below), or NAME=value lines such as ANTHROPIC_API_KEY=… or OPENAI_API_KEY=…, one per provider. The Sandbox keeps them in memory only.",
+          commands: [
+            os === "windows"
+              ? "Get-Content $env:USERPROFILE\\.pi\\agent\\auth.json"
+              : "cat ~/.pi/agent/auth.json",
+          ],
+        },
+      ];
   }
 }
 
@@ -230,6 +253,13 @@ function credentialField(provider: Provider): {
         file: true,
         placeholder: "{ … } or key_…",
       };
+    case "pi":
+      return {
+        label: "pi login (contents of auth.json, or NAME=value API keys)",
+        multiline: true,
+        file: true,
+        placeholder: '{ "anthropic": … } or ANTHROPIC_API_KEY=sk-ant-…',
+      };
   }
 }
 
@@ -243,6 +273,8 @@ function secretUpdate(provider: Provider, value: string) {
       return { codex: { CODEX_AUTH_JSON: value } };
     case "cursor":
       return { cursor: { CURSOR_LOGIN: value } };
+    case "pi":
+      return value.startsWith("{") ? { pi: { PI_AUTH_JSON: value } } : { pi: { PI_API_KEYS: value } };
   }
 }
 

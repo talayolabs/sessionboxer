@@ -63,6 +63,46 @@ export class DevinMcpConfig {
   }
 }
 
+/**
+ * pi's built-in MCP client reads `~/.pi/agent/mcp.json` (ADR-0075): its ACP adapter stores the
+ * servers `session/new` passes but does not hand them to pi, so the set is written there before
+ * `pi-acp` starts, on tmpfs behind a symlink like Devin's. Entries are declared `direct` so the
+ * tools reach the model like a built-in tool (pi's default routes them through its `codemode`
+ * script tool). pi rejects SSE servers, so those are left out and named in the log.
+ */
+export class PiMcpConfig {
+  constructor(
+    private readonly configPath: string,
+    private readonly tmpfsDir: string,
+    private readonly builtins: () => BuiltinMcp[],
+    private readonly log: (msg: string) => void,
+  ) {}
+
+  write(servers: McpServerSpec[]): void {
+    const mcpServers: Record<string, unknown> = {};
+    for (const b of this.builtins()) {
+      mcpServers[b.name] = { command: b.command, args: b.args ?? [], exposure: "direct" };
+    }
+    for (const s of servers) {
+      if (s.transport === "stdio") {
+        mcpServers[s.name] = { command: s.command, args: s.args, env: toRecord(s.env), exposure: "direct" };
+      } else if (s.transport === "http") {
+        mcpServers[s.name] = { url: s.url, headers: toRecord(s.headers), exposure: "direct" };
+      } else {
+        this.log(`mcp server ${s.name} uses SSE, which pi does not support; left out`);
+      }
+    }
+    mkdirSync(this.tmpfsDir, { recursive: true, mode: 0o700 });
+    const target = join(this.tmpfsDir, "pi-mcp.json");
+    writeFileSync(target, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
+    mkdirSync(dirname(this.configPath), { recursive: true });
+    if (!isSymlinkTo(this.configPath, target)) {
+      rmSync(this.configPath, { force: true });
+      symlinkSync(target, this.configPath);
+    }
+  }
+}
+
 function toRecord(entries: { name: string; value: string }[]): Record<string, string> {
   return Object.fromEntries(entries.map(({ name, value }) => [name, value]));
 }

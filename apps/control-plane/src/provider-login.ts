@@ -4,7 +4,7 @@ import { homedir, platform, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import * as pty from "node-pty";
 import type { Provider, ProviderHostLogin, ProviderLoginFlow, Settings, UpdateSettingsRequest } from "@sessionboxer/protocol";
-import { applySettingsUpdate, codexLogin, describeCursorLogin, normalizeCodexAuthJson, normalizeCursorLogin } from "./config.js";
+import { applySettingsUpdate, codexLogin, describeCursorLogin, describePiLogin, normalizeCodexAuthJson, normalizeCursorLogin, normalizePiAuthJson } from "./config.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
 import { HttpError } from "./http-error.js";
 
@@ -143,6 +143,21 @@ export const RECIPES: Record<Provider, Recipe> = {
     },
     secret: (login) => ({ cursor: { CURSOR_LOGIN: login } }),
   },
+  // pi has no login command: its `/login` lives in the TUI, so there is no browser sign-in (`bin: []`;
+  // `start` refuses). The recipe still says where its `auth.json` is and how a login is stored (ADR-0075).
+  pi: {
+    bin: [],
+    args: [],
+    env: {},
+    isLoginUrl: () => false,
+    code: "none",
+    prompt: null,
+    userCode: () => null,
+    rejected: () => null,
+    files: [".pi/agent/auth.json"],
+    result: () => null,
+    secret: (login) => (login.trimStart().startsWith("{") ? { pi: { PI_AUTH_JSON: login } } : { pi: { PI_API_KEYS: login } }),
+  },
 };
 
 interface SettingsStore {
@@ -192,6 +207,7 @@ export class ProviderLogins {
     }
     this.sweep();
     const recipe = this.recipes[provider];
+    if (recipe.bin.length === 0) throw new HttpError(409, `${label(provider)} has no browser sign-in; paste its login instead.`);
     const flow: Flow = {
       state: {
         id: randomUUID(),
@@ -357,7 +373,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {
@@ -590,6 +606,19 @@ export function readHostLogin(provider: Provider, home = homedir()): { account: 
       const what = describeCursorLogin(login);
       if (!login || !what) return null;
       return { account: what.kind === "api-key" ? "an API key" : "signed in with `agent login`", login };
+    }
+    case "pi": {
+      const text = readFirst([join(process.env.PI_CODING_AGENT_DIR?.trim() || join(home, ".pi", "agent"), "auth.json")]);
+      if (text === null) return null;
+      let login: string;
+      try {
+        login = normalizePiAuthJson(text);
+      } catch {
+        return null;
+      }
+      const what = describePiLogin(login, "");
+      if (!login || !what) return null;
+      return { account: `signed in with pi's /login (${what.authProviders.map((p) => p.id).join(", ")})`, login };
     }
   }
 }

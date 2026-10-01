@@ -85,6 +85,8 @@ import {
   codexAuthNewer,
   cursorAuthNewer,
   cursorLogin,
+  piAuthJson,
+  piAuthNewer,
   ensureAccessToken,
   ensureTunnelSecret,
   ensureVapidKeys,
@@ -209,6 +211,19 @@ sessions.cursorAuthRefreshed = (sessionId, authJson) => {
   saveSettings(settings);
   log(`cursor login refreshed by session ${sessionId}; stored`);
   void sessions.pushCursorAuthToAll();
+};
+// pi refreshes the OAuth tokens of its auth.json the same way (API keys are left alone).
+sessions.piAuthRefreshed = (sessionId, authJson) => {
+  if (!piAuthNewer(authJson, piAuthJson(settings))) return;
+  try {
+    settings = applySettingsUpdate(settings, { providerSecrets: { pi: { PI_AUTH_JSON: authJson } } });
+  } catch (e) {
+    log(`pi auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  saveSettings(settings);
+  log(`pi login refreshed by session ${sessionId}; stored`);
+  void sessions.pushPiAuthToAll();
 };
 const automations = new Automations({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
 const tunnels = new Tunnels(
@@ -399,6 +414,7 @@ async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   if (update.providerSecrets?.codex?.CODEX_AUTH_JSON !== undefined) void sessions.pushCodexAuthToAll();
   if (update.providerSecrets?.cursor?.CURSOR_LOGIN !== undefined) void sessions.pushCursorAuthToAll();
+  if (update.providerSecrets?.pi?.PI_AUTH_JSON !== undefined || update.providerSecrets?.pi?.PI_API_KEYS !== undefined) void sessions.pushPiAuthToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
 }

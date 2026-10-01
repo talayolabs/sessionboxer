@@ -1,8 +1,8 @@
 import { PROVIDER_LABELS, type Provider } from "@sessionboxer/protocol";
 
 // Hand-drawn approximations of the Providers' marks: Claude's orange starburst,
-// Devin's three linked hexagons and Codex's (OpenAI's) hexagonal knot, drawn in
-// the current text colour.
+// Devin's three linked hexagons, Codex's (OpenAI's) hexagonal knot and pi's π in
+// a rounded square, drawn in the current text colour.
 
 const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [0, 9.5],
@@ -47,6 +47,9 @@ const CURSOR_FACES: { corners: [number, number, number]; opacity: number }[] = [
   { corners: [2, 3, 4], opacity: 0.7 },
   { corners: [4, 5, 0], opacity: 1 },
 ];
+
+/** pi's mark: the Greek letter π, filled, inside a rounded square. */
+const PI_GLYPH = "M 6.2 8.3 L 17.8 8.3 L 17.8 10.3 L 15.9 10.3 L 15.9 15.1 C 15.9 15.8 16.2 16.1 16.8 16.1 C 17.1 16.1 17.4 16 17.7 15.9 L 17.7 17.6 C 17.2 17.9 16.6 18 16 18 C 14.4 18 13.7 17.1 13.7 15.4 L 13.7 10.3 L 10.9 10.3 L 10.9 17.9 L 8.7 17.9 L 8.7 10.3 L 6.2 10.3 Z";
 
 export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size?: number }) {
   const label = PROVIDER_LABELS[provider];
@@ -95,6 +98,14 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
             ))}
           </g>
           <polygon points={CURSOR_HEX.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+        </svg>
+      );
+    case "pi":
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <rect x="2.5" y="2.5" width="19" height="19" rx="4.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <path d={PI_GLYPH} fill="currentColor" />
         </svg>
       );
   }

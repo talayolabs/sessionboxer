@@ -23,6 +23,7 @@ import {
   DaemonClaudeModelsSetParams,
   DaemonCodexAuthParams,
   DaemonCursorAuthParams,
+  DaemonPiAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -82,7 +83,7 @@ import { GhApi } from "./gh-api.js";
 import { BbCredentials } from "./bb-credentials.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
-import { DevinMcpConfig, type BuiltinMcp } from "./mcp-config.js";
+import { DevinMcpConfig, PiMcpConfig, type BuiltinMcp } from "./mcp-config.js";
 import { serveRawFile } from "./raw-files.js";
 import { Repos } from "./repos.js";
 import { SessionInfoFile } from "./session-info.js";
@@ -144,6 +145,8 @@ const ACP_COMMANDS: Record<Provider, string[]> = {
   // Auto-update off (the image pins the version); --force runs commands without asking and
   // --approve-mcps/--trust skip the MCP and workspace prompts nobody would answer (ADR-0054).
   cursor: ["cursor-agent", "--disable-auto-update", "--force", "--approve-mcps", "--trust", "acp"],
+  // pi has no ACP mode of its own: pi-acp bridges `pi --mode rpc` to ACP (ADR-0075).
+  pi: ["pi-acp"],
 };
 const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
@@ -209,6 +212,20 @@ const devinMcpConfig =
         guest ? builtinMcps().map((b) => ({ name: b.name, ...guest.bridgeMcp(b.name) })) : builtinMcps(),
       )
     : null;
+/**
+ * pi reads its MCP servers from `~/.pi/agent/mcp.json` (its ACP adapter does not pass the ACP ones on);
+ * kept on tmpfs like Devin's (ADR-0075).
+ */
+const piAgentDir = env.PI_CODING_AGENT_DIR ?? `${home}/.pi/agent`;
+const piMcpConfig =
+  provider === "pi"
+    ? new PiMcpConfig(
+        `${piAgentDir}/mcp.json`,
+        tmpfsDir,
+        () => (guest ? builtinMcps().map((b) => ({ name: b.name, ...guest.bridgeMcp(b.name) })) : builtinMcps()),
+        log,
+      )
+    : null;
 /** `gh`/git logins for the Sandbox; the image points `GH_CONFIG_DIR` at this tmpfs dir. */
 const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, log);
 /** `bb`/git logins for Bitbucket hosts; the image points `BB_CONFIG_DIR` at this tmpfs dir. */
@@ -233,6 +250,18 @@ const cursorAuth =
   provider === "cursor"
     ? new AuthFile("cursor", cursorAuthPath, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.cursorAuthChanged, { authJson }))
     : null;
+/**
+ * pi's login (ADR-0075): the `auth.json` its `/login` writes, on tmpfs at the path pi reads it from
+ * (OAuth refreshes are written back through the symlink and reported), and/or API keys handed to the
+ * Agent process as environment (`ANTHROPIC_API_KEY`, ...). pi reads both at start, so the Agent
+ * restarts in place when the login arrives or changes.
+ */
+const piAuth =
+  provider === "pi"
+    ? new AuthFile("pi", `${piAgentDir}/auth.json`, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.piAuthChanged, { authJson }))
+    : null;
+/** No version check against pi.dev and no install telemetry from the box; its agent dir is the image's. */
+const PI_AGENT_ENV = { PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0" };
 
 /**
  * The Provider's files that travel into the VM before each Agent start (the ones the image and this
@@ -256,6 +285,12 @@ const guestProviderFiles: GuestProviderFile[] = (
       { local: `${home}/.cursor/cli-config.json`, guest: ".cursor/cli-config.json" },
       { local: guestBriefingFile, guest: guest?.os === "macos" ? `${guest.homeDir()}/AGENTS.md` : "C:\\AGENTS.md" },
       { local: cursorAuthPath, guest: ".cursor/auth.json", pullBack: true },
+    ],
+    pi: [
+      { local: `${piAgentDir}/settings.json`, guest: ".pi/agent/settings.json" },
+      { local: `${piAgentDir}/mcp.json`, guest: ".pi/agent/mcp.json" },
+      { local: guestBriefingFile, guest: ".pi/agent/AGENTS.md" },
+      { local: `${piAgentDir}/auth.json`, guest: ".pi/agent/auth.json", pullBack: true },
     ],
     devin: [
       { local: `${home}/.config/devin/config.json`, guest: ".config/devin/config.json" },
@@ -291,6 +326,15 @@ function setCursorLogin(login: string): boolean {
   if (login === "") return agent.setAgentEnv({});
   log("cursor login is an API key; handed to the Agent process as CURSOR_API_KEY");
   return agent.setAgentEnv({ CURSOR_API_KEY: login });
+}
+
+function setPiLogin(authJson: string, apiKeys: Record<string, string>): boolean {
+  if (!piAuth) throw new Error("this Sandbox does not run pi");
+  piAuth.set(authJson);
+  const names = Object.keys(apiKeys);
+  if (names.length > 0) log(`pi API keys handed to the Agent process as ${names.join(", ")}`);
+  // The marker makes the arrival or removal of the file a change of the Agent's environment, so it restarts (as for Cursor).
+  return agent.setAgentEnv({ ...apiKeys, ...(authJson === "" ? {} : { SESSIONBOXER_PI_LOGIN: "auth-json" }) });
 }
 
 /** The Session's standing instructions, set by the Control Plane on the container. */
@@ -459,6 +503,7 @@ const agent = new AgentManager(
     ...(transport ? { transport } : {}),
     // In the VM, Codex keeps its default home (`%USERPROFILE%\.codex`, where its files are copied to).
     ...(provider === "codex" ? { env: guest ? { INITIAL_AGENT_MODE: CODEX_AGENT_ENV.INITIAL_AGENT_MODE } : CODEX_AGENT_ENV } : {}),
+    ...(provider === "pi" ? { env: PI_AGENT_ENV } : {}),
     builtinMcps,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     sessionId: env.SESSIONBOXER_SESSION_ID ?? "",
@@ -466,7 +511,7 @@ const agent = new AgentManager(
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
     workspaceBriefing: () => [sessionInfo.briefing(), repos.briefing(), utilities.briefing(), windowsBriefing(), macosBriefing()].filter((s) => s !== "").join("\n\n"),
-    writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : undefined,
+    writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : piMcpConfig ? (servers) => piMcpConfig.write(servers) : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),
     ...(provider === "cursor" ? { extensions: (app) => registerCursorExtensions(app, log), fullAccessModeIds: ["agent"] } : {}),
@@ -603,6 +648,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.cursorAuthSet:
       return { applied: setCursorLogin(DaemonCursorAuthParams.parse(params).login) };
+    case DAEMON_METHODS.piAuthSet: {
+      const p = DaemonPiAuthParams.parse(params);
+      return { applied: setPiLogin(p.authJson, p.apiKeys) };
+    }
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

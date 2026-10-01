@@ -50,7 +50,7 @@ const PROVISION_TIMEOUT_S = 60 * 60;
  * and the Sandbox image. Bump `TOOLCHAIN` when they change: bases with an older number show
  * "Reprovision" and cannot start Sessions until it ran.
  */
-const TOOLCHAIN = 1;
+const TOOLCHAIN = 2;
 const NODE_VERSION = "22.23.3";
 const UV_VERSION = "0.12.13";
 const CLAUDE_CODE_VERSION = "2.1.272";
@@ -58,6 +58,8 @@ const CLAUDE_AGENT_ACP_VERSION = "0.77.0";
 const CODEX_ACP_VERSION = "1.1.9";
 const DEVIN_CLI_VERSION = "3000.10.27";
 const CURSOR_CLI_VERSION = "2026.09.23-86fc751";
+const PI_VERSION = "0.99.2";
+const PI_ACP_VERSION = "0.0.34";
 
 interface BaseRecord {
   version: string;
@@ -806,6 +808,10 @@ function provisionScript(): string {
     `say "installing @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}, @agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION}, @agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}"`,
     `npm install -g --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION} @agentclientprotocol/codex-acp@${CODEX_ACP_VERSION} 2>&1 | tail -3 || fail "npm install -g"`,
     `command -v claude-agent-acp >/dev/null && command -v codex-acp >/dev/null && command -v claude >/dev/null || fail "the npm CLIs are not on PATH after the install"`,
+    // pi and its ACP adapter (ADR-0075).
+    `say "installing @earendil-works/pi-coding-agent@${PI_VERSION}, pi-acp@${PI_ACP_VERSION}"`,
+    `npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent@${PI_VERSION} pi-acp@${PI_ACP_VERSION} 2>&1 | tail -3 || fail "npm install -g pi"`,
+    `command -v pi >/dev/null && command -v pi-acp >/dev/null || fail "pi is not on PATH after the install"`,
     // uv.
     `if [ "$("$HOME/.local/bin/uv" --version 2>/dev/null | awk '{ print $2 }')" = "${UV_VERSION}" ]; then`,
     `  say "uv ${UV_VERSION} present"`,
@@ -838,7 +844,7 @@ function provisionScript(): string {
     `  rm -rf "$CURSOR_DIR" && mv "$CURSOR_DIR.tmp" "$CURSOR_DIR"`,
     "fi",
     `ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/cursor-agent" && ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/agent"`,
-    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp devin cursor-agent in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
+    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
     "echo SBX_PROVISIONED",
     // Detached, after this SSH session has returned: `nohup` could not run the `sudo` function above.
     `(sleep 3; printf '%s\\n' "$SBX_PW" | command sudo -S -p '' shutdown -h now) </dev/null >/dev/null 2>&1 &`,

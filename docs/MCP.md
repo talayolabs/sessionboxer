@@ -6,7 +6,7 @@ Conventions: parameters marked *required* have no default. Sizes are in characte
 
 ## Where the servers run
 
-Both servers are stdio MCP processes inside the **Linux box** of the session (the Sandbox container). The agent's MCP configuration (`.mcp.json` for Claude Code, the equivalent for Codex, Cursor and Devin) lists them under the names `desktop` and `sessionboxer`.
+Both servers are stdio MCP processes inside the **Linux box** of the session (the Sandbox container). The agent's MCP configuration (`.mcp.json` for Claude Code, the equivalent for Codex, Cursor, Devin and pi) lists them under the names `desktop` and `sessionboxer`.
 
 | Environment | Agent, repositories, your MCP servers | `desktop` | `sessionboxer` |
 | --- | --- | --- | --- |
@@ -502,7 +502,7 @@ Start a new session whose first prompt is `first_prompt`; it is marked as create
 | Parameter | Type | Meaning |
 | --- | --- | --- |
 | `title` | string, 1–200 characters, optional | Defaults to the start of `first_prompt` |
-| `provider` | `claude-code` · `devin` · `codex` · `cursor`, optional | Defaults to the caller's provider; the provider has to be connected |
+| `provider` | `claude-code` · `devin` · `codex` · `cursor` · `pi`, optional | Defaults to the caller's provider; the provider has to be connected |
 | `repos` | array of at most 20 repositories, default `[]` | Each `{ name?, source }` with `source` either `{ type: "git", url, ref? }` or `{ type: "copy", path }` (a directory on the host, copied in). `name` is the directory under `/workspace`, derived from the source when omitted |
 | `first_prompt` | string, 1–20,000 characters, *required* | What the new agent is asked first |
 
@@ -515,7 +515,7 @@ Fork this session from a Snapshot taken now: the fork has the same files, reposi
 | Parameter | Type | Meaning |
 | --- | --- | --- |
 | `conversation` | `continue` · `new` · `handoff`, default `continue` | `continue` keeps the conversation (same provider only); `new` starts an empty one; `handoff` starts from `document` |
-| `provider` | `claude-code` · `devin` · `codex` · `cursor`, optional | Another agent for the fork; then `conversation` must be `new` or `handoff` |
+| `provider` | `claude-code` · `devin` · `codex` · `cursor` · `pi`, optional | Another agent for the fork; then `conversation` must be `new` or `handoff` |
 | `title` | string, 1–200 characters, optional | |
 | `document` | string, 1–200,000 characters, optional | With `handoff`: the handoff document, written by the agent in Markdown (goal, state of the work, decisions, open items, files, how to run it). Because the agent writes it itself, the fork starts at once, without the hidden handoff turn the UI's **Hand off** performs |
 | `first_prompt` | string, 1–20,000 characters, optional | A prompt queued for the fork's agent after it starts |

@@ -8,6 +8,7 @@ import {
 } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { ProviderIcon } from "./ProviderIcon";
+import { providerSignsInFromBrowser } from "./providers";
 
 const POLL_MS = 1000;
 
@@ -37,6 +38,7 @@ export function ProviderSignIn({
   const onStoredRef = useRef(onStored);
   onStoredRef.current = onStored;
   const label = PROVIDER_LABELS[provider];
+  const browser = providerSignsInFromBrowser(provider);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,10 +135,14 @@ export function ProviderSignIn({
     <div className="provider-signin">
       {!pending && (
         <div className="provider-signin-row">
-          <button type="button" className="connector-button primary" onClick={() => void start()} disabled={busy}>
-            <ProviderIcon provider={provider} size={14} />
-            {connected ? `Sign in with ${label} again` : `Sign in with ${label}`}
-          </button>
+          {browser ? (
+            <button type="button" className="connector-button primary" onClick={() => void start()} disabled={busy}>
+              <ProviderIcon provider={provider} size={14} />
+              {connected ? `Sign in with ${label} again` : `Sign in with ${label}`}
+            </button>
+          ) : (
+            <span className="muted">{label} signs in from its own terminal (<code>/login</code>); paste or import what it wrote below.</span>
+          )}
           {host?.importable && (
             <button type="button" onClick={() => void importHost()} disabled={busy}>
               Use this machine&apos;s {label} login

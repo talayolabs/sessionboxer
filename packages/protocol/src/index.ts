@@ -12,7 +12,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -21,6 +21,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   devin: "Devin",
   codex: "Codex",
   cursor: "Cursor",
+  pi: "pi",
 };
 
 /**
@@ -33,6 +34,8 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   // Codex's and Cursor's logins never travel as environment: the Daemon gets them over RPC and keeps them on tmpfs.
   codex: [],
   cursor: [],
+  // pi's login too: its `auth.json` goes on tmpfs and its API keys into the Agent process only (ADR-0075).
+  pi: [],
 };
 
 /**
@@ -60,6 +63,18 @@ export const CursorLogin = z.object({
   expiresAt: z.string().nullable(),
 });
 export type CursorLogin = z.infer<typeof CursorLogin>;
+
+/**
+ * What the stored pi login (ADR-0075) holds, by name only: the model providers an `auth.json`
+ * (pi's `/login`) has credentials for, and the API-key environment variables set beside it.
+ */
+export const PiLogin = z.object({
+  /** Provider ids in the pasted `auth.json` (`anthropic`, `openai`, ...), with the credential kind. */
+  authProviders: z.array(z.object({ id: z.string(), kind: z.enum(["oauth", "api_key", "other"]) })),
+  /** Names of the API-key variables stored (`ANTHROPIC_API_KEY`, ...); never their values. */
+  apiKeyNames: z.array(z.string()),
+});
+export type PiLogin = z.infer<typeof PiLogin>;
 
 /**
  * How a Sandbox gets its own Docker daemon: `sysbox` runs it under the Sysbox
@@ -2316,6 +2331,8 @@ export const Settings = z.object({
       codex: z.object({ CODEX_AUTH_JSON: z.string().default("") }).default({}),
       /** Either the whole `auth.json` of an `agent login` (Cursor subscription) or a Cursor API key (ADR-0054). */
       cursor: z.object({ CURSOR_LOGIN: z.string().default("") }).default({}),
+      /** pi's `~/.pi/agent/auth.json` (its `/login`) and/or API keys as `NAME=value` lines, one per model provider (ADR-0075). */
+      pi: z.object({ PI_AUTH_JSON: z.string().default(""), PI_API_KEYS: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -2362,11 +2379,14 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     devin: z.object({ WINDSURF_API_KEY: z.boolean() }),
     codex: z.object({ CODEX_AUTH_JSON: z.boolean() }),
     cursor: z.object({ CURSOR_LOGIN: z.boolean() }),
+    pi: z.object({ PI_AUTH_JSON: z.boolean(), PI_API_KEYS: z.boolean() }),
   }),
   /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
   codexLogin: CodexLogin.nullable(),
   /** What the stored Cursor login is; `null` when none is stored. */
   cursorLogin: CursorLogin.nullable(),
+  /** What the stored pi login holds (names only); `null` when none is stored. */
+  piLogin: PiLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -2401,6 +2421,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, utilities
       devin: z.object({ WINDSURF_API_KEY: z.string() }).partial(),
       codex: z.object({ CODEX_AUTH_JSON: z.string() }).partial(),
       cursor: z.object({ CURSOR_LOGIN: z.string() }).partial(),
+      pi: z.object({ PI_AUTH_JSON: z.string(), PI_API_KEYS: z.string() }).partial(),
     })
     .partial()
     .optional(),
@@ -4474,6 +4495,8 @@ export const DAEMON_METHODS = {
   codexAuthChanged: "_sessionboxer/codex/auth/changed",
   cursorAuthSet: "_sessionboxer/cursor/auth/set",
   cursorAuthChanged: "_sessionboxer/cursor/auth/changed",
+  piAuthSet: "_sessionboxer/pi/auth/set",
+  piAuthChanged: "_sessionboxer/pi/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -4698,6 +4721,24 @@ export const DaemonCursorAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonCursorAuthChangedParams = z.infer<typeof DaemonCursorAuthChangedParams>;
+
+/**
+ * The pi login for the Sandbox (ADR-0075): the `auth.json` goes on tmpfs behind
+ * `~/.pi/agent/auth.json`, the API keys become the Agent process's environment (`ANTHROPIC_API_KEY`,
+ * ...), never the container's. Sent before the MCP set and again whenever the stored login changes;
+ * empty values forget. When pi refreshes an OAuth token in `auth.json`, the rewritten file comes back
+ * as the `piAuthChanged` notification.
+ */
+export const DaemonPiAuthParams = z.object({
+  authJson: z.string(),
+  apiKeys: z.record(z.string(), z.string()),
+});
+export type DaemonPiAuthParams = z.infer<typeof DaemonPiAuthParams>;
+
+export const DaemonPiAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonPiAuthChangedParams = z.infer<typeof DaemonPiAuthChangedParams>;
 
 /**
  * Switches the Agent's model (ACP `session/set_config_option` on the `model` option). Applied right

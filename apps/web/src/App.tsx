@@ -1094,7 +1094,7 @@ export function App() {
                 <span className="setup-check" aria-hidden="true">{anyTokenSet ? "\u2713" : ""}</span>
                 <span className="setup-text">
                   <span className="setup-title">Connect a Provider</span>
-                  <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor or Devin"}</span>
+                  <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor, Devin or pi"}</span>
                 </span>
               </button>
               <button type="button" className={`setup-item${gitConnected ? " done" : ""}`} onClick={() => setGitConnect(true)}>
@@ -1275,7 +1275,7 @@ export function App() {
         <SandboxImageBanner />
         {!anyTokenSet && route.view !== "settings" && route.view !== "new" && !(route.view === "session" && !selected) && (
           <div className="banner banner-warn" onClick={() => setProviderConnect({ provider: null })}>
-            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor or Devin login. Click to connect one.
+            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, Devin or pi login. Click to connect one.
           </div>
         )}
         {settings && (
@@ -3082,6 +3082,11 @@ function SettingsView({
   const [cursorLogin, setCursorLogin] = useState("");
   const [forgetCursorLogin, setForgetCursorLogin] = useState(false);
   const cursorFileRef = useRef<HTMLInputElement>(null);
+  const [piAuth, setPiAuth] = useState("");
+  const [forgetPiAuth, setForgetPiAuth] = useState(false);
+  const piFileRef = useRef<HTMLInputElement>(null);
+  const [piApiKeys, setPiApiKeys] = useState("");
+  const [forgetPiApiKeys, setForgetPiApiKeys] = useState(false);
   const [claudeBaseUrl, setClaudeBaseUrl] = useState(settings.claudeApi.baseUrl);
   const [claudeAuthToken, setClaudeAuthToken] = useState("");
   const [claudeApiKey, setClaudeApiKey] = useState("");
@@ -3131,6 +3136,8 @@ function SettingsView({
   const devinTokenSet = settings.providerSecretsSet.devin.WINDSURF_API_KEY;
   const codexAuthSet = settings.providerSecretsSet.codex.CODEX_AUTH_JSON && !forgetCodexAuth;
   const cursorLoginSet = settings.providerSecretsSet.cursor.CURSOR_LOGIN && !forgetCursorLogin;
+  const piAuthSet = settings.providerSecretsSet.pi.PI_AUTH_JSON && !forgetPiAuth;
+  const piApiKeysSet = settings.providerSecretsSet.pi.PI_API_KEYS && !forgetPiApiKeys;
 
   const { section: active, block } = resolveGlobalSettingsRoute(section);
   const show = (id: GlobalSettingsSection) => active === id;
@@ -3143,6 +3150,14 @@ function SettingsView({
     void file.text().then((text) => {
       setCursorLogin(text);
       setForgetCursorLogin(false);
+    });
+  };
+
+  const importPiAuth = (file: File | undefined) => {
+    if (!file) return;
+    void file.text().then((text) => {
+      setPiAuth(text);
+      setForgetPiAuth(false);
     });
   };
 
@@ -3203,6 +3218,14 @@ function SettingsView({
           ...(devinToken.trim() ? { devin: { WINDSURF_API_KEY: devinToken.trim() } } : {}),
           ...(codexAuth.trim() ? { codex: { CODEX_AUTH_JSON: codexAuth.trim() } } : forgetCodexAuth ? { codex: { CODEX_AUTH_JSON: "" } } : {}),
           ...(cursorLogin.trim() ? { cursor: { CURSOR_LOGIN: cursorLogin.trim() } } : forgetCursorLogin ? { cursor: { CURSOR_LOGIN: "" } } : {}),
+          ...(piAuth.trim() || forgetPiAuth || piApiKeys.trim() || forgetPiApiKeys
+            ? {
+                pi: {
+                  ...(piAuth.trim() ? { PI_AUTH_JSON: piAuth.trim() } : forgetPiAuth ? { PI_AUTH_JSON: "" } : {}),
+                  ...(piApiKeys.trim() ? { PI_API_KEYS: piApiKeys.trim() } : forgetPiApiKeys ? { PI_API_KEYS: "" } : {}),
+                },
+              }
+            : {}),
         },
         claudeApi: {
           baseUrl: claudeBaseUrl.trim(),
@@ -3216,6 +3239,10 @@ function SettingsView({
       setForgetCodexAuth(false);
       setCursorLogin("");
       setForgetCursorLogin(false);
+      setPiAuth("");
+      setForgetPiAuth(false);
+      setPiApiKeys("");
+      setForgetPiApiKeys(false);
       setClaudeAuthToken("");
       setClaudeApiKey("");
       setForgetClaudeAuthToken(false);
@@ -3259,7 +3286,7 @@ function SettingsView({
                 <button type="button" className="primary" onClick={() => setGuided(true)}>
                   Connect a Provider…
                 </button>
-                <span className="muted">Claude, Codex, Cursor or Devin</span>
+                <span className="muted">Claude, Codex, Cursor, Devin or pi</span>
               </div>
               {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
               <label>
@@ -3425,6 +3452,112 @@ function SettingsView({
                   </label>
                 )}
               </div>
+              <label>
+                <Caption
+                  help={
+                    <>
+                      <p>
+                        pi (earendil-works/pi) runs on your own model provider accounts. Run <code>pi</code> on your machine, type <code>/login</code> to
+                        sign in with Anthropic, OpenAI, GitHub Copilot, OpenRouter, … and paste or import the file it writes (the Sandbox keeps it in
+                        memory only; refreshed tokens flow back here). API keys go in the field below instead, or as well.
+                      </p>
+                      <CopyCommand command="pi" />
+                      <CopyCommand command="cat ~/.pi/agent/auth.json" />
+                    </>
+                  }
+                >
+                  pi: login (auth.json){" "}
+                  {piAuthSet ? (
+                    <span className="ok">(set{settings.piLogin && settings.piLogin.authProviders.length > 0 && !forgetPiAuth ? `: ${settings.piLogin.authProviders.map((p) => p.id).join(", ")}` : ""})</span>
+                  ) : (
+                    <span className="warn">(not set)</span>
+                  )}
+                </Caption>
+                <textarea
+                  rows={3}
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={piAuth}
+                  onChange={(e) => {
+                    setPiAuth(e.target.value);
+                    if (e.target.value.trim()) setForgetPiAuth(false);
+                  }}
+                  placeholder={piAuthSet ? "Leave empty to keep the current login" : "Paste the contents of pi's auth.json"}
+                />
+              </label>
+              <div className="field-hint">
+                <input
+                  ref={piFileRef}
+                  type="file"
+                  accept=".json,application/json"
+                  hidden
+                  onChange={(e) => {
+                    importPiAuth(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button type="button" onClick={() => piFileRef.current?.click()}>
+                  Import auth.json…
+                </button>
+                {settings.providerSecretsSet.pi.PI_AUTH_JSON && (
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={forgetPiAuth}
+                      onChange={(e) => {
+                        setForgetPiAuth(e.target.checked);
+                        if (e.target.checked) setPiAuth("");
+                      }}
+                    />{" "}
+                    Forget the stored login
+                  </label>
+                )}
+              </div>
+              <label>
+                <Caption
+                  help={
+                    <p>
+                      API keys pi should run with, one <code>NAME=value</code> line per model provider: <code>ANTHROPIC_API_KEY</code>,{" "}
+                      <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>OPENROUTER_API_KEY</code>, <code>AI_GATEWAY_API_KEY</code>, … (the names
+                      pi&apos;s providers documentation lists). They reach the pi process in the Sandbox as its environment only: never the container, a
+                      snapshot or the logs. Saving replaces the whole list.
+                    </p>
+                  }
+                >
+                  pi: API keys (NAME=value lines){" "}
+                  {piApiKeysSet ? (
+                    <span className="ok">(set{settings.piLogin && settings.piLogin.apiKeyNames.length > 0 && !forgetPiApiKeys ? `: ${settings.piLogin.apiKeyNames.join(", ")}` : ""})</span>
+                  ) : (
+                    <span className="warn">(not set)</span>
+                  )}
+                </Caption>
+                <textarea
+                  rows={3}
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={piApiKeys}
+                  onChange={(e) => {
+                    setPiApiKeys(e.target.value);
+                    if (e.target.value.trim()) setForgetPiApiKeys(false);
+                  }}
+                  placeholder={piApiKeysSet ? "Leave empty to keep the current keys" : "ANTHROPIC_API_KEY=sk-ant-…\nOPENAI_API_KEY=sk-…"}
+                />
+              </label>
+              {settings.providerSecretsSet.pi.PI_API_KEYS && (
+                <div className="field-hint">
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={forgetPiApiKeys}
+                      onChange={(e) => {
+                        setForgetPiApiKeys(e.target.checked);
+                        if (e.target.checked) setPiApiKeys("");
+                      }}
+                    />{" "}
+                    Forget the stored API keys
+                  </label>
+                </div>
+              )}
 
               <h4 className="ss-sub" id="settings-claude-api">
                 <Caption
@@ -3768,7 +3901,7 @@ function SettingsView({
                     help={
                       <p>
                         Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
-                        {deliveryNote("codex")} {deliveryNote("cursor")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
+                        {deliveryNote("codex")} {deliveryNote("cursor")} {deliveryNote("pi")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
                         and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Default for new Sessions; each Session can change it in its
                         settings.
                       </p>

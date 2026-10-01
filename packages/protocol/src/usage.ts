@@ -133,6 +133,16 @@ const CURSOR_LIMIT = [
   /out of (?:fast )?requests/i,
   /quota[_ ]exceeded/i,
 ];
+/** pi runs on the model providers' own APIs: their rate-limit and quota refusals, as pi relays them. */
+const PI_LIMIT = [
+  /rate[_ ]limit/i,
+  /quota[_ ]exceeded/i,
+  /insufficient[_ ]quota/i,
+  /credit balance is too low/i,
+  /out of credits/i,
+  /usage[_ ]limit/i,
+  /\b429\b/,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -140,8 +150,8 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor", message: string, now: Date = new Date()): UsageLimitHit | null {
-  const patterns = provider === "claude-code" ? CLAUDE_LIMIT : provider === "codex" ? CODEX_LIMIT : provider === "cursor" ? CURSOR_LIMIT : DEVIN_LIMIT;
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi", message: string, now: Date = new Date()): UsageLimitHit | null {
+  const patterns = provider === "claude-code" ? CLAUDE_LIMIT : provider === "codex" ? CODEX_LIMIT : provider === "cursor" ? CURSOR_LIMIT : provider === "pi" ? PI_LIMIT : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

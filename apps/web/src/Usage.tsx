@@ -19,6 +19,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   codex: "Codex has not reported its usage yet: it comes after the first turn.",
   devin: "Devin does not report its usage windows (ACUs) to Sessionboxer.",
   cursor: "Cursor does not report its usage to Sessionboxer; see cursor.com → Dashboard → Usage.",
+  pi: "pi runs on your own model provider accounts and reports no usage windows; see the provider's console.",
 };
 
 /** The current time, ticking every second while `live`. */

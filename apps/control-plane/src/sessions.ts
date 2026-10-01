@@ -17,6 +17,7 @@ import {
   DaemonClaudeModelsSetResult,
   type DaemonCodexAuthParams,
   type DaemonCursorAuthParams,
+  type DaemonPiAuthParams,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -132,6 +133,9 @@ import {
   VERSION,
   codexAuthJson,
   cursorLogin,
+  piApiKeyEnv,
+  piApiKeys,
+  piAuthJson,
   defaultMcpEnabled,
   knownMcpIds,
   providerEnv,
@@ -2614,6 +2618,31 @@ export class SessionManager {
   /** A Cursor Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
   cursorAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
 
+  /**
+   * Hands the stored pi login to a pi Session's Daemon (ADR-0075): the `auth.json` goes on tmpfs
+   * where pi reads it, the API keys into the Agent's environment. Before the MCP set at connect
+   * time; again whenever the stored login changes.
+   */
+  async pushPiAuth(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "pi" || !client?.connected) return;
+    const settings = this.settings();
+    const params: DaemonPiAuthParams = { authJson: piAuthJson(settings), apiKeys: piApiKeyEnv(piApiKeys(settings)) };
+    await client.request(DAEMON_METHODS.piAuthSet, params);
+  }
+
+  /** The stored pi login changed (Settings, or a Sandbox refreshed it): every live pi Session gets it. */
+  async pushPiAuthToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.provider !== "pi" || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushPiAuth(s.id).catch((e: unknown) => this.log(`pi auth push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
+  /** A pi Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
+  piAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
+
   /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
   async pushRecordingPrefs(id: string): Promise<void> {
     const client = this.clients.get(id);
@@ -2739,6 +2768,7 @@ export class SessionManager {
       },
       onCodexAuthChanged: (authJson) => this.codexAuthRefreshed(id, authJson),
       onCursorAuthChanged: (authJson) => this.cursorAuthRefreshed(id, authJson),
+      onPiAuthChanged: (authJson) => this.piAuthRefreshed(id, authJson),
       onDisconnected: () => {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");
@@ -2770,6 +2800,7 @@ export class SessionManager {
       .then(() => this.pushRepos(id))
       .then(() => this.pushCodexAuth(id))
       .then(() => this.pushCursorAuth(id))
+      .then(() => this.pushPiAuth(id))
       .then(() => this.pushUtilities(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))

@@ -11,10 +11,17 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.codex.CODEX_AUTH_JSON;
     case "cursor":
       return settings.providerSecretsSet.cursor.CURSOR_LOGIN;
+    case "pi":
+      return settings.providerSecretsSet.pi.PI_AUTH_JSON || settings.providerSecretsSet.pi.PI_API_KEYS;
   }
 }
 
-/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex and Cursor a login. */
+/** Whether "Sign in with …" exists for the Provider (ADR-0058): pi's `/login` lives in its TUI only, so it is paste-only. */
+export function providerSignsInFromBrowser(provider: Provider): boolean {
+  return provider !== "pi";
+}
+
+/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex, Cursor and pi a login. */
 export function providerCredentialNoun(provider: Provider): "token" | "login" {
   return provider === "claude-code" || provider === "devin" ? "token" : "login";
 }

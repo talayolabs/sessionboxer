@@ -66,7 +66,16 @@ function toRef(raw: string, loc: Array<string | undefined>, base: string): FileR
  * null. Video/image/PDF files are left to the attachment cards, paths outside the Workspace to nobody.
  */
 export function parseFileRef(text: string, base = ""): FileRef | null {
-  const m = WHOLE.exec(text.trim());
+  const value = text.trim();
+  if (/^file:/i.test(value)) {
+    const path = workspacePath(value, base);
+    if (!path || isBinaryMedia(path)) return null;
+    const location = /^#L(\d+)(?:C(\d+))?(?:-L?\d+)?$/.exec(new URL(value).hash);
+    const line = Number(location?.[1]);
+    const column = Number(location?.[2]);
+    return { path, ...(line > 0 ? { line, ...(column > 0 ? { column } : {}) } : {}) };
+  }
+  const m = WHOLE.exec(value);
   return m ? toRef(m[1] ?? "", m.slice(2, 6), base) : null;
 }
 

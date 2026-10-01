@@ -29,7 +29,9 @@ import type {
   SessionUpdate,
   StopReason,
   TurnUsage,
+  TurnContextTelemetry,
 } from "@sessionboxer/protocol";
+import { fingerprint } from "@sessionboxer/protocol/node-telemetry";
 import { caEnv } from "./ca-env.js";
 import { acpMcpServers, type BuiltinMcp } from "./mcp-config.js";
 import { promptBlocks } from "./prompt-blocks.js";
@@ -96,6 +98,7 @@ export interface AgentConfig {
 const USAGE_COMMAND_TIMEOUT_MS = 8000;
 
 export interface AgentEvents {
+  onPromptStarted?: (context: Omit<TurnContextTelemetry, "version" | "turnId" | "provider">) => void;
   onUpdate: (update: SessionUpdate) => void;
   onTurnEnded: (stopReason: StopReason, usage: TurnUsage | undefined) => void;
   onError: (message: string) => void;
@@ -792,6 +795,14 @@ export class AgentManager {
       if (attachments.length > 0) {
         this.cfg.log(`prompt carries ${attachments.length} attachment(s): ${built.blocks.map((b) => b.type).join(", ") || "none"} sent inline`);
       }
+      this.events.onPromptStarted?.({
+        model: this.currentModel,
+        agentInfo: this.agentInfo,
+        configuredInstructionsHash: fingerprint(this.instructions()),
+        instructionsScope: "sessionboxer-configured",
+        instructionsDelivery: this.cfg.instructionsDelivery,
+        mcpServers: this.cfg.builtinMcps().map((server) => server.name).concat(this.mcpServerNames ?? []),
+      });
       this.markPrompted(this.acpSessionId);
       const result = await this.conn.agent.request("session/prompt", {
         sessionId: this.acpSessionId,

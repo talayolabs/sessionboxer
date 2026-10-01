@@ -1548,6 +1548,8 @@ export const LlmRequestShape = z.object({
   messagesChars: z.number().int().nonnegative(),
   maxTokens: z.number().nullable(),
   stream: z.boolean(),
+  systemPromptHash: z.string().nullable().optional(),
+  toolSchemaHash: z.string().nullable().optional(),
 });
 export type LlmRequestShape = z.infer<typeof LlmRequestShape>;
 
@@ -2547,12 +2549,77 @@ export type AgentApproval = z.infer<typeof AgentApproval>;
 export const AgentApprovalAnswer = z.object({ allow: z.boolean() });
 export type AgentApprovalAnswer = z.infer<typeof AgentApprovalAnswer>;
 
+export const McpExecutionTelemetry = z.object({
+  version: z.literal(1),
+  executionId: z.string().uuid(),
+  server: z.enum(["desktop", "sessionboxer"]),
+  toolName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_]+$/),
+  startedAt: z.string().datetime(),
+  executionMs: z.number().finite().nonnegative(),
+  toolSchemaHash: z.string().regex(/^[a-f0-9]{64}$/),
+  errorCode: z.enum(["invalid_arguments", "permission_denied", "timeout", "rate_limit", "not_found", "edit_match", "cancelled", "network", "nonzero_exit", "tool_error"]).nullable(),
+  errorSource: z.literal("heuristic").nullable(),
+});
+export type McpExecutionTelemetry = z.infer<typeof McpExecutionTelemetry>;
+
+export interface TurnContextTelemetry {
+  version: 1;
+  turnId: string;
+  provider: Provider;
+  model: string | null;
+  agentInfo: { name: string; version: string } | null;
+  configuredInstructionsHash: string;
+  instructionsScope: "sessionboxer-configured";
+  instructionsDelivery: InstructionsDelivery;
+  mcpServers: string[];
+}
+
+export interface ExecutionEvidence {
+  exitCode: number | null;
+  terminationSignal: string | number | null;
+  timedOut: boolean | null;
+  interrupted: boolean | null;
+  waitTimedOut: boolean | null;
+  processOutcome: "succeeded" | "failed" | "signalled" | "timed_out" | "interrupted" | "running" | "unknown";
+  transportOutcome: "succeeded" | "failed" | "unknown";
+  expectedExitCodes: number[] | null;
+  diagnosticSource: "declared" | null;
+  sources: Record<string, string>;
+  context: {
+    commandHash: string | null;
+    cwdHash: string | null;
+    taskHash: string | null;
+    processRefs: string[];
+    targetHashes: string[];
+  };
+}
+
+export interface ToolExecutionTelemetry {
+  version: 1 | 2;
+  execution?: ExecutionEvidence;
+  turnId: string | null;
+  toolCallId: string;
+  toolName: string | null;
+  status: "completed" | "failed";
+  startedAt: string | null;
+  observedDurationMs: number | null;
+  executionId: string | null;
+  executionMs: number | null;
+  toolSchemaHash: string | null;
+  resultIsError: boolean | null;
+  errorCode: string | null;
+  errorSource: "heuristic" | "structured" | "acp_status" | null;
+}
+
 export type SessionEventBody =
-  | { type: "user_prompt"; text: string; attachments?: PromptAttachment[]; origin?: PromptOrigin }
+  | { type: "user_prompt"; text: string; attachments?: PromptAttachment[]; origin?: PromptOrigin; turnId?: string }
+  | { type: "turn_context"; context: TurnContextTelemetry }
+  | { type: "tool_execution"; execution: ToolExecutionTelemetry }
+  | { type: "mcp_execution"; execution: McpExecutionTelemetry }
   | { type: "update"; update: SessionUpdate }
-  | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage }
+  | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage; turnId?: string }
   /** `limit`: the Provider refused for lack of usage credit (the prompt can be sent again after the reset). */
-  | { type: "agent_error"; message: string; limit?: { resetsAt: string | null } }
+  | { type: "agent_error"; message: string; limit?: { resetsAt: string | null }; turnId?: string }
   | { type: "status"; status: SessionStatus; error?: string }
   /** First event of a forked Session: everything before it was copied from the origin (nothing, with `conversation: "new"`). */
   | {

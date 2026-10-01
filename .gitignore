@@ -5,3 +5,5 @@ dist/
 spike-output/
 *.tsbuildinfo
 build/
+.audit-output/
+__pycache__/

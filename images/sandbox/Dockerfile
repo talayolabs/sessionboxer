@@ -27,9 +27,9 @@ COPY packages/computer-use-mcp packages/computer-use-mcp
 COPY packages/sessionboxer-mcp packages/sessionboxer-mcp
 COPY packages/protocol packages/protocol
 COPY packages/sandbox-daemon packages/sandbox-daemon
-RUN npm run build -w @sessionboxer/computer-use-mcp \
+RUN npm run build -w @sessionboxer/protocol \
+    && npm run build -w @sessionboxer/computer-use-mcp \
     && npm run build -w @sessionboxer/sessionboxer-mcp \
-    && npm run build -w @sessionboxer/protocol \
     && npm run build -w @sessionboxer/sandbox-daemon
 # The VS Code extension with the Sessionboxer color themes, generated from the same palettes
 # the UI uses (ADR-0048).
@@ -202,7 +202,10 @@ RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; ar
 # compiled code (stage 1) after.
 COPY packages/computer-use-mcp/package.json /opt/sessionboxer/computer-use-mcp/
 RUN cd /opt/sessionboxer/computer-use-mcp \
+    && npm pkg delete dependencies.@sessionboxer/protocol \
     && npm install --omit=dev --no-package-lock --ignore-scripts \
+    && mkdir -p node_modules/@sessionboxer \
+    && ln -s /opt/sessionboxer/protocol node_modules/@sessionboxer/protocol \
     && npm cache clean --force \
     && ln -s /opt/sessionboxer/computer-use-mcp/dist/index.js /usr/local/bin/sessionboxer-computer-use-mcp
 
@@ -210,7 +213,10 @@ RUN cd /opt/sessionboxer/computer-use-mcp \
 # through the Daemon on loopback. Its `docs` tool reads the user guide shipped here.
 COPY packages/sessionboxer-mcp/package.json /opt/sessionboxer/sessionboxer-mcp/
 RUN cd /opt/sessionboxer/sessionboxer-mcp \
+    && npm pkg delete dependencies.@sessionboxer/protocol \
     && npm install --omit=dev --no-package-lock --ignore-scripts \
+    && mkdir -p node_modules/@sessionboxer \
+    && ln -s /opt/sessionboxer/protocol node_modules/@sessionboxer/protocol \
     && npm cache clean --force \
     && ln -s /opt/sessionboxer/sessionboxer-mcp/dist/index.js /usr/local/bin/sessionboxer-mcp
 COPY docs/GUIDE.md /opt/sessionboxer/docs/GUIDE.md

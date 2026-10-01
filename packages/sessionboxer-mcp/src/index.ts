@@ -6,13 +6,20 @@
  * the Session. Which tools the Control Plane accepts follows the Session's `agentTools` policy
  * (`session`: this Session only; `all`: other Sessions too); a refused call answers with the reason.
  */
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+import { fingerprint, instrumentTool, reportMcpExecution } from "@sessionboxer/protocol/node-telemetry";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { BridgeError, callTool, e2eCall, type E2eMethod } from "./bridge.js";
 import { extractWav } from "./media.js";
 
 const server = new McpServer({ name: "sessionboxer", version: "0.0.0" });
+
+function registerTool<Shape extends z.ZodRawShape>(name: string, config: { description: string; inputSchema: Shape }, callback: ToolCallback<Shape>) {
+  const schemaHash = fingerprint({ name, description: config.description, inputSchema: toJsonSchemaCompat(z.object(config.inputSchema)) });
+  return server.registerTool(name, config, instrumentTool(schemaHash, callback, reportMcpExecution("sessionboxer", name)) as unknown as ToolCallback<Shape>);
+}
 
 const okText = (text = "OK") => ({ content: [{ type: "text" as const, text }] });
 const errorText = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
@@ -29,7 +36,7 @@ const tool = async (name: string, args: unknown) => {
 
 // --- Self-knowledge --------------------------------------------------------------------------
 
-server.registerTool(
+registerTool(
   "whoami",
   {
     description:
@@ -39,7 +46,7 @@ server.registerTool(
   () => tool("whoami", {}),
 );
 
-server.registerTool(
+registerTool(
   "docs",
   {
     description: "Look a topic up in the Sessionboxer user guide (the sections whose heading or text matches the query, at most a few).",
@@ -48,7 +55,7 @@ server.registerTool(
   (args) => tool("docs", args),
 );
 
-server.registerTool(
+registerTool(
   "settings_get",
   {
     description: "The Sessionboxer settings that apply to this Session, with any secret-shaped value left out.",
@@ -59,7 +66,7 @@ server.registerTool(
 
 // --- This Session ------------------------------------------------------------------------------
 
-server.registerTool(
+registerTool(
   "pr_attach",
   {
     description: "Attach a pull request to this Session: the user sees it in the PRs pane with its checks and review comments. Use it right after creating a PR.",
@@ -68,7 +75,7 @@ server.registerTool(
   (args) => tool("pr_attach", args),
 );
 
-server.registerTool(
+registerTool(
   "pr_review_submit",
   {
     description:
@@ -94,13 +101,13 @@ server.registerTool(
   (args) => tool("pr_review_submit", args),
 );
 
-server.registerTool(
+registerTool(
   "pr_list",
   { description: "The pull requests attached to this Session, with their state, checks and unseen review items.", inputSchema: {} },
   () => tool("pr_list", {}),
 );
 
-server.registerTool(
+registerTool(
   "pr_items",
   {
     description: "The review comments, check results and other items of an attached pull request, with whether the user marked each as addressed.",
@@ -109,7 +116,7 @@ server.registerTool(
   (args) => tool("pr_items", args),
 );
 
-server.registerTool(
+registerTool(
   "pr_mark_addressed",
   {
     description: "Mark review items of an attached pull request as addressed, after you dealt with them.",
@@ -121,7 +128,7 @@ server.registerTool(
   (args) => tool("pr_mark_addressed", args),
 );
 
-server.registerTool(
+registerTool(
   "snapshot",
   {
     description: "Take a Snapshot of this Sandbox now (its disk, the Workspace and your conversation), which the user can fork from or roll back to.",
@@ -130,7 +137,7 @@ server.registerTool(
   () => tool("snapshot", {}),
 );
 
-server.registerTool(
+registerTool(
   "queue_add",
   {
     description: "Queue a prompt for yourself: it is sent to you as the next user turn once this one ends (a follow-up you want a fresh turn for, not a note).",
@@ -139,9 +146,9 @@ server.registerTool(
   (args) => tool("queue_add", args),
 );
 
-server.registerTool("queue_list", { description: "The prompts queued for this Session, in order.", inputSchema: {} }, () => tool("queue_list", {}));
+registerTool("queue_list", { description: "The prompts queued for this Session, in order.", inputSchema: {} }, () => tool("queue_list", {}));
 
-server.registerTool(
+registerTool(
   "title_set",
   {
     description: "Rename this Session (the sidebar and the browser tab); keep it short and specific.",
@@ -150,7 +157,7 @@ server.registerTool(
   (args) => tool("title_set", args),
 );
 
-server.registerTool(
+registerTool(
   "verify",
   {
     description:
@@ -173,7 +180,7 @@ server.registerTool(
   (args) => tool("verify", args),
 );
 
-server.registerTool(
+registerTool(
   "notify",
   {
     description: "Send the user a short notification (a browser push and the bell in Sessionboxer) about this Session, for something that cannot wait for your reply; not for progress.",
@@ -182,13 +189,13 @@ server.registerTool(
   (args) => tool("notify", args),
 );
 
-server.registerTool(
+registerTool(
   "terminal_list",
   { description: "The Terminals of this Session (the user's, and the ones opened for you), with whether each still runs.", inputSchema: {} },
   () => tool("terminal_list", {}),
 );
 
-server.registerTool(
+registerTool(
   "terminal_read",
   {
     description: "The last lines a Terminal printed (its retained output, plain text).",
@@ -200,7 +207,7 @@ server.registerTool(
   (args) => tool("terminal_read", args),
 );
 
-server.registerTool(
+registerTool(
   "transcribe_media",
   {
     description:
@@ -234,7 +241,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "ui_open",
   {
     description:
@@ -268,7 +275,7 @@ const REPOS = z
   .describe("Repositories the new Session starts with");
 const WAIT_TIMEOUT = z.number().int().positive().max(20).default(15).describe("Seconds to wait at most (the call returns earlier when the Session settles); up to 20");
 
-server.registerTool(
+registerTool(
   "sessions_list",
   {
     description:
@@ -278,7 +285,7 @@ server.registerTool(
   () => tool("sessions_list", {}),
 );
 
-server.registerTool(
+registerTool(
   "session_get",
   {
     description: "One Session's summary plus the last thing its Agent said (capped). Needs the all-Sessions policy.",
@@ -287,7 +294,7 @@ server.registerTool(
   (args) => tool("session_get", args),
 );
 
-server.registerTool(
+registerTool(
   "session_create",
   {
     description:
@@ -302,7 +309,7 @@ server.registerTool(
   (args) => tool("session_create", args),
 );
 
-server.registerTool(
+registerTool(
   "session_fork",
   {
     description:
@@ -318,7 +325,7 @@ server.registerTool(
   (args) => tool("session_fork", args),
 );
 
-server.registerTool(
+registerTool(
   "session_message",
   {
     description:
@@ -332,7 +339,7 @@ server.registerTool(
   (args) => tool("session_message", args),
 );
 
-server.registerTool(
+registerTool(
   "session_wait",
   {
     description:
@@ -342,7 +349,7 @@ server.registerTool(
   (args) => tool("session_wait", args),
 );
 
-server.registerTool(
+registerTool(
   "session_stop",
   {
     description: "Stop a Session your Agent created (session_create / session_fork); its Sandbox stops, the user can resume it. Other Sessions are the user's to stop. Needs the all-Sessions policy.",
@@ -351,7 +358,7 @@ server.registerTool(
   (args) => tool("session_stop", args),
 );
 
-server.registerTool(
+registerTool(
   "approval_wait",
   {
     description:
@@ -361,7 +368,7 @@ server.registerTool(
   (args) => tool("approval_wait", args),
 );
 
-server.registerTool(
+registerTool(
   "schedule_create",
   {
     description:
@@ -386,7 +393,7 @@ server.registerTool(
   (args) => tool("schedule_create", args),
 );
 
-server.registerTool(
+registerTool(
   "schedule_list",
   { description: "The automations with a schedule trigger (scheduled tasks): id, name, cron, time zone, enabled, action, next and last run. See automation_list for every automation.", inputSchema: {} },
   () => tool("schedule_list", {}),
@@ -404,7 +411,7 @@ const CREDENTIALS = z
   .default([]);
 const KEY_VALUES = z.array(z.object({ name: z.string().min(1).max(200), value: z.string().max(10_000).describe("May contain ${cred:<name>} for one of the credentials") })).max(20).default([]);
 
-server.registerTool(
+registerTool(
   "utilities_list",
   {
     description:
@@ -414,7 +421,7 @@ server.registerTool(
   () => tool("utilities_list", {}),
 );
 
-server.registerTool(
+registerTool(
   "utilities_get",
   {
     description:
@@ -424,7 +431,7 @@ server.registerTool(
   (args) => tool("utilities_get", args),
 );
 
-server.registerTool(
+registerTool(
   "utilities_open",
   {
     description:
@@ -434,7 +441,7 @@ server.registerTool(
   (args) => tool("utilities_open", args),
 );
 
-server.registerTool(
+registerTool(
   "utilities_add",
   {
     description:
@@ -468,7 +475,7 @@ server.registerTool(
   (args) => tool("utilities_add", args),
 );
 
-server.registerTool(
+registerTool(
   "utilities_update",
   {
     description:
@@ -501,7 +508,7 @@ server.registerTool(
   (args) => tool("utilities_update", args),
 );
 
-server.registerTool(
+registerTool(
   "utilities_enable",
   {
     description:
@@ -511,7 +518,7 @@ server.registerTool(
   (args) => tool("utilities_enable", args),
 );
 
-server.registerTool(
+registerTool(
   "procedure_save",
   {
     description:
@@ -529,7 +536,7 @@ server.registerTool(
 
 // --- Followed pull requests (ADR-0064) --------------------------------------------------------
 
-server.registerTool(
+registerTool(
   "pr_follow",
   {
     description:
@@ -545,7 +552,7 @@ server.registerTool(
   (args) => tool("pr_follow", args),
 );
 
-server.registerTool(
+registerTool(
   "pr_followed_list",
   {
     description: "The follows and the followed pull requests: repository, number, title, state, author, head, review decision, checks, the Sessions each is attached to and its last automation runs.",
@@ -558,7 +565,7 @@ server.registerTool(
 
 const PR_EVENTS = ["opened", "synchronize", "ready_for_review", "converted_to_draft", "review_requested", "review_submitted", "comment", "check_failed", "merged", "closed", "reopened"] as const;
 
-server.registerTool(
+registerTool(
   "automation_create",
   {
     description:
@@ -641,13 +648,13 @@ server.registerTool(
   (args) => tool("automation_create", args),
 );
 
-server.registerTool(
+registerTool(
   "automation_list",
   { description: "Every automation on this Control Plane: id, name, enabled, trigger, action, limits, next/last run, runs today.", inputSchema: {} },
   () => tool("automation_list", {}),
 );
 
-server.registerTool(
+registerTool(
   "automation_runs",
   { description: "The last 50 runs of an automation: trigger, status, PR, Session, detail, error, result.", inputSchema: { id: z.string().min(1) } },
   (args) => tool("automation_runs", args),
@@ -666,7 +673,7 @@ const e2eTool = async (method: E2eMethod, params: unknown) => {
   }
 };
 
-server.registerTool(
+registerTool(
   "e2e_plan",
   {
     description:
@@ -689,7 +696,7 @@ server.registerTool(
   ({ cases, skip_reason }) => e2eTool("plan", { cases, skipReason: skip_reason ?? null }),
 );
 
-server.registerTool(
+registerTool(
   "e2e_case_start",
   {
     description:
@@ -699,7 +706,7 @@ server.registerTool(
   ({ index }) => e2eTool("case_start", { index }),
 );
 
-server.registerTool(
+registerTool(
   "e2e_case_end",
   {
     description: "Record the result of the running case: passed, failed (then fix the code and e2e_case_start it again) or skipped (could not be exercised), with a one-line note and the screenshot that shows the final state.",
@@ -713,7 +720,7 @@ server.registerTool(
   ({ index, status, note, screenshot_path }) => e2eTool("case_end", { index, status, note: note ?? null, screenshotPath: screenshot_path ?? null }),
 );
 
-server.registerTool(
+registerTool(
   "e2e_finish",
   {
     description:

@@ -2,9 +2,9 @@
  * The tools' transport: `POST /sessionboxer` on the Sandbox Daemon (loopback), which forwards the
  * call as JSON-RPC over its own Control Plane connection and answers with the result (ADR-0062).
  * The request names the tool and its arguments only: which Session it concerns is the Daemon's
- * connection, so nothing here can speak for another Session. Mirrors `AGENT_BRIDGE_PATH` /
- * `AgentBridgeRequest` / `DAEMON_PORT` / `E2E_PATH` in `@sessionboxer/protocol`, which this
- * package does not depend on (it is installed on its own in the image).
+ * connection, so nothing here can speak for another Session. The transport constants mirror
+ * `AGENT_BRIDGE_PATH` / `AgentBridgeRequest` / `DAEMON_PORT` / `E2E_PATH` in
+ * `@sessionboxer/protocol`; this server is installed on its own in the image.
  */
 
 const DAEMON_PORT = 7000;

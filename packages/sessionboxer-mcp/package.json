@@ -7,13 +7,16 @@
   "bin": {
     "sessionboxer-mcp": "dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@sessionboxer/protocol": "1.4.1",
     "zod": "^3.25.0"
   },
   "devDependencies": {

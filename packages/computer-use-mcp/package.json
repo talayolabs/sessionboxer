@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@sessionboxer/protocol": "1.4.1",
     "sherpa-onnx-node": "^1.13.8",
     "zod": "^3.25.0"
   },

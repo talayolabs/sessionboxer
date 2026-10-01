@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+import { fingerprint, instrumentTool, reportMcpExecution } from "@sessionboxer/protocol/node-telemetry";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { NARRATION_LANGUAGES, NARRATION_VOICES } from "./narration.js";
@@ -38,10 +40,15 @@ const coordinate = z
 
 const server = new McpServer({ name: "computer-use", version: "0.0.0" });
 
+function registerTool<Shape extends z.ZodRawShape>(name: string, config: { description: string; inputSchema: Shape }, callback: ToolCallback<Shape>) {
+  const schemaHash = fingerprint({ name, description: config.description, inputSchema: toJsonSchemaCompat(z.object(config.inputSchema)) });
+  return server.registerTool(name, config, instrumentTool(schemaHash, callback, reportMcpExecution("desktop", name)) as unknown as ToolCallback<Shape>);
+}
+
 const okText = (text = "OK") => ({ content: [{ type: "text" as const, text }] });
 const image = (png: Buffer) => ({ content: [{ type: "image" as const, data: png.toString("base64"), mimeType: "image/png" }] });
 
-server.registerTool(
+registerTool(
   "screenshot",
   {
     description: `Take a screenshot of the whole ${display.width}x${display.height} desktop. Call this before acting and after any action whose result you need to see; other tools only return "OK".`,
@@ -50,18 +57,18 @@ server.registerTool(
   async () => image(await screenshotPng(display)),
 );
 
-server.registerTool(
+registerTool(
   "zoom",
   {
-    description: "Capture a rectangular region of the screen and scale it up to full screen size, to read small text or inspect details. Coordinates you see in the zoomed image are NOT screen coordinates; map them back through the region.",
+    description: 'Capture a rectangular region of the screen and scale it up to full screen size, to read small text or inspect details. Pass `region`: [x0, y0, x1, y1], the top-left and bottom-right screen corners, not x/y/width/height. Example: {"region":[100,120,500,420]}. Do not use `coordinate` or separate `x`, `y`, `width`, `height` arguments. Coordinates you see in the zoomed image are NOT screen coordinates; map them back through the region.',
     inputSchema: {
-      region: z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()]).describe("[x0, y0, x1, y1] of the region, top-left and bottom-right corners in screen coordinates"),
+      region: z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()]).describe("Required [x0, y0, x1, y1] screen corners, not a position and size; x1 > x0 and y1 > y0"),
     },
   },
   async ({ region }) => image(await zoomPng(display, region as Region)),
 );
 
-server.registerTool(
+registerTool(
   "cursor_position",
   { description: "Return the current [x, y] position of the mouse cursor.", inputSchema: {} },
   async () => {
@@ -70,7 +77,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "mouse_move",
   { description: "Move the mouse cursor to a coordinate without clicking.", inputSchema: { coordinate } },
   async ({ coordinate: c }) => {
@@ -81,28 +88,28 @@ server.registerTool(
 
 const clickInput = { coordinate: coordinate.optional().describe("Where to click; omitted = current cursor position") };
 
-server.registerTool("left_click", { description: "Click the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
+registerTool("left_click", { description: "Click the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
   await click(display, hand(), 1, 1, c as Coordinate | undefined);
   return okText();
 });
-server.registerTool("right_click", { description: "Click the right mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
+registerTool("right_click", { description: "Click the right mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
   await click(display, hand(), 3, 1, c as Coordinate | undefined);
   return okText();
 });
-server.registerTool("middle_click", { description: "Click the middle mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
+registerTool("middle_click", { description: "Click the middle mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
   await click(display, hand(), 2, 1, c as Coordinate | undefined);
   return okText();
 });
-server.registerTool("double_click", { description: "Double-click the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
+registerTool("double_click", { description: "Double-click the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
   await click(display, hand(), 1, 2, c as Coordinate | undefined);
   return okText();
 });
-server.registerTool("triple_click", { description: "Triple-click the left mouse button (selects a line/paragraph in most apps).", inputSchema: clickInput }, async ({ coordinate: c }) => {
+registerTool("triple_click", { description: "Triple-click the left mouse button (selects a line/paragraph in most apps).", inputSchema: clickInput }, async ({ coordinate: c }) => {
   await click(display, hand(), 1, 3, c as Coordinate | undefined);
   return okText();
 });
 
-server.registerTool(
+registerTool(
   "left_click_drag",
   {
     description: "Press the left button at start_coordinate, move to coordinate, release.",
@@ -114,16 +121,16 @@ server.registerTool(
   },
 );
 
-server.registerTool("left_mouse_down", { description: "Press and hold the left mouse button (pair with left_mouse_up).", inputSchema: clickInput }, async ({ coordinate: c }) => {
+registerTool("left_mouse_down", { description: "Press and hold the left mouse button (pair with left_mouse_up).", inputSchema: clickInput }, async ({ coordinate: c }) => {
   await mouseDown(display, hand(), 1, c as Coordinate | undefined);
   return okText();
 });
-server.registerTool("left_mouse_up", { description: "Release the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
+registerTool("left_mouse_up", { description: "Release the left mouse button.", inputSchema: clickInput }, async ({ coordinate: c }) => {
   await mouseUp(display, hand(), 1, c as Coordinate | undefined);
   return okText();
 });
 
-server.registerTool(
+registerTool(
   "type",
   {
     description:
@@ -138,11 +145,11 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "key",
   {
-    description: 'Press a key or key combination using xdotool key names, e.g. "Return", "Escape", "ctrl+s", "alt+Tab", "super", "ctrl+shift+t", "Page_Down". Separate multiple sequential presses with spaces.',
-    inputSchema: { text: z.string().min(1) },
+    description: 'Press a key or key combination using xdotool key names. Pass the required `text` argument, not `key`. Example: {"text":"ctrl+s"}. Other key names include "Return", "Escape", "alt+Tab", "super", "ctrl+shift+t", "Page_Down". Separate multiple sequential presses with spaces.',
+    inputSchema: { text: z.string().min(1).describe("Required xdotool key name or combination, e.g. Return or ctrl+s; separate sequential presses with spaces") },
   },
   async ({ text }) => {
     await key(display, text);
@@ -150,7 +157,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "hold_key",
   {
     description: "Hold a key or combination down for a duration in seconds, then release.",
@@ -162,14 +169,14 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "scroll",
   {
-    description: "Scroll the mouse wheel at a coordinate.",
+    description: 'Scroll the mouse wheel. Required `scroll_direction`: up, down, left or right. Optional `scroll_amount`: 1-50 wheel clicks (default 3), and `coordinate`: [x, y] (omitted = current cursor position). Example: {"scroll_direction":"down","scroll_amount":3,"coordinate":[640,360]}. Use `scroll_direction` and `scroll_amount`, not `direction` and `amount`.',
     inputSchema: {
-      coordinate: coordinate.optional(),
-      scroll_direction: z.enum(["up", "down", "left", "right"]),
-      scroll_amount: z.number().int().min(1).max(50).default(3).describe("Number of wheel clicks"),
+      coordinate: coordinate.optional().describe("Optional [x, y] screen position to move to before scrolling; omitted = current cursor position"),
+      scroll_direction: z.enum(["up", "down", "left", "right"]).describe("Required direction of scrolling: up, down, left or right"),
+      scroll_amount: z.number().int().min(1).max(50).default(3).describe("Optional number of wheel clicks, 1-50; default 3, not a pixel distance"),
     },
   },
   async ({ coordinate: c, scroll_direction, scroll_amount }) => {
@@ -178,7 +185,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "wait",
   {
     description: "Wait for a number of seconds (for pages to load, animations to finish; default 2), then return a screenshot.",
@@ -202,7 +209,7 @@ const narrationSchema = {
   narration_speed: z.number().min(0.7).max(1.5).default(1).describe("Speaking rate multiplier"),
 };
 
-server.registerTool(
+registerTool(
   "start_recording",
   {
     description:
@@ -215,7 +222,7 @@ server.registerTool(
   async ({ path, fps }) => okText(JSON.stringify(await startRecording(display, path, fps, await cursorPosition(display)))),
 );
 
-server.registerTool(
+registerTool(
   "annotate_recording",
   {
     description:
@@ -225,7 +232,7 @@ server.registerTool(
   async ({ text }) => okText(JSON.stringify(annotateRecording(text))),
 );
 
-server.registerTool(
+registerTool(
   "stop_recording",
   {
     description:
@@ -255,7 +262,7 @@ server.registerTool(
     ),
 );
 
-server.registerTool(
+registerTool(
   "narrate_recording",
   {
     description:
@@ -269,7 +276,7 @@ server.registerTool(
     okText(JSON.stringify(await narrateRecording(path, { language: narration_language, voice: narration_voice, speed: narration_speed }))),
 );
 
-server.registerTool(
+registerTool(
   "recording_status",
   { description: "Whether a desktop recording is running, since when, and how many captions it has.", inputSchema: {} },
   async () => okText(JSON.stringify(currentRecording() ?? { recording: false })),

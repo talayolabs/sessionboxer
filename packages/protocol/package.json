@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./node-telemetry": {
+      "types": "./dist/node-telemetry.d.ts",
+      "default": "./dist/node-telemetry.js"
     }
   },
   "files": [
@@ -22,6 +26,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/node": "22.20.2",
     "typescript": "^5.6.0"
   }
 }

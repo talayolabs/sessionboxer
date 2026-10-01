@@ -89,6 +89,8 @@ import { SessionInfoFile } from "./session-info.js";
 import { UtilitiesFiles } from "./utilities.js";
 import { Uploads } from "./uploads.js";
 import { Terminals } from "./terminals.js";
+import { ToolTelemetry } from "./tool-telemetry.js";
+import { handleToolTelemetry } from "./telemetry-http.js";
 import {
   BRIDGE_SERVICE_DESKTOP,
   BRIDGE_SERVICE_SESSIONBOXER,
@@ -317,7 +319,7 @@ function reportUsage(windows: UsageWindow[]): void {
 }
 
 /** The Agent's error as the event carries it, marked when it is the Provider refusing for lack of credit. */
-function agentError(message: string): DaemonEvent["body"] {
+function agentError(message: string): Extract<DaemonEvent["body"], { type: "agent_error" }> {
   const hit = classifyUsageLimit(provider, message);
   const rejected = agent.turnActive && lastRejected && Date.now() - lastRejected.at < REJECTED_TO_ERROR_MS ? lastRejected : null;
   if (!hit && !rejected) return { type: "agent_error", message };
@@ -445,6 +447,9 @@ const macosBriefing = (): string => {
   ].join("\n");
 };
 
+const toolTelemetry = new ToolTelemetry();
+let activeTurnId: string | undefined;
+
 const agent = new AgentManager(
   {
     command: acpCommand,
@@ -468,13 +473,26 @@ const agent = new AgentManager(
     log,
   },
   {
-    onUpdate: (update) => emit({ type: "update", update }),
+    onPromptStarted: (context) => {
+      if (activeTurnId) emit({ type: "turn_context", context: { ...context, version: 1, turnId: activeTurnId, provider } });
+    },
+    onUpdate: (update) => {
+      emit({ type: "update", update });
+      const execution = toolTelemetry.observe(update);
+      if (execution) emit({ type: "tool_execution", execution });
+    },
     onTurnEnded: (stopReason, usage) => {
       llmInspector?.flush();
-      emit(usage ? { type: "turn_ended", stopReason, usage } : { type: "turn_ended", stopReason });
+      emit({ type: "turn_ended", stopReason, ...(usage ? { usage } : {}), turnId: activeTurnId });
+      toolTelemetry.end();
+      activeTurnId = undefined;
       transport?.pullFiles().catch((e: unknown) => log(`copying the Provider's files back from the VM failed: ${String(e)}`));
     },
-    onError: (message) => emit(agentError(message)),
+    onError: (message) => {
+      emit({ ...agentError(message), turnId: activeTurnId });
+      toolTelemetry.end();
+      activeTurnId = undefined;
+    },
     onUsageReport: (text) => reportUsage(codexStatusWindows(text)),
     onMcpChanged: (servers) => emit({ type: "mcp_changed", servers }),
     onModelChanged: (model) => emit({ type: "model_changed", model: model.value, name: model.name }),
@@ -555,8 +573,11 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = DaemonPromptParams.parse(params);
       if (agent.turnActive) throw new Error("a turn is already active");
       if (agent.reporting) throw new Error("the Agent is reporting its context usage; retry in a moment");
+      activeTurnId = randomUUID();
+      toolTelemetry.begin(activeTurnId);
       emit({
         type: "user_prompt",
+        turnId: activeTurnId,
         text: p.text,
         ...(p.attachments?.length ? { attachments: p.attachments } : {}),
       });
@@ -712,6 +733,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
 // One port: JSON-RPC over WebSocket for the Control Plane, plain HTTP for raw Workspace
 // files (single ones and tar bundles), and both kinds of traffic under /code for the VS Code server.
 const http = createServer((req, res) => {
+  if (handleToolTelemetry(req, res, (execution) => emit({ type: "mcp_execution", execution }))) return;
   if (codeServer.handleHttp(req, res)) return;
   if (serveTar(workspace, req, res, log)) return;
   if (uploads.handle(req, res)) return;

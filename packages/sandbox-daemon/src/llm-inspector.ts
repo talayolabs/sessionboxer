@@ -5,6 +5,7 @@ import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { rootCertificates } from "node:tls";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { usageHeadersOnly, type LlmCall, type LlmCallKind, type LlmCallUsage, type LlmRequestShape } from "@sessionboxer/protocol";
+import { requestFingerprints } from "@sessionboxer/protocol/node-telemetry";
 
 /** Per-body copy cap (decoded bytes); what follows is forwarded but not kept. */
 const BODY_CAP = 4 * 1024 * 1024;
@@ -120,6 +121,7 @@ function shapeOf(req: MessagesRequest): LlmRequestShape {
     messagesChars: jsonChars(req.messages),
     maxTokens: num(req.max_tokens),
     stream: req.stream === true,
+    ...requestFingerprints(req),
   };
 }
 

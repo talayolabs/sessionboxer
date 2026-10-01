@@ -161,6 +161,9 @@ function mergeEvents(prev: SessionEvent[], fetched: SessionEvent[]): SessionEven
   return tail.length === 0 ? fetched : [...fetched, ...tail];
 }
 
+/** A running Sandbox can fork from "now" (a snapshot is taken with the fork); a stopped one only from a snapshot. */
+const isLiveSession = (s: Session) => s.status === "idle" || s.status === "running";
+
 /** What a status dot means, spelled out: `idle` in particular is the Agent's turn being over. */
 /** The sidebar's order: pinned Sessions first, then newest first (the Control Plane lists them the same way). */
 function sortSessions(list: Session[]): Session[] {
@@ -705,7 +708,7 @@ export function App() {
   const openSidebarFork = (s: Session) => {
     void run(async () => {
       const [snaps, queued] = await Promise.all([api.snapshots(s.id), api.savedMessages(s.id)]);
-      if (snaps.length === 0) throw new Error(`"${s.title}" has no snapshots yet; take one first (⋯ menu → Snapshot).`);
+      if (snaps.length === 0 && !isLiveSession(s)) throw new Error(`"${s.title}" has no snapshots yet; start its Sandbox to fork it.`);
       setSidebarFork({ sessionId: s.id, snapshots: snaps, saved: queued });
     });
   };
@@ -911,8 +914,15 @@ export function App() {
         </ContextMenuItem>
         <ContextMenuItem
           className="session-menu-item"
-          disabled={noSnapshot !== undefined || s.snapshotCount === 0}
-          title={noSnapshot ?? (s.snapshotCount === 0 ? "Take a snapshot first" : "New Session and Sandbox from a snapshot of this one")}
+          disabled={noSnapshot !== undefined || (s.snapshotCount === 0 && !isLiveSession(s))}
+          title={
+            noSnapshot ??
+            (isLiveSession(s)
+              ? "New Session and Sandbox from this one as it is now (a snapshot is taken), or from an earlier snapshot"
+              : s.snapshotCount > 0
+                ? "New Session and Sandbox from a snapshot of this one"
+                : "Start the Sandbox to fork it (there is no snapshot yet)")
+          }
           onSelect={() => openSidebarFork(s)}
         >
           <Icon name="fork" /> Fork…
@@ -1200,8 +1210,8 @@ export function App() {
         settings &&
         (() => {
           const forkOrigin = sessions.find((s) => s.id === sidebarFork.sessionId);
-          const latest = sidebarFork.snapshots[sidebarFork.snapshots.length - 1];
-          if (!forkOrigin || !latest) return null;
+          const forkPoint = forkOrigin && isLiveSession(forkOrigin) ? FORK_NOW : sidebarFork.snapshots[sidebarFork.snapshots.length - 1]?.id;
+          if (!forkOrigin || !forkPoint) return null;
           return (
             <ForkDialog
               session={forkOrigin}
@@ -1210,7 +1220,7 @@ export function App() {
               options={options ?? EMPTY_OPTIONS}
               snapshots={sidebarFork.snapshots}
               saved={sidebarFork.saved}
-              initialSnapshotId={latest.id}
+              initialSnapshotId={forkPoint}
               busy={sidebarForkBusy}
               onClose={() => setSidebarFork(null)}
               onSubmit={(req) => {

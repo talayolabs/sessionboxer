@@ -212,8 +212,7 @@ export class ProviderLogins {
     }
     this.sweep();
     const recipe = this.recipes[provider];
-    if (recipe.bin.length === 0) throw new HttpError(409, `${label(provider)} has no browser sign-in; paste its login instead.`);
-    if (!recipe) throw new HttpError(409, `${label(provider)} has no sign-in from the browser; paste its login instead.`);
+    if (!recipe || recipe.bin.length === 0) throw new HttpError(409, `${label(provider)} has no sign-in from the browser; paste its login instead.`);
     const flow: Flow = {
       state: {
         id: randomUUID(),

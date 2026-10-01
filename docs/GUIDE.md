@@ -57,7 +57,7 @@ sessionboxer service install           # prints the login link; then status | st
 **Docker Compose** — the home server, VPS, Raspberry Pi or Coolify case; only Docker is needed.
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/talayolabs/sessionboxer/v1.4.1/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/talayolabs/sessionboxer/v1.5.0/docker-compose.yml
 docker compose up -d                   # http://127.0.0.1:4000
 docker compose logs control-plane      # -d hides the startup box: this shows the one-time login link
 docker compose exec control-plane sessionboxer token   # the access token, for the login page of another browser

@@ -43,9 +43,11 @@ More: [user guide → Install](docs/GUIDE.md#install).
 - **Linux, Windows or macOS**: Docker for Linux, a QEMU VM for Windows or macOS with the agent inside it (Linux hosts with KVM).
 - **VS Code and terminals** in the box; files named in the chat open at that line.
 - **Videos in the chat**: the agent films the desktop, with captions.
+- **Photos, videos, sketches and your screen** attached to a prompt from the composer; the agent transcribes what you say in them.
 - **Apps in the chat**: an HTML file the agent writes runs sandboxed inline and in an App pane that reloads as it edits.
 - **Verified turns**: after each turn the agent tests its work on the desktop, on video, and fixes what fails.
 - **Snapshots and forks**: snapshot by hand or after every turn, fork a session from any of them.
+- **Folders and pins**: group sessions by project in the sidebar, pin the ones you are on to the top.
 - **Revert and branches**: go back to an earlier turn and try another way.
 - **Hand off** a session to another agent, with the context written by the origin's agent.
 - **Pull requests** on GitHub or Bitbucket Data Center: comments and checks in the chat, address them, auto-merge.
@@ -54,6 +56,7 @@ More: [user guide → Install](docs/GUIDE.md#install).
 - **Model and options** per session, changed mid-conversation.
 - **MCP servers**: register once, switch on per session; several Git accounts, one per repository. Tools with a view (MCP Apps) render it inline in the chat, sandboxed.
 - **Automations**: a prompt on a timetable into a running session or a fresh one; a review, a QA video or a prompt when a followed pull request opens or changes.
+- **Utilities**: the systems around your software (monitoring, QA apps, databases, SSH hosts) registered once per environment, used by the agent by name without ever seeing the credentials.
 - **The agent knows where it is**: a `sessionboxer` MCP to ask about itself, attach PRs, snapshot, open panes, verify — and, if allowed, create, message and hand off to other sessions.
 - **USB devices**: one device of the host per session, for `adb` and friends.
 - **Dictation**: whisper.cpp on your machine, offline.

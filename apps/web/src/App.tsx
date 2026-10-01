@@ -24,6 +24,7 @@ import {
   type Branch,
   type CodexLogin,
   type CursorLogin,
+  type OpenCodeLogin,
   type E2eRun,
   type Environment,
   type LlmCall,
@@ -213,6 +214,11 @@ function describeCodexLogin(login: CodexLogin): string {
   if (login.plan) parts.push(`${login.plan} plan`);
   if (login.lastRefresh) parts.push(`refreshed ${new Date(login.lastRefresh).toLocaleString()}`);
   return parts.join(", ");
+}
+
+/** One line about the stored OpenCode login (ADR-0076): which model providers its auth.json covers. */
+function describeOpenCodeLogin(login: OpenCodeLogin): string {
+  return login.providers.map((p) => `${p.id} (${p.kind === "oauth" ? "login" : p.kind === "api" ? "API key" : "token"})`).join(", ");
 }
 
 /** One line about the stored Cursor login (ADR-0054), from its metadata only. */
@@ -1094,7 +1100,7 @@ export function App() {
                 <span className="setup-check" aria-hidden="true">{anyTokenSet ? "\u2713" : ""}</span>
                 <span className="setup-text">
                   <span className="setup-title">Connect a Provider</span>
-                  <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor, Devin or pi"}</span>
+                  <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor, OpenCode, Devin or pi"}</span>
                 </span>
               </button>
               <button type="button" className={`setup-item${gitConnected ? " done" : ""}`} onClick={() => setGitConnect(true)}>
@@ -1275,7 +1281,7 @@ export function App() {
         <SandboxImageBanner />
         {!anyTokenSet && route.view !== "settings" && route.view !== "new" && !(route.view === "session" && !selected) && (
           <div className="banner banner-warn" onClick={() => setProviderConnect({ provider: null })}>
-            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, Devin or pi login. Click to connect one.
+            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, OpenCode, Devin or pi login. Click to connect one.
           </div>
         )}
         {settings && (
@@ -3087,6 +3093,9 @@ function SettingsView({
   const piFileRef = useRef<HTMLInputElement>(null);
   const [piApiKeys, setPiApiKeys] = useState("");
   const [forgetPiApiKeys, setForgetPiApiKeys] = useState(false);
+  const [opencodeAuth, setOpenCodeAuth] = useState("");
+  const [forgetOpenCodeAuth, setForgetOpenCodeAuth] = useState(false);
+  const opencodeFileRef = useRef<HTMLInputElement>(null);
   const [claudeBaseUrl, setClaudeBaseUrl] = useState(settings.claudeApi.baseUrl);
   const [claudeAuthToken, setClaudeAuthToken] = useState("");
   const [claudeApiKey, setClaudeApiKey] = useState("");
@@ -3138,6 +3147,7 @@ function SettingsView({
   const cursorLoginSet = settings.providerSecretsSet.cursor.CURSOR_LOGIN && !forgetCursorLogin;
   const piAuthSet = settings.providerSecretsSet.pi.PI_AUTH_JSON && !forgetPiAuth;
   const piApiKeysSet = settings.providerSecretsSet.pi.PI_API_KEYS && !forgetPiApiKeys;
+  const opencodeAuthSet = settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && !forgetOpenCodeAuth;
 
   const { section: active, block } = resolveGlobalSettingsRoute(section);
   const show = (id: GlobalSettingsSection) => active === id;
@@ -3158,6 +3168,14 @@ function SettingsView({
     void file.text().then((text) => {
       setPiAuth(text);
       setForgetPiAuth(false);
+    });
+  };
+
+  const importOpenCodeAuth = (file: File | undefined) => {
+    if (!file) return;
+    void file.text().then((text) => {
+      setOpenCodeAuth(text);
+      setForgetOpenCodeAuth(false);
     });
   };
 
@@ -3226,6 +3244,7 @@ function SettingsView({
                 },
               }
             : {}),
+          ...(opencodeAuth.trim() ? { opencode: { OPENCODE_AUTH_JSON: opencodeAuth.trim() } } : forgetOpenCodeAuth ? { opencode: { OPENCODE_AUTH_JSON: "" } } : {}),
         },
         claudeApi: {
           baseUrl: claudeBaseUrl.trim(),
@@ -3243,6 +3262,8 @@ function SettingsView({
       setForgetPiAuth(false);
       setPiApiKeys("");
       setForgetPiApiKeys(false);
+      setOpenCodeAuth("");
+      setForgetOpenCodeAuth(false);
       setClaudeAuthToken("");
       setClaudeApiKey("");
       setForgetClaudeAuthToken(false);
@@ -3286,7 +3307,7 @@ function SettingsView({
                 <button type="button" className="primary" onClick={() => setGuided(true)}>
                   Connect a Provider…
                 </button>
-                <span className="muted">Claude, Codex, Cursor, Devin or pi</span>
+                <span className="muted">Claude, Codex, Cursor, OpenCode, Devin or pi</span>
               </div>
               {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
               <label>
@@ -3558,6 +3579,67 @@ function SettingsView({
                   </label>
                 </div>
               )}
+              <label>
+                <Caption
+                  help={
+                    <>
+                      <p>
+                        OpenCode runs on the model providers you log into with its CLI on your own machine (Anthropic with a Claude Pro/Max login,
+                        OpenAI with ChatGPT, OpenCode Zen, Google, API keys…): paste or import the file it writes (the Sandbox keeps it in memory
+                        only; refreshed tokens flow back here), or paste an OpenCode Zen API key from opencode.ai/auth.
+                      </p>
+                      <CopyCommand command="opencode auth login" />
+                      <CopyCommand command="cat ~/.local/share/opencode/auth.json" />
+                    </>
+                  }
+                >
+                  OpenCode: login (auth.json or OpenCode Zen API key){" "}
+                  {opencodeAuthSet ? (
+                    <span className="ok">(set{settings.opencodeLogin && !forgetOpenCodeAuth ? `: ${describeOpenCodeLogin(settings.opencodeLogin)}` : ""})</span>
+                  ) : (
+                    <span className="warn">(not set)</span>
+                  )}
+                </Caption>
+                <textarea
+                  rows={3}
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={opencodeAuth}
+                  onChange={(e) => {
+                    setOpenCodeAuth(e.target.value);
+                    if (e.target.value.trim()) setForgetOpenCodeAuth(false);
+                  }}
+                  placeholder={opencodeAuthSet ? "Leave empty to keep the current login" : "Paste the contents of OpenCode's auth.json, or an OpenCode Zen API key"}
+                />
+              </label>
+              <div className="field-hint">
+                <input
+                  ref={opencodeFileRef}
+                  type="file"
+                  accept=".json,application/json"
+                  hidden
+                  onChange={(e) => {
+                    importOpenCodeAuth(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button type="button" onClick={() => opencodeFileRef.current?.click()}>
+                  Import auth.json…
+                </button>
+                {settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && (
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={forgetOpenCodeAuth}
+                      onChange={(e) => {
+                        setForgetOpenCodeAuth(e.target.checked);
+                        if (e.target.checked) setOpenCodeAuth("");
+                      }}
+                    />{" "}
+                    Forget the stored login
+                  </label>
+                )}
+              </div>
 
               <h4 className="ss-sub" id="settings-claude-api">
                 <Caption
@@ -3901,7 +3983,7 @@ function SettingsView({
                     help={
                       <p>
                         Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
-                        {deliveryNote("codex")} {deliveryNote("cursor")} {deliveryNote("pi")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
+                        {deliveryNote("codex")} {deliveryNote("cursor")} {deliveryNote("pi")} {deliveryNote("opencode")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
                         and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Default for new Sessions; each Session can change it in its
                         settings.
                       </p>

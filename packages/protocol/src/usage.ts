@@ -143,6 +143,16 @@ const PI_LIMIT = [
   /usage[_ ]limit/i,
   /\b429\b/,
 ];
+/** OpenCode relays its model provider's error; these are the quota/credit wordings of the common ones (ADR-0076). */
+const OPENCODE_LIMIT = [
+  /usage[_ ]limit/i,
+  /rate[_ ]limit(?:ed)?(?: exceeded| reached)/i,
+  /quota[_ ]exceeded/i,
+  /insufficient[_ ](?:quota|credits?|balance)/i,
+  /out of credits/i,
+  /credit balance is too low/i,
+  /exceeded your (?:current )?(?:usage|quota|budget)/i,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -150,8 +160,8 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi", message: string, now: Date = new Date()): UsageLimitHit | null {
-  const patterns = provider === "claude-code" ? CLAUDE_LIMIT : provider === "codex" ? CODEX_LIMIT : provider === "cursor" ? CURSOR_LIMIT : provider === "pi" ? PI_LIMIT : DEVIN_LIMIT;
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode", message: string, now: Date = new Date()): UsageLimitHit | null {
+  const patterns = provider === "claude-code" ? CLAUDE_LIMIT : provider === "codex" ? CODEX_LIMIT : provider === "cursor" ? CURSOR_LIMIT : provider === "pi" ? PI_LIMIT : provider === "opencode" ? OPENCODE_LIMIT : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

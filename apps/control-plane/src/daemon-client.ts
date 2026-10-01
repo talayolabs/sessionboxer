@@ -4,6 +4,7 @@ import {
   DaemonCodexAuthParams,
   DaemonCursorAuthChangedParams,
   DaemonPiAuthChangedParams,
+  DaemonOpenCodeAuthChangedParams,
   DaemonStatus,
   PtyExitParams,
   PtyOutputParams,
@@ -26,6 +27,8 @@ export interface DaemonClientHandlers {
   onCursorAuthChanged: (authJson: string) => void;
   /** pi rewrote its `auth.json` (refreshed OAuth tokens); the whole file. */
   onPiAuthChanged: (authJson: string) => void;
+  /** OpenCode rewrote its `auth.json` (refreshed OAuth tokens); the whole file. */
+  onOpenCodeAuthChanged: (authJson: string) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
   /** A request from the Daemon (the Agent's `e2e_*` tools); the result or thrown error is answered back. */
@@ -141,6 +144,8 @@ export class DaemonClient {
         this.handlers.onCursorAuthChanged(DaemonCursorAuthChangedParams.parse(msg.params).authJson);
       } else if (msg.method === DAEMON_METHODS.piAuthChanged) {
         this.handlers.onPiAuthChanged(DaemonPiAuthChangedParams.parse(msg.params).authJson);
+      } else if (msg.method === DAEMON_METHODS.opencodeAuthChanged) {
+        this.handlers.onOpenCodeAuthChanged(DaemonOpenCodeAuthChangedParams.parse(msg.params).authJson);
       }
     }
   }

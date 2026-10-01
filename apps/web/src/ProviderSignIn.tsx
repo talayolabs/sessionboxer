@@ -135,7 +135,9 @@ export function ProviderSignIn({
     <div className="provider-signin">
       {!pending && (
         <div className="provider-signin-row">
-          {browser ? (
+          {host?.signIn === false ? (
+            <span className="muted">{label} has no sign-in from the browser: make the login with its CLI on your machine and paste it below.</span>
+          ) : browser ? (
             <button type="button" className="connector-button primary" onClick={() => void start()} disabled={busy}>
               <ProviderIcon provider={provider} size={14} />
               {connected ? `Sign in with ${label} again` : `Sign in with ${label}`}

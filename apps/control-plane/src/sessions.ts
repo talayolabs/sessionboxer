@@ -18,6 +18,7 @@ import {
   type DaemonCodexAuthParams,
   type DaemonCursorAuthParams,
   type DaemonPiAuthParams,
+  type DaemonOpenCodeAuthParams,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -137,6 +138,7 @@ import {
   piApiKeys,
   piAuthJson,
   defaultMcpEnabled,
+  opencodeAuthJson,
   knownMcpIds,
   providerEnv,
   providerReady,
@@ -2643,6 +2645,30 @@ export class SessionManager {
   /** A pi Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
   piAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
 
+  /**
+   * Hands the stored OpenCode `auth.json` to an OpenCode Session's Daemon, which keeps it on tmpfs
+   * where OpenCode reads it (ADR-0076). Before the MCP set at connect time so the Agent finds it at
+   * start; again whenever the stored file changes.
+   */
+  async pushOpenCodeAuth(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "opencode" || !client?.connected) return;
+    const params: DaemonOpenCodeAuthParams = { authJson: opencodeAuthJson(this.settings()) };
+    await client.request(DAEMON_METHODS.opencodeAuthSet, params);
+  }
+
+  /** The stored OpenCode login changed (Settings, or a Sandbox refreshed it): every live OpenCode Session gets the file. */
+  async pushOpenCodeAuthToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.provider !== "opencode" || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushOpenCodeAuth(s.id).catch((e: unknown) => this.log(`opencode auth push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
+  /** An OpenCode Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
+  opencodeAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
+
   /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
   async pushRecordingPrefs(id: string): Promise<void> {
     const client = this.clients.get(id);
@@ -2769,6 +2795,7 @@ export class SessionManager {
       onCodexAuthChanged: (authJson) => this.codexAuthRefreshed(id, authJson),
       onCursorAuthChanged: (authJson) => this.cursorAuthRefreshed(id, authJson),
       onPiAuthChanged: (authJson) => this.piAuthRefreshed(id, authJson),
+      onOpenCodeAuthChanged: (authJson) => this.opencodeAuthRefreshed(id, authJson),
       onDisconnected: () => {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");
@@ -2801,6 +2828,7 @@ export class SessionManager {
       .then(() => this.pushCodexAuth(id))
       .then(() => this.pushCursorAuth(id))
       .then(() => this.pushPiAuth(id))
+      .then(() => this.pushOpenCodeAuth(id))
       .then(() => this.pushUtilities(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))

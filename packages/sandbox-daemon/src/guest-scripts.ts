@@ -13,6 +13,7 @@ const GUEST_TOOL_DIRS = [
   "%USERPROFILE%\\.local\\bin",
   "%LOCALAPPDATA%\\devin\\cli\\bin",
   "%LOCALAPPDATA%\\Programs\\cursor-agent",
+  "%LOCALAPPDATA%\\Programs\\opencode",
 ];
 
 /**

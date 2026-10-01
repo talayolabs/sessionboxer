@@ -60,6 +60,8 @@ const DEVIN_CLI_VERSION = "3000.10.27";
 const CURSOR_CLI_VERSION = "2026.09.23-86fc751";
 const PI_VERSION = "0.99.2";
 const PI_ACP_VERSION = "0.0.34";
+/** OpenCode, pinned with the Sandbox image (ADR-0076): the binary of its npm platform package. */
+const OPENCODE_VERSION = "1.18.32";
 
 interface BaseRecord {
   version: string;
@@ -844,6 +846,19 @@ function provisionScript(): string {
     `  rm -rf "$CURSOR_DIR" && mv "$CURSOR_DIR.tmp" "$CURSOR_DIR"`,
     "fi",
     `ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/cursor-agent" && ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/agent"`,
+    // OpenCode (`opencode acp`), kept apart from ~/.local/share/opencode, which is OpenCode's own data directory.
+    `OPENCODE_DIR="$HOME/.local/share/opencode-cli/versions/${OPENCODE_VERSION}"`,
+    `if [ -x "$OPENCODE_DIR/opencode" ]; then`,
+    `  say "opencode ${OPENCODE_VERSION} present"`,
+    "else",
+    `  say "installing OpenCode ${OPENCODE_VERSION} ($NODE_ARCH)"`,
+    `  rm -rf "$OPENCODE_DIR.tmp" && mkdir -p "$OPENCODE_DIR.tmp"`,
+    `  curl -fsSL --retry 5 --retry-all-errors "https://registry.npmjs.org/opencode-darwin-$NODE_ARCH/-/opencode-darwin-$NODE_ARCH-${OPENCODE_VERSION}.tgz" | tar -xzf - -C "$OPENCODE_DIR.tmp" --strip-components=2 package/bin/opencode || fail "downloading OpenCode"`,
+    `  [ -x "$OPENCODE_DIR.tmp/opencode" ] || fail "the OpenCode package has no opencode binary"`,
+    `  rm -rf "$OPENCODE_DIR" && mv "$OPENCODE_DIR.tmp" "$OPENCODE_DIR"`,
+    "fi",
+    `ln -sfn "$OPENCODE_DIR/opencode" "$HOME/.local/bin/opencode"`,
+    `say "opencode $(OPENCODE_DISABLE_AUTOUPDATE=1 "$HOME/.local/bin/opencode" --version 2>/dev/null | head -1)"`,
     `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
     "echo SBX_PROVISIONED",
     // Detached, after this SSH session has returned: `nohup` could not run the `sudo` function above.

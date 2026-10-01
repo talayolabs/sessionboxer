@@ -22,6 +22,7 @@ set "DEVIN_CLI_VERSION=3000.10.27"
 set "CURSOR_CLI_VERSION=2026.09.23-86fc751"
 set "PI_VERSION=0.99.2"
 set "PI_ACP_VERSION=0.0.34"
+set "OPENCODE_VERSION=1.18.32"
 set "LOG=C:\sessionboxer-install.log"
 set "DL=%TEMP%\sessionboxer-install"
 mkdir "%DL%" 2>nul
@@ -123,10 +124,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Move-Item -LiteralPath $inner.FullName -Destination $dest;" ^
   "Remove-Item -LiteralPath \"$dest.tmp\" -Recurse -Force -ErrorAction SilentlyContinue" >> "%LOG%" 2>&1
 
+rem OpenCode (`opencode acp`): the single binary of its Windows npm platform package, where the launcher looks for it.
+echo [%time%] opencode %OPENCODE_VERSION%>> "%LOG%"
+curl.exe -fsSL --retry 5 --retry-all-errors -o "%DL%\opencode.tgz" "https://registry.npmjs.org/opencode-windows-x64/-/opencode-windows-x64-%OPENCODE_VERSION%.tgz" >> "%LOG%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$dest = Join-Path $env:LOCALAPPDATA 'Programs\opencode';" ^
+  "New-Item -ItemType Directory -Force -Path $dest, \"$dest.tmp\" | Out-Null;" ^
+  "tar.exe -xzf '%DL%\opencode.tgz' -C \"$dest.tmp\";" ^
+  "Copy-Item -LiteralPath (Join-Path \"$dest.tmp\" 'package\bin\opencode.exe') -Destination (Join-Path $dest 'opencode.exe') -Force;" ^
+  "Remove-Item -LiteralPath \"$dest.tmp\" -Recurse -Force -ErrorAction SilentlyContinue" >> "%LOG%" 2>&1
+
 rem The account's PATH for interactive shells (the Terminal pane, `win ...`): what the installers
 rem put in place. The Agent's launcher adds the same directories itself.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$dirs = @('C:\Program Files\nodejs', \"$env:APPDATA\npm\", 'C:\Program Files\Git\cmd', \"$env:USERPROFILE\.local\bin\", \"$env:LOCALAPPDATA\devin\cli\bin\", \"$env:LOCALAPPDATA\Programs\cursor-agent\");" ^
+  "$dirs = @('C:\Program Files\nodejs', \"$env:APPDATA\npm\", 'C:\Program Files\Git\cmd', \"$env:USERPROFILE\.local\bin\", \"$env:LOCALAPPDATA\devin\cli\bin\", \"$env:LOCALAPPDATA\Programs\cursor-agent\", \"$env:LOCALAPPDATA\Programs\opencode\");" ^
   "$user = [Environment]::GetEnvironmentVariable('Path', 'User');" ^
   "$parts = @(); if ($user) { $parts = $user -split ';' | Where-Object { $_ -ne '' } };" ^
   "foreach ($d in $dirs) { if ($parts -notcontains $d) { $parts += $d } };" ^
@@ -143,6 +154,8 @@ set "PI_SKIP_VERSION_CHECK=1"
 call pi --version >> "%LOG%" 2>&1
 call "%LOCALAPPDATA%\devin\cli\bin\devin.exe" --version >> "%LOG%" 2>&1
 call "%LOCALAPPDATA%\Programs\cursor-agent\cursor-agent.cmd" --version >> "%LOG%" 2>&1
+set "OPENCODE_DISABLE_AUTOUPDATE=1"
+call "%LOCALAPPDATA%\Programs\opencode\opencode.exe" --version >> "%LOG%" 2>&1
 
 rmdir /s /q "%DL%" 2>nul
 echo [%time%] done>> "%LOG%"

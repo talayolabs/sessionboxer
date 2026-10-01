@@ -24,6 +24,7 @@ import {
   DaemonCodexAuthParams,
   DaemonCursorAuthParams,
   DaemonPiAuthParams,
+  DaemonOpenCodeAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -147,6 +148,7 @@ const ACP_COMMANDS: Record<Provider, string[]> = {
   cursor: ["cursor-agent", "--disable-auto-update", "--force", "--approve-mcps", "--trust", "acp"],
   // pi has no ACP mode of its own: pi-acp bridges `pi --mode rpc` to ACP (ADR-0075).
   pi: ["pi-acp"],
+  opencode: ["opencode", "acp"],
 };
 const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
@@ -262,6 +264,20 @@ const piAuth =
     : null;
 /** No version check against pi.dev and no install telemetry from the box; its agent dir is the image's. */
 const PI_AGENT_ENV = { PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0" };
+/**
+ * OpenCode's login (ADR-0076): the `auth.json` its CLI writes with `opencode auth login` (OAuth
+ * logins and API keys of its model providers), on tmpfs at the path OpenCode reads it from; the
+ * rest of `~/.local/share/opencode` (sessions, storage) stays on disk for `session/load`. OpenCode
+ * lists its providers when its server starts, so the Agent restarts in place when the login arrives
+ * or goes; refreshed OAuth tokens it writes into the file are reported back.
+ */
+const opencodeAuthPath = `${env.XDG_DATA_HOME ?? `${home}/.local/share`}/opencode/auth.json`;
+const opencodeAuth =
+  provider === "opencode"
+    ? new AuthFile("opencode", opencodeAuthPath, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.opencodeAuthChanged, { authJson }))
+    : null;
+/** The image pins OpenCode; no update check at start (also `autoupdate: false` in its config, for the guests). */
+const OPENCODE_AGENT_ENV = { OPENCODE_DISABLE_AUTOUPDATE: "1" };
 
 /**
  * The Provider's files that travel into the VM before each Agent start (the ones the image and this
@@ -304,6 +320,12 @@ const guestProviderFiles: GuestProviderFile[] = (
         : []),
       { local: guestBriefingFile, guest: ".claude/CLAUDE.md" },
     ],
+    // OpenCode's paths are XDG-style on every OS (`~/.config/opencode`, `~/.local/share/opencode`).
+    opencode: [
+      { local: `${home}/.config/opencode/opencode.json`, guest: ".config/opencode/opencode.json" },
+      { local: guestBriefingFile, guest: ".config/opencode/AGENTS.md" },
+      { local: opencodeAuthPath, guest: ".local/share/opencode/auth.json", pullBack: true },
+    ],
   } satisfies Record<Provider, GuestProviderFile[]>
 )[provider];
 /** The Provider's environment the Control Plane set on this Sandbox, for the Agent in the VM. */
@@ -335,6 +357,13 @@ function setPiLogin(authJson: string, apiKeys: Record<string, string>): boolean 
   if (names.length > 0) log(`pi API keys handed to the Agent process as ${names.join(", ")}`);
   // The marker makes the arrival or removal of the file a change of the Agent's environment, so it restarts (as for Cursor).
   return agent.setAgentEnv({ ...apiKeys, ...(authJson === "" ? {} : { SESSIONBOXER_PI_LOGIN: "auth-json" }) });
+}
+
+/** Puts the OpenCode `auth.json` on tmpfs (or removes it) and restarts the Agent so its server sees the providers. */
+function setOpenCodeLogin(authJson: string): boolean {
+  if (!opencodeAuth) throw new Error("this Sandbox does not run OpenCode");
+  opencodeAuth.set(authJson);
+  return agent.setAgentEnv(authJson === "" ? {} : { SESSIONBOXER_OPENCODE_LOGIN: "auth-json" });
 }
 
 /** The Session's standing instructions, set by the Control Plane on the container. */
@@ -504,6 +533,7 @@ const agent = new AgentManager(
     // In the VM, Codex keeps its default home (`%USERPROFILE%\.codex`, where its files are copied to).
     ...(provider === "codex" ? { env: guest ? { INITIAL_AGENT_MODE: CODEX_AGENT_ENV.INITIAL_AGENT_MODE } : CODEX_AGENT_ENV } : {}),
     ...(provider === "pi" ? { env: PI_AGENT_ENV } : {}),
+    ...(provider === "opencode" && !guest ? { env: OPENCODE_AGENT_ENV } : {}),
     builtinMcps,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     sessionId: env.SESSIONBOXER_SESSION_ID ?? "",
@@ -652,6 +682,8 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = DaemonPiAuthParams.parse(params);
       return { applied: setPiLogin(p.authJson, p.apiKeys) };
     }
+    case DAEMON_METHODS.opencodeAuthSet:
+      return { applied: setOpenCodeLogin(DaemonOpenCodeAuthParams.parse(params).authJson) };
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

@@ -12,7 +12,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -22,6 +22,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   codex: "Codex",
   cursor: "Cursor",
   pi: "pi",
+  opencode: "OpenCode",
 };
 
 /**
@@ -36,6 +37,7 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   cursor: [],
   // pi's login too: its `auth.json` goes on tmpfs and its API keys into the Agent process only (ADR-0075).
   pi: [],
+  opencode: [],
 };
 
 /**
@@ -75,6 +77,24 @@ export const PiLogin = z.object({
   apiKeyNames: z.array(z.string()),
 });
 export type PiLogin = z.infer<typeof PiLogin>;
+
+/**
+ * What the stored OpenCode login (ADR-0076) holds: the model providers an `auth.json` written by
+ * `opencode auth login` has credentials for, each an OAuth login (refreshed by OpenCode), an API
+ * key or a well-known token; nothing secret.
+ */
+export const OpenCodeLogin = z.object({
+  providers: z.array(
+    z.object({
+      /** OpenCode's provider id (`anthropic`, `openai`, `opencode`, `google`, …). */
+      id: z.string(),
+      kind: z.enum(["oauth", "api", "wellknown"]),
+      /** When the OAuth access token expires, ISO 8601; `null` for keys or when absent. */
+      expiresAt: z.string().nullable(),
+    }),
+  ),
+});
+export type OpenCodeLogin = z.infer<typeof OpenCodeLogin>;
 
 /**
  * How a Sandbox gets its own Docker daemon: `sysbox` runs it under the Sysbox
@@ -2333,6 +2353,8 @@ export const Settings = z.object({
       cursor: z.object({ CURSOR_LOGIN: z.string().default("") }).default({}),
       /** pi's `~/.pi/agent/auth.json` (its `/login`) and/or API keys as `NAME=value` lines, one per model provider (ADR-0075). */
       pi: z.object({ PI_AUTH_JSON: z.string().default(""), PI_API_KEYS: z.string().default("") }).default({}),
+      /** The whole `auth.json` of an `opencode auth login`, or an OpenCode Zen API key (ADR-0076). */
+      opencode: z.object({ OPENCODE_AUTH_JSON: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -2380,6 +2402,7 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     codex: z.object({ CODEX_AUTH_JSON: z.boolean() }),
     cursor: z.object({ CURSOR_LOGIN: z.boolean() }),
     pi: z.object({ PI_AUTH_JSON: z.boolean(), PI_API_KEYS: z.boolean() }),
+    opencode: z.object({ OPENCODE_AUTH_JSON: z.boolean() }),
   }),
   /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
   codexLogin: CodexLogin.nullable(),
@@ -2387,6 +2410,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   cursorLogin: CursorLogin.nullable(),
   /** What the stored pi login holds (names only); `null` when none is stored. */
   piLogin: PiLogin.nullable(),
+  /** Which model providers the stored OpenCode `auth.json` covers; `null` when none is stored. */
+  opencodeLogin: OpenCodeLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -2422,6 +2447,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, utilities
       codex: z.object({ CODEX_AUTH_JSON: z.string() }).partial(),
       cursor: z.object({ CURSOR_LOGIN: z.string() }).partial(),
       pi: z.object({ PI_AUTH_JSON: z.string(), PI_API_KEYS: z.string() }).partial(),
+      opencode: z.object({ OPENCODE_AUTH_JSON: z.string() }).partial(),
     })
     .partial()
     .optional(),
@@ -4497,6 +4523,8 @@ export const DAEMON_METHODS = {
   cursorAuthChanged: "_sessionboxer/cursor/auth/changed",
   piAuthSet: "_sessionboxer/pi/auth/set",
   piAuthChanged: "_sessionboxer/pi/auth/changed",
+  opencodeAuthSet: "_sessionboxer/opencode/auth/set",
+  opencodeAuthChanged: "_sessionboxer/opencode/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -4739,6 +4767,21 @@ export const DaemonPiAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonPiAuthChangedParams = z.infer<typeof DaemonPiAuthChangedParams>;
+
+/**
+ * `opencodeAuthSet`: the OpenCode `auth.json` (ADR-0076) for the Sandbox's tmpfs, where OpenCode
+ * reads it (`~/.local/share/opencode/auth.json`); `""` removes it. OpenCode refreshes the OAuth
+ * tokens in the file; the rewritten file comes back as the `opencodeAuthChanged` notification.
+ */
+export const DaemonOpenCodeAuthParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonOpenCodeAuthParams = z.infer<typeof DaemonOpenCodeAuthParams>;
+
+export const DaemonOpenCodeAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonOpenCodeAuthChangedParams = z.infer<typeof DaemonOpenCodeAuthChangedParams>;
 
 /**
  * Switches the Agent's model (ACP `session/set_config_option` on the `model` option). Applied right

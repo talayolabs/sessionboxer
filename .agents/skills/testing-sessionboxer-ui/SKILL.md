@@ -27,3 +27,11 @@ description: Test Sessionboxer's local browser UI using existing services, devic
 ## Devin Secrets Needed
 
 No organization secret is needed for an already-authenticated local device session. Use the existing device `accessToken`; real agent completion additionally requires a valid configured provider credential such as `CLAUDE_CODE_OAUTH_TOKEN`.
+
+# Provider model and mode expectations
+
+- Model catalogs are what the agent advertises over ACP. A provider can send flat names such as `Provider/Model` without groups (OpenCode does); a flat picker is not a grouping defect. Assert the advertised names and the selected model, not group headers.
+- The Daemon owns the agent/permission mode; the composer never shows the ACP `mode` option (OpenCode runs in `build`, Cursor in `agent`). Do not expect a build/plan selector.
+- A stored login's summary in Global settings → Providers shows provider names and kinds (`mock (API key)`), never the secret. Leave Forget untouched unless removing the credential is the test.
+- Providers without usage windows (Devin, Cursor, OpenCode) show three hatched bars above the composer; hover them for the explanation.
+- To clean up, note the Session id while it is visible, delete through the UI, then check `docker ps -a --filter name=sbx-<id>` is empty.

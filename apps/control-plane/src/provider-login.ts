@@ -4,7 +4,7 @@ import { homedir, platform, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import * as pty from "node-pty";
 import type { Provider, ProviderHostLogin, ProviderLoginFlow, Settings, UpdateSettingsRequest } from "@sessionboxer/protocol";
-import { applySettingsUpdate, codexLogin, describeCursorLogin, describePiLogin, normalizeCodexAuthJson, normalizeCursorLogin, normalizePiAuthJson } from "./config.js";
+import { applySettingsUpdate, codexLogin, describeCursorLogin, describeOpenCodeLogin, describePiLogin, normalizeCodexAuthJson, normalizeCursorLogin, normalizeOpenCodeAuthJson, normalizePiAuthJson } from "./config.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
 import { HttpError } from "./http-error.js";
 
@@ -59,7 +59,12 @@ export interface Recipe {
 const noBrowser = { BROWSER: platform() === "win32" ? "" : "true", NO_OPEN_BROWSER: "1" };
 const BROWSER_OPENERS = ["xdg-open", "open", "sensible-browser", "x-www-browser", "gnome-open", "kde-open", "wslview"];
 
-export const RECIPES: Record<Provider, Recipe> = {
+/**
+ * One recipe per Provider whose CLI has a paste-a-code login. OpenCode has none: its logins are per
+ * model provider and each is a browser OAuth that calls back to the CLI's local port, or an API
+ * key typed into an interactive prompt (ADR-0076); the user pastes its `auth.json` instead.
+ */
+export const RECIPES: Partial<Record<Provider, Recipe>> = {
   "claude-code": {
     bin: ["claude"],
     args: ["setup-token"],
@@ -197,7 +202,7 @@ export class ProviderLogins {
     private readonly runner: LoginRunner,
     private readonly settings: SettingsStore,
     private readonly log: (msg: string) => void,
-    private readonly recipes: Record<Provider, Recipe> = RECIPES,
+    private readonly recipes: Partial<Record<Provider, Recipe>> = RECIPES,
   ) {}
 
   /** Starts a sign-in for `provider`, replacing one still in progress. */
@@ -208,6 +213,7 @@ export class ProviderLogins {
     this.sweep();
     const recipe = this.recipes[provider];
     if (recipe.bin.length === 0) throw new HttpError(409, `${label(provider)} has no browser sign-in; paste its login instead.`);
+    if (!recipe) throw new HttpError(409, `${label(provider)} has no sign-in from the browser; paste its login instead.`);
     const flow: Flow = {
       state: {
         id: randomUUID(),
@@ -269,7 +275,7 @@ export class ProviderLogins {
   /** What this machine offers for `provider`: a sign-in, and the CLI's own login here when there is one. */
   hostLogin(provider: Provider): ProviderHostLogin {
     const host = readHostLogin(provider);
-    return { signIn: true, account: host?.account ?? null, importable: host?.login !== undefined };
+    return { signIn: this.recipes[provider] !== undefined, account: host?.account ?? null, importable: host?.login !== undefined };
   }
 
   /**
@@ -343,7 +349,10 @@ export class ProviderLogins {
   }
 
   private store(provider: Provider, login: string): void {
-    this.settings.set(applySettingsUpdate(this.settings.get(), { providerSecrets: this.recipes[provider].secret(login) }));
+    const recipe = this.recipes[provider];
+    const secret = recipe ? recipe.secret(login) : provider === "opencode" ? { opencode: { OPENCODE_AUTH_JSON: login } } : null;
+    if (!secret) throw new HttpError(409, `${label(provider)} logins cannot be stored from here.`);
+    this.settings.set(applySettingsUpdate(this.settings.get(), { providerSecrets: secret }));
   }
 
   private fail(flow: Flow, error: string): void {
@@ -373,7 +382,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {
@@ -620,7 +629,26 @@ export function readHostLogin(provider: Provider, home = homedir()): { account: 
       if (!login || !what) return null;
       return { account: `signed in with pi's /login (${what.authProviders.map((p) => p.id).join(", ")})`, login };
     }
+    case "opencode": {
+      const text = readFirst([opencodeAuthPath(home)]);
+      if (text === null) return null;
+      let login: string;
+      try {
+        login = normalizeOpenCodeAuthJson(text);
+      } catch {
+        return null;
+      }
+      const what = describeOpenCodeLogin(login);
+      if (!login || !what) return null;
+      return { account: `signed in with \`opencode auth login\` (${what.providers.map((p) => p.id).join(", ")})`, login };
+    }
   }
+}
+
+/** Where `opencode auth login` writes on every OS (OpenCode uses XDG paths on Windows and macOS too). */
+function opencodeAuthPath(home: string): string {
+  const xdg = process.env.XDG_DATA_HOME?.trim();
+  return join(xdg || join(home, ".local", "share"), "opencode", "auth.json");
 }
 
 /** "e-mail (Plan)" from Claude Code's `~/.claude.json` `oauthAccount`, the CLI's non-secret account record. */

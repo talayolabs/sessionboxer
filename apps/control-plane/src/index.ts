@@ -87,6 +87,8 @@ import {
   cursorLogin,
   piAuthJson,
   piAuthNewer,
+  opencodeAuthJson,
+  opencodeAuthNewer,
   ensureAccessToken,
   ensureTunnelSecret,
   ensureVapidKeys,
@@ -224,6 +226,19 @@ sessions.piAuthRefreshed = (sessionId, authJson) => {
   saveSettings(settings);
   log(`pi login refreshed by session ${sessionId}; stored`);
   void sessions.pushPiAuthToAll();
+};
+// OpenCode refreshes the OAuth logins in its auth.json the same way (API keys are left alone).
+sessions.opencodeAuthRefreshed = (sessionId, authJson) => {
+  if (!opencodeAuthNewer(authJson, opencodeAuthJson(settings))) return;
+  try {
+    settings = applySettingsUpdate(settings, { providerSecrets: { opencode: { OPENCODE_AUTH_JSON: authJson } } });
+  } catch (e) {
+    log(`opencode auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  saveSettings(settings);
+  log(`opencode login refreshed by session ${sessionId}; stored`);
+  void sessions.pushOpenCodeAuthToAll();
 };
 const automations = new Automations({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
 const tunnels = new Tunnels(
@@ -415,6 +430,7 @@ async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void
   if (update.providerSecrets?.codex?.CODEX_AUTH_JSON !== undefined) void sessions.pushCodexAuthToAll();
   if (update.providerSecrets?.cursor?.CURSOR_LOGIN !== undefined) void sessions.pushCursorAuthToAll();
   if (update.providerSecrets?.pi?.PI_AUTH_JSON !== undefined || update.providerSecrets?.pi?.PI_API_KEYS !== undefined) void sessions.pushPiAuthToAll();
+  if (update.providerSecrets?.opencode?.OPENCODE_AUTH_JSON !== undefined) void sessions.pushOpenCodeAuthToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
 }

@@ -205,6 +205,26 @@ RUN npm install -g \
     && npm cache clean --force \
     && HOME=/tmp PI_SKIP_VERSION_CHECK=1 pi --version && rm -rf /tmp/.pi
 
+# OpenCode (`opencode acp` is spawned by the Sandbox Daemon; `opencode` in the terminal, ADR-0076):
+# the single prebuilt binary of the platform package `opencode-ai` depends on, taken from the npm
+# registry by exact version (what `npm i -g opencode-ai@<version>` would unpack). Root-owned under
+# /opt/opencode so a Sandbox runs the version the image was built with; the update check is off
+# (OPENCODE_DISABLE_AUTOUPDATE in the Agent's environment and `autoupdate: false` in its config).
+ARG OPENCODE_VERSION=1.18.32
+RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "unsupported arch $arch" >&2; exit 1 ;; esac \
+    && mkdir -p /opt/opencode \
+    && for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/opencode.tgz \
+           "https://registry.npmjs.org/opencode-linux-${arch}/-/opencode-linux-${arch}-${OPENCODE_VERSION}.tgz" && break; \
+         [ "$i" = 5 ] && exit 1; sleep 5; \
+       done \
+    && tar -xzf /tmp/opencode.tgz -C /opt/opencode --strip-components=2 package/bin/opencode \
+    && rm /tmp/opencode.tgz \
+    && chmod 0755 /opt/opencode/opencode \
+    && ln -s /opt/opencode/opencode /usr/local/bin/opencode \
+    && HOME=/tmp OPENCODE_DISABLE_AUTOUPDATE=1 opencode --version | grep -qx "${OPENCODE_VERSION}" \
+    && rm -rf /tmp/.local /tmp/.cache /tmp/.config
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -295,6 +315,7 @@ COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.confi
 COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
 COPY --chown=agent:agent images/sandbox/pi-settings.json /home/agent/.pi/agent/settings.json
 COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.cursor/cli-config.json
+COPY --chown=agent:agent images/sandbox/opencode-config.json /home/agent/.config/opencode/opencode.json
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -310,6 +331,7 @@ RUN mkdir -p /home/agent/.agents && ln -s /home/agent/.claude/skills /home/agent
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.pi/agent/AGENTS.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.config/opencode/AGENTS.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md

@@ -39,6 +39,7 @@ const PROVIDER_BLURB: Record<Provider, string> = {
   cursor: "Cursor's Agent; runs on your Cursor subscription",
   devin: "Cognition's Agent; runs on your Devin account",
   pi: "earendil-works' open-source Agent; runs on your own model API keys or logins",
+  opencode: "The open-source Agent; runs on the model subscriptions and API keys of its providers",
 };
 
 /** Four big buttons, one per Provider, marked when a login is already stored. */
@@ -159,6 +160,27 @@ function steps(provider: Provider, os: Os): Step[] {
           ],
         },
       ];
+    case "opencode":
+      return [
+        {
+          title: "Install OpenCode (skip if you already use it)",
+          body:
+            os === "windows"
+              ? "Needs Node.js 18+ (winget install OpenJS.NodeJS.LTS if missing); in PowerShell:"
+              : `In ${shell}; or npm i -g opencode-ai, brew install opencode.`,
+          commands: [os === "windows" ? "npm i -g opencode-ai" : "curl -fsSL https://opencode.ai/install | bash"],
+        },
+        {
+          title: "Log in with a model provider",
+          body: "Pick the provider (Anthropic with a Claude Pro/Max login, OpenAI with ChatGPT, OpenCode Zen, Google, an API key…) and sign in; repeat for each provider you want.",
+          commands: ["opencode auth login"],
+        },
+        {
+          title: "Copy the login file it wrote and paste it below",
+          body: "The whole file, or use Import below. An OpenCode Zen API key from opencode.ai/auth works too. The Sandbox keeps it in memory only; refreshed tokens flow back here.",
+          commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.local\\share\\opencode\\auth.json" : "cat ~/.local/share/opencode/auth.json"],
+        },
+      ];
     case "devin":
       return [
         {
@@ -260,6 +282,13 @@ function credentialField(provider: Provider): {
         file: true,
         placeholder: '{ "anthropic": … } or ANTHROPIC_API_KEY=sk-ant-…',
       };
+    case "opencode":
+      return {
+        label: "OpenCode login (contents of auth.json, or an OpenCode Zen API key)",
+        multiline: true,
+        file: true,
+        placeholder: '{ "anthropic": { "type": "oauth", … } } or sk-…',
+      };
   }
 }
 
@@ -275,6 +304,8 @@ function secretUpdate(provider: Provider, value: string) {
       return { cursor: { CURSOR_LOGIN: value } };
     case "pi":
       return value.startsWith("{") ? { pi: { PI_AUTH_JSON: value } } : { pi: { PI_API_KEYS: value } };
+    case "opencode":
+      return { opencode: { OPENCODE_AUTH_JSON: value } };
   }
 }
 

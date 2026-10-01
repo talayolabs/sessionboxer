@@ -20,6 +20,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   devin: "Devin does not report its usage windows (ACUs) to Sessionboxer.",
   cursor: "Cursor does not report its usage to Sessionboxer; see cursor.com → Dashboard → Usage.",
   pi: "pi runs on your own model provider accounts and reports no usage windows; see the provider's console.",
+  opencode: "OpenCode reports tokens per turn but no usage windows; see your model provider's dashboard (opencode.ai/zen for OpenCode Zen).",
 };
 
 /** The current time, ticking every second while `live`. */

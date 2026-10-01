@@ -11,6 +11,7 @@ import {
   type CodexLogin,
   type CursorLogin,
   type PiLogin,
+  type OpenCodeLogin,
   CONNECTORS,
   connectorHasMcp,
   MCP_RESERVED_NAMES,
@@ -251,6 +252,10 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
         ...current.providerSecrets.pi,
         ...stripUndefined(providerSecrets.pi ?? {}),
       },
+      opencode: {
+        ...current.providerSecrets.opencode,
+        ...stripUndefined(providerSecrets.opencode ?? {}),
+      },
     };
     if (providerSecrets.codex?.CODEX_AUTH_JSON !== undefined) {
       next.providerSecrets.codex.CODEX_AUTH_JSON = normalizeCodexAuthJson(providerSecrets.codex.CODEX_AUTH_JSON);
@@ -263,6 +268,9 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     }
     if (providerSecrets.pi?.PI_API_KEYS !== undefined) {
       next.providerSecrets.pi.PI_API_KEYS = normalizePiApiKeys(providerSecrets.pi.PI_API_KEYS);
+    }
+    if (providerSecrets.opencode?.OPENCODE_AUTH_JSON !== undefined) {
+      next.providerSecrets.opencode.OPENCODE_AUTH_JSON = normalizeOpenCodeAuthJson(providerSecrets.opencode.OPENCODE_AUTH_JSON);
     }
   }
   return Settings.parse(next);
@@ -302,10 +310,12 @@ export function toPublicSettings(
       codex: { CODEX_AUTH_JSON: codexAuthJson(settings) !== "" },
       cursor: { CURSOR_LOGIN: cursorLogin(settings) !== "" },
       pi: { PI_AUTH_JSON: piAuthJson(settings) !== "", PI_API_KEYS: piApiKeys(settings) !== "" },
+      opencode: { OPENCODE_AUTH_JSON: opencodeAuthJson(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
     cursorLogin: describeCursorLogin(cursorLogin(settings)),
     piLogin: describePiLogin(piAuthJson(settings), piApiKeys(settings)),
+    opencodeLogin: describeOpenCodeLogin(opencodeAuthJson(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -623,6 +633,99 @@ export function piAuthNewer(candidate: string, current: string): boolean {
   return a >= b;
 }
 
+/**
+ * The OpenCode login (ADR-0076): the whole `auth.json` an `opencode auth login` wrote (one record per
+ * model provider: an OAuth login, an API key or a well-known token), or an OpenCode Zen API key
+ * normalised into such a file. No environment override: OpenCode rotates the OAuth tokens in the
+ * file and the refreshed file is written back here.
+ */
+export function opencodeAuthJson(settings: Settings): string {
+  return settings.providerSecrets.opencode.OPENCODE_AUTH_JSON;
+}
+
+/** One record of OpenCode's `auth.json`, the parts Sessionboxer looks at (the rest is passed through untouched). */
+const OpenCodeAuthRecord = z.object({
+  type: z.enum(["oauth", "api", "wellknown"]),
+  key: z.string().optional(),
+  token: z.string().optional(),
+  access: z.string().optional(),
+  refresh: z.string().optional(),
+  expires: z.number().optional(),
+});
+const OpenCodeAuthFile = z.record(z.string(), OpenCodeAuthRecord);
+
+const OPENCODE_AUTH_HELP = "run `opencode auth login` on your machine and paste ~/.local/share/opencode/auth.json, or an API key from opencode.ai/auth.";
+
+/** Accepts an OpenCode Zen API key or the JSON object `opencode auth login` writes; `""` forgets it. Returns JSON compacted. */
+export function normalizeOpenCodeAuthJson(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed === "") return "";
+  if (!trimmed.startsWith("{")) {
+    if (!/^[\w.-]+$/.test(trimmed)) throw new HttpError(400, `The OpenCode login must be an API key or the JSON in OpenCode's auth.json: ${OPENCODE_AUTH_HELP}`);
+    return JSON.stringify({ opencode: { type: "api", key: trimmed } });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new HttpError(400, `The OpenCode login must be the JSON in OpenCode's auth.json: ${OPENCODE_AUTH_HELP}`);
+  }
+  const file = OpenCodeAuthFile.safeParse(parsed);
+  if (!file.success || typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new HttpError(400, "The OpenCode login must be the JSON object in OpenCode's auth.json: a provider id to a record of type oauth, api or wellknown each.");
+  }
+  const entries = Object.entries(file.data);
+  if (entries.length === 0) throw new HttpError(400, `This auth.json holds no login; ${OPENCODE_AUTH_HELP}`);
+  for (const [id, record] of entries) {
+    const complete =
+      record.type === "oauth" ? record.access !== undefined && record.refresh !== undefined : record.type === "api" ? record.key !== undefined : record.key !== undefined && record.token !== undefined;
+    if (!complete) throw new HttpError(400, `The ${record.type} record for ${id} in this auth.json is incomplete; ${OPENCODE_AUTH_HELP}`);
+  }
+  return JSON.stringify(parsed);
+}
+
+/** Which model providers the stored login covers, for Settings; nothing is verified. `null` for an empty or unusable string. */
+export function describeOpenCodeLogin(login: string): OpenCodeLogin | null {
+  if (login.trim() === "") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(login);
+  } catch {
+    return null;
+  }
+  const file = OpenCodeAuthFile.safeParse(parsed);
+  if (!file.success) return null;
+  const providers = Object.entries(file.data).map(([id, record]) => ({
+    id,
+    kind: record.type,
+    expiresAt: record.type === "oauth" && typeof record.expires === "number" && record.expires > 0 ? new Date(record.expires).toISOString() : null,
+  }));
+  return providers.length === 0 ? null : { providers };
+}
+
+/** The latest OAuth expiry in a login, ms since the epoch; `null` when it holds no dated OAuth record. */
+function opencodeLatestExpiry(login: OpenCodeLogin): number | null {
+  const times = login.providers.flatMap((p) => (p.expiresAt ? [Date.parse(p.expiresAt)] : []));
+  return times.length === 0 ? null : Math.max(...times);
+}
+
+/**
+ * Which of two OpenCode `auth.json` is the newer one: OpenCode writes a later expiry when it
+ * refreshes an OAuth login. `true` when `candidate` should replace `current` (a different, valid
+ * file whose logins are not older).
+ */
+export function opencodeAuthNewer(candidate: string, current: string): boolean {
+  const a = describeOpenCodeLogin(candidate);
+  if (!a) return false;
+  if (JSON.stringify(JSON.parse(candidate)) === current) return false;
+  const b = describeOpenCodeLogin(current);
+  if (!b) return true;
+  const ea = opencodeLatestExpiry(a);
+  const eb = opencodeLatestExpiry(b);
+  if (ea === null || eb === null) return true;
+  return ea >= eb;
+}
+
 /** `ANTHROPIC_AUTH_TOKEN` for Claude Sandboxes (a company proxy's bearer credential); env override like the tokens. */
 export function claudeAuthToken(settings: Settings): string {
   return process.env.ANTHROPIC_AUTH_TOKEN || settings.claudeApi.authToken;
@@ -656,6 +759,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return cursorLogin(settings) !== "";
     case "pi":
       return piAuthJson(settings) !== "" || piApiKeys(settings) !== "";
+    case "opencode":
+      return opencodeAuthJson(settings) !== "";
   }
 }
 
@@ -684,6 +789,7 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "codex":
     case "cursor":
     case "pi":
+    case "opencode":
       return {};
   }
 }
@@ -700,6 +806,8 @@ export function providerSetupHint(provider: Provider): string {
       return "No Cursor login configured. Paste a Cursor API key, or run `agent login` and paste Cursor's auth.json, in Global settings → Providers.";
     case "pi":
       return "No pi login configured. Paste a model provider's API key (ANTHROPIC_API_KEY=..., OPENAI_API_KEY=...), or run `pi`, `/login`, and paste ~/.pi/agent/auth.json, in Global settings → Providers.";
+    case "opencode":
+      return "No OpenCode login configured. Run `opencode auth login` on your machine and paste ~/.local/share/opencode/auth.json, or an OpenCode Zen API key, in Global settings → Providers.";
   }
 }
 

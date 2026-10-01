@@ -258,7 +258,7 @@ registerTool(
 // The Control Plane refuses these under the `session` policy with the reason; `session_create` may
 // answer `{ pending: true, id }` when the user has to allow it first (a card in their chat).
 
-const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi"] as const;
+const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode"] as const;
 const SESSION_REF = z.string().min(1).max(100).describe("A Session id from sessions_list (a prefix of 6+ characters does)");
 const REPOS = z
   .array(

@@ -13,6 +13,8 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.cursor.CURSOR_LOGIN;
     case "pi":
       return settings.providerSecretsSet.pi.PI_AUTH_JSON || settings.providerSecretsSet.pi.PI_API_KEYS;
+    case "opencode":
+      return settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON;
   }
 }
 
@@ -21,7 +23,7 @@ export function providerSignsInFromBrowser(provider: Provider): boolean {
   return provider !== "pi";
 }
 
-/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex, Cursor and pi a login. */
+/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex, Cursor, pi and OpenCode a login. */
 export function providerCredentialNoun(provider: Provider): "token" | "login" {
   return provider === "claude-code" || provider === "devin" ? "token" : "login";
 }

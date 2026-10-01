@@ -1,6 +1,6 @@
 import type { Element, ElementContent } from "hast";
 import { memo, useContext, useMemo } from "react";
-import ReactMarkdown, { type Components, type Options } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components, type Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -74,7 +74,7 @@ export const Markdown = memo(function Markdown({
 }) {
   const sessionId = useContext(AttachmentSession);
   const openFile = useContext(OpenFile);
-  const found = useMemo(() => (attachments && sessionId ? findAttachments(text) : []), [attachments, sessionId, text]);
+  const found = useMemo(() => (attachments && sessionId ? findAttachments(text, base) : []), [attachments, sessionId, text, base]);
   const rehypePlugins = useMemo<NonNullable<Options["rehypePlugins"]>>(() => {
     const plugins = html ? HTML_PLUGINS : REHYPE_PLUGINS;
     return openFile ? [...plugins, [rehypeFileLinks, { base }]] : plugins;
@@ -84,6 +84,7 @@ export const Markdown = memo(function Markdown({
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
         rehypePlugins={rehypePlugins}
+        urlTransform={(href) => sessionId && workspacePath(href, base) ? href : defaultUrlTransform(href)}
         components={{
           pre: Pre,
           code: ({ node, children, ...rest }) => {

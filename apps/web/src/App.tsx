@@ -351,6 +351,8 @@ export function App() {
   const [folderDialog, setFolderDialog] = useState<{ mode: "new" | "rename"; folderId?: string; sessionId?: string } | null>(null);
   const [sidebarFork, setSidebarFork] = useState<{ sessionId: string; snapshots: Snapshot[]; saved: SavedMessage[] } | null>(null);
   const [sidebarForkBusy, setSidebarForkBusy] = useState(false);
+  // NewSession stays mounted (hidden) so its form survives navigating away; a successful Start bumps this, remounting it empty.
+  const [newSessionEpoch, setNewSessionEpoch] = useState(0);
   const appRef = useRef<HTMLDivElement>(null);
   useEffect(() => setDrawerOpen(false), [route]);
   // The service worker shows push notifications while the page is closed; a tap on one navigates here.
@@ -1276,14 +1278,18 @@ export function App() {
             No Provider connected yet: Sessions need a Claude Code, Codex, Cursor or Devin login. Click to connect one.
           </div>
         )}
-        {(route.view === "new" || (route.view === "session" && !selected)) && settings && (
+        {settings && (
           <NewSession
-            key={route.view}
+            key={newSessionEpoch}
+            hidden={route.view !== "new" && (route.view !== "session" || selected !== null)}
             settings={settings}
             models={models ?? EMPTY_MODELS}
             options={options ?? EMPTY_OPTIONS}
             firstTime={sessions.length === 0}
-            onCreated={(s) => setRoute({ view: "session", id: s.id })}
+            onCreated={(s) => {
+              setNewSessionEpoch((n) => n + 1);
+              setRoute({ view: "session", id: s.id });
+            }}
             onConnectProvider={(provider) => setProviderConnect({ provider })}
             onConnectGit={() => setGitConnect(true)}
             run={run}
@@ -2533,6 +2539,7 @@ function NewSession({
   models,
   options,
   firstTime,
+  hidden,
   onCreated,
   onConnectProvider,
   onConnectGit,
@@ -2543,6 +2550,8 @@ function NewSession({
   options: ProviderOptions;
   /** No Session exists yet: a welcome heading instead of "New session". */
   firstTime: boolean;
+  /** Another route is on screen: render nothing but keep the state (text, repositories, staged files) for when it comes back. */
+  hidden: boolean;
   onCreated: (s: Session) => void;
   onConnectProvider: (provider: Provider | null) => void;
   onConnectGit: () => void;
@@ -2582,6 +2591,16 @@ function NewSession({
     });
   }, []);
   const dictation = useDictation(appendDictation);
+
+  // Back on this screen the prompt takes focus again (the autofocus attribute only fires on mount).
+  useEffect(() => {
+    if (!hidden && !mobileQuery()) promptRef.current?.focus();
+  }, [hidden]);
+
+  // Leaving the screen mid-recording releases the microphone; the clip is still transcribed into the prompt.
+  useEffect(() => {
+    if (hidden && dictation.dictation.kind === "recording") void dictation.toggle();
+  }, [hidden, dictation]);
 
   // A login stored from the connect dialog while this screen is open becomes the selection (unless one was picked by hand).
   useEffect(() => {
@@ -2629,7 +2648,7 @@ function NewSession({
         : "Ctrl/\u2318+Enter";
 
   return (
-    <div className="start">
+    <div className="start" hidden={hidden}>
       <div className="start-inner">
         <h2 className="start-title">{firstTime ? "What should the Agent work on?" : "New session"}</h2>
         {connectedProviders.length === 0 && (
@@ -2665,7 +2684,6 @@ function NewSession({
               className="start-prompt"
               rows={4}
               value={prompt}
-              autoFocus={!mobileQuery()}
               onChange={(e) => setPrompt(e.target.value)}
               onPaste={(e) => {
                 const files = droppedFiles(e.clipboardData);

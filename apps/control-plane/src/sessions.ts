@@ -27,6 +27,15 @@ import {
   DaemonLlmCallsResult,
   DaemonLlmCallBodyResult,
   type DaemonLlmCallBodyParams,
+  type DaemonMcpAppsCallToolParams,
+  type DaemonMcpAppsReadResourceParams,
+  DaemonMcpAppsReadResourceResult,
+  type DaemonMcpAppsResourceParams,
+  DaemonMcpAppsResourceResult,
+  type DaemonMcpAppsToolResultParams,
+  DaemonMcpAppsToolResultResult,
+  type McpAppResourceResponse,
+  McpToolResult,
   type LlmCall,
   type LlmCallBody,
   type StopReason,
@@ -556,6 +565,29 @@ export class SessionManager {
       }
       throw e;
     }
+  }
+
+  // --- MCP Apps (ADR-0078): what the tee mirrored in the Sandbox, for the transcript's app cards ---
+
+  /** A view's HTML and `_meta.ui`, with whether its external domains are approved on the registry entry. */
+  async mcpAppResource(id: string, params: DaemonMcpAppsResourceParams): Promise<McpAppResourceResponse> {
+    const res = DaemonMcpAppsResourceResult.parse(await this.daemonCall(id, DAEMON_METHODS.mcpAppsResource, params, DAEMON_WAIT_MS));
+    const entry = this.settings().mcpServers.find((m) => m.name === params.server) ?? null;
+    return { ...res, approvedDomains: entry?.appDomains ?? null, approvable: entry !== null };
+  }
+
+  /** The exact result (content, structuredContent, _meta, isError) of an Agent tool call, as the tee saw it. */
+  async mcpAppToolResult(id: string, params: DaemonMcpAppsToolResultParams): Promise<DaemonMcpAppsToolResultResult> {
+    return DaemonMcpAppsToolResultResult.parse(await this.daemonCall(id, DAEMON_METHODS.mcpAppsToolResult, params, DAEMON_WAIT_MS * 2));
+  }
+
+  /** A view's own `tools/call`, on its server only (the Daemon enforces the tool's `visibility`). */
+  async mcpAppCallTool(id: string, params: DaemonMcpAppsCallToolParams): Promise<McpToolResult> {
+    return McpToolResult.parse(await this.daemonCall(id, DAEMON_METHODS.mcpAppsCallTool, params, 120_000));
+  }
+
+  async mcpAppReadResource(id: string, params: DaemonMcpAppsReadResourceParams): Promise<DaemonMcpAppsReadResourceResult> {
+    return DaemonMcpAppsReadResourceResult.parse(await this.daemonCall(id, DAEMON_METHODS.mcpAppsReadResource, params, DAEMON_WAIT_MS * 2));
   }
 
   // --- Pull changes to my folder ("copy" Sessions) -----------------------------

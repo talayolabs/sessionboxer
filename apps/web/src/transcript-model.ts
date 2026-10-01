@@ -6,6 +6,7 @@ import {
   type E2eRunSummary,
   type ForkConversation,
   type LlmCall,
+  type McpAppCall,
   type PromptAttachment,
   type Provider,
   type SessionEvent,
@@ -47,6 +48,8 @@ export type TranscriptItem =
       locations: ToolCallLocation[];
       rawInput?: unknown;
       rawOutput?: unknown;
+      /** The call went to an MCP tool with a view (ADR-0078): rendered as an app card. */
+      mcpApp?: McpAppCall;
     }
   | { kind: "plan"; key: string; ts: string; entries: { content: string; status: string }[] }
   | {
@@ -157,11 +160,19 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
     }
   };
 
+  /** `mcp_app_call` events that came before their `tool_call`. */
+  const appCalls = new Map<string, McpAppCall>();
   for (const ev of events) {
     const key = String(ev.seq);
     const ts = ev.ts;
     const body = ev.body;
     switch (body.type) {
+      case "mcp_app_call": {
+        const tool = tools.get(body.call.toolCallId);
+        if (tool) tool.mcpApp = body.call;
+        else appCalls.set(body.call.toolCallId, body.call);
+        break;
+      }
       case "user_prompt":
         markContinued(items);
         handoffTurn = body.origin === "handoff_request";
@@ -293,6 +304,8 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
               rawInput: u.rawInput,
               rawOutput: u.rawOutput,
             };
+            const app = appCalls.get(u.toolCallId);
+            if (app) item.mcpApp = app;
             tools.set(u.toolCallId, item);
             items.push(item);
             break;

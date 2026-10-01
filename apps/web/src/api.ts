@@ -43,6 +43,13 @@ import type {
   HostDirListing,
   LlmCall,
   LlmCallBody,
+  DaemonMcpAppsCallToolParams,
+  DaemonMcpAppsReadResourceParams,
+  DaemonMcpAppsReadResourceResult,
+  DaemonMcpAppsToolResultResult,
+  McpAppApproveRequest,
+  McpAppResourceResponse,
+  McpToolResult,
   PrActionRequest,
   PrActionResult,
   PrCheckItem,
@@ -261,6 +268,16 @@ export const api = {
     request<CompactionDetails>(`/sessions/${id}/context/compaction`, { method: "POST", body: JSON.stringify(req) }),
   llmCalls: (id: string) => request<{ calls: LlmCall[]; withBodies: string[] }>(`/sessions/${id}/llm-calls`),
   llmCallBody: (id: string, callId: string) => request<LlmCallBody>(`/sessions/${id}/llm-calls/${callId}`),
+  /** MCP Apps (ADR-0078): a view's HTML, the exact result it shows, and its own calls to its server. */
+  mcpAppResource: (id: string, server: string, uri: string) =>
+    request<McpAppResourceResponse>(`/sessions/${id}/mcp-apps/resource?server=${encodeURIComponent(server)}&uri=${encodeURIComponent(uri)}`),
+  mcpAppToolResult: (id: string, toolCallId: string) =>
+    request<DaemonMcpAppsToolResultResult>(`/sessions/${id}/mcp-apps/tool-results/${encodeURIComponent(toolCallId)}`),
+  mcpAppCallTool: (id: string, req: DaemonMcpAppsCallToolParams) =>
+    request<McpToolResult>(`/sessions/${id}/mcp-apps/call-tool`, { method: "POST", body: JSON.stringify(req) }),
+  mcpAppReadResource: (id: string, req: DaemonMcpAppsReadResourceParams) =>
+    request<DaemonMcpAppsReadResourceResult>(`/sessions/${id}/mcp-apps/read-resource`, { method: "POST", body: JSON.stringify(req) }),
+  mcpAppApprove: (req: McpAppApproveRequest) => request<PublicSettings>("/mcp-apps/approve", { method: "POST", body: JSON.stringify(req) }),
   cancel: (id: string) => request<{ ok: true }>(`/sessions/${id}/cancel`, { method: "POST" }),
   stop: (id: string) => request<Session>(`/sessions/${id}/stop`, { method: "POST" }),
   resume: (id: string) => request<Session>(`/sessions/${id}/resume`, { method: "POST" }),

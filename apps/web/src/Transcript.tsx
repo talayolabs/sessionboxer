@@ -13,6 +13,8 @@ import { formatMb, formatTime } from "./format";
 import { Icon } from "./Icons";
 import { callFacts } from "./LlmCallDialog";
 import { Markdown } from "./Markdown";
+import { McpAppCard } from "./McpAppCard";
+import type { Draft } from "./draft";
 import type { DividerRef } from "./BranchTree";
 import type { TranscriptItem } from "./transcript-model";
 
@@ -278,7 +280,7 @@ function ToolTitle({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> }
   );
 }
 
-function ToolCall({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> }) {
+function ToolCall({ item, agent }: { item: Extract<TranscriptItem, { kind: "tool" }>; agent: AgentOnScreen }) {
   const [open, setOpen] = useState(false);
   const images = item.content.filter((c) => c.type === "content" && c.content.type === "image");
   const rest = item.content.filter((c) => !(c.type === "content" && c.content.type === "image"));
@@ -295,6 +297,7 @@ function ToolCall({ item }: { item: Extract<TranscriptItem, { kind: "tool" }> })
         <ToolTitle item={item} />
         <span className="tool-status">{item.status}</span>
       </button>
+      {item.mcpApp && <McpAppCard sessionId={agent.sessionId} item={item} draft={agent.draft} />}
       {open && (
         <div className="tool-body">
           {images.map((c, i) => (
@@ -466,7 +469,7 @@ function Item({
         </details>
       );
     case "tool":
-      return <ToolCall item={item} />;
+      return <ToolCall item={item} agent={agent} />;
     case "plan":
       return (
         <ul className="plan">
@@ -571,6 +574,8 @@ export interface AgentOnScreen {
   sessionId: string;
   /** "Claude", "Codex", … */
   label: string;
+  /** The Composer's draft, for what an MCP App's view asks to say (`ui/message`, ADR-0078). */
+  draft?: Draft;
 }
 
 function forkedNote(item: Extract<TranscriptItem, { kind: "forked" }>): string {

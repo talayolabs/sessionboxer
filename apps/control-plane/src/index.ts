@@ -24,6 +24,10 @@ import {
   CodeStartParams,
   CodeThemeParams,
   CompactionDetailsRequest,
+  DaemonMcpAppsCallToolParams,
+  DaemonMcpAppsReadResourceParams,
+  DaemonMcpAppsResourceParams,
+  McpAppApproveRequest,
   PrActionRequest,
   UpdatePrRequest,
   ConnectorKind,
@@ -639,6 +643,30 @@ api.get("/sessions/:id/llm-calls", async (c) => {
   return c.json({ calls, withBodies: await sessions.llmCallsWithBodies(id) });
 });
 api.get("/sessions/:id/llm-calls/:callId", async (c) => c.json(await sessions.llmCallBody(c.req.param("id"), c.req.param("callId"))));
+// MCP Apps (ADR-0078): the views of the Session's MCP tool calls, from the Daemon's tee mirror.
+api.get("/sessions/:id/mcp-apps/resource", async (c) => {
+  const params = DaemonMcpAppsResourceParams.parse({ server: c.req.query("server"), uri: c.req.query("uri") });
+  return c.json(await sessions.mcpAppResource(c.req.param("id"), params));
+});
+api.get("/sessions/:id/mcp-apps/tool-results/:toolCallId", async (c) =>
+  c.json(await sessions.mcpAppToolResult(c.req.param("id"), { toolCallId: c.req.param("toolCallId") })),
+);
+api.post("/sessions/:id/mcp-apps/call-tool", async (c) => {
+  const params = DaemonMcpAppsCallToolParams.parse(await c.req.json());
+  return c.json(await sessions.mcpAppCallTool(c.req.param("id"), params));
+});
+api.post("/sessions/:id/mcp-apps/read-resource", async (c) => {
+  const params = DaemonMcpAppsReadResourceParams.parse(await c.req.json());
+  return c.json(await sessions.mcpAppReadResource(c.req.param("id"), params));
+});
+/** Approves, once per registry entry, the external domains a server's views may reach (kept on `McpServerDef.appDomains`). */
+api.post("/mcp-apps/approve", async (c) => {
+  const req = McpAppApproveRequest.parse(await c.req.json());
+  const current = (await publicSettings()).mcpServers;
+  if (!current.some((m) => m.name === req.server)) throw new HttpError(404, `No MCP server named "${req.server}" in the registry.`);
+  await applySettingsRequest({ mcpServers: current.map((m) => (m.name === req.server ? { ...m, appDomains: req.csp } : m)) });
+  return c.json(await publicSettings());
+});
 api.post("/sessions/:id/cancel", async (c) => {
   await sessions.cancel(c.req.param("id"));
   return c.json({ ok: true });

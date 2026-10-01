@@ -2213,7 +2213,7 @@ function SessionView({
             onInspectLlmCall={setInspectingCall}
             onOpenE2e={openE2e}
             onOpenPane={(p) => (p === "e2e" ? openE2e(null) : setPane(p as Pane))}
-            agent={{ sessionId: session.id, label: PROVIDER_LABELS[session.provider] }}
+            agent={{ sessionId: session.id, label: PROVIDER_LABELS[session.provider], draft }}
           />
           <Composer
             draft={draft}

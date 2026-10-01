@@ -1,0 +1,26 @@
+{
+  "name": "@sessionboxer/mcp-tee",
+  "version": "1.4.1",
+  "private": true,
+  "type": "module",
+  "description": "Transparent per-server MCP tee: the Agent talks to it over stdio, it talks to the real server and mirrors the exchange to the Sandbox Daemon (MCP Apps, ADR-0078).",
+  "bin": {
+    "sessionboxer-mcp-tee": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@sessionboxer/protocol": "1.4.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

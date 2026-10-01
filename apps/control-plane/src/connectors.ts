@@ -304,6 +304,7 @@ export class Connectors {
       headers: [{ name: preset.tokenHeader, value: "", secret: true }],
       enabledByDefault: true,
       connector: { kind, account: null, connectedAt: null, expiresAt: null, host: null },
+      appDomains: null,
     };
     this.settings.set({ ...settings, mcpServers: [...settings.mcpServers, server] });
     this.onChanged();

@@ -21,6 +21,7 @@ export function newMcpServer(): PublicMcpServerDef {
     headers: [],
     enabledByDefault: true,
     connector: null,
+    appDomains: null,
   };
 }
 
@@ -115,6 +116,7 @@ export function importMcpJson(text: string): PublicMcpServerDef[] {
       headers: kvFromRecord(def.headers, `"${name}".headers`),
       enabledByDefault: !(def.disabled === true),
       connector: null,
+      appDomains: null,
     });
   }
   if (out.length === 0) throw new Error("No servers found in the JSON.");

@@ -31,6 +31,12 @@ import {
   DaemonGhApiParams,
   DaemonHelloParams,
   DaemonMcpSetParams,
+  type McpServerSpec,
+  DaemonMcpAppsCallToolParams,
+  DaemonMcpAppsReadResourceParams,
+  DaemonMcpAppsResourceParams,
+  DaemonMcpAppsToolResultParams,
+  DaemonMcpAppsToolsParams,
   DaemonModelSetParams,
   DaemonOptionSetParams,
   DaemonPromptParams,
@@ -86,7 +92,8 @@ import { GhApi } from "./gh-api.js";
 import { BbCredentials } from "./bb-credentials.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
-import { DevinMcpConfig, PiMcpConfig, type BuiltinMcp } from "./mcp-config.js";
+import { DevinMcpConfig, PiMcpConfig, type BuiltinMcp, type McpTee } from "./mcp-config.js";
+import { McpTeeHub } from "./mcp-mirror.js";
 import { FsWatches } from "./fs-watch.js";
 import { serveRawFile } from "./raw-files.js";
 import { Repos } from "./repos.js";
@@ -212,11 +219,19 @@ function guestIdentityFile(key: string, dir: string): string | undefined {
 }
 /** Where the Agent's working directory is: in the VM for a Windows or macOS Session. */
 const agentWorkspace = guest ? guest.workspace : workspace;
+/**
+ * The user's MCP servers are reached through the tee (ADR-0078), which mirrors the exchange to this
+ * Daemon for MCP Apps. In a Windows/macOS VM the Agent starts the servers itself, as before.
+ */
+const mcpTee: McpTee | undefined = guest ? undefined : { command: env.SESSIONBOXER_MCP_TEE ?? "sessionboxer-mcp-tee", port };
 /** Devin reads MCP servers from its config file; kept on tmpfs so Snapshots never carry MCP secrets. */
 const devinMcpConfig =
   provider === "devin"
-    ? new DevinMcpConfig(`${home}/.config/devin/mcp_config.json`, tmpfsDir, () =>
-        guest ? builtinMcps().map((b) => ({ name: b.name, ...guest.bridgeMcp(b.name) })) : builtinMcps(),
+    ? new DevinMcpConfig(
+        `${home}/.config/devin/mcp_config.json`,
+        tmpfsDir,
+        () => (guest ? builtinMcps().map((b) => ({ name: b.name, ...guest.bridgeMcp(b.name) })) : builtinMcps()),
+        mcpTee,
       )
     : null;
 /**
@@ -231,6 +246,7 @@ const piMcpConfig =
         tmpfsDir,
         () => (guest ? builtinMcps().map((b) => ({ name: b.name, ...guest.bridgeMcp(b.name) })) : builtinMcps()),
         log,
+        mcpTee,
       )
     : null;
 /** `gh`/git logins for the Sandbox; the image points `GH_CONFIG_DIR` at this tmpfs dir. */
@@ -610,6 +626,13 @@ const macosBriefing = (): string => {
 
 const toolTelemetry = new ToolTelemetry();
 let activeTurnId: string | undefined;
+/** The Session's user MCP servers as last set, which the tees ask for when they start. */
+let mcpServers: McpServerSpec[] = [];
+const mcpTeeHub = new McpTeeHub(() => mcpServers, {
+  emit,
+  exact: (toolCallId, info) => toolTelemetry.attachExact(toolCallId, info),
+  log,
+});
 
 const agent = new AgentManager(
   {
@@ -624,6 +647,7 @@ const agent = new AgentManager(
     ...(provider === "opencode" && !guest ? { env: OPENCODE_AGENT_ENV } : {}),
     ...(provider === "fx" ? { env: FX_AGENT_ENV } : {}),
     builtinMcps,
+    ...(mcpTee ? { mcpTee } : {}),
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     sessionId: env.SESSIONBOXER_SESSION_ID ?? "",
     newConversation: env.SESSIONBOXER_NEW_CONVERSATION === "1",
@@ -647,6 +671,7 @@ const agent = new AgentManager(
     },
     onUpdate: (update) => {
       emit({ type: "update", update });
+      mcpTeeHub.observeAcp(update);
       const execution = toolTelemetry.observe(update);
       if (execution) emit({ type: "tool_execution", execution });
     },
@@ -787,8 +812,21 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       ghCredentials.apply(p.credentials);
       bbCredentials.apply(p.credentials);
       sessionboxerTools = p.sessionboxerTools;
+      mcpServers = p.servers;
       return { applied: agent.setMcpServers(p.servers) };
     }
+    case DAEMON_METHODS.mcpAppsResource: {
+      const p = DaemonMcpAppsResourceParams.parse(params);
+      return mcpTeeHub.resource(p.server, p.uri);
+    }
+    case DAEMON_METHODS.mcpAppsToolResult:
+      return mcpTeeHub.toolResult(DaemonMcpAppsToolResultParams.parse(params).toolCallId);
+    case DAEMON_METHODS.mcpAppsCallTool:
+      return mcpTeeHub.callTool(DaemonMcpAppsCallToolParams.parse(params));
+    case DAEMON_METHODS.mcpAppsReadResource:
+      return mcpTeeHub.readResource(DaemonMcpAppsReadResourceParams.parse(params));
+    case DAEMON_METHODS.mcpAppsTools:
+      return { tools: await mcpTeeHub.tools(DaemonMcpAppsToolsParams.parse(params).server) };
     case DAEMON_METHODS.modelSet: {
       const p = DaemonModelSetParams.parse(params);
       return { applied: agent.setModel(p.model) };
@@ -929,6 +967,7 @@ const http = createServer((req, res) => {
 const wss = new WebSocketServer({ noServer: true });
 http.on("upgrade", (req, socket, head) => {
   if (codeServer.handleUpgrade(req, socket, head)) return;
+  if (mcpTeeHub.handleUpgrade(req, socket, head)) return;
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 http.listen(port, "0.0.0.0");

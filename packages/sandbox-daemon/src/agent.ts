@@ -33,7 +33,7 @@ import type {
 } from "@sessionboxer/protocol";
 import { fingerprint } from "@sessionboxer/protocol/node-telemetry";
 import { caEnv } from "./ca-env.js";
-import { acpMcpServers, type BuiltinMcp } from "./mcp-config.js";
+import { acpMcpServers, type BuiltinMcp, type McpTee } from "./mcp-config.js";
 import { promptBlocks } from "./prompt-blocks.js";
 
 /**
@@ -98,6 +98,8 @@ export interface AgentConfig {
   fullAccessModeIds?: string[];
   /** Rewrites a stdio MCP server's command for an Agent that wants it as an absolute path (fx, ADR-0077). */
   mcpCommandPath?: (command: string) => string;
+  /** The tee the user's servers go through (ADR-0078); not used when the Agent runs in a VM (`transport`). */
+  mcpTee?: McpTee;
   log: (msg: string) => void;
 }
 
@@ -1081,7 +1083,7 @@ export class AgentManager {
 
   /** The MCP servers as `session/new` / `session/load` take them, for where the Agent runs. */
   private acpMcpServers(userServers: McpServerSpec[]): McpServer[] {
-    const servers = acpMcpServers(this.cfg.builtinMcps(), userServers);
+    const servers = acpMcpServers(this.cfg.builtinMcps(), userServers, this.cfg.transport ? undefined : this.cfg.mcpTee);
     const placed = this.cfg.transport ? this.cfg.transport.mcpServers(servers) : servers;
     const toPath = this.cfg.mcpCommandPath;
     return toPath ? placed.map((s) => ("command" in s ? { ...s, command: toPath(s.command) } : s)) : placed;

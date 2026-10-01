@@ -424,6 +424,15 @@ export const McpConnector = z.object({
 });
 export type McpConnector = z.infer<typeof McpConnector>;
 
+/** The origins a MCP App view declares in `_meta.ui.csp` (spec 2026-01-26), and what a user approves. */
+export const McpUiCsp = z.object({
+  connectDomains: z.array(z.string().max(500)).max(50).default([]),
+  resourceDomains: z.array(z.string().max(500)).max(50).default([]),
+  frameDomains: z.array(z.string().max(500)).max(50).default([]),
+  baseUriDomains: z.array(z.string().max(500)).max(50).default([]),
+});
+export type McpUiCsp = z.infer<typeof McpUiCsp>;
+
 export const McpServerDef = z.object({
   id: z.string().min(1),
   name: z.string().regex(MCP_NAME_PATTERN, "letters, digits, `_` and `-` only"),
@@ -438,6 +447,11 @@ export const McpServerDef = z.object({
   /** Pre-selected for new Sessions. */
   enabledByDefault: z.boolean().default(true),
   connector: McpConnector.nullable().default(null),
+  /**
+   * External origins the user allowed this server's MCP App views to reach (ADR-0078); `null`
+   * until the first approval. A view's CSP only opens for origins listed here.
+   */
+  appDomains: McpUiCsp.nullable().default(null),
 });
 export type McpServerDef = z.infer<typeof McpServerDef>;
 
@@ -454,7 +468,7 @@ export const PublicMcpServerDef = McpServerDef.extend({
 export type PublicMcpServerDef = z.infer<typeof PublicMcpServerDef>;
 
 /** What the Daemon gets: resolved definitions of the Session's enabled servers, secrets included. */
-export const McpServerSpec = McpServerDef.omit({ enabledByDefault: true, connector: true });
+export const McpServerSpec = McpServerDef.omit({ enabledByDefault: true, connector: true, appDomains: true });
 export type McpServerSpec = z.infer<typeof McpServerSpec>;
 
 // ---------------------------------------------------------------------------
@@ -520,7 +534,7 @@ export const UTILITY_WEB_LOGIN_LABELS: Record<UtilityWebLogin, string> = {
  * `${cred:<name>}` in args, env values, the URL and headers is replaced by the Utility's credential
  * of that name when the set is resolved for the Daemon.
  */
-export const UtilityMcpFacet = McpServerDef.omit({ id: true, name: true, enabledByDefault: true, connector: true });
+export const UtilityMcpFacet = McpServerDef.omit({ id: true, name: true, enabledByDefault: true, connector: true, appDomains: true });
 export type UtilityMcpFacet = z.infer<typeof UtilityMcpFacet>;
 export const UtilityWebFacet = z.object({
   url: z.string().max(4000).default(""),
@@ -2663,13 +2677,18 @@ export type AgentApprovalAnswer = z.infer<typeof AgentApprovalAnswer>;
 export const McpExecutionTelemetry = z.object({
   version: z.literal(1),
   executionId: z.string().uuid(),
-  server: z.enum(["desktop", "sessionboxer"]),
-  toolName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_]+$/),
+  /** A built-in (`desktop`, `sessionboxer`) or the name of a user server observed through the tee (ADR-0078). */
+  server: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
+  toolName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_.-]+$/),
   startedAt: z.string().datetime(),
   executionMs: z.number().finite().nonnegative(),
   toolSchemaHash: z.string().regex(/^[a-f0-9]{64}$/),
   errorCode: z.enum(["invalid_arguments", "permission_denied", "timeout", "rate_limit", "not_found", "edit_match", "cancelled", "network", "nonzero_exit", "tool_error"]).nullable(),
-  errorSource: z.literal("heuristic").nullable(),
+  errorSource: z.enum(["heuristic", "structured"]).nullable(),
+  /** Set when the record comes from the exact MCP exchange seen by the tee, with the ACP call it was matched to. */
+  exact: z.boolean().optional(),
+  toolCallId: z.string().optional(),
+  resultIsError: z.boolean().optional(),
 });
 export type McpExecutionTelemetry = z.infer<typeof McpExecutionTelemetry>;
 
@@ -2720,6 +2739,8 @@ export interface ToolExecutionTelemetry {
   resultIsError: boolean | null;
   errorCode: string | null;
   errorSource: "heuristic" | "structured" | "acp_status" | null;
+  /** The MCP server and tool behind the call when the tee saw the exact exchange (ADR-0078). */
+  mcp?: { server: string; tool: string; exact: true };
 }
 
 export type SessionEventBody =
@@ -2727,6 +2748,8 @@ export type SessionEventBody =
   | { type: "turn_context"; context: TurnContextTelemetry }
   | { type: "tool_execution"; execution: ToolExecutionTelemetry }
   | { type: "mcp_execution"; execution: McpExecutionTelemetry }
+  /** An Agent MCP tool call (seen through the tee) whose tool has an MCP App view; the transcript renders the card (ADR-0078). */
+  | { type: "mcp_app_call"; call: McpAppCall }
   | { type: "update"; update: SessionUpdate }
   | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage; turnId?: string }
   /** `limit`: the Provider refused for lack of usage credit (the prompt can be sent again after the reset). */
@@ -4652,6 +4675,12 @@ export const DAEMON_METHODS = {
   sessionInfoSet: "_sessionboxer/session-info/set",
   /** Control Plane → Daemon: the Session's enabled Utilities (secrets included) and procedure skills (ADR-0073). */
   utilitiesSet: "_sessionboxer/utilities/set",
+  /** MCP Apps (ADR-0078): the Daemon's mirror of the Agent's MCP servers, reached through the tee. */
+  mcpAppsResource: "_sessionboxer/mcp-apps/resource",
+  mcpAppsToolResult: "_sessionboxer/mcp-apps/toolResult",
+  mcpAppsCallTool: "_sessionboxer/mcp-apps/callTool",
+  mcpAppsReadResource: "_sessionboxer/mcp-apps/readResource",
+  mcpAppsTools: "_sessionboxer/mcp-apps/tools/list",
   // Daemon → Control Plane requests (the Agent's `e2e_*` tools); each answers with the `E2eRun`.
   // The `sessionboxer` MCP's tools are `_sessionboxer/agent/<tool>` (see `agentMethod`).
   e2ePlan: "_sessionboxer/e2e/plan",
@@ -5114,6 +5143,141 @@ export function parseJsonRpc(raw: string): JsonRpcMessage {
   }
   return value as JsonRpcMessage;
 }
+
+
+// ---------------------------------------------------------------------------
+// MCP Apps (ADR-0078): the `io.modelcontextprotocol/ui` extension, spec 2026-01-26. The Agent's
+// MCP servers are reached through a transparent per-server tee (`packages/mcp-tee`); the Daemon
+// mirrors what passes and the web transcript hosts the views.
+// ---------------------------------------------------------------------------
+
+export const MCP_APPS_EXTENSION = "io.modelcontextprotocol/ui";
+export const MCP_APPS_PROTOCOL_VERSION = "2026-01-26";
+export const MCP_APP_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
+/** The Daemon's WebSocket path a tee connects to: `/mcp-tee/<server name>`, loopback only. */
+export const MCP_TEE_PATH = "/mcp-tee";
+/** Environment variable the Daemon sets on the tee's process (the Agent passes its environment on). */
+export const MCP_TEE_PORT_ENV = "SESSIONBOXER_DAEMON_PORT";
+/** Prefix of the JSON-RPC ids the tee uses for Daemon-originated requests (the Agent's ids are numbers). */
+export const MCP_TEE_ID_PREFIX = "sbx-tee:";
+
+/** A tool result exactly as the server sent it; `structuredContent` and `_meta` are what the view renders. */
+export const McpToolResult = z
+  .object({
+    content: z.array(z.unknown()).default([]),
+    structuredContent: z.record(z.unknown()).optional(),
+    _meta: z.record(z.unknown()).optional(),
+    isError: z.boolean().optional(),
+  })
+  .passthrough();
+export type McpToolResult = z.infer<typeof McpToolResult>;
+
+/** `_meta.ui` of a tool as the server lists it. */
+export const McpToolUiMeta = z
+  .object({
+    resourceUri: z.string().optional(),
+    visibility: z.array(z.enum(["model", "app"])).optional(),
+  })
+  .passthrough();
+export type McpToolUiMeta = z.infer<typeof McpToolUiMeta>;
+
+/** `_meta.ui` of a `ui://` resource as the server serves it. */
+export const McpResourceUiMeta = z
+  .object({
+    csp: McpUiCsp.partial().optional(),
+    permissions: z.record(z.unknown()).optional(),
+    domain: z.string().optional(),
+    prefersBorder: z.boolean().optional(),
+  })
+  .passthrough();
+export type McpResourceUiMeta = z.infer<typeof McpResourceUiMeta>;
+
+/** An Agent tool call matched to its exact MCP exchange, for a tool that has a view. */
+export const McpAppCall = z.object({
+  toolCallId: z.string(),
+  server: z.string(),
+  tool: z.string(),
+  resourceUri: z.string(),
+  arguments: z.record(z.unknown()).nullable(),
+});
+export type McpAppCall = z.infer<typeof McpAppCall>;
+
+export const DaemonMcpAppsResourceParams = z.object({ server: z.string().min(1), uri: z.string().min(1) });
+export type DaemonMcpAppsResourceParams = z.infer<typeof DaemonMcpAppsResourceParams>;
+export const DaemonMcpAppsResourceResult = z.object({
+  server: z.string(),
+  uri: z.string(),
+  mimeType: z.string(),
+  html: z.string(),
+  meta: McpResourceUiMeta,
+  sha256: z.string(),
+});
+export type DaemonMcpAppsResourceResult = z.infer<typeof DaemonMcpAppsResourceResult>;
+
+export const DaemonMcpAppsToolResultParams = z.object({ toolCallId: z.string().min(1) });
+export type DaemonMcpAppsToolResultParams = z.infer<typeof DaemonMcpAppsToolResultParams>;
+export const DaemonMcpAppsToolResultResult = z.object({
+  call: McpAppCall,
+  /** `null` while the server has not answered yet. */
+  result: McpToolResult.nullable(),
+  /** The tool as listed by the server (name, description, schema, `_meta`), for the view's host context. */
+  tool: z.record(z.unknown()).nullable(),
+});
+export type DaemonMcpAppsToolResultResult = z.infer<typeof DaemonMcpAppsToolResultResult>;
+
+export const DaemonMcpAppsCallToolParams = z.object({
+  /** The card's call: the tool must belong to that call's server (no cross-server calls). */
+  toolCallId: z.string().min(1),
+  server: z.string().min(1),
+  name: z.string().min(1),
+  arguments: z.record(z.unknown()).default({}),
+});
+export type DaemonMcpAppsCallToolParams = z.infer<typeof DaemonMcpAppsCallToolParams>;
+
+export const DaemonMcpAppsReadResourceParams = z.object({
+  toolCallId: z.string().min(1),
+  server: z.string().min(1),
+  uri: z.string().min(1),
+});
+export type DaemonMcpAppsReadResourceParams = z.infer<typeof DaemonMcpAppsReadResourceParams>;
+export const DaemonMcpAppsReadResourceResult = z.object({ contents: z.array(z.unknown()) }).passthrough();
+export type DaemonMcpAppsReadResourceResult = z.infer<typeof DaemonMcpAppsReadResourceResult>;
+
+export const DaemonMcpAppsToolsParams = z.object({ server: z.string().min(1) });
+export type DaemonMcpAppsToolsParams = z.infer<typeof DaemonMcpAppsToolsParams>;
+export const DaemonMcpAppsToolsResult = z.object({ tools: z.array(z.record(z.unknown())) });
+export type DaemonMcpAppsToolsResult = z.infer<typeof DaemonMcpAppsToolsResult>;
+
+/** What the UI gets for a view: the Daemon's resource plus the registry's approvals for its server. */
+export const McpAppResourceResponse = DaemonMcpAppsResourceResult.extend({
+  approvedDomains: McpUiCsp.nullable(),
+  /** Whether the server has a registry entry approvals can be stored on (Utilities' servers have none). */
+  approvable: z.boolean(),
+});
+export type McpAppResourceResponse = z.infer<typeof McpAppResourceResponse>;
+
+export const McpAppApproveRequest = z.object({ server: z.string().min(1), csp: McpUiCsp });
+export type McpAppApproveRequest = z.infer<typeof McpAppApproveRequest>;
+
+/** Messages the tee sends the Daemon over its WebSocket. */
+export const McpTeeToDaemon = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("hello"), server: z.string().min(1), pid: z.number().int().optional() }),
+  /** A copy of every JSON-RPC message between the Agent and the server, in the order the tee saw them. */
+  z.object({ type: z.literal("traffic"), from: z.enum(["agent", "server"]), message: z.record(z.unknown()), at: z.number() }),
+  /** The server's answer to a Daemon-originated request (`id` as the Daemon gave it). */
+  z.object({ type: z.literal("response"), id: z.string(), result: z.unknown().optional(), error: z.unknown().optional() }),
+  z.object({ type: z.literal("log"), message: z.string() }),
+]);
+export type McpTeeToDaemon = z.infer<typeof McpTeeToDaemon>;
+
+/** Messages the Daemon sends the tee. */
+export const McpTeeFromDaemon = z.discriminatedUnion("type", [
+  /** The real server to connect to (command/args/env or url/headers): answers `hello`. */
+  z.object({ type: z.literal("spec"), spec: McpServerSpec }),
+  z.object({ type: z.literal("request"), id: z.string(), method: z.string(), params: z.unknown().optional() }),
+  z.object({ type: z.literal("error"), message: z.string() }),
+]);
+export type McpTeeFromDaemon = z.infer<typeof McpTeeFromDaemon>;
 
 export * from "./themes.js";
 export * from "./usage.js";

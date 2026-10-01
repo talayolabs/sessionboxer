@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
-import type { McpServerSpec } from "@sessionboxer/protocol";
+import { MCP_TEE_PORT_ENV, type McpServerSpec } from "@sessionboxer/protocol";
 
 /**
  * A stdio MCP server the image ships and every Agent gets without configuring it: `desktop`
@@ -14,11 +14,29 @@ export interface BuiltinMcp {
   args?: string[];
 }
 
-/** The ACP `mcpServers` entries for the built-in servers plus the user's. */
-export function acpMcpServers(builtins: BuiltinMcp[], servers: McpServerSpec[]): McpServer[] {
+/**
+ * The MCP tee the user's servers are reached through (ADR-0078): the Agent starts
+ * `<command> <server name>` over stdio; the tee asks the Daemon on `port` for the real server and
+ * mirrors the exchange. The server's command, env, url and headers stay out of the Agent's configuration.
+ */
+export interface McpTee {
+  command: string;
+  port: number;
+}
+
+/** The stdio entry the Agent gets for a user server behind the tee. */
+export function teeEntry(tee: McpTee, s: McpServerSpec): { command: string; args: string[]; env: Record<string, string> } {
+  return { command: tee.command, args: [s.name], env: { [MCP_TEE_PORT_ENV]: String(tee.port) } };
+}
+
+/** The ACP `mcpServers` entries for the built-in servers plus the user's (through the tee when given). */
+export function acpMcpServers(builtins: BuiltinMcp[], servers: McpServerSpec[], tee?: McpTee): McpServer[] {
   const list: McpServer[] = builtins.map((b) => ({ name: b.name, command: b.command, args: b.args ?? [], env: [] }));
   for (const s of servers) {
-    if (s.transport === "stdio") {
+    if (tee) {
+      const t = teeEntry(tee, s);
+      list.push({ name: s.name, command: t.command, args: t.args, env: Object.entries(t.env).map(([name, value]) => ({ name, value })) });
+    } else if (s.transport === "stdio") {
       list.push({ name: s.name, command: s.command, args: s.args, env: s.env.map(({ name, value }) => ({ name, value })) });
     } else {
       list.push({ type: s.transport, name: s.name, url: s.url, headers: s.headers.map(({ name, value }) => ({ name, value })) });
@@ -39,6 +57,7 @@ export class DevinMcpConfig {
     private readonly tmpfsDir: string,
     /** The built-in servers as the Agent starts them (the bridge client's command line when it runs in a VM). */
     private readonly builtins: () => BuiltinMcp[],
+    private readonly tee?: McpTee,
   ) {}
 
   write(servers: McpServerSpec[]): void {
@@ -47,8 +66,9 @@ export class DevinMcpConfig {
       mcpServers[b.name] = { command: b.command, ...(b.args && b.args.length > 0 ? { args: b.args } : {}), transport: "stdio" };
     }
     for (const s of servers) {
-      mcpServers[s.name] =
-        s.transport === "stdio"
+      mcpServers[s.name] = this.tee
+        ? { ...teeEntry(this.tee, s), transport: "stdio" }
+        : s.transport === "stdio"
           ? { command: s.command, args: s.args, env: toRecord(s.env), transport: "stdio" }
           : { url: s.url, headers: toRecord(s.headers), transport: s.transport };
     }
@@ -76,6 +96,7 @@ export class PiMcpConfig {
     private readonly tmpfsDir: string,
     private readonly builtins: () => BuiltinMcp[],
     private readonly log: (msg: string) => void,
+    private readonly tee?: McpTee,
   ) {}
 
   write(servers: McpServerSpec[]): void {
@@ -84,7 +105,10 @@ export class PiMcpConfig {
       mcpServers[b.name] = { command: b.command, args: b.args ?? [], exposure: "direct" };
     }
     for (const s of servers) {
-      if (s.transport === "stdio") {
+      if (this.tee) {
+        // Through the tee every server is stdio to pi, SSE ones included.
+        mcpServers[s.name] = { ...teeEntry(this.tee, s), exposure: "direct" };
+      } else if (s.transport === "stdio") {
         mcpServers[s.name] = { command: s.command, args: s.args, env: toRecord(s.env), exposure: "direct" };
       } else if (s.transport === "http") {
         mcpServers[s.name] = { url: s.url, headers: toRecord(s.headers), exposure: "direct" };

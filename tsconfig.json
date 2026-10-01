@@ -11,6 +11,9 @@
       "path": "packages/sessionboxer-mcp"
     },
     {
+      "path": "packages/mcp-tee"
+    },
+    {
       "path": "packages/sandbox-daemon"
     },
     {

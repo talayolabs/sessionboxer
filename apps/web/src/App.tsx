@@ -807,18 +807,17 @@ export function App() {
               ) : (
                 <span className="chevron chevron-blank" />
               )}
-              {s.usage.limit ? (
-                <span className="usage-sign-small" title={`${PROVIDER_LABELS[s.provider]} usage limit reached: ${s.usage.limit.message}`} aria-label="usage limit reached">
-                  <NoEntrySign size={11} />
-                </span>
-              ) : (
-                <span className={`dot dot-${s.status}`} title={statusTitle(s.status)} />
-              )}
-              <span className="session-title">{s.title}</span>
-              <span className="session-provider">
+              <span className={cx("session-status", s.pinned && "pinned")}>
+                {s.usage.limit ? (
+                  <span className="usage-sign-small" title={`${PROVIDER_LABELS[s.provider]} usage limit reached: ${s.usage.limit.message}`} aria-label="usage limit reached">
+                    <NoEntrySign size={11} />
+                  </span>
+                ) : (
+                  <span className={`dot dot-${s.status}`} title={statusTitle(s.status)} />
+                )}
                 <button
                   type="button"
-                  className={`session-pin${s.pinned ? " pinned" : ""}`}
+                  className="session-pin"
                   title={s.pinned ? "Pinned to the top of its group. Click to unpin." : "Pin to the top of its group"}
                   aria-label={s.pinned ? "Unpin" : "Pin to top"}
                   aria-pressed={s.pinned}
@@ -829,6 +828,20 @@ export function App() {
                 >
                   <Icon name="pin" size={12} />
                 </button>
+              </span>
+              <span className="session-title">{s.title}</span>
+              <span className="session-provider">
+                {s.queueRunning && <span title="Messages queued for the Agent">{"\u25b6"}</span>}
+                {s.usb && (
+                  <span className={`session-usb${s.usb.node ? "" : " unplugged"}`} title={`USB device connected: ${s.usb.name}${s.usb.node ? ` (${s.usb.node})` : " (unplugged right now)"}`}>
+                    <Icon name="usb" size={12} />
+                  </span>
+                )}
+                {s.settings.sandbox.dockerMode === "privileged" && (
+                  <span className="docker-warn" title={PRIVILEGED_WARNING}>
+                    <DockerIcon label={PRIVILEGED_WARNING} />
+                  </span>
+                )}
                 {(prs[s.id] ?? []).some((p) => p.unread > 0) && (
                   <span
                     className="count"
@@ -841,39 +854,24 @@ export function App() {
                     {(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)}
                   </span>
                 )}
-                {s.queueRunning && <span title="Messages queued for the Agent">{"\u25b6"}</span>}
-                {s.usb && (
-                  <span className={`session-usb${s.usb.node ? "" : " unplugged"}`} title={`USB device connected: ${s.usb.name}${s.usb.node ? ` (${s.usb.node})` : " (unplugged right now)"}`}>
-                    <Icon name="usb" size={12} />
-                  </span>
-                )}
-                {s.settings.sandbox.dockerMode === "privileged" && (
-                  <span className="docker-warn" title={PRIVILEGED_WARNING}>
-                    <DockerIcon label={PRIVILEGED_WARNING} />
-                  </span>
-                )}
-                {s.settings.sandbox.environment === "qemu-windows" && (
-                  <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: a Windows VM next to the Sandbox`}>
-                    <EnvironmentIcon environment="qemu-windows" size={13} />
-                  </span>
-                )}
-                {s.settings.sandbox.environment === "qemu-macos" && (
-                  <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the agent runs inside a macOS VM next to the Sandbox`}>
-                    <EnvironmentIcon environment="qemu-macos" size={13} />
-                  </span>
-                )}
-                <SessionSourceIcon session={s} />
+              </span>
+            </div>
+            <div className="session-meta">
+              <span className="session-size" title="Disk used by the machine and its snapshots">
+                {formatMb((s.diskBytes ?? 0) + s.snapshotBytes)}
+              </span>
+              <span className="session-marks">
+                <span title={sessionSourceTitle(s)}>
+                  <SessionSourceIcon session={s} size={14} />
+                </span>
+                <span className="session-env" title={ENVIRONMENT_LABELS[s.settings.sandbox.environment]}>
+                  <EnvironmentIcon environment={s.settings.sandbox.environment} size={13} />
+                </span>
                 <span title={PROVIDER_LABELS[s.provider]}>
-                  <ProviderIcon provider={s.provider} />
+                  <ProviderIcon provider={s.provider} size={14} />
                 </span>
               </span>
             </div>
-            <SessionSizes
-              session={s}
-              snapshotting={snapshotting.has(s.id)}
-              autoSnapshot={s.settings.autoSnapshot ?? settings?.autoSnapshot ?? false}
-              onClick={() => setSnapshotsFor(s.id)}
-            />
             <SessionFamily session={s} sessions={sessions} onOpen={(id) => setRoute({ view: "session", id })} />
             {expanded.has(s.id) && s.branches.length > 1 && (
               <BranchTree
@@ -1477,39 +1475,6 @@ type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 const EMPTY_MODELS: ProviderModels = Object.fromEntries(PROVIDERS.map((p): [Provider, ModelOption[]] => [p, []])) as ProviderModels;
 const EMPTY_OPTIONS: ProviderOptions = Object.fromEntries(PROVIDERS.map((p): [Provider, AgentOption[]] => [p, []])) as ProviderOptions;
 const EMPTY_BRANCHES: Branch[] = [];
-
-/** Total storage (machine + Snapshots) under a sidebar entry; click opens the Snapshots popup with the breakdown. */
-function SessionSizes({
-  session,
-  snapshotting,
-  autoSnapshot,
-  onClick,
-}: {
-  session: Session;
-  snapshotting: boolean;
-  autoSnapshot: boolean;
-  onClick: () => void;
-}) {
-  const total = (session.diskBytes ?? 0) + session.snapshotBytes;
-  return (
-    <button
-      type="button"
-      className="session-sizes"
-      title="Disk used by the machine and its snapshots. Click for the breakdown, the snapshot list and the auto-snapshot switch."
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-    >
-      <span>{formatMb(total)}</span>
-      {snapshotting ? (
-        <span className="warn">{"\u{1F4F7} snapshotting\u2026"}</span>
-      ) : (
-        !autoSnapshot && <span title="Automatic snapshots are off for this session">{"\u{1F4F7}\u00d7"}</span>
-      )}
-    </button>
-  );
-}
 
 /** The one-line name dialog behind "New folder…" and a folder's "Rename…" (ADR-0074). */
 function FolderNameDialog({

@@ -35,26 +35,30 @@
 .folder-head .chevron { margin-left: -4px; }
 .folder-head .icon { color: var(--muted); }
 .folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
-.folder-head .count { color: var(--muted); }
+.folder-head .count { background: var(--border); color: var(--text); }
 .folder-items { list-style: none; margin: 0 0 2px; padding: 0 0 0 10px; }
 .folder-items li.empty { padding: 4px 10px; font-size: var(--fs-xs); }
 .session-list li.dragging { opacity: 0.45; }
 .session-list li.drop-hover { background: var(--selected); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .session-folder.drop-hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .session-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
-.session-sizes { display: flex; gap: 6px; font-size: var(--fs-xs); color: var(--muted); margin-left: 34px; padding: 0 4px; min-width: 0; white-space: nowrap; background: none; border: 1px solid transparent; border-radius: var(--radius-sm); text-align: left; align-self: flex-start; max-width: calc(100% - 34px); }
-.session-sizes:hover { border-color: var(--border); color: var(--text); background: var(--hover); }
-.session-sizes > span:first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.session-sizes > span:last-child:not(:first-child) { flex: none; }
+/* Second line of an entry: the disk size on the left; repository, machine and agent marks on the right. */
+.session-meta { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: 38px; font-size: var(--fs-xs); color: var(--muted); }
+.session-size { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-marks { flex: none; display: inline-flex; align-items: center; gap: 8px; }
+.session-marks > span { display: inline-flex; line-height: 0; }
 .session-list li:hover { background: var(--hover); }
 .session-list li.active { background: var(--selected); }
 .session-list li.empty { color: var(--muted); cursor: default; }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .session-provider { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--muted); }
-.session-pin { display: none; flex: none; padding: 0; background: none; border: none; color: var(--muted); line-height: 0; cursor: pointer; }
+/* The status mark; hovering the entry lays the pin button over it (accent when pinned), a click toggles the pin. */
+.session-status { position: relative; flex: none; width: 12px; height: 12px; display: inline-flex; align-items: center; justify-content: center; }
+.session-pin { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 0; background: none; border: none; color: var(--muted); line-height: 0; cursor: pointer; }
 .session-pin .icon { display: block; }
-.session-pin.pinned { display: inline-flex; color: var(--accent); }
-.session-list li:hover .session-pin, .session-list li:focus-within .session-pin, .app.mobile .session-pin.pinned { display: inline-flex; }
+.session-status.pinned .session-pin { color: var(--accent); }
+.session-list li:hover .session-pin, .session-pin:focus-visible { display: inline-flex; }
+.session-list li:hover .session-status > :not(.session-pin), .session-status:has(.session-pin:focus-visible) > :not(.session-pin) { visibility: hidden; }
 .session-pin:hover { color: var(--text); }
 .provider-icon { display: block; color: var(--text); opacity: 0.8; }
 .provider-badge { display: inline-flex; align-items: center; gap: 6px; cursor: help; }

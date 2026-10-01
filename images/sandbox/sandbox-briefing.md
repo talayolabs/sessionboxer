@@ -177,6 +177,12 @@ video; the user follows it in the Verification pane next to the chat.
   Markdown (`.md`) and Mermaid (`.mmd`) files rendered, all with a download
   button. So to deliver a video, screenshot, diagram or document, save it
   under `/workspace` and name its path in your final reply.
+- A self-contained `.html` file (its CSS and JS inline, no relative files;
+  libraries only from cdnjs, jsDelivr, unpkg, esm.sh and Google Fonts) runs as
+  an interactive app inline when you mention its path — a chart, a game, a
+  small tool. It runs sandboxed with no origin and no network: `fetch`/XHR,
+  forms, `<iframe>` and anything outside the allowed CDNs are blocked, so put
+  the data in the file. Keep it under 2 MB to start on sight; 16 MB is the cap.
 - Replies render as Markdown: fenced code with a language is highlighted and
   a ```mermaid block is drawn as a diagram, in the chat and inside `.md` files.
 

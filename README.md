@@ -43,6 +43,7 @@ More: [user guide → Install](docs/GUIDE.md#install).
 - **Linux, Windows or macOS**: Docker for Linux, a QEMU VM for Windows or macOS with the agent inside it (Linux hosts with KVM).
 - **VS Code and terminals** in the box; files named in the chat open at that line.
 - **Videos in the chat**: the agent films the desktop, with captions.
+- **Apps in the chat**: an HTML file the agent writes runs sandboxed inline and in an App pane that reloads as it edits.
 - **Verified turns**: after each turn the agent tests its work on the desktop, on video, and fixes what fails.
 - **Snapshots and forks**: snapshot by hand or after every turn, fork a session from any of them.
 - **Revert and branches**: go back to an earlier turn and try another way.

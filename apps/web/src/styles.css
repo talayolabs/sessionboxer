@@ -203,7 +203,7 @@ li.active .provider-icon, li:hover .provider-icon { opacity: 1; }
 .tool details summary { cursor: pointer; color: var(--muted); font-size: var(--fs-sm); }
 .screenshot { display: block; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
 
-/* MCP Apps (ADR-0078): the view of an MCP tool call, in its sandbox proxy iframe */
+/* MCP Apps (ADR-0079): the view of an MCP tool call, in its sandbox proxy iframe */
 .mcp-app { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 8px; border-top: 1px solid var(--border); background: var(--panel); }
 .mcp-app-bar { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); }
 .mcp-app-name { color: var(--text); font-weight: 600; }

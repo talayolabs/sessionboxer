@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The MCP tee (ADR-0078): the Agent is pointed at `sessionboxer-mcp-tee <server>` instead of a
+ * The MCP tee (ADR-0079): the Agent is pointed at `sessionboxer-mcp-tee <server>` instead of a
  * user's MCP server. The tee asks the Sandbox Daemon what the server really is (command/args/env or
  * url/headers never reach the Agent's configuration), connects to it over stdio, streamable HTTP
  * or SSE, and forwards every JSON-RPC message unchanged in both directions: no renamed tools, no

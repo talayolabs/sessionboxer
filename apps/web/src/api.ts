@@ -268,7 +268,7 @@ export const api = {
     request<CompactionDetails>(`/sessions/${id}/context/compaction`, { method: "POST", body: JSON.stringify(req) }),
   llmCalls: (id: string) => request<{ calls: LlmCall[]; withBodies: string[] }>(`/sessions/${id}/llm-calls`),
   llmCallBody: (id: string, callId: string) => request<LlmCallBody>(`/sessions/${id}/llm-calls/${callId}`),
-  /** MCP Apps (ADR-0078): a view's HTML, the exact result it shows, and its own calls to its server. */
+  /** MCP Apps (ADR-0079): a view's HTML, the exact result it shows, and its own calls to its server. */
   mcpAppResource: (id: string, server: string, uri: string) =>
     request<McpAppResourceResponse>(`/sessions/${id}/mcp-apps/resource?server=${encodeURIComponent(server)}&uri=${encodeURIComponent(uri)}`),
   mcpAppToolResult: (id: string, toolCallId: string) =>

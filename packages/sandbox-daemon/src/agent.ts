@@ -98,7 +98,7 @@ export interface AgentConfig {
   fullAccessModeIds?: string[];
   /** Rewrites a stdio MCP server's command for an Agent that wants it as an absolute path (fx, ADR-0077). */
   mcpCommandPath?: (command: string) => string;
-  /** The tee the user's servers go through (ADR-0078); not used when the Agent runs in a VM (`transport`). */
+  /** The tee the user's servers go through (ADR-0079); not used when the Agent runs in a VM (`transport`). */
   mcpTee?: McpTee;
   log: (msg: string) => void;
 }

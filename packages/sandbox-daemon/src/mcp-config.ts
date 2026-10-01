@@ -15,7 +15,7 @@ export interface BuiltinMcp {
 }
 
 /**
- * The MCP tee the user's servers are reached through (ADR-0078): the Agent starts
+ * The MCP tee the user's servers are reached through (ADR-0079): the Agent starts
  * `<command> <server name>` over stdio; the tee asks the Daemon on `port` for the real server and
  * mirrors the exchange. The server's command, env, url and headers stay out of the Agent's configuration.
  */

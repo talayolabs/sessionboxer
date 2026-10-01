@@ -448,7 +448,7 @@ export const McpServerDef = z.object({
   enabledByDefault: z.boolean().default(true),
   connector: McpConnector.nullable().default(null),
   /**
-   * External origins the user allowed this server's MCP App views to reach (ADR-0078); `null`
+   * External origins the user allowed this server's MCP App views to reach (ADR-0079); `null`
    * until the first approval. A view's CSP only opens for origins listed here.
    */
   appDomains: McpUiCsp.nullable().default(null),
@@ -2677,7 +2677,7 @@ export type AgentApprovalAnswer = z.infer<typeof AgentApprovalAnswer>;
 export const McpExecutionTelemetry = z.object({
   version: z.literal(1),
   executionId: z.string().uuid(),
-  /** A built-in (`desktop`, `sessionboxer`) or the name of a user server observed through the tee (ADR-0078). */
+  /** A built-in (`desktop`, `sessionboxer`) or the name of a user server observed through the tee (ADR-0079). */
   server: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
   toolName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_.-]+$/),
   startedAt: z.string().datetime(),
@@ -2739,7 +2739,7 @@ export interface ToolExecutionTelemetry {
   resultIsError: boolean | null;
   errorCode: string | null;
   errorSource: "heuristic" | "structured" | "acp_status" | null;
-  /** The MCP server and tool behind the call when the tee saw the exact exchange (ADR-0078). */
+  /** The MCP server and tool behind the call when the tee saw the exact exchange (ADR-0079). */
   mcp?: { server: string; tool: string; exact: true };
 }
 
@@ -2748,7 +2748,7 @@ export type SessionEventBody =
   | { type: "turn_context"; context: TurnContextTelemetry }
   | { type: "tool_execution"; execution: ToolExecutionTelemetry }
   | { type: "mcp_execution"; execution: McpExecutionTelemetry }
-  /** An Agent MCP tool call (seen through the tee) whose tool has an MCP App view; the transcript renders the card (ADR-0078). */
+  /** An Agent MCP tool call (seen through the tee) whose tool has an MCP App view; the transcript renders the card (ADR-0079). */
   | { type: "mcp_app_call"; call: McpAppCall }
   | { type: "update"; update: SessionUpdate }
   | { type: "turn_ended"; stopReason: StopReason; usage?: TurnUsage; turnId?: string }
@@ -4675,7 +4675,7 @@ export const DAEMON_METHODS = {
   sessionInfoSet: "_sessionboxer/session-info/set",
   /** Control Plane → Daemon: the Session's enabled Utilities (secrets included) and procedure skills (ADR-0073). */
   utilitiesSet: "_sessionboxer/utilities/set",
-  /** MCP Apps (ADR-0078): the Daemon's mirror of the Agent's MCP servers, reached through the tee. */
+  /** MCP Apps (ADR-0079): the Daemon's mirror of the Agent's MCP servers, reached through the tee. */
   mcpAppsResource: "_sessionboxer/mcp-apps/resource",
   mcpAppsToolResult: "_sessionboxer/mcp-apps/toolResult",
   mcpAppsCallTool: "_sessionboxer/mcp-apps/callTool",
@@ -5146,7 +5146,7 @@ export function parseJsonRpc(raw: string): JsonRpcMessage {
 
 
 // ---------------------------------------------------------------------------
-// MCP Apps (ADR-0078): the `io.modelcontextprotocol/ui` extension, spec 2026-01-26. The Agent's
+// MCP Apps (ADR-0079): the `io.modelcontextprotocol/ui` extension, spec 2026-01-26. The Agent's
 // MCP servers are reached through a transparent per-server tee (`packages/mcp-tee`); the Daemon
 // mirrors what passes and the web transcript hosts the views.
 // ---------------------------------------------------------------------------

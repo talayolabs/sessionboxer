@@ -3,7 +3,7 @@
   "version": "1.4.1",
   "private": true,
   "type": "module",
-  "description": "Transparent per-server MCP tee: the Agent talks to it over stdio, it talks to the real server and mirrors the exchange to the Sandbox Daemon (MCP Apps, ADR-0078).",
+  "description": "Transparent per-server MCP tee: the Agent talks to it over stdio, it talks to the real server and mirrors the exchange to the Sandbox Daemon (MCP Apps, ADR-0079).",
   "bin": {
     "sessionboxer-mcp-tee": "dist/index.js"
   },

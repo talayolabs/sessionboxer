@@ -126,7 +126,7 @@ interface Staged {
 }
 
 /**
- * An MCP App inline in the transcript (ADR-0078): the view of the tool the Agent called, hosted the
+ * An MCP App inline in the transcript (ADR-0079): the view of the tool the Agent called, hosted the
  * way the spec's sandbox proxy does it — an opaque-origin `srcdoc` iframe that puts the view in an
  * inner `srcdoc` iframe behind the CSP built from the resource's `_meta.ui.csp`. The HTML never
  * enters this document; it goes to the proxy with a message. The card speaks the host side of the

@@ -24,7 +24,7 @@ export class ToolTelemetry {
     this.turnId = null;
   }
 
-  /** The exact MCP result behind an ACP tool call, as the tee saw it (ADR-0078); only counts when it arrives before the call completes. */
+  /** The exact MCP result behind an ACP tool call, as the tee saw it (ADR-0079); only counts when it arrives before the call completes. */
   attachExact(toolCallId: string, info: { server: string; tool: string; isError: boolean }): void {
     let call = this.calls.get(toolCallId);
     if (!call) {

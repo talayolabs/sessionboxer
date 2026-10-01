@@ -1,5 +1,5 @@
 /**
- * The Daemon's side of the MCP tee (ADR-0078). Every user MCP server the Agent talks to goes through
+ * The Daemon's side of the MCP tee (ADR-0079). Every user MCP server the Agent talks to goes through
  * `sessionboxer-mcp-tee <name>`, which connects here (`ws://127.0.0.1:<port>/mcp-tee/<name>`,
  * loopback only), asks for the server's real definition, and then copies every JSON-RPC message
  * between the Agent and the server. From those copies the hub keeps, per server:

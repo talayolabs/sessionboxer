@@ -278,7 +278,7 @@ RUN cd /opt/sessionboxer/sessionboxer-mcp \
     && ln -s /opt/sessionboxer/sessionboxer-mcp/dist/index.js /usr/local/bin/sessionboxer-mcp
 COPY docs/GUIDE.md /opt/sessionboxer/docs/GUIDE.md
 
-# The MCP tee (ADR-0078): the Agent reaches each user MCP server through `sessionboxer-mcp-tee <name>`,
+# The MCP tee (ADR-0079): the Agent reaches each user MCP server through `sessionboxer-mcp-tee <name>`,
 # which mirrors the exchange to the Daemon for MCP Apps.
 COPY packages/mcp-tee/package.json /opt/sessionboxer/mcp-tee/
 RUN cd /opt/sessionboxer/mcp-tee \

@@ -1,5 +1,5 @@
 /**
- * The MCP Apps sandbox proxy (ADR-0078), as the `srcdoc` of an `<iframe sandbox="allow-scripts">`:
+ * The MCP Apps sandbox proxy (ADR-0079), as the `srcdoc` of an `<iframe sandbox="allow-scripts">`:
  * an opaque origin, so nothing in it is the Sessionboxer origin. It tells the host it is ready,
  * takes the view's HTML with the CSP to apply, puts the CSP `<meta>` ahead of the HTML in an inner
  * `srcdoc` iframe (opaque too), and relays every other message between host and view — host

@@ -48,7 +48,7 @@ export type TranscriptItem =
       locations: ToolCallLocation[];
       rawInput?: unknown;
       rawOutput?: unknown;
-      /** The call went to an MCP tool with a view (ADR-0078): rendered as an app card. */
+      /** The call went to an MCP tool with a view (ADR-0079): rendered as an app card. */
       mcpApp?: McpAppCall;
     }
   | { kind: "plan"; key: string; ts: string; entries: { content: string; status: string }[] }

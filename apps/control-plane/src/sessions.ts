@@ -567,7 +567,7 @@ export class SessionManager {
     }
   }
 
-  // --- MCP Apps (ADR-0078): what the tee mirrored in the Sandbox, for the transcript's app cards ---
+  // --- MCP Apps (ADR-0079): what the tee mirrored in the Sandbox, for the transcript's app cards ---
 
   /** A view's HTML and `_meta.ui`, with whether its external domains are approved on the registry entry. */
   async mcpAppResource(id: string, params: DaemonMcpAppsResourceParams): Promise<McpAppResourceResponse> {

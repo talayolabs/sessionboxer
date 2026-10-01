@@ -220,7 +220,7 @@ function guestIdentityFile(key: string, dir: string): string | undefined {
 /** Where the Agent's working directory is: in the VM for a Windows or macOS Session. */
 const agentWorkspace = guest ? guest.workspace : workspace;
 /**
- * The user's MCP servers are reached through the tee (ADR-0078), which mirrors the exchange to this
+ * The user's MCP servers are reached through the tee (ADR-0079), which mirrors the exchange to this
  * Daemon for MCP Apps. In a Windows/macOS VM the Agent starts the servers itself, as before.
  */
 const mcpTee: McpTee | undefined = guest ? undefined : { command: env.SESSIONBOXER_MCP_TEE ?? "sessionboxer-mcp-tee", port };

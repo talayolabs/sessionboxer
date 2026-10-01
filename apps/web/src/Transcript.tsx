@@ -574,7 +574,7 @@ export interface AgentOnScreen {
   sessionId: string;
   /** "Claude", "Codex", … */
   label: string;
-  /** The Composer's draft, for what an MCP App's view asks to say (`ui/message`, ADR-0078). */
+  /** The Composer's draft, for what an MCP App's view asks to say (`ui/message`, ADR-0079). */
   draft?: Draft;
 }
 

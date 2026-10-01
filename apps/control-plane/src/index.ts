@@ -643,7 +643,7 @@ api.get("/sessions/:id/llm-calls", async (c) => {
   return c.json({ calls, withBodies: await sessions.llmCallsWithBodies(id) });
 });
 api.get("/sessions/:id/llm-calls/:callId", async (c) => c.json(await sessions.llmCallBody(c.req.param("id"), c.req.param("callId"))));
-// MCP Apps (ADR-0078): the views of the Session's MCP tool calls, from the Daemon's tee mirror.
+// MCP Apps (ADR-0079): the views of the Session's MCP tool calls, from the Daemon's tee mirror.
 api.get("/sessions/:id/mcp-apps/resource", async (c) => {
   const params = DaemonMcpAppsResourceParams.parse({ server: c.req.query("server"), uri: c.req.query("uri") });
   return c.json(await sessions.mcpAppResource(c.req.param("id"), params));

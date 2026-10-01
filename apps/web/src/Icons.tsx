@@ -19,7 +19,9 @@ export type IconName =
   | "usb"
   | "windows"
   | "apple"
-  | "pin";
+  | "pin"
+  | "folder"
+  | "folder-plus";
 
 /** Feather-style outline glyphs (24-unit grid, `currentColor` strokes). */
 const GLYPHS: Record<IconName, ReactNode> = {
@@ -110,6 +112,13 @@ const GLYPHS: Record<IconName, ReactNode> = {
   windows: (
     <>
       <path d="M3 5.5l7.5-1v7H3zM12 4.3L21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z" />
+    </>
+  ),
+  folder: <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />,
+  "folder-plus": (
+    <>
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      <path d="M12 11v6M9 14h6" />
     </>
   ),
   // An apple with a leaf: the mark of a macOS Session.

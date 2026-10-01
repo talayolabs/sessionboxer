@@ -83,6 +83,7 @@ import {
   inBranchScope,
   type Branch,
   type CreateSessionRequest,
+  type CreateFolderRequest,
   type DaemonEvent,
   type DaemonPromptParams,
   type DeleteSnapshotsResult,
@@ -104,6 +105,7 @@ import {
   type SessionBroadcast,
   type SessionEvent,
   type SessionEventBody,
+  type SessionFolder,
   type SessionSettings,
   type SessionStatus,
   type Settings,
@@ -112,6 +114,7 @@ import {
   createRequestSettings,
   resolveSessionSettings,
   type SnapshotReason,
+  type UpdateFolderRequest,
   type UpdateSessionRequest,
   updateRequestSettings,
   type WorkspaceSource,
@@ -433,6 +436,37 @@ export class SessionManager {
     const s = this.db.getSession(id);
     if (!s) throw new HttpError(404, `session ${id} not found`);
     return s;
+  }
+
+  // --- Sidebar folders (ADR-0074) ------------------------------------------
+
+  folders(): SessionFolder[] {
+    return this.db.listFolders();
+  }
+
+  createFolder(req: CreateFolderRequest): SessionFolder {
+    const name = req.name.trim();
+    if (!name) throw new HttpError(400, "A folder needs a name.");
+    const folder = this.db.insertFolder(name);
+    this.broadcast({ type: "folders", folders: this.db.listFolders() });
+    return folder;
+  }
+
+  renameFolder(id: string, req: UpdateFolderRequest): SessionFolder {
+    const name = req.name?.trim();
+    if (req.name !== undefined && !name) throw new HttpError(400, "A folder needs a name.");
+    const folder = name !== undefined ? this.db.renameFolder(id, name) : this.db.getFolder(id);
+    if (!folder) throw new HttpError(404, `folder ${id} not found`);
+    this.broadcast({ type: "folders", folders: this.db.listFolders() });
+    return folder;
+  }
+
+  /** Deletes the folder; its Sessions go back to the unfiled list (each broadcast as changed). */
+  deleteFolder(id: string): void {
+    if (!this.db.getFolder(id)) throw new HttpError(404, `folder ${id} not found`);
+    const sessionIds = this.db.deleteFolder(id);
+    for (const sessionId of sessionIds) this.update(sessionId, { folderId: null });
+    this.broadcast({ type: "folders", folders: this.db.listFolders() });
   }
 
   events(id: string, afterSeq = 0): SessionEvent[] {
@@ -1125,6 +1159,7 @@ export class SessionManager {
       usb: null,
       createdBy: createdBy ? { sessionId: createdBy } : null,
       pinned: false,
+      folderId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1275,6 +1310,8 @@ export class SessionManager {
       usb: null,
       createdBy: createdBy ? { sessionId: createdBy } : null,
       pinned: false,
+      // Forks stay filed next to their origin; the pin does not carry (ADR-0074).
+      folderId: origin.folderId,
       createdAt: now,
       updatedAt: now,
     };
@@ -2369,9 +2406,13 @@ export class SessionManager {
         ...(patch.sandbox?.memoryGb !== undefined ? { memoryGb: patch.sandbox.memoryGb } : {}),
       },
     };
+    if (req.folderId !== undefined && req.folderId !== null && !this.db.getFolder(req.folderId)) {
+      throw new HttpError(404, `folder ${req.folderId} not found`);
+    }
     const s = this.update(id, {
       ...(req.title !== undefined ? { title: req.title } : {}),
       ...(req.pinned !== undefined ? { pinned: req.pinned } : {}),
+      ...(req.folderId !== undefined ? { folderId: req.folderId } : {}),
       ...(Object.keys(patch).length > 0 ? { settings: next } : {}),
     });
     const policyChanged = patch.agentTools !== undefined && this.agentToolsPolicy(current.settings) !== this.agentToolsPolicy(next);

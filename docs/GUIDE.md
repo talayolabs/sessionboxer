@@ -302,6 +302,12 @@ If you allow it, the agent works across sessions: **list** them and **read** ano
 
 The sidebar lists sessions newest first. To keep one at hand whatever its age — the project you come back to every day, a long-running agent — hover it and click the **pin** that appears at the right of its row, or pick **Pin to top** in the session's ⋯ menu. Pinned sessions sit above the others (newest first among themselves) with the pin shown in colour; click it again, or **Unpin**, to let the session back into date order. The pin belongs to the session, not to the browser: every device and `sessionboxer list` see the same order.
 
+### Folders
+
+Sessions can be grouped into **folders**: click the 📁+ next to **New** (or a session's right-click menu → **Move to folder → New folder…**) and name it. Folders sit at the top of the sidebar, sorted by name, each with its sessions under it (pinned first, then newest, as in the plain list) and a count; the sessions that are in no folder list underneath. A click folds a folder away — the browser remembers which — and an empty folder stays, showing *Drop sessions here*.
+
+Move a session by **dragging** it onto a folder's name or onto a session inside it; drop it on an unfiled session or the bare list to take it out of its folder. The same moves are on the **right-click menu** every session row has: **Pin**, **Move to folder** (the folders, the current one ticked, *No folder*), **Snapshots…**, **Fork…**, **Stop** or **Resume**, and **Delete** — on a phone, a long-press opens the same menu. Right-click a folder's name to **rename** or **delete** it; deleting a folder never deletes its sessions — they move back to the unfiled list. Forks start in the folder their origin was in. The folders and their contents live on the Control Plane, so every browser sees the same grouping.
+
 ### Stop, resume, delete
 
 - **Stop** pauses the box. It uses no CPU or memory while stopped; the conversation, files, installed packages and everything else in the container are kept.

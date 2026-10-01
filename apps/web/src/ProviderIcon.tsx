@@ -2,7 +2,8 @@ import { PROVIDER_LABELS, type Provider } from "@sessionboxer/protocol";
 
 // Hand-drawn approximations of the Providers' marks: Claude's orange starburst,
 // Devin's three linked hexagons, Codex's (OpenAI's) hexagonal knot, pi's π in
-// a rounded square and OpenCode's pixel terminal, drawn in the current text colour.
+// a rounded square, OpenCode's pixel terminal and fx's lowercase "fx" wordmark
+// (fx.sh), drawn in the current text colour.
 
 const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [0, 9.5],
@@ -121,6 +122,19 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
           <title>{label}</title>
           <path d={OPENCODE_RING} fill="currentColor" fillRule="evenodd" />
           <rect {...OPENCODE_BLOCK} fill="currentColor" opacity={0.45} />
+        </svg>
+      );
+    case "fx":
+      // fx's wordmark: a lowercase "f" with its crossbar and a lowercase "x", as on fx.sh.
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <g fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 6.2c-1.8 0-3 1.1-3 3.1V20" />
+            <path d="M4.2 11.5h6.3" />
+            <path d="M13.5 11.5 20.2 20" />
+            <path d="M20.2 11.5 13.5 20" />
+          </g>
         </svg>
       );
   }

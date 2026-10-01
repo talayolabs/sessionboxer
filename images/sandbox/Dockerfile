@@ -1,6 +1,6 @@
 # Sessionboxer Sandbox image: one container per Session, with an X11 Desktop
 # (Xvfb + xfce4 + x11vnc + noVNC), the Provider ACP adapters (Claude Code,
-# Devin, Codex, Cursor), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
+# Devin, Codex, Cursor, fx), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
 #   npm run build:image        (scripts/build-image.mjs)
 # which is `docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .` plus the
 # `extra-ca` build secret: the CA certificates this machine trusts beyond the public ones
@@ -225,6 +225,29 @@ RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; ar
     && HOME=/tmp OPENCODE_DISABLE_AUTOUPDATE=1 opencode --version | grep -qx "${OPENCODE_VERSION}" \
     && rm -rf /tmp/.local /tmp/.cache /tmp/.config
 
+# fx (`fx acp` is spawned by the Sandbox Daemon; `fx` in the terminal, ADR-0077): Vercel Labs'
+# single static binary, the release archive its installer (fx.sh/setup.sh) would download, fetched
+# directly for the pinned version and checked against the sha256 observed at pin time (the release
+# publishes none). Root-owned under /opt/fx; auto-upgrade is off per process (the Daemon sets
+# FX_AUTO_UPGRADE=0), so a Sandbox runs the version the image was built with.
+ARG FX_VERSION=v0.0.11
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+         amd64) arch=x86_64; sha=0438a067df1e2b0e2d85f1e018795b7fe5a4b5fafb37f4a590a733917e53943b ;; \
+         arm64) arch=aarch64; sha=0067d2156ac31956f52bb0b7b69722733d2756a373f47c4456681b1490b458fe ;; \
+         *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+       esac \
+    && mkdir -p /opt/fx \
+    && for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/fx.tar.gz \
+           "https://releases.fx.sh/${FX_VERSION}/fx-linux-${arch}.tar.gz" && break; \
+         [ "$i" = 5 ] && exit 1; sleep 5; \
+       done \
+    && echo "$sha  /tmp/fx.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/fx.tar.gz --no-same-owner -C /opt/fx && rm /tmp/fx.tar.gz \
+    && ln -s /opt/fx/fx /usr/local/bin/fx \
+    && HOME=/tmp FX_AUTO_UPGRADE=0 fx --version && rm -rf /tmp/.fx
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -312,10 +335,13 @@ COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.confi
 # Cursor reads AGENTS.md from the workspace and every directory above it, so the
 # briefing sits at /AGENTS.md: above /workspace and every repository, inside none.
 # pi reads ~/.pi/agent/AGENTS.md; its settings trust every project (the Sandbox is the isolation).
+# fx reads its user-level instructions from ~/.fx/AGENTS.md and its settings from ~/.fx/settings.json;
+# a Session mounts a volume over ~/.fx, populated from these files (ADR-0077).
 COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
 COPY --chown=agent:agent images/sandbox/pi-settings.json /home/agent/.pi/agent/settings.json
 COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.cursor/cli-config.json
 COPY --chown=agent:agent images/sandbox/opencode-config.json /home/agent/.config/opencode/opencode.json
+COPY --chown=agent:agent images/sandbox/fx-settings.json /home/agent/.fx/settings.json
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -332,6 +358,7 @@ COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.claude/
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.pi/agent/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.config/opencode/AGENTS.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.fx/AGENTS.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md

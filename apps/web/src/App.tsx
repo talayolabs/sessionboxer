@@ -11,6 +11,7 @@ import {
   ENVIRONMENT_LABELS,
   PROVIDERS,
   PROVIDER_LABELS,
+  providerUnavailableIn,
   ROOT_BRANCH_ID,
   SPEECH_MODELS,
   SPEECH_MODEL_INFO,
@@ -25,6 +26,7 @@ import {
   type CodexLogin,
   type CursorLogin,
   type OpenCodeLogin,
+  type FxLogin,
   type E2eRun,
   type Environment,
   type LlmCall,
@@ -225,6 +227,12 @@ function describeOpenCodeLogin(login: OpenCodeLogin): string {
 function describeCursorLogin(login: CursorLogin): string {
   if (login.kind === "api-key") return "API key";
   return login.expiresAt ? `auth.json, token valid until ${new Date(login.expiresAt).toLocaleString()}` : "auth.json";
+}
+
+/** One line about the stored fx login (ADR-0077), from its metadata only. */
+function describeFxLogin(login: FxLogin): string {
+  const what = login.kind === "api-key" ? "AI Gateway API key" : login.kind === "vercel" ? "Vercel login" : login.kind === "codex" ? "ChatGPT login" : "Grok login";
+  return login.expiresAt && login.kind !== "api-key" ? `${what}, token valid until ${new Date(login.expiresAt).toLocaleString()}` : what;
 }
 
 /** `pane` carries a deep link into a Session (`#/sessions/<id>/prs`, `…/pr/<prId>`, as notifications send them). */
@@ -1100,7 +1108,7 @@ export function App() {
                 <span className="setup-check" aria-hidden="true">{anyTokenSet ? "\u2713" : ""}</span>
                 <span className="setup-text">
                   <span className="setup-title">Connect a Provider</span>
-                  <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor, OpenCode, Devin or pi"}</span>
+                  <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor, OpenCode, Devin, pi or fx"}</span>
                 </span>
               </button>
               <button type="button" className={`setup-item${gitConnected ? " done" : ""}`} onClick={() => setGitConnect(true)}>
@@ -1281,7 +1289,7 @@ export function App() {
         <SandboxImageBanner />
         {!anyTokenSet && route.view !== "settings" && route.view !== "new" && !(route.view === "session" && !selected) && (
           <div className="banner banner-warn" onClick={() => setProviderConnect({ provider: null })}>
-            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, OpenCode, Devin or pi login. Click to connect one.
+            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, OpenCode, Devin, pi or fx login. Click to connect one.
           </div>
         )}
         {settings && (
@@ -2749,12 +2757,16 @@ function NewSession({
               aria-label="Agent"
               tip={`Agent: ${PROVIDER_LABELS[provider]}`}
               className="compact icon-only"
-              options={PROVIDERS.map((p) => ({
-                value: p,
-                label: PROVIDER_LABELS[p],
-                icon: <ProviderIcon provider={p} size={16} />,
-                hint: providerTokenSet(settings, p) ? undefined : "not connected",
-              }))}
+              options={PROVIDERS.map((p) => {
+                const unavailable = providerUnavailableIn(p, draft.environment);
+                return {
+                  value: p,
+                  label: PROVIDER_LABELS[p],
+                  icon: <ProviderIcon provider={p} size={16} />,
+                  disabled: unavailable !== null,
+                  hint: unavailable ?? (providerTokenSet(settings, p) ? undefined : "not connected"),
+                };
+              })}
             >
               <ProviderIcon provider={provider} size={16} />
             </Select>
@@ -3096,6 +3108,9 @@ function SettingsView({
   const [opencodeAuth, setOpenCodeAuth] = useState("");
   const [forgetOpenCodeAuth, setForgetOpenCodeAuth] = useState(false);
   const opencodeFileRef = useRef<HTMLInputElement>(null);
+  const [fxLogin, setFxLogin] = useState("");
+  const [forgetFxLogin, setForgetFxLogin] = useState(false);
+  const fxFileRef = useRef<HTMLInputElement>(null);
   const [claudeBaseUrl, setClaudeBaseUrl] = useState(settings.claudeApi.baseUrl);
   const [claudeAuthToken, setClaudeAuthToken] = useState("");
   const [claudeApiKey, setClaudeApiKey] = useState("");
@@ -3148,6 +3163,7 @@ function SettingsView({
   const piAuthSet = settings.providerSecretsSet.pi.PI_AUTH_JSON && !forgetPiAuth;
   const piApiKeysSet = settings.providerSecretsSet.pi.PI_API_KEYS && !forgetPiApiKeys;
   const opencodeAuthSet = settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && !forgetOpenCodeAuth;
+  const fxLoginSet = settings.providerSecretsSet.fx.FX_LOGIN && !forgetFxLogin;
 
   const { section: active, block } = resolveGlobalSettingsRoute(section);
   const show = (id: GlobalSettingsSection) => active === id;
@@ -3176,6 +3192,14 @@ function SettingsView({
     void file.text().then((text) => {
       setOpenCodeAuth(text);
       setForgetOpenCodeAuth(false);
+    });
+  };
+
+  const importFxAuth = (file: File | undefined) => {
+    if (!file) return;
+    void file.text().then((text) => {
+      setFxLogin(text);
+      setForgetFxLogin(false);
     });
   };
 
@@ -3245,6 +3269,7 @@ function SettingsView({
               }
             : {}),
           ...(opencodeAuth.trim() ? { opencode: { OPENCODE_AUTH_JSON: opencodeAuth.trim() } } : forgetOpenCodeAuth ? { opencode: { OPENCODE_AUTH_JSON: "" } } : {}),
+          ...(fxLogin.trim() ? { fx: { FX_LOGIN: fxLogin.trim() } } : forgetFxLogin ? { fx: { FX_LOGIN: "" } } : {}),
         },
         claudeApi: {
           baseUrl: claudeBaseUrl.trim(),
@@ -3264,6 +3289,8 @@ function SettingsView({
       setForgetPiApiKeys(false);
       setOpenCodeAuth("");
       setForgetOpenCodeAuth(false);
+      setFxLogin("");
+      setForgetFxLogin(false);
       setClaudeAuthToken("");
       setClaudeApiKey("");
       setForgetClaudeAuthToken(false);
@@ -3307,7 +3334,7 @@ function SettingsView({
                 <button type="button" className="primary" onClick={() => setGuided(true)}>
                   Connect a Provider…
                 </button>
-                <span className="muted">Claude, Codex, Cursor, OpenCode, Devin or pi</span>
+                <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi or fx</span>
               </div>
               {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
               <label>
@@ -3634,6 +3661,69 @@ function SettingsView({
                       onChange={(e) => {
                         setForgetOpenCodeAuth(e.target.checked);
                         if (e.target.checked) setOpenCodeAuth("");
+                      }}
+                    />{" "}
+                    Forget the stored login
+                  </label>
+                )}
+              </div>
+              <label>
+                <Caption
+                  help={
+                    <>
+                      <p>
+                        fx (Vercel Labs) runs on Vercel&apos;s AI Gateway, or on your ChatGPT or Grok subscription. Log in with fx on your own machine and
+                        paste or import the file it writes: <code>~/.fx/auth.json</code> after <code>fx login</code>, <code>~/.fx/chatgpt-auth.json</code>{" "}
+                        after <code>fx login codex</code>, <code>~/.fx/grok-auth.json</code> after <code>fx login grok</code> (the Sandbox keeps it in
+                        memory only; refreshed tokens flow back here). Or paste an AI Gateway API key from vercel.com &rarr; AI Gateway &rarr; API keys.
+                        fx runs in Linux and macOS Sandboxes; it has no Windows build.
+                      </p>
+                      <CopyCommand command="fx login" />
+                      <CopyCommand command="cat ~/.fx/auth.json" />
+                    </>
+                  }
+                >
+                  fx: login (auth.json or AI Gateway API key){" "}
+                  {fxLoginSet ? (
+                    <span className="ok">(set{settings.fxLogin && !forgetFxLogin ? `: ${describeFxLogin(settings.fxLogin)}` : ""})</span>
+                  ) : (
+                    <span className="warn">(not set)</span>
+                  )}
+                </Caption>
+                <textarea
+                  rows={3}
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={fxLogin}
+                  onChange={(e) => {
+                    setFxLogin(e.target.value);
+                    if (e.target.value.trim()) setForgetFxLogin(false);
+                  }}
+                  placeholder={fxLoginSet ? "Leave empty to keep the current login" : "Paste the contents of ~/.fx/auth.json, or an AI Gateway API key"}
+                />
+              </label>
+              <div className="field-hint">
+                <input
+                  ref={fxFileRef}
+                  type="file"
+                  accept=".json,application/json"
+                  hidden
+                  onChange={(e) => {
+                    importFxAuth(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button type="button" onClick={() => fxFileRef.current?.click()}>
+                  Import auth.json…
+                </button>
+                {settings.providerSecretsSet.fx.FX_LOGIN && (
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={forgetFxLogin}
+                      onChange={(e) => {
+                        setForgetFxLogin(e.target.checked);
+                        if (e.target.checked) setFxLogin("");
                       }}
                     />{" "}
                     Forget the stored login
@@ -3983,7 +4073,7 @@ function SettingsView({
                     help={
                       <p>
                         Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
-                        {deliveryNote("codex")} {deliveryNote("cursor")} {deliveryNote("pi")} {deliveryNote("opencode")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
+                        {deliveryNote("codex")} {deliveryNote("cursor")} {deliveryNote("pi")} {deliveryNote("opencode")} {deliveryNote("fx")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
                         and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Default for new Sessions; each Session can change it in its
                         settings.
                       </p>

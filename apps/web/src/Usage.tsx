@@ -21,6 +21,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   cursor: "Cursor does not report its usage to Sessionboxer; see cursor.com → Dashboard → Usage.",
   pi: "pi runs on your own model provider accounts and reports no usage windows; see the provider's console.",
   opencode: "OpenCode reports tokens per turn but no usage windows; see your model provider's dashboard (opencode.ai/zen for OpenCode Zen).",
+  fx: "fx does not report its usage windows to Sessionboxer; see vercel.com → AI Gateway for the Gateway balance, or run `fx credits`.",
 };
 
 /** The current time, ticking every second while `live`. */

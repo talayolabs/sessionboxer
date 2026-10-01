@@ -15,6 +15,8 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.pi.PI_AUTH_JSON || settings.providerSecretsSet.pi.PI_API_KEYS;
     case "opencode":
       return settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON;
+    case "fx":
+      return settings.providerSecretsSet.fx.FX_LOGIN;
   }
 }
 

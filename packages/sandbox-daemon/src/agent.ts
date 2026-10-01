@@ -75,6 +75,11 @@ export interface AgentConfig {
   /** Standing instructions for the Agent (the Session's); empty sends none. */
   instructions: string;
   instructionsDelivery: InstructionsDelivery;
+  /**
+   * How a `system-prompt` adapter takes the instructions in `session/new`'s `_meta`; the default is
+   * claude-agent-acp's `{ systemPrompt: { append } }`. fx reads `_meta.fx.systemPrompt` (ADR-0077).
+   */
+  systemPromptMeta?: (instructions: string) => Record<string, unknown>;
   /** Read whenever the instructions are sent: what the Workspace holds right now (its repositories). */
   workspaceBriefing?: () => string;
   /** Runs before every spawn with the user MCP servers (Devin reads them from a file, not over ACP). */
@@ -91,6 +96,8 @@ export interface AgentConfig {
   extensions?: (app: ClientApp) => void;
   /** Mode ids that mean "auto-approve every tool call" for this adapter, when not among the usual ones. */
   fullAccessModeIds?: string[];
+  /** Rewrites a stdio MCP server's command for an Agent that wants it as an absolute path (fx, ADR-0077). */
+  mcpCommandPath?: (command: string) => string;
   log: (msg: string) => void;
 }
 
@@ -155,7 +162,9 @@ const NEW_SESSION_RETRY_MS = 3000;
 /** The ACP config option that selects the model (claude-agent-acp and devin acp both use id `model`, category `model`). */
 function modelOption(options: SessionConfigOption[] | null | undefined): (SessionConfigOption & { type: "select" }) | null {
   if (!options) return null;
-  const found = options.find((o) => o.type === "select" && (o.category === "model" || o.id === "model"));
+  // fx lists both `provider` and `model` under the `model` category; the one named `model` is the picker.
+  const found =
+    options.find((o) => o.type === "select" && o.id === "model") ?? options.find((o) => o.type === "select" && o.category === "model");
   return found?.type === "select" ? found : null;
 }
 
@@ -1054,13 +1063,16 @@ export class AgentManager {
   /** The MCP servers as `session/new` / `session/load` take them, for where the Agent runs. */
   private acpMcpServers(userServers: McpServerSpec[]): McpServer[] {
     const servers = acpMcpServers(this.cfg.builtinMcps(), userServers);
-    return this.cfg.transport ? this.cfg.transport.mcpServers(servers) : servers;
+    const placed = this.cfg.transport ? this.cfg.transport.mcpServers(servers) : servers;
+    const toPath = this.cfg.mcpCommandPath;
+    return toPath ? placed.map((s) => ("command" in s ? { ...s, command: toPath(s.command) } : s)) : placed;
   }
 
   /** `_meta` carrying the instructions for adapters that take them as a system prompt addition. */
   private systemPromptMeta(): Pick<NewSessionRequest, "_meta"> {
     if (this.cfg.instructionsDelivery !== "system-prompt" || this.instructions() === "") return {};
-    return { _meta: { systemPrompt: { append: this.instructions() } } };
+    const text = this.instructions();
+    return { _meta: this.cfg.systemPromptMeta ? this.cfg.systemPromptMeta(text) : { systemPrompt: { append: text } } };
   }
 
   /** The Session's instructions followed by the Workspace briefing, trimmed; empty when there is neither. */

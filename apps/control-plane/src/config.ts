@@ -12,6 +12,7 @@ import {
   type CursorLogin,
   type PiLogin,
   type OpenCodeLogin,
+  type FxLogin,
   CONNECTORS,
   connectorHasMcp,
   MCP_RESERVED_NAMES,
@@ -256,6 +257,10 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
         ...current.providerSecrets.opencode,
         ...stripUndefined(providerSecrets.opencode ?? {}),
       },
+      fx: {
+        ...current.providerSecrets.fx,
+        ...stripUndefined(providerSecrets.fx ?? {}),
+      },
     };
     if (providerSecrets.codex?.CODEX_AUTH_JSON !== undefined) {
       next.providerSecrets.codex.CODEX_AUTH_JSON = normalizeCodexAuthJson(providerSecrets.codex.CODEX_AUTH_JSON);
@@ -271,6 +276,9 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     }
     if (providerSecrets.opencode?.OPENCODE_AUTH_JSON !== undefined) {
       next.providerSecrets.opencode.OPENCODE_AUTH_JSON = normalizeOpenCodeAuthJson(providerSecrets.opencode.OPENCODE_AUTH_JSON);
+    }
+    if (providerSecrets.fx?.FX_LOGIN !== undefined) {
+      next.providerSecrets.fx.FX_LOGIN = normalizeFxLogin(providerSecrets.fx.FX_LOGIN);
     }
   }
   return Settings.parse(next);
@@ -311,11 +319,13 @@ export function toPublicSettings(
       cursor: { CURSOR_LOGIN: cursorLogin(settings) !== "" },
       pi: { PI_AUTH_JSON: piAuthJson(settings) !== "", PI_API_KEYS: piApiKeys(settings) !== "" },
       opencode: { OPENCODE_AUTH_JSON: opencodeAuthJson(settings) !== "" },
+      fx: { FX_LOGIN: fxLogin(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
     cursorLogin: describeCursorLogin(cursorLogin(settings)),
     piLogin: describePiLogin(piAuthJson(settings), piApiKeys(settings)),
     opencodeLogin: describeOpenCodeLogin(opencodeAuthJson(settings)),
+    fxLogin: describeFxLogin(fxLogin(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -726,6 +736,93 @@ export function opencodeAuthNewer(candidate: string, current: string): boolean {
   return ea >= eb;
 }
 
+/** The fx login (ADR-0077): an AI Gateway API key or the JSON of an `fx login` file; `AI_GATEWAY_API_KEY` in the environment overrides. */
+export function fxLogin(settings: Settings): string {
+  return process.env.AI_GATEWAY_API_KEY?.trim() || settings.providerSecrets.fx.FX_LOGIN;
+}
+
+/**
+ * The parts of fx's login files Sessionboxer looks at (the rest is passed through untouched):
+ * `fx login` writes an OAuth session (`token_type`, `expires_at`), `fx login codex` / `fx login grok`
+ * write `{ version, access_token, refresh_token, expires_at_ms, account_id }`.
+ */
+const FxAuthFile = z.object({
+  access_token: z.string().optional(),
+  refresh_token: z.string().optional(),
+  token_type: z.string().optional(),
+  account_id: z.string().optional(),
+  expires_at: z.union([z.number(), z.string()]).optional(),
+  expires_at_ms: z.number().optional(),
+});
+
+/** Accepts an AI Gateway API key or the JSON object one of `fx login`'s files holds; `""` forgets it. Returns JSON compacted. */
+export function normalizeFxLogin(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed === "") return "";
+  if (!trimmed.startsWith("{")) {
+    if (!/^[\w.-]+$/.test(trimmed)) {
+      throw new HttpError(400, "The fx login must be an AI Gateway API key (vercel.com → AI Gateway → API keys) or the JSON in a login file of `fx login`.");
+    }
+    return trimmed;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new HttpError(400, "The fx login must be the JSON in ~/.fx/auth.json (or chatgpt-auth.json, grok-auth.json), as written by `fx login`.");
+  }
+  const file = FxAuthFile.safeParse(parsed);
+  if (!file.success || typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new HttpError(400, "The fx login must be the JSON object in one of fx's login files.");
+  }
+  if (!file.data.access_token || !file.data.refresh_token) {
+    throw new HttpError(400, "This file holds no fx login; run `fx login` (or `fx login codex`, `fx login grok`) and copy the file again.");
+  }
+  return JSON.stringify(parsed);
+}
+
+/** What the stored fx login is, for Settings; nothing is verified. `null` for an empty or unusable string. */
+export function describeFxLogin(login: string): FxLogin | null {
+  if (login.trim() === "") return null;
+  if (!login.trimStart().startsWith("{")) return { kind: "api-key", expiresAt: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(login);
+  } catch {
+    return null;
+  }
+  const file = FxAuthFile.safeParse(parsed);
+  if (!file.success || !file.data.access_token) return null;
+  const expiresMs =
+    file.data.expires_at_ms ??
+    (typeof file.data.expires_at === "number" ? (file.data.expires_at > 1e12 ? file.data.expires_at : file.data.expires_at * 1000) : Date.parse(file.data.expires_at ?? ""));
+  const expiresAt = Number.isFinite(expiresMs) ? new Date(expiresMs).toISOString() : null;
+  if (file.data.token_type !== undefined || file.data.account_id === undefined) return { kind: "vercel", expiresAt };
+  const iss = jwtClaims(file.data.access_token)?.iss;
+  return { kind: typeof iss === "string" && /openai\.com/i.test(iss) ? "codex" : "grok", expiresAt };
+}
+
+/**
+ * Which of two fx login files is the newer one: fx rewrites the file with a later expiry when it
+ * refreshes the tokens. `true` when `candidate` should replace `current` (a login file of the same
+ * kind whose token is not older); an API key in `current` is never replaced.
+ */
+export function fxAuthNewer(candidate: string, current: string): boolean {
+  const a = describeFxLogin(candidate);
+  if (!a || a.kind === "api-key") return false;
+  let compact: string;
+  try {
+    compact = JSON.stringify(JSON.parse(candidate));
+  } catch {
+    return false;
+  }
+  if (compact === current) return false;
+  const b = describeFxLogin(current);
+  if (b?.kind === "api-key" || (b && b.kind !== a.kind)) return false;
+  if (!b?.expiresAt || !a.expiresAt) return true;
+  return Date.parse(a.expiresAt) >= Date.parse(b.expiresAt);
+}
+
 /** `ANTHROPIC_AUTH_TOKEN` for Claude Sandboxes (a company proxy's bearer credential); env override like the tokens. */
 export function claudeAuthToken(settings: Settings): string {
   return process.env.ANTHROPIC_AUTH_TOKEN || settings.claudeApi.authToken;
@@ -761,6 +858,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return piAuthJson(settings) !== "" || piApiKeys(settings) !== "";
     case "opencode":
       return opencodeAuthJson(settings) !== "";
+    case "fx":
+      return fxLogin(settings) !== "";
   }
 }
 
@@ -790,6 +889,7 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "cursor":
     case "pi":
     case "opencode":
+    case "fx":
       return {};
   }
 }
@@ -808,6 +908,8 @@ export function providerSetupHint(provider: Provider): string {
       return "No pi login configured. Paste a model provider's API key (ANTHROPIC_API_KEY=..., OPENAI_API_KEY=...), or run `pi`, `/login`, and paste ~/.pi/agent/auth.json, in Global settings → Providers.";
     case "opencode":
       return "No OpenCode login configured. Run `opencode auth login` on your machine and paste ~/.local/share/opencode/auth.json, or an OpenCode Zen API key, in Global settings → Providers.";
+    case "fx":
+      return "No fx login configured. Paste an AI Gateway API key, or run `fx login` and paste ~/.fx/auth.json, in Global settings → Providers.";
   }
 }
 

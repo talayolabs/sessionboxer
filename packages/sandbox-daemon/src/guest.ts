@@ -223,6 +223,9 @@ export abstract class Guest {
   /** A script that creates `dir` (and its parents) in the VM, quietly, succeeding when it exists. */
   abstract mkdirScript(dir: string): string;
 
+  /** A script setting a file's permission bits, `null` where the OS has none (Windows). */
+  abstract chmodScript(path: string, mode: number): string | null;
+
   /** Copies a local file into the VM (`guestPath` with forward or back slashes). */
   async putFile(localPath: string, guestPath: string): Promise<void> {
     const dir = posix.dirname(guestPath.replace(/\\/g, "/"));
@@ -422,6 +425,10 @@ export class WindowsGuest extends Guest {
     return `New-Item -ItemType Directory -Force -Path '${psQuote(dir)}' | Out-Null`;
   }
 
+  chmodScript(): string | null {
+    return null;
+  }
+
   protected existsScript(path: string): string {
     return `if (Test-Path -LiteralPath '${psQuote(path)}') { Write-Output yes } else { Write-Output no }`;
   }
@@ -585,6 +592,10 @@ export class MacGuest extends Guest {
 
   mkdirScript(dir: string): string {
     return `mkdir -p -- ${shQuote(dir)}`;
+  }
+
+  chmodScript(path: string, mode: number): string | null {
+    return `chmod ${mode.toString(8)} -- ${shQuote(path)}`;
   }
 
   protected existsScript(path: string): string {
@@ -773,6 +784,8 @@ export interface GuestProviderFile {
   guest: string;
   /** Copied back from the VM after each turn so refreshed tokens reach the Control Plane. */
   pullBack?: boolean;
+  /** Permission bits the file must have in the VM (fx reads a login file only with 0600); ignored where the OS has none. */
+  mode?: number;
 }
 
 export interface GuestTransportConfig {
@@ -840,7 +853,10 @@ export class GuestAgentTransport implements AgentTransport {
       } catch {
         continue;
       }
-      await this.guest.writeFile(this.guestFilePath(f), content);
+      const guestPath = this.guestFilePath(f);
+      await this.guest.writeFile(guestPath, content);
+      const chmod = f.mode === undefined ? null : this.guest.chmodScript(guestPath, f.mode);
+      if (chmod) await this.guest.run(chmod);
     }
   }
 

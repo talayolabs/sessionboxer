@@ -153,6 +153,18 @@ const OPENCODE_LIMIT = [
   /credit balance is too low/i,
   /exceeded your (?:current )?(?:usage|quota|budget)/i,
 ];
+/** fx relays its model provider's refusal (the AI Gateway's credit balance, a ChatGPT/Grok subscription's window). */
+const FX_LIMIT = [
+  /insufficient[_ ]credits?/i,
+  /out of credits/i,
+  /credit balance (?:is )?(?:too low|exhausted|depleted)/i,
+  /usage[_ ]limit/i,
+  /hit your (?:usage |rate )?limit/i,
+  /reached your (?:usage |rate )?limit/i,
+  /quota[_ ]exceeded/i,
+  /insufficient[_ ]quota/i,
+  /exceeded your (?:current )?quota/i,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -160,8 +172,21 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode", message: string, now: Date = new Date()): UsageLimitHit | null {
-  const patterns = provider === "claude-code" ? CLAUDE_LIMIT : provider === "codex" ? CODEX_LIMIT : provider === "cursor" ? CURSOR_LIMIT : provider === "pi" ? PI_LIMIT : provider === "opencode" ? OPENCODE_LIMIT : DEVIN_LIMIT;
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx", message: string, now: Date = new Date()): UsageLimitHit | null {
+  const patterns =
+    provider === "claude-code"
+      ? CLAUDE_LIMIT
+      : provider === "codex"
+        ? CODEX_LIMIT
+        : provider === "cursor"
+          ? CURSOR_LIMIT
+          : provider === "pi"
+            ? PI_LIMIT
+            : provider === "opencode"
+              ? OPENCODE_LIMIT
+              : provider === "fx"
+                ? FX_LIMIT
+                : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

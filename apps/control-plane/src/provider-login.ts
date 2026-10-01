@@ -4,7 +4,7 @@ import { homedir, platform, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import * as pty from "node-pty";
 import type { Provider, ProviderHostLogin, ProviderLoginFlow, Settings, UpdateSettingsRequest } from "@sessionboxer/protocol";
-import { applySettingsUpdate, codexLogin, describeCursorLogin, describeOpenCodeLogin, describePiLogin, normalizeCodexAuthJson, normalizeCursorLogin, normalizeOpenCodeAuthJson, normalizePiAuthJson } from "./config.js";
+import { applySettingsUpdate, codexLogin, describeCursorLogin, describeFxLogin, describeOpenCodeLogin, describePiLogin, normalizeCodexAuthJson, normalizeCursorLogin, normalizeFxLogin, normalizeOpenCodeAuthJson, normalizePiAuthJson } from "./config.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
 import { HttpError } from "./http-error.js";
 
@@ -162,6 +162,29 @@ export const RECIPES: Partial<Record<Provider, Recipe>> = {
     files: [".pi/agent/auth.json"],
     result: () => null,
     secret: (login) => (login.trimStart().startsWith("{") ? { pi: { PI_AUTH_JSON: login } } : { pi: { PI_API_KEYS: login } }),
+  },
+  // `fx login` is Vercel's device flow (ADR-0077): fx prints "Open https://vercel.com/oauth/device?user_code=XXXX-XXXX"
+  // and "Code: XXXX-XXXX", then polls; the page prefills the code from the URL but the dialog shows it too.
+  fx: {
+    bin: ["fx"],
+    args: ["login", "vercel"],
+    env: { ...noBrowser, FX_NO_OPEN_BROWSER: "1" },
+    isLoginUrl: (u) => /(^|\.)vercel\.com$/.test(u.hostname) && /device/i.test(u.pathname),
+    code: "page",
+    prompt: null,
+    userCode: (text) => /^\s*Code:\s*([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\s*$/im.exec(text)?.[1] ?? null,
+    rejected: () => null,
+    files: [".fx/auth.json"],
+    result: (_output, file) => {
+      if (!file) return null;
+      try {
+        const login = normalizeFxLogin(file);
+        return login && describeFxLogin(login) ? { login, account: null } : null;
+      } catch {
+        return null;
+      }
+    },
+    secret: (login) => ({ fx: { FX_LOGIN: login } }),
   },
 };
 
@@ -381,7 +404,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {
@@ -640,6 +663,20 @@ export function readHostLogin(provider: Provider, home = homedir()): { account: 
       const what = describeOpenCodeLogin(login);
       if (!login || !what) return null;
       return { account: `signed in with \`opencode auth login\` (${what.providers.map((p) => p.id).join(", ")})`, login };
+    }
+    case "fx": {
+      // The Vercel login only: `fx login codex`/`grok` write other files, pasted in Settings instead.
+      const text = readFirst([join(home, ".fx/auth.json")]);
+      if (text === null) return null;
+      let login: string;
+      try {
+        login = normalizeFxLogin(text);
+      } catch {
+        return null;
+      }
+      const what = describeFxLogin(login);
+      if (!login || !what) return null;
+      return { account: what.kind === "api-key" ? "an API key" : "signed in with `fx login`", login };
     }
   }
 }

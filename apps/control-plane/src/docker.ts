@@ -39,6 +39,11 @@ export function usbNodePath(node: UsbNode): string {
   return `${USB_DIR}/${String(node.bus).padStart(3, "0")}/${String(node.dev).padStart(3, "0")}`;
 }
 
+/** The volume holding an fx Session's `~/.fx` (ADR-0077). */
+export function fxStateVolumeName(sessionId: string): string {
+  return `sbx-fx-${sessionId}`;
+}
+
 export function usbVolumeName(sessionId: string): string {
   return `sbx-usb-${sessionId}`;
 }
@@ -107,6 +112,12 @@ export interface Endpoint {
 export interface SandboxSpec {
   sessionId: string;
   env: Record<string, string>;
+  /**
+   * A named volume mounted over a directory of the Agent's home: fx keeps its login files and
+   * session store there (ADR-0077). Populated from the image on first use, kept across Stop/Resume,
+   * never part of a `docker commit`, removed with the Session (`removeVolume`).
+   */
+  stateVolume?: { name: string; path: string };
   cpus: number;
   memoryGb: number;
   dockerMode: DockerMode;
@@ -296,7 +307,7 @@ export class SandboxDocker {
             : {},
         PublishAllPorts: false,
         RestartPolicy: { Name: "no" },
-        Binds: [`${usbVolumeName(spec.sessionId)}:${USB_DIR}`],
+        Binds: [`${usbVolumeName(spec.sessionId)}:${USB_DIR}`, ...(spec.stateVolume ? [`${spec.stateVolume.name}:${spec.stateVolume.path}`] : [])],
         DeviceCgroupRules: [USB_DEVICE_CGROUP_RULE],
         // Sysbox and privileged Sandboxes keep Docker's capability set (Sysbox's init needs it; privileged has all of them anyway).
         ...(spec.dockerMode === "none" ? { CapDrop: ["MKNOD"] } : {}),
@@ -337,8 +348,13 @@ export class SandboxDocker {
   }
 
   async removeUsbVolume(sessionId: string): Promise<void> {
+    await this.removeVolume(usbVolumeName(sessionId));
+  }
+
+  /** Removes a named volume; nothing when it does not exist. */
+  async removeVolume(name: string): Promise<void> {
     try {
-      await this.docker.getVolume(usbVolumeName(sessionId)).remove();
+      await this.docker.getVolume(name).remove();
     } catch (e) {
       if (!isStatus(e, 404)) throw e;
     }

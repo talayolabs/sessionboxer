@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 const SETTLE_MS = 400;
@@ -29,13 +29,18 @@ export class AuthFile {
     private readonly tmpfsDir: string,
     private readonly log: (msg: string) => void,
     private readonly onChanged: (authJson: string) => void,
+    /**
+     * Write the file at `link` itself instead of a symlink onto tmpfs: fx refuses a login file that
+     * is not a regular file with mode 0600 (ADR-0077); its `~/.fx` is a volume the Snapshot never sees.
+     */
+    private readonly direct = false,
   ) {
     this.dir = dirname(link);
     this.name = basename(link);
   }
 
   private get file(): string {
-    return join(this.tmpfsDir, `${this.label}-auth.json`);
+    return this.direct ? this.link : join(this.tmpfsDir, `${this.label}-auth.json`);
   }
 
   /** Puts `authJson` in place (empty removes the login); a no-op when the file already holds it. */
@@ -52,7 +57,8 @@ export class AuthFile {
     const onDisk = this.read();
     if (onDisk !== authJson) {
       writeFileSync(this.file, authJson, { mode: 0o600 });
-      this.log(`${this.label} login written to ${this.link} (${authJson.length} bytes on tmpfs)`);
+      chmodSync(this.file, 0o600);
+      this.log(`${this.label} login written to ${this.link} (${authJson.length} bytes${this.direct ? "" : " on tmpfs"})`);
     }
     this.current = authJson;
     this.start();
@@ -61,7 +67,7 @@ export class AuthFile {
   private start(): void {
     if (this.watchers.length > 0) return;
     const tmpfsName = basename(this.file);
-    for (const dir of [this.tmpfsDir, this.dir]) {
+    for (const dir of new Set([this.direct ? this.dir : this.tmpfsDir, this.dir])) {
       try {
         const w = watch(dir, (_event, name) => {
           if (name === tmpfsName || name === this.name) this.schedule();
@@ -100,6 +106,7 @@ export class AuthFile {
 
   /** The Provider's path must be a symlink onto tmpfs; a regular file there is moved over and replaced. */
   private relink(): void {
+    if (this.direct) return;
     let regular = false;
     try {
       const st = lstatSync(this.link);

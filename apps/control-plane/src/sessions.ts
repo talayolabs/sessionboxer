@@ -19,6 +19,7 @@ import {
   type DaemonCursorAuthParams,
   type DaemonPiAuthParams,
   type DaemonOpenCodeAuthParams,
+  type DaemonFxAuthParams,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -98,9 +99,11 @@ import {
   type PromptRequest,
   type PromptOrigin,
   PROVIDER_LABELS,
+  providerUnavailableIn,
   type PushMessage,
   sessionRoute,
   type ProviderModels,
+  type Provider,
   type ProviderOptions,
   type SavedMessage,
   type Session,
@@ -137,6 +140,7 @@ import {
   piApiKeyEnv,
   piApiKeys,
   piAuthJson,
+  fxLogin,
   defaultMcpEnabled,
   opencodeAuthJson,
   knownMcpIds,
@@ -155,7 +159,7 @@ import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { E2eVerification } from "./e2e.js";
 import { extractHandoff, handoffMessage, handoffRequestPrompt, isHiddenTurn, lastAgentMessage } from "./handoff.js";
-import { MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
+import { fxStateVolumeName, MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
@@ -1115,6 +1119,7 @@ export class SessionManager {
     const workspaceSource: WorkspaceSource = { type: "empty" };
     await this.docker.ensureImage();
     const environment = input.sandbox?.environment ?? "docker-linux";
+    this.assertProviderRunsIn(req.provider, environment);
     await this.assertEnvironmentAvailable(environment);
     const dockerMode: DockerMode =
       environment === "docker-linux" && (input.sandbox?.docker ?? settings.dockerInSandbox) ? await this.dockerModeAvailable() : "none";
@@ -1245,6 +1250,7 @@ export class SessionManager {
     if (!providerReady(provider, settings)) {
       throw new HttpError(400, providerSetupHint(provider));
     }
+    this.assertProviderRunsIn(provider, origin.settings.sandbox.environment);
     if (req.document !== undefined && req.conversation !== "handoff") throw new HttpError(400, "A handoff document goes with conversation: handoff.");
     // A document supplied with the request (the origin's Agent wrote it itself) needs no hidden turn.
     const hiddenHandoff = req.conversation === "handoff" && req.document === undefined;
@@ -1443,6 +1449,8 @@ export class SessionManager {
       memoryGb: effective.memoryGb,
       dockerMode: session.settings.sandbox.dockerMode,
       image,
+      // fx wants its login files as regular files in a real ~/.fx (no symlink onto tmpfs, ADR-0077).
+      ...(session.provider === "fx" ? { stateVolume: { name: fxStateVolumeName(session.id), path: "/home/agent/.fx" } } : {}),
     });
   }
 
@@ -1511,6 +1519,12 @@ export class SessionManager {
     } else {
       void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
     }
+  }
+
+  /** Some Providers have no build for an Environment (fx on Windows, ADR-0077); the reason as a 4xx. */
+  private assertProviderRunsIn(provider: Provider, environment: Environment): void {
+    const reason = providerUnavailableIn(provider, environment);
+    if (reason) throw new HttpError(400, `${PROVIDER_LABELS[provider]} cannot run in ${ENVIRONMENT_LABELS[environment]}: ${reason}`);
   }
 
   /** Whether a Session can be created in `environment` on this host; the reason as a 4xx otherwise. */
@@ -2372,6 +2386,7 @@ export class SessionManager {
     for (const [messageId, q] of this.queuedOrigins) if (q.targetId === id) this.queuedOrigins.delete(messageId);
     try {
       if (s.containerId) await this.docker.remove(s.containerId);
+      if (s.provider === "fx") await this.docker.removeVolume(fxStateVolumeName(id)).catch((e: unknown) => this.log(`delete ${id}: could not remove the fx volume: ${String(e)}`));
       await this.vms(s.settings.sandbox.environment)?.remove(id);
     } finally {
       this.stopping.delete(id);
@@ -2669,6 +2684,30 @@ export class SessionManager {
   /** An OpenCode Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
   opencodeAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
 
+  /**
+   * Hands the stored fx login to an fx Session's Daemon (ADR-0077): a login file is written 0600 into
+   * `~/.fx` (a volume `docker commit` never sees), an API key goes into the Agent's environment. Before the MCP set at connect time; again
+   * whenever the stored login changes.
+   */
+  async pushFxAuth(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "fx" || !client?.connected) return;
+    const params: DaemonFxAuthParams = { login: fxLogin(this.settings()) };
+    await client.request(DAEMON_METHODS.fxAuthSet, params);
+  }
+
+  /** The stored fx login changed (Settings, or a Sandbox refreshed it): every live fx Session gets it. */
+  async pushFxAuthToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.provider !== "fx" || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushFxAuth(s.id).catch((e: unknown) => this.log(`fx auth push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
+  /** An fx Sandbox rewrote a login file with refreshed tokens; set by the owner to store it. */
+  fxAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
+
   /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
   async pushRecordingPrefs(id: string): Promise<void> {
     const client = this.clients.get(id);
@@ -2796,6 +2835,7 @@ export class SessionManager {
       onCursorAuthChanged: (authJson) => this.cursorAuthRefreshed(id, authJson),
       onPiAuthChanged: (authJson) => this.piAuthRefreshed(id, authJson),
       onOpenCodeAuthChanged: (authJson) => this.opencodeAuthRefreshed(id, authJson),
+      onFxAuthChanged: (authJson) => this.fxAuthRefreshed(id, authJson),
       onDisconnected: () => {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");
@@ -2829,6 +2869,7 @@ export class SessionManager {
       .then(() => this.pushCursorAuth(id))
       .then(() => this.pushPiAuth(id))
       .then(() => this.pushOpenCodeAuth(id))
+      .then(() => this.pushFxAuth(id))
       .then(() => this.pushUtilities(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))

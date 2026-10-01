@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
@@ -25,6 +25,7 @@ import {
   DaemonCursorAuthParams,
   DaemonPiAuthParams,
   DaemonOpenCodeAuthParams,
+  DaemonFxAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -149,6 +150,8 @@ const ACP_COMMANDS: Record<Provider, string[]> = {
   // pi has no ACP mode of its own: pi-acp bridges `pi --mode rpc` to ACP (ADR-0075).
   pi: ["pi-acp"],
   opencode: ["opencode", "acp"],
+  // fx's ACP server is built in (ADR-0077); permission mode and auto-upgrade are set in its environment (`FX_AGENT_ENV`).
+  fx: ["fx", "acp"],
 };
 const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
@@ -280,6 +283,32 @@ const opencodeAuth =
 const OPENCODE_AGENT_ENV = { OPENCODE_DISABLE_AUTOUPDATE: "1" };
 
 /**
+ * fx's login (ADR-0077): the file an `fx login` wrote, on tmpfs behind the path fx reads it from —
+ * `~/.fx/auth.json` (Vercel account), `~/.fx/chatgpt-auth.json` (ChatGPT) or `~/.fx/grok-auth.json`
+ * (Grok), one of the three by the file's shape — or an AI Gateway API key handed over in the process
+ * environment as `AI_GATEWAY_API_KEY`. fx refreshes the tokens of a login file in place and the
+ * rewritten file is reported back. The rest of `~/.fx` (settings, saved sessions) stays on disk so
+ * `session/load` finds the conversation after Stop/Resume.
+ */
+const fxHome = `${home}/.fx`;
+const fxAuthPaths = { vercel: `${fxHome}/auth.json`, codex: `${fxHome}/chatgpt-auth.json`, grok: `${fxHome}/grok-auth.json` } as const;
+type FxLoginKind = keyof typeof fxAuthPaths;
+const fxAuth: Record<FxLoginKind, AuthFile> | null =
+  provider === "fx"
+    ? Object.fromEntries(
+        (Object.keys(fxAuthPaths) as FxLoginKind[]).map((kind) => [
+          kind,
+          new AuthFile(`fx-${kind}`, fxAuthPaths[kind], tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.fxAuthChanged, { authJson }), true),
+        ]),
+      ) as Record<FxLoginKind, AuthFile>
+    : null;
+/**
+ * The Sandbox is the isolation: fx runs in its `full-access` permission mode (ADR-0077; the Daemon
+ * still answers any permission request it sends). Auto-upgrade is off: the image pins the version.
+ */
+const FX_AGENT_ENV = { FX_PERMISSION_MODE: "full-access", FX_AUTO_UPGRADE: "0", FX_NO_OPEN_BROWSER: "1" };
+
+/**
  * The Provider's files that travel into the VM before each Agent start (the ones the image and this
  * Daemon keep here), at the paths the Provider reads on Windows or macOS; logins come back after
  * each turn so refreshed tokens reach the Control Plane. The briefing goes where the Provider reads
@@ -307,6 +336,12 @@ const guestProviderFiles: GuestProviderFile[] = (
       { local: `${piAgentDir}/mcp.json`, guest: ".pi/agent/mcp.json" },
       { local: guestBriefingFile, guest: ".pi/agent/AGENTS.md" },
       { local: `${piAgentDir}/auth.json`, guest: ".pi/agent/auth.json", pullBack: true },
+    ],
+    fx: [
+      { local: guestBriefingFile, guest: ".fx/AGENTS.md" },
+      { local: fxAuthPaths.vercel, guest: ".fx/auth.json", pullBack: true, mode: 0o600 },
+      { local: fxAuthPaths.codex, guest: ".fx/chatgpt-auth.json", pullBack: true, mode: 0o600 },
+      { local: fxAuthPaths.grok, guest: ".fx/grok-auth.json", pullBack: true, mode: 0o600 },
     ],
     devin: [
       { local: `${home}/.config/devin/config.json`, guest: ".config/devin/config.json" },
@@ -364,6 +399,57 @@ function setOpenCodeLogin(authJson: string): boolean {
   if (!opencodeAuth) throw new Error("this Sandbox does not run OpenCode");
   opencodeAuth.set(authJson);
   return agent.setAgentEnv(authJson === "" ? {} : { SESSIONBOXER_OPENCODE_LOGIN: "auth-json" });
+}
+
+/**
+ * Which of fx's three login files a pasted login is: `fx login` (Vercel) writes an OAuth session
+ * with a `token_type`; `fx login codex` and `fx login grok` write `{ version, access_token,
+ * refresh_token, expires_at_ms, account_id }`, told apart by the access token's issuer (ChatGPT's
+ * is a JWT issued by auth.openai.com). The Control Plane validated the JSON already.
+ */
+function fxLoginKind(login: string): FxLoginKind {
+  const parsed = JSON.parse(login) as Record<string, unknown>;
+  if (typeof parsed.token_type === "string" || !("account_id" in parsed)) return "vercel";
+  const token = typeof parsed.access_token === "string" ? parsed.access_token : "";
+  const payload = token.split(".")[1];
+  try {
+    const claims = payload ? (JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>) : null;
+    return typeof claims?.iss === "string" && /openai\.com/i.test(claims.iss) ? "codex" : "grok";
+  } catch {
+    return "grok";
+  }
+}
+
+/** fx refuses an MCP server whose command is not an absolute path: a bare name is looked up on this PATH (left as is when not found, so fx reports it). */
+function onPath(command: string): string {
+  if (command.includes("/")) return command;
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    const candidate = `${dir}/${command}`;
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // next
+    }
+  }
+  return command;
+}
+
+/** Puts an fx login in place: one login file on tmpfs (the other two removed) or the API key in the Agent's environment (on top of `FX_AGENT_ENV`). */
+function setFxLogin(login: string): boolean {
+  if (!fxAuth) throw new Error("this Sandbox does not run fx");
+  const kind = login.trimStart().startsWith("{") ? fxLoginKind(login) : null;
+  for (const k of Object.keys(fxAuth) as FxLoginKind[]) fxAuth[k].set(k === kind ? login : "");
+  if (kind === "codex" || kind === "grok") {
+    // `fx login codex`/`grok` also record the choice in settings.json; a pasted file needs it said per process.
+    return agent.setAgentEnv({ FX_PROVIDER: kind });
+  }
+  // A Vercel login leaves the provider to fx: the AI Gateway by default, or a custom model connection in ~/.fx/settings.json.
+  if (kind === "vercel") return agent.setAgentEnv({});
+  if (login === "") return agent.setAgentEnv({});
+  log("fx login is an API key; handed to the Agent process as AI_GATEWAY_API_KEY");
+  return agent.setAgentEnv({ AI_GATEWAY_API_KEY: login });
 }
 
 /** The Session's standing instructions, set by the Control Plane on the container. */
@@ -534,6 +620,7 @@ const agent = new AgentManager(
     ...(provider === "codex" ? { env: guest ? { INITIAL_AGENT_MODE: CODEX_AGENT_ENV.INITIAL_AGENT_MODE } : CODEX_AGENT_ENV } : {}),
     ...(provider === "pi" ? { env: PI_AGENT_ENV } : {}),
     ...(provider === "opencode" && !guest ? { env: OPENCODE_AGENT_ENV } : {}),
+    ...(provider === "fx" ? { env: FX_AGENT_ENV } : {}),
     builtinMcps,
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
     sessionId: env.SESSIONBOXER_SESSION_ID ?? "",
@@ -545,6 +632,11 @@ const agent = new AgentManager(
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),
     ...(provider === "cursor" ? { extensions: (app) => registerCursorExtensions(app, log), fullAccessModeIds: ["agent"] } : {}),
+    // fx's ACP modes are `ask` and `code` (its `auto` mode, which reviews calls with a model); neither is
+    // "approve everything", so the mode is left alone and `FX_PERMISSION_MODE` (above) opens the Sandbox up.
+    ...(provider === "fx"
+      ? { fullAccessModeIds: [], systemPromptMeta: (text: string) => ({ fx: { systemPrompt: [{ type: "text", text }] } }), mcpCommandPath: guest ? undefined : onPath }
+      : {}),
     log,
   },
   {
@@ -684,6 +776,8 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.opencodeAuthSet:
       return { applied: setOpenCodeLogin(DaemonOpenCodeAuthParams.parse(params).authJson) };
+    case DAEMON_METHODS.fxAuthSet:
+      return { applied: setFxLogin(DaemonFxAuthParams.parse(params).login) };
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);
@@ -881,6 +975,8 @@ if (!guest) {
 const shutdown = (): void => {
   log("shutting down");
   agent.kill();
+  // fx's login files are regular files in its volume (ADR-0077); the Control Plane puts them back on the next connection.
+  if (fxAuth) for (const f of Object.values(fxAuth)) f.set("");
   terminals.closeAll();
   codeServer.stop();
   wss.close();

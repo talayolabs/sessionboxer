@@ -5,6 +5,7 @@ import {
   DaemonCursorAuthChangedParams,
   DaemonPiAuthChangedParams,
   DaemonOpenCodeAuthChangedParams,
+  DaemonFxAuthChangedParams,
   DaemonStatus,
   PtyExitParams,
   PtyOutputParams,
@@ -29,6 +30,8 @@ export interface DaemonClientHandlers {
   onPiAuthChanged: (authJson: string) => void;
   /** OpenCode rewrote its `auth.json` (refreshed OAuth tokens); the whole file. */
   onOpenCodeAuthChanged: (authJson: string) => void;
+  /** fx rewrote one of its login files (refreshed tokens); the whole file. */
+  onFxAuthChanged: (authJson: string) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
   /** A request from the Daemon (the Agent's `e2e_*` tools); the result or thrown error is answered back. */
@@ -146,6 +149,8 @@ export class DaemonClient {
         this.handlers.onPiAuthChanged(DaemonPiAuthChangedParams.parse(msg.params).authJson);
       } else if (msg.method === DAEMON_METHODS.opencodeAuthChanged) {
         this.handlers.onOpenCodeAuthChanged(DaemonOpenCodeAuthChangedParams.parse(msg.params).authJson);
+      } else if (msg.method === DAEMON_METHODS.fxAuthChanged) {
+        this.handlers.onFxAuthChanged(DaemonFxAuthChangedParams.parse(msg.params).authJson);
       }
     }
   }

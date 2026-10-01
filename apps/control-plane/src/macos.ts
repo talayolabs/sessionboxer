@@ -62,6 +62,8 @@ const PI_VERSION = "0.99.2";
 const PI_ACP_VERSION = "0.0.34";
 /** OpenCode, pinned with the Sandbox image (ADR-0076): the binary of its npm platform package. */
 const OPENCODE_VERSION = "1.18.32";
+/** fx (ADR-0077): the release archive for macOS; same pin as the Sandbox image. */
+const FX_VERSION = "v0.0.11";
 
 interface BaseRecord {
   version: string;
@@ -734,7 +736,8 @@ function setupSteps(version: string): string[] {
  *   `npm install -g` needs no sudo; then the Provider CLIs with the same pins as Windows.
  * - uv: Astral's pinned installer into `~/.local/bin`. Devin: its pinned `setup.sh` (checksummed
  *   bundle under `~/.local/share/devin`, `~/.local/bin/devin`). Cursor: the pinned macOS package
- *   under `~/.local/share/cursor-agent`, `~/.local/bin/{cursor-agent,agent}`.
+ *   under `~/.local/share/cursor-agent`, `~/.local/bin/{cursor-agent,agent}`. fx: the pinned release
+ *   archive under `~/.local/share/fx/<version>`, `~/.local/bin/fx`.
  */
 /** Encodes stdin as `/etc/kcpassword`: XOR with Apple's key, NUL-terminated and padded to 12 bytes. */
 const KCPASSWORD_PERL =
@@ -754,6 +757,7 @@ function provisionScript(): string {
     `export HOMEBREW_NO_AUTO_UPDATE=1 npm_config_fund=false npm_config_audit=false npm_config_update_notifier=false`,
     `ARCH=$(uname -m)`,
     `case "$ARCH" in arm64) NODE_ARCH=arm64; CURSOR_ARCH=arm64 ;; x86_64) NODE_ARCH=x64; CURSOR_ARCH=x64 ;; *) fail "unsupported architecture $ARCH" ;; esac`,
+    `case "$ARCH" in arm64) FX_ARCH=aarch64 ;; *) FX_ARCH=x86_64 ;; esac`,
     `say "macOS $(sw_vers -productVersion) ($ARCH), setting up as $(id -un)"`,
     // Power and login.
     "sudo pmset -a sleep 0 displaysleep 0 disksleep 0 2>/dev/null || true",
@@ -859,7 +863,20 @@ function provisionScript(): string {
     "fi",
     `ln -sfn "$OPENCODE_DIR/opencode" "$HOME/.local/bin/opencode"`,
     `say "opencode $(OPENCODE_DISABLE_AUTOUPDATE=1 "$HOME/.local/bin/opencode" --version 2>/dev/null | head -1)"`,
-    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
+    // fx (ADR-0077): the release archive (fx, LICENSE, THIRD_PARTY_NOTICES.md) for the Mac's architecture.
+    `FX_DIR="$HOME/.local/share/fx/${FX_VERSION}"`,
+    `if [ -x "$FX_DIR/fx" ]; then`,
+    `  say "fx ${FX_VERSION} present"`,
+    "else",
+    `  say "installing fx ${FX_VERSION} ($FX_ARCH)"`,
+    `  rm -rf "$FX_DIR.tmp" && mkdir -p "$FX_DIR.tmp"`,
+    `  curl -fsSL --retry 5 --retry-all-errors "https://releases.fx.sh/${FX_VERSION}/fx-macos-$FX_ARCH.tar.gz" | tar -xzf - -C "$FX_DIR.tmp" || fail "downloading fx"`,
+    `  [ -x "$FX_DIR.tmp/fx" ] || fail "the fx archive has no fx binary"`,
+    `  rm -rf "$FX_DIR" && mv "$FX_DIR.tmp" "$FX_DIR"`,
+    "fi",
+    `ln -sfn "$FX_DIR/fx" "$HOME/.local/bin/fx"`,
+    `say "fx $("$HOME/.local/bin/fx" --version 2>/dev/null | head -1)"`,
+    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
     "echo SBX_PROVISIONED",
     // Detached, after this SSH session has returned: `nohup` could not run the `sudo` function above.
     `(sleep 3; printf '%s\\n' "$SBX_PW" | command sudo -S -p '' shutdown -h now) </dev/null >/dev/null 2>&1 &`,

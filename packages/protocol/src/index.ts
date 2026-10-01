@@ -12,7 +12,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -23,7 +23,17 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   cursor: "Cursor",
   pi: "pi",
   opencode: "OpenCode",
+  fx: "fx",
 };
+
+/**
+ * Why a Provider cannot run in an Environment, or `null` when it can. fx ships no Windows build
+ * (ADR-0077), so a `qemu-windows` Session cannot run it; the UI disables the choice with this text.
+ */
+export function providerUnavailableIn(provider: Provider, environment: Environment): string | null {
+  if (provider === "fx" && environment === "qemu-windows") return "fx has no Windows build; it runs on Linux and macOS.";
+  return null;
+}
 
 /**
  * The environment the Control Plane may set on a Sandbox for its Provider: what Snapshots blank
@@ -38,7 +48,20 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   // pi's login too: its `auth.json` goes on tmpfs and its API keys into the Agent process only (ADR-0075).
   pi: [],
   opencode: [],
+  // fx's login (ADR-0077) travels over RPC too: a login file goes on tmpfs, an API key into the Agent process alone.
+  fx: [],
 };
+
+/**
+ * What the stored fx login (ADR-0077) is: an AI Gateway API key, or the file an `fx login` wrote —
+ * `auth.json` (Vercel account, `vercel`), `chatgpt-auth.json` (`codex`) or `grok-auth.json` (`grok`).
+ */
+export const FxLogin = z.object({
+  kind: z.enum(["api-key", "vercel", "codex", "grok"]),
+  /** When the login's access token expires (`expires_at`), ISO 8601; `null` for API keys or when the file does not say. */
+  expiresAt: z.string().nullable(),
+});
+export type FxLogin = z.infer<typeof FxLogin>;
 
 /**
  * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT
@@ -935,7 +958,7 @@ export const InstructionsDelivery = z.enum(["system-prompt", "first-prompt"]);
 export type InstructionsDelivery = z.infer<typeof InstructionsDelivery>;
 
 export function instructionsDelivery(provider: Provider): InstructionsDelivery {
-  return provider === "claude-code" ? "system-prompt" : "first-prompt";
+  return provider === "claude-code" || provider === "fx" ? "system-prompt" : "first-prompt";
 }
 
 // ---------------------------------------------------------------------------
@@ -2355,6 +2378,8 @@ export const Settings = z.object({
       pi: z.object({ PI_AUTH_JSON: z.string().default(""), PI_API_KEYS: z.string().default("") }).default({}),
       /** The whole `auth.json` of an `opencode auth login`, or an OpenCode Zen API key (ADR-0076). */
       opencode: z.object({ OPENCODE_AUTH_JSON: z.string().default("") }).default({}),
+      /** An AI Gateway API key, or the whole login file an `fx login` wrote (`auth.json`, `chatgpt-auth.json`, `grok-auth.json`; ADR-0077). */
+      fx: z.object({ FX_LOGIN: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -2403,6 +2428,7 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     cursor: z.object({ CURSOR_LOGIN: z.boolean() }),
     pi: z.object({ PI_AUTH_JSON: z.boolean(), PI_API_KEYS: z.boolean() }),
     opencode: z.object({ OPENCODE_AUTH_JSON: z.boolean() }),
+    fx: z.object({ FX_LOGIN: z.boolean() }),
   }),
   /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
   codexLogin: CodexLogin.nullable(),
@@ -2412,6 +2438,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   piLogin: PiLogin.nullable(),
   /** Which model providers the stored OpenCode `auth.json` covers; `null` when none is stored. */
   opencodeLogin: OpenCodeLogin.nullable(),
+  /** What the stored fx login is; `null` when none is stored. */
+  fxLogin: FxLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -2448,6 +2476,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, utilities
       cursor: z.object({ CURSOR_LOGIN: z.string() }).partial(),
       pi: z.object({ PI_AUTH_JSON: z.string(), PI_API_KEYS: z.string() }).partial(),
       opencode: z.object({ OPENCODE_AUTH_JSON: z.string() }).partial(),
+      fx: z.object({ FX_LOGIN: z.string() }).partial(),
     })
     .partial()
     .optional(),
@@ -4525,6 +4554,8 @@ export const DAEMON_METHODS = {
   piAuthChanged: "_sessionboxer/pi/auth/changed",
   opencodeAuthSet: "_sessionboxer/opencode/auth/set",
   opencodeAuthChanged: "_sessionboxer/opencode/auth/changed",
+  fxAuthSet: "_sessionboxer/fx/auth/set",
+  fxAuthChanged: "_sessionboxer/fx/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -4782,6 +4813,23 @@ export const DaemonOpenCodeAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonOpenCodeAuthChangedParams = z.infer<typeof DaemonOpenCodeAuthChangedParams>;
+
+/**
+ * The fx login for the Sandbox (ADR-0077): a login file goes on tmpfs behind the path fx reads it
+ * from (`~/.fx/auth.json`, `chatgpt-auth.json` or `grok-auth.json`, by its shape), an AI Gateway
+ * API key becomes the Agent's `AI_GATEWAY_API_KEY`. Sent before the MCP set and again whenever the
+ * stored login changes. When fx refreshes the tokens of a login file, the rewritten file comes back
+ * as the `fxAuthChanged` notification.
+ */
+export const DaemonFxAuthParams = z.object({
+  login: z.string(),
+});
+export type DaemonFxAuthParams = z.infer<typeof DaemonFxAuthParams>;
+
+export const DaemonFxAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonFxAuthChangedParams = z.infer<typeof DaemonFxAuthChangedParams>;
 
 /**
  * Switches the Agent's model (ACP `session/set_config_option` on the `model` option). Applied right

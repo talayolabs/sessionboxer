@@ -40,6 +40,7 @@ const PROVIDER_BLURB: Record<Provider, string> = {
   devin: "Cognition's Agent; runs on your Devin account",
   pi: "earendil-works' open-source Agent; runs on your own model API keys or logins",
   opencode: "The open-source Agent; runs on the model subscriptions and API keys of its providers",
+  fx: "Vercel Labs' Agent; runs on Vercel's AI Gateway, or your ChatGPT or Grok subscription",
 };
 
 /** Four big buttons, one per Provider, marked when a login is already stored. */
@@ -181,6 +182,24 @@ function steps(provider: Provider, os: Os): Step[] {
           commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.local\\share\\opencode\\auth.json" : "cat ~/.local/share/opencode/auth.json"],
         },
       ];
+    case "fx":
+      return [
+        {
+          title: "Install fx (skip if you already use it)",
+          body: `In ${shell} (fx runs on macOS and Linux; there is no Windows build):`,
+          commands: ["curl -fsSL https://fx.sh/setup.sh | bash"],
+        },
+        {
+          title: "Log in",
+          body: "Opens the browser with your Vercel account; `fx login codex` or `fx login grok` use a ChatGPT or Grok subscription instead.",
+          commands: ["fx login"],
+        },
+        {
+          title: "Copy the login file it wrote and paste it below",
+          body: "The whole file, or use Import below (chatgpt-auth.json / grok-auth.json for the other logins). An AI Gateway API key from vercel.com → AI Gateway → API keys works too.",
+          commands: ["cat ~/.fx/auth.json"],
+        },
+      ];
     case "devin":
       return [
         {
@@ -289,6 +308,13 @@ function credentialField(provider: Provider): {
         file: true,
         placeholder: '{ "anthropic": { "type": "oauth", … } } or sk-…',
       };
+    case "fx":
+      return {
+        label: "fx login (contents of ~/.fx/auth.json, or an AI Gateway API key)",
+        multiline: true,
+        file: true,
+        placeholder: "{ … } or vck_…",
+      };
   }
 }
 
@@ -306,6 +332,8 @@ function secretUpdate(provider: Provider, value: string) {
       return value.startsWith("{") ? { pi: { PI_AUTH_JSON: value } } : { pi: { PI_API_KEYS: value } };
     case "opencode":
       return { opencode: { OPENCODE_AUTH_JSON: value } };
+    case "fx":
+      return { fx: { FX_LOGIN: value } };
   }
 }
 

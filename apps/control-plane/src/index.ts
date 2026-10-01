@@ -89,6 +89,8 @@ import {
   piAuthNewer,
   opencodeAuthJson,
   opencodeAuthNewer,
+  fxAuthNewer,
+  fxLogin,
   ensureAccessToken,
   ensureTunnelSecret,
   ensureVapidKeys,
@@ -239,6 +241,19 @@ sessions.opencodeAuthRefreshed = (sessionId, authJson) => {
   saveSettings(settings);
   log(`opencode login refreshed by session ${sessionId}; stored`);
   void sessions.pushOpenCodeAuthToAll();
+};
+// fx refreshes the tokens of its login files the same way (an API key login is left alone).
+sessions.fxAuthRefreshed = (sessionId, authJson) => {
+  if (!fxAuthNewer(authJson, fxLogin(settings))) return;
+  try {
+    settings = applySettingsUpdate(settings, { providerSecrets: { fx: { FX_LOGIN: authJson } } });
+  } catch (e) {
+    log(`fx auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  saveSettings(settings);
+  log(`fx login refreshed by session ${sessionId}; stored`);
+  void sessions.pushFxAuthToAll();
 };
 const automations = new Automations({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
 const tunnels = new Tunnels(
@@ -431,6 +446,7 @@ async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void
   if (update.providerSecrets?.cursor?.CURSOR_LOGIN !== undefined) void sessions.pushCursorAuthToAll();
   if (update.providerSecrets?.pi?.PI_AUTH_JSON !== undefined || update.providerSecrets?.pi?.PI_API_KEYS !== undefined) void sessions.pushPiAuthToAll();
   if (update.providerSecrets?.opencode?.OPENCODE_AUTH_JSON !== undefined) void sessions.pushOpenCodeAuthToAll();
+  if (update.providerSecrets?.fx?.FX_LOGIN !== undefined) void sessions.pushFxAuthToAll();
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
 }

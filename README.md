@@ -52,7 +52,7 @@ More: [user guide → Install](docs/GUIDE.md#install).
 - **Context gauge**: how full the agent's memory is, what each turn cost, every byte sent to the model.
 - **Usage limits**: session and weekly bars, auto-continue when the limit resets.
 - **Model and options** per session, changed mid-conversation.
-- **MCP servers**: register once, switch on per session; several Git accounts, one per repository.
+- **MCP servers**: register once, switch on per session; several Git accounts, one per repository. Tools with a view (MCP Apps) render it inline in the chat, sandboxed.
 - **Automations**: a prompt on a timetable into a running session or a fresh one; a review, a QA video or a prompt when a followed pull request opens or changes.
 - **The agent knows where it is**: a `sessionboxer` MCP to ask about itself, attach PRs, snapshot, open panes, verify — and, if allowed, create, message and hand off to other sessions.
 - **USB devices**: one device of the host per session, for `adb` and friends.

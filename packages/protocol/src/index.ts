@@ -934,6 +934,16 @@ export type ProviderOptions = Record<Provider, AgentOption[]>;
 /** Claude aliases Sessionboxer allows by default (Claude's own list plus Fable, which the SDK hides otherwise). */
 export const DEFAULT_CLAUDE_MODELS = ["opus", "sonnet", "haiku", "fable"];
 
+/** Origins an HTML Artifact may load scripts, styles, images and fonts from (shipped default of `Settings.htmlAppCdns`). */
+export const DEFAULT_HTML_APP_CDNS = [
+  "https://cdnjs.cloudflare.com",
+  "https://cdn.jsdelivr.net",
+  "https://unpkg.com",
+  "https://esm.sh",
+  "https://fonts.googleapis.com",
+  "https://fonts.gstatic.com",
+];
+
 /** Shipped default for `Settings.instructions`. Testing the change is not asked for here: `e2eVerify`, when on, runs a verification turn after each turn. */
 export const DEFAULT_INSTRUCTIONS =
   "- Never author git commits as an agent: commits carry the user's git identity only, with no `Co-Authored-By` trailer, no \"generated with\" line and no mention of Claude, Devin or any other agent in commit messages or PR text.";
@@ -2343,6 +2353,8 @@ export const Settings = z.object({
    * of the Sandbox briefing: delivered as system prompt or first-prompt prefix, see `instructionsDelivery`.
    */
   instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).default(DEFAULT_INSTRUCTIONS),
+  /** Origins (scheme + host) an HTML Artifact may import scripts, styles, images and fonts from (ADR-0078). */
+  htmlAppCdns: z.array(z.string().url()).default(DEFAULT_HTML_APP_CDNS),
   recordingNarration: RecordingNarration.default({}),
   /** Speech to text in the composer: which Whisper model runs on this machine and in what language. */
   speech: SpeechSettings.default({}),
@@ -2804,6 +2816,8 @@ export type SessionBroadcast =
   | { type: "pr_merged"; sessionId: string; sessionTitle: string; pr: PrMergedNotice }
   /** An end-to-end verification run of the Session changed (created, a case started or ended, finished). */
   | { type: "e2e_changed"; sessionId: string; run: E2eRun }
+  /** A Workspace file the UI asked to watch (`fs/watch`) changed; the App pane reloads its Artifact. */
+  | { type: "fs_changed"; sessionId: string; path: string; exists: boolean }
   /** The Agent asked for a pane (`ui_open`); the page switches only when it shows this Session and the user is not typing. */
   | { type: "ui_hint"; hint: UiHint }
   /** The list of automations (one created, edited, deleted, or its next/last run moved). */
@@ -2834,6 +2848,35 @@ export type SessionBroadcast =
 // stream a video with Range requests: Daemon `GET /fs/raw?path=…`, proxied by the Control Plane
 // as `GET /api/sessions/:id/fs/raw?path=…[&download=1]`.
 export const FS_RAW_PATH = "/fs/raw";
+/**
+ * A self-contained HTML file of the Workspace, served to run as a sandboxed "Artifact" (ADR-0078):
+ * Daemon `GET /fs/app?path=…`, proxied as `GET /api/sessions/:id/fs/app?path=…`. Same file access as
+ * `/fs/raw`, but the response carries a `Content-Security-Policy` whose `sandbox` directive gives the
+ * document an opaque origin wherever it is opened, and files above `HTML_APP_MAX_BYTES` are refused
+ * (413). `/fs/raw` keeps serving `.html` as an attachment that never runs.
+ */
+export const FS_APP_PATH = "/fs/app";
+export const HTML_APP_MAX_BYTES = 16 * 1024 * 1024;
+/** Inline cards run an HTML Artifact on sight up to this size; bigger ones wait for Run. */
+export const HTML_APP_AUTORUN_BYTES = 2 * 1024 * 1024;
+/** The CSP an HTML Artifact runs under: opaque origin, no network but the CDN allowlist, nothing framed or submitted. */
+export function htmlAppCsp(cdns: readonly string[]): string {
+  const allow = cdns.length ? ` ${cdns.join(" ")}` : "";
+  return [
+    "sandbox allow-scripts allow-pointer-lock",
+    "default-src 'none'",
+    `script-src 'unsafe-inline' 'unsafe-eval'${allow}`,
+    `style-src 'unsafe-inline'${allow}`,
+    `img-src data: blob:${allow}`,
+    `font-src data:${allow}`,
+    "media-src data: blob:",
+    "connect-src 'none'",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join("; ");
+}
 /**
  * `PUT /fs/upload?name=<file name>` with the bytes as the body (and their `Content-Type`) stores a
  * prompt attachment under `UPLOADS_DIR` and answers with the `PromptAttachment`.
@@ -3025,7 +3068,7 @@ export const SessionInfo = z.object({
 export type SessionInfo = z.infer<typeof SessionInfo>;
 
 /** Panes of the Session page the Agent can ask to open (`ui_open`). */
-export const UiPane = z.enum(["chat", "desktop", "code", "terminal", "context", "prs", "e2e", "schedules"]);
+export const UiPane = z.enum(["chat", "desktop", "code", "terminal", "app", "context", "prs", "e2e", "schedules"]);
 export type UiPane = z.infer<typeof UiPane>;
 
 /** Daemon `POST /sessionboxer` body (the `sessionboxer` MCP): a tool name and its arguments. */
@@ -3314,6 +3357,18 @@ export type PtyReadParams = z.infer<typeof PtyReadParams>;
 export const FsManifestParams = z.object({ dir: z.string().default("") });
 export type FsManifestParams = z.infer<typeof FsManifestParams>;
 
+/**
+ * Daemon `fs/watch` params: a Workspace file the UI shows (an HTML Artifact in the App pane); the
+ * Daemon reports its changes as `fs/changed` notifications until it is restarted (at most
+ * `FS_WATCH_MAX` files, the least recently asked for dropped first).
+ */
+export const FsWatchParams = z.object({ path: z.string().min(1) });
+export type FsWatchParams = z.infer<typeof FsWatchParams>;
+export const FS_WATCH_MAX = 32;
+/** Daemon → Control Plane `fs/changed` notification: a watched Workspace file was written, replaced or removed. */
+export const FsChangedParams = z.object({ path: z.string(), exists: z.boolean() });
+export type FsChangedParams = z.infer<typeof FsChangedParams>;
+
 /** One file of a Workspace: regular files carry a content hash, symlinks their target. */
 export const SyncFile = z.object({
   path: z.string(),
@@ -3393,7 +3448,7 @@ export const SyncResult = z.object({
 export type SyncResult = z.infer<typeof SyncResult>;
 
 /** How the chat embeds a Workspace file the Agent mentions; `null` = shown as a plain link. */
-export type MediaKind = "video" | "audio" | "image" | "pdf" | "markdown" | "mermaid";
+export type MediaKind = "video" | "audio" | "image" | "pdf" | "markdown" | "mermaid" | "html";
 
 const MEDIA_TYPES: Record<string, [MediaKind, string]> = {
   mp4: ["video", "video/mp4"],
@@ -3415,6 +3470,8 @@ const MEDIA_TYPES: Record<string, [MediaKind, string]> = {
   markdown: ["markdown", "text/markdown; charset=utf-8"],
   mmd: ["mermaid", "text/plain; charset=utf-8"],
   mermaid: ["mermaid", "text/plain; charset=utf-8"],
+  html: ["html", "text/html; charset=utf-8"],
+  htm: ["html", "text/html; charset=utf-8"],
 };
 
 /** Regular expression source matching any embeddable file extension (no anchors, no dot). */
@@ -4566,6 +4623,8 @@ export const DAEMON_METHODS = {
   status: "_sessionboxer/status",
   event: "_sessionboxer/event",
   fsManifest: "_sessionboxer/fs/manifest",
+  fsWatch: "_sessionboxer/fs/watch",
+  fsChanged: "_sessionboxer/fs/changed",
   ptyList: "_sessionboxer/pty/list",
   ptyOpen: "_sessionboxer/pty/open",
   ptyAttach: "_sessionboxer/pty/attach",

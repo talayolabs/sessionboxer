@@ -59,7 +59,7 @@ export class SessionInfoFile {
       `You are the Agent of the Sessionboxer Session "${s.title}" (id \`${s.id}\`, ${env}${s.forkedFrom ? `, forked from "${s.forkedFrom.title}"` : ""}${
         s.createdBy ? `, created by the Agent of "${s.createdBy.title}"` : ""
       }). Sessionboxer runs one or more Sessions like this one, each in its own Sandbox with its own Agent; the user`,
-      "watches this one in a browser with Chat, Desktop, Terminal, Code, PRs, Verification and Context panes and may be looking",
+      "watches this one in a browser with Chat, Desktop, Terminal, Code, App, PRs, Verification and Context panes and may be looking",
       `at another Session right now. Your identity is in \`${this.path}\` (${SESSION_INFO_PATH} in the Workspace) and the`,
       "`sessionboxer` MCP is how you act on Sessionboxer itself: `whoami` (this Session live: status, usage, queue, open",
       "panes, terminals, PRs), `docs` (the user guide), `pr_attach`/`pr_list`/`pr_items`/`pr_mark_addressed`, `snapshot`,",

@@ -6,6 +6,7 @@ import {
   DaemonPiAuthChangedParams,
   DaemonOpenCodeAuthChangedParams,
   DaemonFxAuthChangedParams,
+  FsChangedParams,
   DaemonStatus,
   PtyExitParams,
   PtyOutputParams,
@@ -32,6 +33,8 @@ export interface DaemonClientHandlers {
   onOpenCodeAuthChanged: (authJson: string) => void;
   /** fx rewrote one of its login files (refreshed tokens); the whole file. */
   onFxAuthChanged: (authJson: string) => void;
+  /** A Workspace file the Control Plane asked to watch (`fs/watch`) changed. */
+  onFsChanged: (change: FsChangedParams) => void;
   onConnected: (status: DaemonStatus) => void;
   onDisconnected: () => void;
   /** A request from the Daemon (the Agent's `e2e_*` tools); the result or thrown error is answered back. */
@@ -151,6 +154,8 @@ export class DaemonClient {
         this.handlers.onOpenCodeAuthChanged(DaemonOpenCodeAuthChangedParams.parse(msg.params).authJson);
       } else if (msg.method === DAEMON_METHODS.fxAuthChanged) {
         this.handlers.onFxAuthChanged(DaemonFxAuthChangedParams.parse(msg.params).authJson);
+      } else if (msg.method === DAEMON_METHODS.fsChanged) {
+        this.handlers.onFsChanged(FsChangedParams.parse(msg.params));
       }
     }
   }

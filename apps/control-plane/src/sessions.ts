@@ -51,6 +51,7 @@ import {
   DaemonSessionForkResult,
   DaemonSessionSwitchResult,
   CodeOpenParams,
+  type FsWatchParams,
   type CodeStartParams,
   type CodeThemeParams,
   CodeServerStatus,
@@ -982,6 +983,11 @@ export class SessionManager {
   }
 
   /** Shows a Workspace file in the Session's VS Code (starting it if needed). */
+  /** Has the Daemon report changes of a Workspace file (`fs_changed` broadcasts), for the App pane. */
+  async fsWatch(id: string, params: FsWatchParams): Promise<void> {
+    await this.daemonCall(id, DAEMON_METHODS.fsWatch, params);
+  }
+
   async codeOpen(id: string, params: CodeOpenParams): Promise<void> {
     await this.daemonCall(id, DAEMON_METHODS.codeOpen, params, CODE_START_TIMEOUT_MS);
   }
@@ -2836,6 +2842,7 @@ export class SessionManager {
       onPiAuthChanged: (authJson) => this.piAuthRefreshed(id, authJson),
       onOpenCodeAuthChanged: (authJson) => this.opencodeAuthRefreshed(id, authJson),
       onFxAuthChanged: (authJson) => this.fxAuthRefreshed(id, authJson),
+      onFsChanged: (change) => this.broadcast({ type: "fs_changed", sessionId: id, ...change }),
       onDisconnected: () => {
         this.log(`daemon ${id} disconnected`);
         this.detachAllTerminals(id, "Sandbox Daemon disconnected");

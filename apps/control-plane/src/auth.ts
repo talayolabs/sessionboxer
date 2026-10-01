@@ -172,12 +172,26 @@ export class Auth {
   }
 
   /**
+   * Requests an opaque-origin document (`Origin: null`) may make: the Workspace file routes, for an
+   * HTML Artifact (ADR-0078) loading itself or a Range of a media file. Its `fetch()` to anything
+   * else on the API is refused before authentication, whatever cookie the browser attaches.
+   */
+  static allowsNullOrigin(method: string, path: string): boolean {
+    return (method === "GET" || method === "HEAD") && /^\/sessions\/[^/]+\/fs\/(raw|app)$/.test(path);
+  }
+
+  /**
    * A cross-site page cannot make the browser use the cookie (`SameSite=Lax` keeps it from
    * fetches and WebSockets it opens), but the check costs nothing and covers older browsers.
+   * A sandboxed document (an HTML Artifact) sends `Origin: null` and gets only the file routes.
    */
   private rejectCrossOrigin(c: Context): void {
     const origin = c.req.header("origin");
-    if (!origin || origin === "null") return;
+    if (!origin) return;
+    if (origin === "null") {
+      if (Auth.allowsNullOrigin(c.req.method, c.req.path.replace(/^\/api/, ""))) return;
+      throw new HttpError(403, "Requests from an opaque origin are not allowed.");
+    }
     const host = (this.forwarded(c) && c.req.header("x-forwarded-host")?.split(",")[0]?.trim()) || c.req.header("host") || "";
     let originHost: string;
     try {

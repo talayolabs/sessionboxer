@@ -45,6 +45,7 @@ import {
   SessionInfo,
   DaemonReposSetParams,
   FsManifestParams,
+  FsWatchParams,
   DaemonSessionForkParams,
   type DaemonSessionForkResult,
   DaemonSessionSwitchParams,
@@ -86,6 +87,7 @@ import { BbCredentials } from "./bb-credentials.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
 import { DevinMcpConfig, PiMcpConfig, type BuiltinMcp } from "./mcp-config.js";
+import { FsWatches } from "./fs-watch.js";
 import { serveRawFile } from "./raw-files.js";
 import { Repos } from "./repos.js";
 import { SessionInfoFile } from "./session-info.js";
@@ -680,6 +682,8 @@ const workspaceFs = new WorkspaceFs(
   guest ? (rel, abs) => guest.getFile(guest.guestPath(rel), abs).catch((e: unknown) => log(`could not copy ${rel} from the VM: ${String(e)}`)) : undefined,
 );
 
+const fsWatches = new FsWatches(workspace, (change) => notify(DAEMON_METHODS.fsChanged, change), log);
+
 const terminals = new Terminals(
   workspace,
   {
@@ -837,6 +841,9 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       if (guest) await guest.pullDir(guest.guestPath(dir), workspaceDir(workspace, dir));
       return workspaceManifest(workspaceDir(workspace, dir));
     }
+    case DAEMON_METHODS.fsWatch:
+      await fsWatches.watch(FsWatchParams.parse(params).path);
+      return {};
     case DAEMON_METHODS.reposSet:
       await repos.set(DaemonReposSetParams.parse(params));
       return { ok: true };
@@ -978,6 +985,7 @@ const shutdown = (): void => {
   // fx's login files are regular files in its volume (ADR-0077); the Control Plane puts them back on the next connection.
   if (fxAuth) for (const f of Object.values(fxAuth)) f.set("");
   terminals.closeAll();
+  fsWatches.close();
   codeServer.stop();
   wss.close();
   http.close();

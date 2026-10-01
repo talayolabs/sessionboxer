@@ -46,8 +46,11 @@ import {
   UpdateScheduleRequest,
   RevertRequest,
   SwitchBranchRequest,
+  FS_APP_PATH,
   FS_RAW_PATH,
   FS_UPLOAD_PATH,
+  FsWatchParams,
+  htmlAppCsp,
   PromptAttachment,
   SyncRequest,
   PromptRequest,
@@ -887,6 +890,33 @@ api.on(["GET", "HEAD"], "/sessions/:id/fs/raw", async (c) => {
     if (v) passed.set(name, v);
   }
   return new Response(upstream.body, { status: upstream.status, headers: passed });
+});
+
+// A self-contained HTML file of the Workspace, run as a sandboxed Artifact (ADR-0078): same Daemon
+// access as /fs/raw, but the response carries the Artifact CSP (its `sandbox` directive makes the
+// document's origin opaque wherever it is opened, and its sources are the configured CDN allowlist)
+// and the Daemon refuses files over 16 MiB. Not a download: `.html` on /fs/raw is an attachment.
+api.on(["GET", "HEAD"], "/sessions/:id/fs/app", async (c) => {
+  const base = await sessions.daemonHttpUrl(c.req.param("id"));
+  const target = new URL(FS_APP_PATH, base);
+  target.searchParams.set("path", c.req.query("path") ?? "");
+  const upstream = await fetch(target, { method: c.req.method });
+  const passed = new Headers();
+  for (const name of ["content-type", "content-length", "last-modified", "cache-control"]) {
+    const v = upstream.headers.get(name);
+    if (v) passed.set(name, v);
+  }
+  if (upstream.ok) {
+    passed.set("content-security-policy", htmlAppCsp(settings.htmlAppCdns));
+    passed.set("x-content-type-options", "nosniff");
+    passed.set("referrer-policy", "no-referrer");
+  }
+  return new Response(upstream.body, { status: upstream.status, headers: passed });
+});
+// The App pane asks to be told when its Artifact changes; the Daemon answers with `fs_changed` broadcasts.
+api.post("/sessions/:id/fs/watch", async (c) => {
+  await sessions.fsWatch(c.req.param("id"), FsWatchParams.parse(await c.req.json()));
+  return c.json({ ok: true });
 });
 
 // A file for the next prompt: bytes in the body, stored by the Daemon under the Workspace's

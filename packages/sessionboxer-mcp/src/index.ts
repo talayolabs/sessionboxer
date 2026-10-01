@@ -247,7 +247,7 @@ registerTool(
     description:
       "Ask the user's browser to show a pane of this Session (only when they are on this Session and not typing). With pane terminal and a command, a new Terminal opens and runs the command visibly, so the user can watch it.",
     inputSchema: {
-      pane: z.enum(["chat", "desktop", "code", "terminal", "context", "prs", "e2e", "schedules"]),
+      pane: z.enum(["chat", "desktop", "code", "terminal", "app", "context", "prs", "e2e", "schedules"]),
       terminal: z.object({ command: z.string().min(1).max(4000) }).optional().describe("With pane terminal: the command the new Terminal runs"),
     },
   },

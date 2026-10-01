@@ -106,3 +106,60 @@ test("resolved attachment URLs pass HEAD and GET through the real workspace file
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("an .html file is an app attachment, not a text preview, and the Daemon serves it inert on fs/raw and sandboxed on fs/app", async () => {
+  const { previewKind } = await vite.ssrLoadModule("/src/AttachmentPreview.tsx");
+  const { appFileUrl } = await vite.ssrLoadModule("/src/attachment-paths.ts");
+  const [attachment] = findAttachments("See /workspace/out/game.html and `out/notes.htm`.");
+  assert.deepEqual(findAttachments("See /workspace/out/game.html and `out/notes.htm`.").map((a) => [a.path, a.kind]), [["out/game.html", "html"], ["out/notes.htm", "html"]]);
+  assert.equal(previewKind("game.html", "text/html"), "html");
+  assert.equal(previewKind("game.htm", ""), "html");
+  assert.equal(previewKind("notes.txt", "text/plain"), "text");
+  assert.equal(appFileUrl("s1", attachment.path, 7), "/api/sessions/s1/fs/app?path=out%2Fgame.html&v=7");
+
+  const root = await mkdtemp(join(tmpdir(), "sessionboxer-attachments-"));
+  await mkdir(join(root, "out"), { recursive: true });
+  const page = "<!doctype html><title>Game</title><canvas></canvas><script>1</script>";
+  await writeFile(join(root, "out/game.html"), page);
+  await writeFile(join(root, "out/big.html"), Buffer.alloc(16 * 1024 * 1024 + 1, 0x20));
+  await writeFile(join(root, "out/pic.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+  const server = createHttpServer((req, res) => void serveRawFile(new WorkspaceFs(root), req, res));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const raw = await fetch(`${base}/fs/raw?path=out%2Fgame.html`);
+    assert.equal(raw.status, 200);
+    assert.equal(raw.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.match(raw.headers.get("content-disposition"), /^attachment;/);
+    assert.equal(raw.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(raw.headers.get("content-security-policy"), null);
+    assert.equal(await raw.text(), page);
+
+    const app = await fetch(`${base}/fs/app?path=out%2Fgame.html`);
+    assert.equal(app.status, 200);
+    assert.equal(app.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.equal(app.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(app.headers.get("content-disposition"), null);
+    const csp = app.headers.get("content-security-policy");
+    assert.match(csp, /^sandbox allow-scripts allow-pointer-lock; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:\/\/cdnjs\.cloudflare\.com /);
+    assert.match(csp, /connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'$/);
+    assert.equal(await app.text(), page);
+
+    const head = await fetch(`${base}/fs/app?path=out%2Fgame.html`, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("content-length"), String(Buffer.byteLength(page)));
+
+    assert.equal((await fetch(`${base}/fs/app?path=out%2Fbig.html`, { method: "HEAD" })).status, 413);
+    assert.equal((await fetch(`${base}/fs/app?path=out%2Fpic.svg`)).status, 415);
+    assert.equal((await fetch(`${base}/fs/app?path=out%2Fmissing.html`)).status, 404);
+    const svg = await fetch(`${base}/fs/raw?path=out%2Fpic.svg`);
+    assert.equal(svg.headers.get("content-type"), "image/svg+xml");
+    assert.match(svg.headers.get("content-disposition"), /^inline;/);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+    await once(server, "close");
+    await rm(root, { recursive: true, force: true });
+  }
+});

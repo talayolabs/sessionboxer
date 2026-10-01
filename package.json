@@ -14,6 +14,7 @@
     "test:telemetry": "tsc -b && node --test scripts/telemetry.test.mjs",
     "test:audit": "python3 -m unittest discover -s scripts -p 'test_audit_tools.py'",
     "test:attachments": "tsc -b && node --test scripts/attachment-paths.test.mjs",
+    "test:auth": "tsc -b && node --test scripts/auth-origin.test.mjs",
     "test:desktop-tools": "tsc -b && node --test scripts/desktop-tool-descriptions.test.mjs",
     "audit:tools": "python3 scripts/audit_tools.py",
     "clean": "tsc -b --clean",

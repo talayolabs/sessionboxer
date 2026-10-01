@@ -22,6 +22,7 @@ jobs:
       - run: npm run test:telemetry
       - run: npm run test:audit
       - run: npm run test:attachments
+      - run: npm run test:auth
       - run: npm run test:desktop-tools
       - run: npm run build
       - run: npm run pack

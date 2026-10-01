@@ -8,21 +8,29 @@
  */
 import type { McpUiCsp } from "@sessionboxer/protocol";
 
-/** The spec's CSP construction (apps.mdx, "Content Security Policy"), with the domains a view may use. */
+/**
+ * The spec's CSP construction (apps.mdx, "Content Security Policy") with the domains a view may use,
+ * minus `'self'`: in an `about:srcdoc` document Chrome resolves `'self'` to the origin of the
+ * nearest non-srcdoc ancestor — Sessionboxer's — so it would let the view reach the Control Plane.
+ * A view with no domains gets no network at all (`connect-src 'none'`).
+ */
 export function viewCsp(csp: Partial<McpUiCsp> | null): string {
-  const list = (d: string[] | undefined) => (d && d.length > 0 ? ` ${d.join(" ")}` : "");
-  const resources = list(csp?.resourceDomains);
+  const list = (d: string[] | undefined, always = "") => {
+    const parts = [...(always ? [always] : []), ...(d ?? [])];
+    return parts.length > 0 ? parts.join(" ") : "'none'";
+  };
+  const resources = csp?.resourceDomains;
   return [
     "default-src 'none'",
-    `script-src 'self' 'unsafe-inline'${resources}`,
-    `style-src 'self' 'unsafe-inline'${resources}`,
-    `connect-src 'self'${list(csp?.connectDomains)}`,
-    `img-src 'self' data:${resources}`,
-    `font-src 'self'${resources}`,
-    `media-src 'self' data:${resources}`,
-    `frame-src${csp?.frameDomains && csp.frameDomains.length > 0 ? ` ${csp.frameDomains.join(" ")}` : " 'none'"}`,
+    `script-src ${list(resources, "'unsafe-inline'")}`,
+    `style-src ${list(resources, "'unsafe-inline'")}`,
+    `connect-src ${list(csp?.connectDomains)}`,
+    `img-src ${list(resources, "data:")}`,
+    `font-src ${list(resources)}`,
+    `media-src ${list(resources, "data:")}`,
+    `frame-src ${list(csp?.frameDomains)}`,
     "object-src 'none'",
-    `base-uri${csp?.baseUriDomains && csp.baseUriDomains.length > 0 ? ` ${csp.baseUriDomains.join(" ")}` : " 'self'"}`,
+    `base-uri ${list(csp?.baseUriDomains, "'self'")}`,
   ].join("; ");
 }
 

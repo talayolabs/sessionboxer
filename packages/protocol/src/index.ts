@@ -2740,7 +2740,7 @@ export interface ToolExecutionTelemetry {
   errorCode: string | null;
   errorSource: "heuristic" | "structured" | "acp_status" | null;
   /** The MCP server and tool behind the call when the tee saw the exact exchange (ADR-0079). */
-  mcp?: { server: string; tool: string; exact: true };
+  mcp?: { server: string; tool: string; exact: true; contentBlocks: number; structuredContentKeys: string[] };
 }
 
 export type SessionEventBody =

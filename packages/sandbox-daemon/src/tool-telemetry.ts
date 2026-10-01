@@ -2,7 +2,9 @@ import type { SessionUpdate, ToolExecutionTelemetry } from "@sessionboxer/protoc
 import { classifyToolError } from "@sessionboxer/protocol/node-telemetry";
 import { executionEvidence, mergeExecutionMeta } from "./execution-evidence.js";
 
-type Call = { start: number | null; startedAt: string | null; name: string | null; input: unknown; meta: Record<string, unknown>; structuredOutput: Record<string, unknown>; locations: Array<{ path: string }>; output: unknown; content: unknown; done: boolean; mcp: { server: string; tool: string; isError: boolean } | null };
+/** What the tee saw of an MCP tool's result (ADR-0079): the server's own `isError`, and the shape of what ACP drops. */
+export type McpExact = { server: string; tool: string; isError: boolean; contentBlocks: number; structuredContentKeys: string[] };
+type Call = { start: number | null; startedAt: string | null; name: string | null; input: unknown; meta: Record<string, unknown>; structuredOutput: Record<string, unknown>; locations: Array<{ path: string }>; output: unknown; content: unknown; done: boolean; mcp: McpExact | null };
 
 function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -25,7 +27,7 @@ export class ToolTelemetry {
   }
 
   /** The exact MCP result behind an ACP tool call, as the tee saw it (ADR-0079); only counts when it arrives before the call completes. */
-  attachExact(toolCallId: string, info: { server: string; tool: string; isError: boolean }): void {
+  attachExact(toolCallId: string, info: McpExact): void {
     let call = this.calls.get(toolCallId);
     if (!call) {
       if (this.calls.size >= 10_000) return;
@@ -78,7 +80,7 @@ export class ToolTelemetry {
       resultIsError,
       errorCode: processError ?? (failed ? execution.processOutcome === "succeeded" ? "tool_error" : classifyToolError(JSON.stringify(call.output ?? call.content ?? "")) : null),
       errorSource: processError ? "structured" : failed ? execution.processOutcome === "succeeded" ? "acp_status" : "heuristic" : null,
-      ...(call.mcp ? { mcp: { server: call.mcp.server, tool: call.mcp.tool, exact: true as const } } : {}),
+      ...(call.mcp ? { mcp: { server: call.mcp.server, tool: call.mcp.tool, exact: true as const, contentBlocks: call.mcp.contentBlocks, structuredContentKeys: call.mcp.structuredContentKeys } } : {}),
     };
     call.output = null;
     call.content = null;

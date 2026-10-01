@@ -111,7 +111,7 @@ class ServerMirror {
 export interface McpTeeHubEvents {
   emit(body: DaemonEvent["body"]): void;
   /** The exact MCP result of an ACP tool call became known (for `tool-telemetry.ts`). */
-  exact(toolCallId: string, info: { server: string; tool: string; isError: boolean }): void;
+  exact(toolCallId: string, info: { server: string; tool: string; isError: boolean; contentBlocks: number; structuredContentKeys: string[] }): void;
   log(msg: string): void;
 }
 
@@ -329,7 +329,13 @@ export class McpTeeHub {
 
   private exactKnown(rec: CallRecord) {
     if (!rec.toolCallId || !rec.result) return;
-    this.events.exact(rec.toolCallId, { server: rec.server, tool: rec.tool, isError: rec.result.isError === true });
+    this.events.exact(rec.toolCallId, {
+      server: rec.server,
+      tool: rec.tool,
+      isError: rec.result.isError === true,
+      contentBlocks: rec.result.content.length,
+      structuredContentKeys: Object.keys(rec.result.structuredContent ?? {}).sort(),
+    });
     const waiters = this.resultWaiters.get(rec.toolCallId);
     if (waiters) {
       this.resultWaiters.delete(rec.toolCallId);

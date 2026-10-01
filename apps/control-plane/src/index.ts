@@ -885,7 +885,7 @@ api.on(["GET", "HEAD"], "/sessions/:id/fs/raw", async (c) => {
   if (range) headers.range = range;
   const upstream = await fetch(target, { method: c.req.method, headers });
   const passed = new Headers();
-  for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition", "last-modified", "cache-control"]) {
+  for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition", "last-modified", "cache-control", "x-content-type-options"]) {
     const v = upstream.headers.get(name);
     if (v) passed.set(name, v);
   }

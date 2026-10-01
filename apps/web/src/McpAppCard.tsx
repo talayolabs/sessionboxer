@@ -40,21 +40,27 @@ function covered(asked: McpUiCsp, approved: McpUiCsp | null): boolean {
 }
 
 /** Our theme in the spec's `--color-*` / `--font-*` variables; the view styles itself with them. */
+/** A view that speaks the MCP Apps protocol (`text/html;profile=mcp-app`), as opposed to plain HTML an MCP-UI result embeds. */
+const isMcpApp = (r: { mimeType: string }) => /profile=mcp-app/i.test(r.mimeType);
+
 function styleVariables(theme: Theme): Record<string, string> {
   const c = theme.colors;
   const root = getComputedStyle(document.documentElement);
   const sans = getComputedStyle(document.body).fontFamily || "system-ui, sans-serif";
   const mono = root.getPropertyValue("--font-mono").trim() || "ui-monospace, monospace";
+  // `*-background-{info,danger,…}` are pale tints the view puts `*-text-{info,…}` on (the reference
+  // host uses #eff6ff/#1e3a5f for info), never the full status colour.
+  const tint = (color: string) => `color-mix(in srgb, ${color} 15%, ${c.bg})`;
   return {
     "--color-background-primary": c.bg,
     "--color-background-secondary": c.panel,
     "--color-background-tertiary": c.sunken,
     "--color-background-inverse": c.text,
     "--color-background-ghost": c.hover,
-    "--color-background-info": c.accent,
-    "--color-background-danger": c.error,
-    "--color-background-success": c.ok,
-    "--color-background-warning": c.warn,
+    "--color-background-info": tint(c.accent),
+    "--color-background-danger": tint(c.error),
+    "--color-background-success": tint(c.ok),
+    "--color-background-warning": tint(c.warn),
     "--color-background-disabled": c.sunken,
     "--color-text-primary": c.text,
     "--color-text-secondary": c.muted,
@@ -391,7 +397,7 @@ export function McpAppCard({ sessionId, item, draft }: { sessionId: string; item
                       ? "error result"
                       : needsApproval
                         ? "restricted"
-                        : initialized
+                        : initialized || !isMcpApp(resource)
                           ? ""
                           : "starting…"}
         </span>

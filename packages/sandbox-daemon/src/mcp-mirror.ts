@@ -115,6 +115,19 @@ export interface McpTeeHubEvents {
   log(msg: string): void;
 }
 
+/**
+ * Agents that put MCP tools into a model's function namespace sanitise the names (pi and OpenCode
+ * turn `get-time` into `mcp__basic__get_time`), so names compare with every non-word character as `_`.
+ */
+const canonicalToolName = (name: string) => name.replace(/[^A-Za-z0-9]/g, "_");
+const sameToolName = (a: string, b: string) => a === b || canonicalToolName(a) === canonicalToolName(b);
+/** `h` is `<prefix><sep><tool>` with the separators Agents use (`__`, `/`, `.`). */
+const hintEndsWith = (h: string, tool: string) => {
+  const ch = canonicalToolName(h);
+  const ct = canonicalToolName(tool);
+  return [`__${ct}`, `_${ct}`].some((suffix) => ch.endsWith(suffix) && ch.length > suffix.length);
+};
+
 export class McpTeeHub {
   private readonly wss = new WebSocketServer({ noServer: true });
   private readonly servers = new Map<string, ServerMirror>();
@@ -294,7 +307,10 @@ export class McpTeeHub {
         rec.completedAt = at;
         this.recordExecution(m, rec);
         this.matchRecord(m, rec);
-        if (rec.toolCallId) this.exactKnown(rec);
+        if (rec.toolCallId) {
+          this.maybeEmitApp(m, rec);
+          this.exactKnown(rec);
+        }
         break;
       }
       case "resources/read": {
@@ -410,8 +426,8 @@ export class McpTeeHub {
     if (Math.abs(rec.requestedAt - a.at) > MATCH_WINDOW_MS) return false;
     if (a.server && a.server !== rec.server) return false;
     if (a.tool) {
-      if (a.tool !== rec.tool) return false;
-    } else if (!a.hints.some((h) => h === rec.tool || h.endsWith(`__${rec.tool}`) || h.endsWith(`/${rec.tool}`) || h.endsWith(`.${rec.tool}`) || h === `${rec.server}__${rec.tool}`)) {
+      if (!sameToolName(a.tool, rec.tool)) return false;
+    } else if (!a.hints.some((h) => sameToolName(h, rec.tool) || hintEndsWith(h, rec.tool) || sameToolName(h, `${rec.server}__${rec.tool}`))) {
       // A tool call whose name we cannot read: only its arguments can tell.
       if (a.rawInput === undefined) return false;
     }
@@ -458,11 +474,31 @@ export class McpTeeHub {
     }
     const tool = m.tools.find((t) => t.name === rec.tool);
     const ui = tool ? McpToolUiMeta.safeParse(object(object(tool._meta).ui)).data : undefined;
-    if (!ui?.resourceUri) return;
+    const resourceUri = ui?.resourceUri ?? this.embeddedView(m, rec);
+    if (!resourceUri) return;
     rec.appEmitted = true;
-    const call: McpAppCall = { toolCallId: rec.toolCallId, server: m.name, tool: rec.tool, resourceUri: ui.resourceUri, arguments: rec.arguments };
+    const call: McpAppCall = { toolCallId: rec.toolCallId, server: m.name, tool: rec.tool, resourceUri, arguments: rec.arguments };
     this.events.emit({ type: "mcp_app_call", call });
-    void this.resource(m.name, ui.resourceUri).catch((e: unknown) => this.events.log(`mcp-apps: ${m.name} ${ui.resourceUri}: ${e instanceof Error ? e.message : String(e)}`));
+    void this.resource(m.name, resourceUri).catch((e: unknown) => this.events.log(`mcp-apps: ${m.name} ${resourceUri}: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
+  /**
+   * MCP-UI's convention (`@mcp-ui/server`): the view comes *inside the result* as an embedded
+   * `ui://` resource of `text/html`, not as `_meta.ui.resourceUri` on the tool. The HTML is cached as if
+   * the server had served it and rendered through the same sandbox; `text/uri-list` and remote-dom
+   * blocks are left to the Agent's plain rendering (a link, text).
+   */
+  private embeddedView(m: ServerMirror, rec: CallRecord): string | undefined {
+    for (const block of rec.result?.content ?? []) {
+      const b = object(block);
+      if (b.type !== "resource") continue;
+      const res = object(b.resource);
+      const uri = str(res.uri);
+      const mime = (str(res.mimeType) ?? "").split(";")[0]?.trim().toLowerCase();
+      if (!uri?.startsWith("ui://") || mime !== "text/html") continue;
+      if (m.resources.has(uri) || this.cacheResource(m, uri, { contents: [res] })) return uri;
+    }
+    return undefined;
   }
 
   // --- Daemon-originated requests ----------------------------------------------------------------

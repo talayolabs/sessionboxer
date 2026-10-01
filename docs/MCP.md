@@ -24,6 +24,22 @@ How it works (ADR-0079): every user MCP server you switch on runs behind a **tra
 
 The view runs in the spec's **sandbox proxy**: an opaque-origin `srcdoc` iframe, never the Sessionboxer origin, with a Content Security Policy built from the resource's `_meta.ui.csp`. With no domains declared the view has **no network** (`connect-src 'none'`; `'self'` is never granted, it would be Sessionboxer's origin) and no frames; a view that declares `connectDomains` / `resourceDomains` / `frameDomains` runs restricted until you press **Allow for <server>** on the card, which stores the domains with the server's registry entry (`appDomains`) once for all Sessions. What a view asks the host for is staged in the card: a message it wants to send (`ui/message`) gets a button that puts the text in the composer, a link it wants to open (`ui/open-link`) a button that opens it in a new tab, and the context it wants the model to have (`ui/update-model-context`) is shown behind **model context**. A view can call its own server's tools and read its resources (through the tee, on the Agent's connection, never another server's); tools the server marks `visibility: ["app"]` are callable from the view only.
 
+### Compatibility
+
+Verified in a Linux Sandbox against the official [ext-apps](https://github.com/modelcontextprotocol/ext-apps) examples (`npx -y @modelcontextprotocol/server-<name> --stdio`, SDK `@modelcontextprotocol/ext-apps` 2.0.3) and the two other conventions seen in the wild:
+
+| Server / convention | Status | Notes |
+| --- | --- | --- |
+| `server-basic-vanillajs` (stdio) | works, after a fix | `ui/initialize` (`hostContext`, theme variables), `tool-input`/`tool-result`, view-initiated `tools/call`, `ui/message`, `notifications/message` (log), `ui/open-link`, `size-changed`. Fixed: the Daemon now matches the Agent's sanitised tool names (pi and OpenCode expose `get-time` as `mcp__basic__get_time`), so a view is found for every call; the `--color-background-{info,danger,…}` variables are pale tints, as the reference host's. |
+| `server-map` (CesiumJS, OpenStreetMap) | works, after a fix | The approval card lists `*.openstreetmap.org`, `cesium.com`, `*.cesium.com`; **Allow** is stored on the server's registry entry and holds across Sessions. Tiles and the globe needed the view CSP to allow `blob:` (`worker-src`, scripts, styles, images, fonts) and `'unsafe-eval'` in `script-src`, as the reference host does — Cesium spawns its workers from blob URLs and its Knockout bindings use `eval`. Still no `'self'`, no `allow-same-origin`, `connect-src` only the approved domains. Cesium's `localStorage` view state does not persist (opaque origin; harmless). |
+| `server-basic-vanillajs` over Streamable HTTP | works | Register the server with the HTTP transport; the tee connects with `StreamableHTTPClientTransport` and the view is identical. `localhost` in the URL means the **host machine** (rewritten to `host.docker.internal`), not the Sandbox. |
+| `server-system-monitor` | works | Periodic view-initiated `poll-system-stats` (an app-only tool, `visibility: ["app"]`) every 2 s through the tee, `ui/request-display-mode` fullscreen and back. |
+| MCP-UI (`@mcp-ui/server`) `text/html` embedded resource | works | A `ui://` resource of `text/html` *inside the tool result* is rendered through the same sandbox (no domains: no network), with the card's status line left blank since the page does not speak the MCP Apps protocol. MCP-UI's own `postMessage` actions (`tool`, `prompt`, `link`…) are not handled. |
+| MCP-UI `text/uri-list` / `application/vnd.mcp-ui.remote-dom` | gap, falls back | Shown as the Agent renders the result: the URL as a link, the remote-dom script as text. Not iframed, not executed. |
+| OpenAI Apps SDK (`_meta["openai/outputTemplate"]`, `text/html+skybridge`) | gap, falls back | Not MCP Apps: the tool's text/`structuredContent` result shows as the usual preformatted output; the widget is not loaded (it expects `window.openai`). |
+
+Not verified: `pip` display mode (the card offers `inline` and `fullscreen`), `ui/notifications/host-context-changed` from a mid-view theme switch, view-initiated `resources/read` beyond Plotable's, non-Chromium browsers, Windows/macOS Sessions (no tee there).
+
 `GET /api/sessions/:id/mcp-apps/resource?server=&uri=`, `GET /api/sessions/:id/mcp-apps/tool-results/:toolCallId`, `POST /api/sessions/:id/mcp-apps/call-tool`, `POST /api/sessions/:id/mcp-apps/read-resource` and `POST /api/mcp-apps/approve` are the API behind the card.
 
 ## The `desktop` server

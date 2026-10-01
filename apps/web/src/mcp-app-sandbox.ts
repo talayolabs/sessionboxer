@@ -12,7 +12,11 @@ import type { McpUiCsp } from "@sessionboxer/protocol";
  * The spec's CSP construction (apps.mdx, "Content Security Policy") with the domains a view may use,
  * minus `'self'`: in an `about:srcdoc` document Chrome resolves `'self'` to the origin of the
  * nearest non-srcdoc ancestor — Sessionboxer's — so it would let the view reach the Control Plane.
- * A view with no domains gets no network at all (`connect-src 'none'`).
+ * A view with no domains gets no network at all (`connect-src 'none'`). `blob:` (and `worker-src
+ * blob:`) is allowed as the reference host does: a blob URL is minted by the view's own script from
+ * bytes it already has, so it reaches nothing new, and WebGL libraries (CesiumJS, three.js) spawn
+ * their workers from one. `'unsafe-eval'` likewise (CesiumJS's Knockout bindings need it): a view
+ * already runs any inline script, so eval reaches nothing it could not reach without it.
  */
 export function viewCsp(csp: Partial<McpUiCsp> | null): string {
   const list = (d: string[] | undefined, always = "") => {
@@ -22,12 +26,13 @@ export function viewCsp(csp: Partial<McpUiCsp> | null): string {
   const resources = csp?.resourceDomains;
   return [
     "default-src 'none'",
-    `script-src ${list(resources, "'unsafe-inline'")}`,
-    `style-src ${list(resources, "'unsafe-inline'")}`,
+    `script-src ${list(resources, "'unsafe-inline' 'unsafe-eval' blob:")}`,
+    `style-src ${list(resources, "'unsafe-inline' blob:")}`,
     `connect-src ${list(csp?.connectDomains)}`,
-    `img-src ${list(resources, "data:")}`,
-    `font-src ${list(resources)}`,
-    `media-src ${list(resources, "data:")}`,
+    `img-src ${list(resources, "data: blob:")}`,
+    `font-src ${list(resources, "data: blob:")}`,
+    `media-src ${list(resources, "data: blob:")}`,
+    `worker-src ${list(resources, "blob:")}`,
     `frame-src ${list(csp?.frameDomains)}`,
     "object-src 'none'",
     `base-uri ${list(csp?.baseUriDomains, "'self'")}`,

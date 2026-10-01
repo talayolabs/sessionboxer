@@ -1187,13 +1187,14 @@ export class SessionManager {
    * a session of its own (the Daemon ignores the origin's on the first boot), or, with
    * `"handoff"`, that plus a handoff document the origin's Agent writes first (a hidden
    * turn in the origin) and the fork's Agent gets as its first message. The fork's Agent
-   * may be another Provider with `new` or `handoff`. The origin Session, its Sandbox and
-   * its saved messages are untouched.
+   * may be another Provider with `new` or `handoff`. Without a `snapshotId` the fork point is
+   * now: a manual Snapshot is taken once the request is known to be acceptable. The origin
+   * Session, its Sandbox and its saved messages are untouched.
    */
   async fork(fromId: string, req: ForkSessionRequest, createdBy?: string): Promise<Session> {
     const origin = this.get(fromId);
-    const snapshot = this.db.getSnapshot(fromId, req.snapshotId);
-    if (!snapshot) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
+    const existing = req.snapshotId !== undefined ? this.db.getSnapshot(fromId, req.snapshotId) : undefined;
+    if (req.snapshotId !== undefined && !existing) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
     const settings = this.settings();
     const provider = req.provider ?? origin.provider;
     const sameAgent = provider === origin.provider;
@@ -1209,8 +1210,8 @@ export class SessionManager {
     if (hiddenHandoff) this.assertCanWriteHandoff(origin);
     if (createdBy) this.assertChildAllowed(createdBy);
     this.assertSnapshottable(origin.settings.sandbox.environment);
-    if (!(await this.docker.imageExists(snapshot.imageId))) {
-      throw new HttpError(409, `The image of snapshot ${snapshot.ordinal} is gone from Docker; delete the snapshot.`);
+    if (existing && !(await this.docker.imageExists(existing.imageId))) {
+      throw new HttpError(409, `The image of snapshot ${existing.ordinal} is gone from Docker; delete the snapshot.`);
     }
     const base = origin.settings;
     const input = req.settings;
@@ -1219,6 +1220,7 @@ export class SessionManager {
     if (base.sandbox.dockerMode !== "none" && wantsDocker && dockerMode !== base.sandbox.dockerMode) {
       throw new HttpError(409, `The origin ran with ${base.sandbox.dockerMode} Docker, which this host no longer offers.`);
     }
+    const snapshot = existing ?? (await this.snapshot(fromId, "manual"));
 
     const id = randomBytes(6).toString("hex");
     const now = new Date().toISOString();

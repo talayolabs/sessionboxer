@@ -47,7 +47,7 @@ export function SessionSettingsDialog({
   options: AgentOption[];
   busy: boolean;
   onPatch: (patch: SessionSettingsPatch) => void;
-  /** Opens the Fork dialog (the way to change creation-only values); `null` when there is no snapshot yet. */
+  /** Opens the Fork dialog (the way to change creation-only values); `null` when the Sandbox is not running and there is no snapshot yet. */
   onFork: (() => void) | null;
   onClose: () => void;
 }) {

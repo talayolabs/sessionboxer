@@ -1675,7 +1675,8 @@ export type ForkConversation = z.infer<typeof ForkConversation>;
 export const HANDOFF_DOCUMENT_MAX_CHARS = 200_000;
 
 export const ForkSessionRequest = z.object({
-  snapshotId: z.string(),
+  /** The fork point; omitted, the Control Plane takes a manual Snapshot of the running Sandbox now and forks from it. */
+  snapshotId: z.string().optional(),
   conversation: ForkConversation.default("continue"),
   /** The fork's Agent; the origin's when omitted. Another one needs `new` or `handoff` (an Agent's memory cannot be loaded into another). */
   provider: Provider.optional(),

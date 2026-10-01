@@ -77,7 +77,7 @@ import { CopyCommand } from "./CopyCommand";
 import { Desktop } from "./Desktop";
 import { Devices } from "./Devices";
 import { E2ePane, isRunOpen } from "./E2e";
-import { ForkDialog } from "./ForkDialog";
+import { FORK_NOW, ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
 import { onServiceWorkerNavigate, registerServiceWorker } from "./push";
@@ -1456,6 +1456,8 @@ function SessionView({
   const isLive = session.status === "idle" || session.status === "running";
   const noSnapshot = VM_NO_SNAPSHOT[session.settings.sandbox.environment];
   const latestSnapshot = snapshots[snapshots.length - 1];
+  // A running Sandbox forks from now (a snapshot is taken with the fork); a stopped one only from an existing snapshot.
+  const defaultForkPoint = isLive ? FORK_NOW : latestSnapshot?.id;
   const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
   const utilitiesActive = (settings?.utilities ?? []).filter((u) => session.settings.utilitiesEnabled.includes(u.id));
   const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending;
@@ -1491,9 +1493,15 @@ function SessionView({
       key: "fork",
       icon: "fork",
       label: "Fork\u2026",
-      title: noSnapshot ?? (latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first"),
-      disabled: noSnapshot !== undefined || !latestSnapshot,
-      onPick: () => latestSnapshot && setForkFrom(latestSnapshot.id),
+      title:
+        noSnapshot ??
+        (isLive
+          ? "New Session and Sandbox from this one as it is now (a snapshot is taken), or from an earlier snapshot"
+          : latestSnapshot
+            ? "New Session and Sandbox from a snapshot of this one"
+            : "Start the Sandbox to fork it (there is no snapshot yet)"),
+      disabled: noSnapshot !== undefined || !defaultForkPoint,
+      onPick: () => defaultForkPoint && setForkFrom(defaultForkPoint),
     },
     ...(copiedRepos.length > 0
       ? [
@@ -1753,11 +1761,11 @@ function SessionView({
             void run(() => api.updateSession(session.id, { settings: patch })).finally(() => setSettingsBusy(false));
           }}
           onFork={
-            latestSnapshot
+            defaultForkPoint
               ? () => {
                   setSettingsOpen(false);
                   setForkWithSettings(true);
-                  setForkFrom(latestSnapshot.id);
+                  setForkFrom(defaultForkPoint);
                 }
               : null
           }

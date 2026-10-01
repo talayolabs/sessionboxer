@@ -20,6 +20,9 @@ import { Modal, Select } from "./ui";
 
 const PREVIEW_CHARS = 120;
 
+/** Fork point "now": no `snapshotId` is sent and the Control Plane snapshots the running Sandbox with the fork. */
+export const FORK_NOW = "now";
+
 function preview(text: string): string {
   const oneLine = text.replace(/\s+/g, " ").trim();
   return oneLine.length > PREVIEW_CHARS ? `${oneLine.slice(0, PREVIEW_CHARS)}\u2026` : oneLine;
@@ -71,6 +74,7 @@ export function ForkDialog({
   snapshots: Snapshot[];
   /** The origin's current saved messages, offered next to the ones stored with the Snapshot. */
   saved: SavedMessage[];
+  /** A Snapshot id, or `FORK_NOW` (offered while the Sandbox runs). */
   initialSnapshotId: string;
   /** Start with the settings section expanded ("Fork with different settings"). */
   initialSettingsOpen?: boolean;
@@ -89,7 +93,9 @@ export function ForkDialog({
   const [draft, setDraft] = useState<SessionSettingsDraft>(() => draftFromSettings(session.settings));
   const [draftChanged, setDraftChanged] = useState(false);
 
-  const snapshot = snapshots.find((s) => s.id === snapshotId) ?? snapshots[snapshots.length - 1];
+  const canForkNow = session.status === "idle" || session.status === "running";
+  const now = canForkNow && snapshotId === FORK_NOW;
+  const snapshot = now ? undefined : (snapshots.find((s) => s.id === snapshotId) ?? snapshots[snapshots.length - 1]);
   // Messages queued when the Snapshot was taken, then whatever is queued now that wasn't already there.
   const candidates = snapshot
     ? [...snapshot.queuedMessages, ...saved.map((m) => m.text).filter((t) => !snapshot.queuedMessages.includes(t))]
@@ -100,7 +106,7 @@ export function ForkDialog({
     if (first.startsWith("q") && Number(first.slice(1)) >= candidates.length) setFirst("none");
   }, [first, candidates.length]);
 
-  if (!snapshot) return null;
+  if (!now && !snapshot) return null;
 
   const sameAgent = provider === session.provider;
   const originLabel = PROVIDER_LABELS[session.provider];
@@ -124,12 +130,12 @@ export function ForkDialog({
   const prompt = first === "custom" ? custom.trim() : pickedIndex >= 0 ? candidates[pickedIndex] : "";
   const others = candidates.filter((_, i) => i !== pickedIndex);
   const rest = copyRest ? others : [];
-  const defaultTitle = `${session.title} (${sameAgent ? "fork" : `${forkLabel}, fork`} ${snapshot.ordinal})`;
+  const defaultTitle = `${session.title} (${sameAgent ? "fork" : `${forkLabel}, fork`}${snapshot ? ` ${snapshot.ordinal}` : ""})`;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
-      snapshotId: snapshot.id,
+      ...(snapshot ? { snapshotId: snapshot.id } : {}),
       conversation,
       ...(sameAgent ? {} : { provider }),
       ...(title.trim() ? { title: title.trim() } : {}),
@@ -149,13 +155,16 @@ export function ForkDialog({
       <label>
         Fork point
         <Select<string>
-          value={snapshot.id}
+          value={snapshot?.id ?? FORK_NOW}
           onChange={setSnapshotId}
           aria-label="Fork point"
-          options={[...snapshots].reverse().map((s) => ({
-            value: s.id,
-            label: `#${s.ordinal}${s.reason === "manual" ? " (manual)" : ""} \u00b7 ${formatTime(s.createdAt)} \u00b7 ${formatMb(s.sizeBytes)}${s.queuedMessages.length > 0 ? ` \u00b7 ${s.queuedMessages.length} queued` : ""}`,
-          }))}
+          options={[
+            ...(canForkNow ? [{ value: FORK_NOW, label: "Now \u00b7 a snapshot is taken with the fork" }] : []),
+            ...[...snapshots].reverse().map((s) => ({
+              value: s.id,
+              label: `#${s.ordinal}${s.reason === "manual" ? " (manual)" : ""} \u00b7 ${formatTime(s.createdAt)} \u00b7 ${formatMb(s.sizeBytes)}${s.queuedMessages.length > 0 ? ` \u00b7 ${s.queuedMessages.length} queued` : ""}`,
+            })),
+          ]}
         />
       </label>
       <label>

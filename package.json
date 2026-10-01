@@ -11,6 +11,7 @@
     "build": "tsc -b && npm run build -w @sessionboxer/web",
     "build:protocol": "tsc -b packages/protocol",
     "typecheck": "tsc -b && npm run typecheck -w @sessionboxer/web",
+    "test:attachments": "tsc -b && node --test scripts/attachment-paths.test.mjs",
     "clean": "tsc -b --clean",
     "build:image": "node scripts/build-image.mjs",
     "start": "node apps/control-plane/dist/index.js",

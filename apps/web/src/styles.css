@@ -25,6 +25,22 @@
 .warn-sign { color: var(--warn); margin-left: 6px; }
 .session-list { list-style: none; margin: 0; padding: 6px; overflow: auto; flex: 1; }
 .session-list li { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: var(--radius); cursor: pointer; }
+/* Sidebar folders (ADR-0074): a group header row, then the Sessions indented under it. */
+.sidebar-head-actions { display: flex; align-items: center; gap: 4px; }
+.sidebar-head-actions .icon-button { padding: 2px 6px; line-height: 0; }
+.session-list li.session-folder { padding: 0; gap: 0; cursor: default; }
+.session-list li.session-folder:hover { background: none; }
+.folder-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; background: none; border: none; border-radius: var(--radius); color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 600; text-align: left; cursor: pointer; }
+.folder-head:hover { background: var(--hover); }
+.folder-head .chevron { margin-left: -4px; }
+.folder-head .icon { color: var(--muted); }
+.folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.folder-head .count { color: var(--muted); }
+.folder-items { list-style: none; margin: 0 0 2px; padding: 0 0 0 10px; }
+.folder-items li.empty { padding: 4px 10px; font-size: var(--fs-xs); }
+.session-list li.dragging { opacity: 0.45; }
+.session-list li.drop-hover { background: var(--selected); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.session-folder.drop-hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .session-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .session-sizes { display: flex; gap: 6px; font-size: var(--fs-xs); color: var(--muted); margin-left: 34px; padding: 0 4px; min-width: 0; white-space: nowrap; background: none; border: 1px solid transparent; border-radius: var(--radius-sm); text-align: left; align-self: flex-start; max-width: calc(100% - 34px); }
 .session-sizes:hover { border-color: var(--border); color: var(--text); background: var(--hover); }
@@ -520,7 +536,8 @@ li.expanded .saved-text { white-space: normal; }
 .session-menu-item.active { color: var(--accent); }
 .session-menu-item.active .icon { color: var(--accent); }
 .session-menu-item.pending .icon { color: var(--warn); }
-.session-menu-item .count, .session-menu-item .warn-sign { margin-left: auto; }
+.session-menu-item .count, .session-menu-item .warn-sign, .session-menu-item .menu-sub-arrow { margin-left: auto; }
+.menu-sub-arrow { color: var(--muted); }
 
 /* The Scheduled pane: the Schedules panel inside a Session */
 .schedules-pane .panel { max-width: none; padding: 14px; }

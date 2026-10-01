@@ -1301,10 +1301,30 @@ export const Session = z.object({
   createdBy: z.object({ sessionId: z.string() }).nullable().default(null),
   /** Listed before the others, whatever its age (ADR-0071). */
   pinned: z.boolean().default(false),
+  /** Folder the sidebar files the Session under (ADR-0074); `null` = the unfiled list. */
+  folderId: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type Session = z.infer<typeof Session>;
+
+/** A named group Sessions are filed under in the sidebar (ADR-0074). */
+export const SessionFolder = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.string(),
+});
+export type SessionFolder = z.infer<typeof SessionFolder>;
+
+export const CreateFolderRequest = z.object({
+  name: z.string().min(1).max(80),
+});
+export type CreateFolderRequest = z.infer<typeof CreateFolderRequest>;
+
+export const UpdateFolderRequest = z.object({
+  name: z.string().min(1).max(80).optional(),
+});
+export type UpdateFolderRequest = z.infer<typeof UpdateFolderRequest>;
 
 export const CreateSessionRequest = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -1363,6 +1383,8 @@ export const UpdateSessionRequest = z.object({
   title: z.string().min(1).max(200).optional(),
   /** Keep the Session at the top of the list (`true`) or let it back in date order. */
   pinned: z.boolean().optional(),
+  /** Folder to file the Session under (ADR-0074); `null` moves it back to the unfiled list. */
+  folderId: z.string().nullable().optional(),
   settings: SessionSettingsPatch.optional(),
   // Flat forms of `settings.*`, kept for older clients; `settings` wins where both are given.
   mcpEnabled: z.array(z.string()).optional(),
@@ -1677,7 +1699,8 @@ export type ForkConversation = z.infer<typeof ForkConversation>;
 export const HANDOFF_DOCUMENT_MAX_CHARS = 200_000;
 
 export const ForkSessionRequest = z.object({
-  snapshotId: z.string(),
+  /** The fork point; omitted, the Control Plane takes a manual Snapshot of the running Sandbox now and forks from it. */
+  snapshotId: z.string().optional(),
   conversation: ForkConversation.default("continue"),
   /** The fork's Agent; the origin's when omitted. Another one needs `new` or `handoff` (an Agent's memory cannot be loaded into another). */
   provider: Provider.optional(),
@@ -2677,6 +2700,8 @@ export interface SessionEvent {
 export type SessionBroadcast =
   | { type: "session"; session: Session }
   | { type: "session_deleted"; id: string }
+  /** The folder list changed (created, renamed, deleted); carries the whole list. */
+  | { type: "folders"; folders: SessionFolder[] }
   | { type: "event"; event: SessionEvent }
   | { type: "saved_messages"; sessionId: string; messages: SavedMessage[] }
   | { type: "snapshots"; sessionId: string; snapshots: Snapshot[] }

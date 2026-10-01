@@ -144,7 +144,7 @@ Every time the agent finishes a turn, Sessionboxer takes a **snapshot** of the b
 
 **Start from a snapshot** without opening the session it belongs to: the Environment dropdown of the New session screen (the toolbar logo, or Advanced… → Environment) lists, after the three Environments, the **Recent snapshots** — the twenty newest of all sessions plus the ones you picked lately, each with its session, agent and age. Pick one and the new session's box starts from that image (files, installed tools, the repositories it had; the Environment is the snapshot's) with an empty conversation for the agent you pick and your prompt as the first message; the repository button reads *Snapshot's repositories* (add others once it runs). The same dropdown is in an automation's *New Session* action, so a run reuses a prepared box instead of cloning and installing every time ([Automations](#automations)).
 
-**Fork from here** on a marker (or **Fork…** in the header) starts a *new* session with its *own* box from that snapshot: same files, same tools. Under **Agent** pick who runs the fork — the origin's agent or another one (Claude Code, Devin, Codex, Cursor; it needs its token in Global settings) — and under **Conversation** what happens to the chat:
+**Fork from here** on a marker (or **Fork…** in the header) starts a *new* session with its *own* box from that snapshot: same files, same tools. No snapshot is needed beforehand: while the box runs, **Fork…** opens on the fork point **Now**, which takes a manual snapshot with the fork (kept, like every fork origin); the dialog's **Fork point** also lists the earlier snapshots. A stopped box forks only from an existing snapshot. Over the API, `POST /api/sessions/:id/fork` without a `snapshotId` does the same. Under **Agent** pick who runs the fork — the origin's agent or another one (Claude Code, Devin, Codex, Cursor; it needs its token in Global settings) — and under **Conversation** what happens to the chat:
 
 - **Continue it** (the default): the chat up to the snapshot is copied and the agent remembers it all. Only with the origin's agent — an agent's memory cannot be loaded into another one, so the option is greyed out as soon as you pick a different agent.
 - **Start a new one**: empty chat, the agent starts fresh on those files. Handy when the context is rotting, when you want to try a different approach without the old reasoning, or to put another agent on the same machine.
@@ -301,6 +301,12 @@ If you allow it, the agent works across sessions: **list** them and **read** ano
 ### Pin a session to the top
 
 The sidebar lists sessions newest first. To keep one at hand whatever its age — the project you come back to every day, a long-running agent — hover it and click the **pin** that appears at the right of its row, or pick **Pin to top** in the session's ⋯ menu. Pinned sessions sit above the others (newest first among themselves) with the pin shown in colour; click it again, or **Unpin**, to let the session back into date order. The pin belongs to the session, not to the browser: every device and `sessionboxer list` see the same order.
+
+### Folders
+
+Sessions can be grouped into **folders**: click the 📁+ next to **New** (or a session's right-click menu → **Move to folder → New folder…**) and name it. Folders sit at the top of the sidebar, sorted by name, each with its sessions under it (pinned first, then newest, as in the plain list) and a count; the sessions that are in no folder list underneath. A click folds a folder away — the browser remembers which — and an empty folder stays, showing *Drop sessions here*.
+
+Move a session by **dragging** it onto a folder's name or onto a session inside it; drop it on an unfiled session or the bare list to take it out of its folder. The same moves are on the **right-click menu** every session row has: **Pin**, **Move to folder** (the folders, the current one ticked, *No folder*), **Snapshots…**, **Fork…**, **Stop** or **Resume**, and **Delete** — on a phone, a long-press opens the same menu. Right-click a folder's name to **rename** or **delete** it; deleting a folder never deletes its sessions — they move back to the unfiled list. Forks start in the folder their origin was in. The folders and their contents live on the Control Plane, so every browser sees the same grouping.
 
 ### Stop, resume, delete
 

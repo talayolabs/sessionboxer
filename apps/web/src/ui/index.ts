@@ -4,7 +4,16 @@
  */
 export { cx } from "./cx";
 export { Modal } from "./Dialog";
-export { ContextMenu, ContextMenuItem, Menu, MenuItem } from "./Menu";
+export {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  Menu,
+  MenuItem,
+} from "./Menu";
 export { Caption, Help } from "./Help";
 export { Popover } from "./Popover";
 export { Select, type SelectOption } from "./Select";

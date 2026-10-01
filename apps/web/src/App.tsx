@@ -49,6 +49,7 @@ import {
   type PrFollow,
   type Session,
   type SessionEvent,
+  type SessionFolder,
   type SessionStatus,
   type Snapshot,
   type SpeechModel,
@@ -77,7 +78,7 @@ import { CopyCommand } from "./CopyCommand";
 import { Desktop } from "./Desktop";
 import { Devices } from "./Devices";
 import { E2ePane, isRunOpen } from "./E2e";
-import { ForkDialog } from "./ForkDialog";
+import { FORK_NOW, ForkDialog } from "./ForkDialog";
 import { formatMb } from "./format";
 import { MOBILE_QUERY, useMediaQuery, useVisualViewportHeight } from "./mobile";
 import { onServiceWorkerNavigate, registerServiceWorker } from "./push";
@@ -121,7 +122,25 @@ import { RepoChips, RepoEditor, ReposButton, ReposDialog, draftsError, draftsToS
 import { UsbDialog } from "./UsbDialog";
 import { Automations, promptsSession } from "./Automations";
 import { PrsPage, followLabel } from "./Prs";
-import { Caption, Modal, Select, cx, Menu, MenuItem, Tab, TabList, TabPanel, Tabs, Tip } from "./ui";
+import {
+  Caption,
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  Menu,
+  MenuItem,
+  Modal,
+  Select,
+  Tab,
+  TabList,
+  TabPanel,
+  Tabs,
+  Tip,
+  cx,
+} from "./ui";
 import { SessionSourceIcon, sessionSourceLabel, sessionSourceTitle } from "./SourceIcon";
 import { SyncDialog } from "./SyncDialog";
 import { TerminalPane, type TerminalFocus } from "./Terminal";
@@ -142,11 +161,31 @@ function mergeEvents(prev: SessionEvent[], fetched: SessionEvent[]): SessionEven
   return tail.length === 0 ? fetched : [...fetched, ...tail];
 }
 
+/** A running Sandbox can fork from "now" (a snapshot is taken with the fork); a stopped one only from a snapshot. */
+const isLiveSession = (s: Session) => s.status === "idle" || s.status === "running";
+
 /** What a status dot means, spelled out: `idle` in particular is the Agent's turn being over. */
 /** The sidebar's order: pinned Sessions first, then newest first (the Control Plane lists them the same way). */
 function sortSessions(list: Session[]): Session[] {
   return [...list].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt.localeCompare(a.createdAt));
 }
+
+/** Folders the user collapsed in the sidebar, remembered per browser (ADR-0074). */
+function loadCollapsedFolders(): Set<string> {
+  try {
+    const ids = JSON.parse(localStorage.getItem("sessionboxer.foldersCollapsed") ?? "[]") as unknown;
+    return new Set(Array.isArray(ids) ? (ids as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedFolders(collapsed: Set<string>): void {
+  localStorage.setItem("sessionboxer.foldersCollapsed", JSON.stringify([...collapsed]));
+}
+
+/** The MIME a dragged sidebar Session announces; text/plain carries the id for the drop. */
+const SESSION_DRAG_TYPE = "application/x-sessionboxer-session";
 
 function statusTitle(status: SessionStatus): string {
   return status === "idle" ? "waiting for you: the Agent finished its turn" : status;
@@ -302,6 +341,16 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sessionboxer.sidebarCollapsed") === "1");
   const [sidebarWidth, setSidebarWidth] = useState<number | null>(() => loadSize("sessionboxer.sidebarWidth", SIDEBAR_MIN_PX, SIDEBAR_MAX_PX));
   useEffect(() => saveSize("sessionboxer.sidebarWidth", sidebarWidth), [sidebarWidth]);
+  // Sidebar folders (ADR-0074): the list, the ones collapsed, the Session mid-drag and the row under it.
+  const [folders, setFolders] = useState<SessionFolder[]>([]);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(loadCollapsedFolders);
+  const [draggingSession, setDraggingSession] = useState<string | null>(null);
+  /** Drop target under the pointer: a folder id, a Session's id (its folder is the target) or `"list"` (unfile). */
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  // The name dialog (new folder / rename) and a Fork dialog opened for a sidebar Session that may not be selected.
+  const [folderDialog, setFolderDialog] = useState<{ mode: "new" | "rename"; folderId?: string; sessionId?: string } | null>(null);
+  const [sidebarFork, setSidebarFork] = useState<{ sessionId: string; snapshots: Snapshot[]; saved: SavedMessage[] } | null>(null);
+  const [sidebarForkBusy, setSidebarForkBusy] = useState(false);
   const appRef = useRef<HTMLDivElement>(null);
   useEffect(() => setDrawerOpen(false), [route]);
   // The service worker shows push notifications while the page is closed; a tap on one navigates here.
@@ -360,6 +409,7 @@ export function App() {
     void run(async () => setAutomations(await api.automations()));
     void run(async () => setPrFollows(await api.prFollows()));
     void run(async () => setFollowedPrs(await api.followedPrs()));
+    void run(async () => setFolders(await api.folders()));
   }, [reloadSessions, run]);
 
   const loadFollowedPrDetail = useCallback(
@@ -444,6 +494,9 @@ export function App() {
             setSessions((prev) => prev.filter((s) => s.id !== msg.id));
             if (selectedId === msg.id) setRoute({ view: "session", id: null });
             if (snapshotsForRef.current === msg.id) setSnapshotsFor(null);
+            break;
+          case "folders":
+            setFolders(msg.folders);
             break;
           case "event":
             setEvents((prev) => {
@@ -579,6 +632,7 @@ export function App() {
       () => {
         // Reconnected: refetch to fill any gap.
         void reloadSessions();
+        void run(async () => setFolders(await api.folders()));
         void run(async () => setModels(await api.models()));
         void run(async () => setOptions(await api.options()));
         setSnapshotting(new Set());
@@ -627,6 +681,283 @@ export function App() {
     localStorage.setItem("sessionboxer.sidebarCollapsed", collapsed ? "1" : "0");
   };
 
+  // Sidebar folders (ADR-0074): groups in name order, then the unfiled Sessions; a Session filed under a
+  // folder that is gone counts as unfiled until the server's update lands.
+  const folderGroups = useMemo(
+    () => folders.map((folder) => ({ folder, sessions: sessions.filter((s) => s.folderId === folder.id) })),
+    [folders, sessions],
+  );
+  const unfiled = useMemo(() => sessions.filter((s) => s.folderId === null || !folders.some((f) => f.id === s.folderId)), [sessions, folders]);
+
+  const toggleFolder = (id: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      saveCollapsedFolders(next);
+      return next;
+    });
+  };
+
+  const fileSession = (sessionId: string, folderId: string | null) => {
+    setDraggingSession(null);
+    setDropTarget(null);
+    void run(() => api.updateSession(sessionId, { folderId }));
+  };
+
+  /** The sidebar's "Fork…": needs the Session's snapshots and queue, fetched on demand (it may not be selected). */
+  const openSidebarFork = (s: Session) => {
+    void run(async () => {
+      const [snaps, queued] = await Promise.all([api.snapshots(s.id), api.savedMessages(s.id)]);
+      if (snaps.length === 0 && !isLiveSession(s)) throw new Error(`"${s.title}" has no snapshots yet; start its Sandbox to fork it.`);
+      setSidebarFork({ sessionId: s.id, snapshots: snaps, saved: queued });
+    });
+  };
+
+  const submitFolderDialog = (name: string) => {
+    const dialog = folderDialog;
+    setFolderDialog(null);
+    if (!dialog) return;
+    if (dialog.mode === "rename" && dialog.folderId) {
+      void run(() => api.updateFolder(dialog.folderId as string, { name }));
+      return;
+    }
+    void run(async () => {
+      const folder = await api.createFolder(name);
+      if (dialog.sessionId) await api.updateSession(dialog.sessionId, { folderId: folder.id });
+    });
+  };
+
+  const dropOnSession = (e: React.DragEvent, s: Session) => {
+    const id = e.dataTransfer.getData(SESSION_DRAG_TYPE) || e.dataTransfer.getData("text/plain");
+    if (!id || id === s.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    fileSession(id, s.folderId);
+  };
+
+  /** One row of the session list, the same inside a folder group as in the unfiled list. */
+  const sessionEntry = (s: Session) => {
+    const noSnapshot = VM_NO_SNAPSHOT[s.settings.sandbox.environment];
+    const canStop = (s.status === "idle" || s.status === "running" || s.status === "error") && s.containerId !== null;
+    const canResume = s.status === "stopped" || s.status === "error";
+    return (
+      <ContextMenu
+        key={s.id}
+        trigger={
+          <li
+            className={cx(s.id === selectedId && "active", dropTarget === `s:${s.id}` && "drop-hover", draggingSession === s.id && "dragging")}
+            onClick={() => setRoute({ view: "session", id: s.id })}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(SESSION_DRAG_TYPE, s.id);
+              e.dataTransfer.setData("text/plain", s.id);
+              e.dataTransfer.effectAllowed = "move";
+              setDraggingSession(s.id);
+            }}
+            onDragEnd={() => {
+              setDraggingSession(null);
+              setDropTarget(null);
+            }}
+            onDragOver={(e) => {
+              if (draggingSession === null || draggingSession === s.id) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "move";
+              setDropTarget(`s:${s.id}`);
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget((t) => (t === `s:${s.id}` ? null : t));
+            }}
+            onDrop={(e) => dropOnSession(e, s)}
+          >
+            <div className="session-row">
+              {s.branches.length > 1 ? (
+                <button
+                  type="button"
+                  className="chevron"
+                  aria-expanded={expanded.has(s.id)}
+                  title={expanded.has(s.id) ? "Hide the conversation branches" : `Show the ${s.branches.length} conversation branches`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpanded((prev) => {
+                      const next = new Set(prev);
+                      if (!next.delete(s.id)) next.add(s.id);
+                      return next;
+                    });
+                  }}
+                >
+                  {expanded.has(s.id) ? "\u25BE" : "\u25B8"}
+                </button>
+              ) : (
+                <span className="chevron chevron-blank" />
+              )}
+              {s.usage.limit ? (
+                <span className="usage-sign-small" title={`${PROVIDER_LABELS[s.provider]} usage limit reached: ${s.usage.limit.message}`} aria-label="usage limit reached">
+                  <NoEntrySign size={11} />
+                </span>
+              ) : (
+                <span className={`dot dot-${s.status}`} title={statusTitle(s.status)} />
+              )}
+              <span className="session-title">{s.title}</span>
+              <span className="session-provider">
+                <button
+                  type="button"
+                  className={`session-pin${s.pinned ? " pinned" : ""}`}
+                  title={s.pinned ? "Pinned to the top of its group. Click to unpin." : "Pin to the top of its group"}
+                  aria-label={s.pinned ? "Unpin" : "Pin to top"}
+                  aria-pressed={s.pinned}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void run(() => api.updateSession(s.id, { pinned: !s.pinned }));
+                  }}
+                >
+                  <Icon name="pin" size={12} />
+                </button>
+                {(prs[s.id] ?? []).some((p) => p.unread > 0) && (
+                  <span
+                    className="count"
+                    title={`${(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)} unread PR comment(s)`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPr(s.id, null);
+                    }}
+                  >
+                    {(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)}
+                  </span>
+                )}
+                {s.queueRunning && <span title="Messages queued for the Agent">{"\u25b6"}</span>}
+                {s.usb && (
+                  <span className={`session-usb${s.usb.node ? "" : " unplugged"}`} title={`USB device connected: ${s.usb.name}${s.usb.node ? ` (${s.usb.node})` : " (unplugged right now)"}`}>
+                    <Icon name="usb" size={12} />
+                  </span>
+                )}
+                {s.settings.sandbox.dockerMode === "privileged" && (
+                  <span className="docker-warn" title={PRIVILEGED_WARNING}>
+                    <DockerIcon label={PRIVILEGED_WARNING} />
+                  </span>
+                )}
+                {s.settings.sandbox.environment === "qemu-windows" && (
+                  <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: a Windows VM next to the Sandbox`}>
+                    <EnvironmentIcon environment="qemu-windows" size={13} />
+                  </span>
+                )}
+                {s.settings.sandbox.environment === "qemu-macos" && (
+                  <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the agent runs inside a macOS VM next to the Sandbox`}>
+                    <EnvironmentIcon environment="qemu-macos" size={13} />
+                  </span>
+                )}
+                <SessionSourceIcon session={s} />
+                <span title={PROVIDER_LABELS[s.provider]}>
+                  <ProviderIcon provider={s.provider} />
+                </span>
+              </span>
+            </div>
+            <SessionSizes
+              session={s}
+              snapshotting={snapshotting.has(s.id)}
+              autoSnapshot={s.settings.autoSnapshot ?? settings?.autoSnapshot ?? false}
+              onClick={() => setSnapshotsFor(s.id)}
+            />
+            <SessionFamily session={s} sessions={sessions} onOpen={(id) => setRoute({ view: "session", id })} />
+            {expanded.has(s.id) && s.branches.length > 1 && (
+              <BranchTree
+                session={s}
+                switching={treeSwitching === s.id}
+                onFocus={(divider) => {
+                  setRoute({ view: "session", id: s.id });
+                  setFocus(divider ? { sessionId: s.id, ...divider } : null);
+                }}
+                onSwitch={(b) => {
+                  setRoute({ view: "session", id: s.id });
+                  setFocus(null);
+                  if (treeSwitching) return;
+                  if (!confirm(`Switch the conversation to "${b.name}"?\n\nThe chat will show that branch and the Agent will continue from it. The current branch stays in the tree.`)) return;
+                  setTreeSwitching(s.id);
+                  void run(() => api.switchBranch(s.id, { branchId: b.id })).finally(() => setTreeSwitching(null));
+                }}
+              />
+            )}
+          </li>
+        }
+      >
+        <ContextMenuItem className="session-menu-item" onSelect={() => void run(() => api.updateSession(s.id, { pinned: !s.pinned }))}>
+          <Icon name="pin" /> {s.pinned ? "Unpin" : "Pin to top"}
+        </ContextMenuItem>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger className="session-menu-item">
+            <Icon name="folder" /> Move to folder <span className="menu-sub-arrow">{"\u25B8"}</span>
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            {folders.map((f) => (
+              <ContextMenuItem key={f.id} className={cx("session-menu-item", f.id === s.folderId && "active")} onSelect={() => fileSession(s.id, f.id)}>
+                <Icon name="folder" />
+                <span className="menu-row">
+                  <span>{f.name}</span>
+                  {f.id === s.folderId && <span>{"\u2713"}</span>}
+                </span>
+              </ContextMenuItem>
+            ))}
+            {s.folderId !== null && (
+              <ContextMenuItem className="session-menu-item" onSelect={() => fileSession(s.id, null)}>
+                <Icon name="folder" /> No folder
+              </ContextMenuItem>
+            )}
+            <ContextMenuSeparator />
+            <ContextMenuItem className="session-menu-item" onSelect={() => setFolderDialog({ mode: "new", sessionId: s.id })}>
+              <Icon name="folder-plus" /> New folder…
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuSeparator />
+        <ContextMenuItem className="session-menu-item" onSelect={() => setSnapshotsFor(s.id)}>
+          <Icon name="snapshot" /> Snapshots…
+        </ContextMenuItem>
+        <ContextMenuItem
+          className="session-menu-item"
+          disabled={noSnapshot !== undefined || (s.snapshotCount === 0 && !isLiveSession(s))}
+          title={
+            noSnapshot ??
+            (isLiveSession(s)
+              ? "New Session and Sandbox from this one as it is now (a snapshot is taken), or from an earlier snapshot"
+              : s.snapshotCount > 0
+                ? "New Session and Sandbox from a snapshot of this one"
+                : "Start the Sandbox to fork it (there is no snapshot yet)")
+          }
+          onSelect={() => openSidebarFork(s)}
+        >
+          <Icon name="fork" /> Fork…
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        {canStop && (
+          <ContextMenuItem
+            className="session-menu-item"
+            title="Stop the Sandbox; the conversation stays and Resume brings it back"
+            onSelect={() => void run(() => api.stop(s.id))}
+          >
+            <Icon name="stop" /> Stop
+          </ContextMenuItem>
+        )}
+        {canResume && (
+          <ContextMenuItem
+            className="session-menu-item"
+            title="Start the Sandbox again; the Agent picks up its conversation"
+            onSelect={() => void run(() => api.resume(s.id))}
+          >
+            <Icon name="resume" /> Resume
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem
+          className="session-menu-item danger"
+          onSelect={() => {
+            if (confirm(`Delete "${s.title}" and its Sandbox?`)) void run(() => api.deleteSession(s.id));
+          }}
+        >
+          <Icon name="delete" /> Delete
+        </ContextMenuItem>
+      </ContextMenu>
+    );
+  };
+
   return (
     <div
       ref={appRef}
@@ -645,7 +976,12 @@ export function App() {
             <img src="/icon-192.png" alt="" />
             Sessionboxer
           </h1>
-          <button onClick={() => setRoute({ view: "new" })}>+ New</button>
+          <span className="sidebar-head-actions">
+            <button className="icon-button" title="New folder" aria-label="New folder" onClick={() => setFolderDialog({ mode: "new" })}>
+              <Icon name="folder-plus" />
+            </button>
+            <button onClick={() => setRoute({ view: "new" })}>+ New</button>
+          </span>
           {!mobile && (
             <button className="sidebar-hide" title="Hide the session list" aria-label="Hide the session list" onClick={() => collapseSidebar(true)}>
               {"\u00ab"}
@@ -657,123 +993,86 @@ export function App() {
             </button>
           )}
         </div>
-        <ul className="session-list">
-          {sessions.map((s) => (
+        <ul
+          className="session-list"
+          onDragOver={(e) => {
+            // A drop on bare list space (between groups, below the last row) unfiles the Session.
+            if (draggingSession === null) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={(e) => {
+            const id = e.dataTransfer.getData(SESSION_DRAG_TYPE) || e.dataTransfer.getData("text/plain");
+            if (!id) return;
+            e.preventDefault();
+            fileSession(id, null);
+          }}
+        >
+          {folderGroups.map(({ folder, sessions: members }) => (
             <li
-              key={s.id}
-              className={s.id === selectedId ? "active" : ""}
-              onClick={() => setRoute({ view: "session", id: s.id })}
+              key={folder.id}
+              className={cx("session-folder", dropTarget === `f:${folder.id}` && "drop-hover")}
+              onDragOver={(e) => {
+                if (draggingSession === null) return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "move";
+                setDropTarget(`f:${folder.id}`);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget((t) => (t === `f:${folder.id}` ? null : t));
+              }}
+              onDrop={(e) => {
+                const id = e.dataTransfer.getData(SESSION_DRAG_TYPE) || e.dataTransfer.getData("text/plain");
+                if (!id) return;
+                e.preventDefault();
+                e.stopPropagation();
+                fileSession(id, folder.id);
+              }}
             >
-              <div className="session-row">
-                {s.branches.length > 1 ? (
+              <ContextMenu
+                trigger={
                   <button
                     type="button"
-                    className="chevron"
-                    aria-expanded={expanded.has(s.id)}
-                    title={expanded.has(s.id) ? "Hide the conversation branches" : `Show the ${s.branches.length} conversation branches`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setExpanded((prev) => {
-                        const next = new Set(prev);
-                        if (!next.delete(s.id)) next.add(s.id);
-                        return next;
-                      });
-                    }}
+                    className="folder-head"
+                    aria-expanded={!collapsedFolders.has(folder.id)}
+                    title={`${members.length} session${members.length === 1 ? "" : "s"} — click to ${collapsedFolders.has(folder.id) ? "open" : "fold"}, right-click for folder actions`}
+                    onClick={() => toggleFolder(folder.id)}
                   >
-                    {expanded.has(s.id) ? "\u25BE" : "\u25B8"}
+                    <span className="chevron">{collapsedFolders.has(folder.id) ? "\u25B8" : "\u25BE"}</span>
+                    <Icon name="folder" size={13} />
+                    <span className="folder-name">{folder.name}</span>
+                    <span className="count">{members.length}</span>
                   </button>
-                ) : (
-                  <span className="chevron chevron-blank" />
-                )}
-                {s.usage.limit ? (
-                  <span className="usage-sign-small" title={`${PROVIDER_LABELS[s.provider]} usage limit reached: ${s.usage.limit.message}`} aria-label="usage limit reached">
-                    <NoEntrySign size={11} />
-                  </span>
-                ) : (
-                  <span className={`dot dot-${s.status}`} title={statusTitle(s.status)} />
-                )}
-                <span className="session-title">{s.title}</span>
-                <span className="session-provider">
-                  <button
-                    type="button"
-                    className={`session-pin${s.pinned ? " pinned" : ""}`}
-                    title={s.pinned ? "Pinned to the top of the list. Click to unpin." : "Pin to the top of the list"}
-                    aria-label={s.pinned ? "Unpin" : "Pin to top"}
-                    aria-pressed={s.pinned}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void run(() => api.updateSession(s.id, { pinned: !s.pinned }));
-                    }}
-                  >
-                    <Icon name="pin" size={12} />
-                  </button>
-                  {(prs[s.id] ?? []).some((p) => p.unread > 0) && (
-                    <span
-                      className="count"
-                      title={`${(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)} unread PR comment(s)`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openPr(s.id, null);
-                      }}
-                    >
-                      {(prs[s.id] ?? []).reduce((n, p) => n + p.unread, 0)}
-                    </span>
-                  )}
-                  {s.queueRunning && <span title="Messages queued for the Agent">{"\u25b6"}</span>}
-                  {s.usb && (
-                    <span className={`session-usb${s.usb.node ? "" : " unplugged"}`} title={`USB device connected: ${s.usb.name}${s.usb.node ? ` (${s.usb.node})` : " (unplugged right now)"}`}>
-                      <Icon name="usb" size={12} />
-                    </span>
-                  )}
-                  {s.settings.sandbox.dockerMode === "privileged" && (
-                    <span className="docker-warn" title={PRIVILEGED_WARNING}>
-                      <DockerIcon label={PRIVILEGED_WARNING} />
-                    </span>
-                  )}
-                  {s.settings.sandbox.environment === "qemu-windows" && (
-                    <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-windows"]}: a Windows VM next to the Sandbox`}>
-                      <EnvironmentIcon environment="qemu-windows" size={13} />
-                    </span>
-                  )}
-                  {s.settings.sandbox.environment === "qemu-macos" && (
-                    <span className="session-env" title={`${ENVIRONMENT_LABELS["qemu-macos"]}: the agent runs inside a macOS VM next to the Sandbox`}>
-                      <EnvironmentIcon environment="qemu-macos" size={13} />
-                    </span>
-                  )}
-                  <SessionSourceIcon session={s} />
-                  <span title={PROVIDER_LABELS[s.provider]}>
-                    <ProviderIcon provider={s.provider} />
-                  </span>
-                </span>
-              </div>
-              <SessionSizes
-                session={s}
-                snapshotting={snapshotting.has(s.id)}
-                autoSnapshot={s.settings.autoSnapshot ?? settings?.autoSnapshot ?? false}
-                onClick={() => setSnapshotsFor(s.id)}
-              />
-              <SessionFamily session={s} sessions={sessions} onOpen={(id) => setRoute({ view: "session", id })} />
-              {expanded.has(s.id) && s.branches.length > 1 && (
-                <BranchTree
-                  session={s}
-                  switching={treeSwitching === s.id}
-                  onFocus={(divider) => {
-                    setRoute({ view: "session", id: s.id });
-                    setFocus(divider ? { sessionId: s.id, ...divider } : null);
+                }
+              >
+                <ContextMenuItem className="session-menu-item" onSelect={() => setFolderDialog({ mode: "rename", folderId: folder.id })}>
+                  <Icon name="folder" /> Rename…
+                </ContextMenuItem>
+                <ContextMenuItem className="session-menu-item" onSelect={() => setFolderDialog({ mode: "new" })}>
+                  <Icon name="folder-plus" /> New folder…
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="session-menu-item danger"
+                  onSelect={() => {
+                    const note = members.length > 0 ? `\n\nIts ${members.length === 1 ? "session moves" : `${members.length} sessions move`} back to the unfiled list.` : "";
+                    if (confirm(`Delete the folder "${folder.name}"?${note}`)) void run(() => api.deleteFolder(folder.id));
                   }}
-                  onSwitch={(b) => {
-                    setRoute({ view: "session", id: s.id });
-                    setFocus(null);
-                    if (treeSwitching) return;
-                    if (!confirm(`Switch the conversation to "${b.name}"?\n\nThe chat will show that branch and the Agent will continue from it. The current branch stays in the tree.`)) return;
-                    setTreeSwitching(s.id);
-                    void run(() => api.switchBranch(s.id, { branchId: b.id })).finally(() => setTreeSwitching(null));
-                  }}
-                />
+                >
+                  <Icon name="delete" /> Delete folder
+                </ContextMenuItem>
+              </ContextMenu>
+              {!collapsedFolders.has(folder.id) && (
+                <ul className="folder-items">
+                  {members.map(sessionEntry)}
+                  {members.length === 0 && <li className="empty">Drop sessions here</li>}
+                </ul>
               )}
             </li>
           ))}
-          {sessions.length === 0 && <li className="empty">No sessions yet</li>}
+          {unfiled.map(sessionEntry)}
+          {sessions.length === 0 && folders.length === 0 && <li className="empty">No sessions yet</li>}
         </ul>
         <div className="sidebar-footer">
           {showSetup && (
@@ -896,6 +1195,45 @@ export function App() {
           onClose={() => setSnapshotsFor(null)}
         />
       )}
+
+      {folderDialog && (
+        <FolderNameDialog
+          title={folderDialog.mode === "rename" ? "Rename folder" : "New folder"}
+          initial={folderDialog.mode === "rename" ? (folders.find((f) => f.id === folderDialog.folderId)?.name ?? "") : ""}
+          submitLabel={folderDialog.mode === "rename" ? "Rename" : "Create"}
+          onSubmit={submitFolderDialog}
+          onClose={() => setFolderDialog(null)}
+        />
+      )}
+
+      {sidebarFork &&
+        settings &&
+        (() => {
+          const forkOrigin = sessions.find((s) => s.id === sidebarFork.sessionId);
+          const forkPoint = forkOrigin && isLiveSession(forkOrigin) ? FORK_NOW : sidebarFork.snapshots[sidebarFork.snapshots.length - 1]?.id;
+          if (!forkOrigin || !forkPoint) return null;
+          return (
+            <ForkDialog
+              session={forkOrigin}
+              settings={settings}
+              models={models ?? EMPTY_MODELS}
+              options={options ?? EMPTY_OPTIONS}
+              snapshots={sidebarFork.snapshots}
+              saved={sidebarFork.saved}
+              initialSnapshotId={forkPoint}
+              busy={sidebarForkBusy}
+              onClose={() => setSidebarFork(null)}
+              onSubmit={(req) => {
+                setSidebarForkBusy(true);
+                void run(async () => {
+                  const fork = await api.forkSession(forkOrigin.id, req);
+                  setSidebarFork(null);
+                  setRoute({ view: "session", id: fork.id });
+                }).finally(() => setSidebarForkBusy(false));
+              }}
+            />
+          );
+        })()}
 
       {!mobile && !sidebarCollapsed && (
         <div
@@ -1150,6 +1488,46 @@ function SessionSizes({
         !autoSnapshot && <span title="Automatic snapshots are off for this session">{"\u{1F4F7}\u00d7"}</span>
       )}
     </button>
+  );
+}
+
+/** The one-line name dialog behind "New folder…" and a folder's "Rename…" (ADR-0074). */
+function FolderNameDialog({
+  title,
+  initial = "",
+  submitLabel,
+  onSubmit,
+  onClose,
+}: {
+  title: string;
+  initial?: string;
+  submitLabel: string;
+  onSubmit: (name: string) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(initial);
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (name.trim()) onSubmit(name.trim());
+      }}
+    >
+      <label>
+        Name
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={80} spellCheck={false} />
+      </label>
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="submit" className="primary" disabled={!name.trim()}>
+          {submitLabel}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1456,6 +1834,8 @@ function SessionView({
   const isLive = session.status === "idle" || session.status === "running";
   const noSnapshot = VM_NO_SNAPSHOT[session.settings.sandbox.environment];
   const latestSnapshot = snapshots[snapshots.length - 1];
+  // A running Sandbox forks from now (a snapshot is taken with the fork); a stopped one only from an existing snapshot.
+  const defaultForkPoint = isLive ? FORK_NOW : latestSnapshot?.id;
   const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
   const utilitiesActive = (settings?.utilities ?? []).filter((u) => session.settings.utilitiesEnabled.includes(u.id));
   const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending;
@@ -1491,9 +1871,15 @@ function SessionView({
       key: "fork",
       icon: "fork",
       label: "Fork\u2026",
-      title: noSnapshot ?? (latestSnapshot ? "New Session and Sandbox from a snapshot of this one" : "Take a snapshot first"),
-      disabled: noSnapshot !== undefined || !latestSnapshot,
-      onPick: () => latestSnapshot && setForkFrom(latestSnapshot.id),
+      title:
+        noSnapshot ??
+        (isLive
+          ? "New Session and Sandbox from this one as it is now (a snapshot is taken), or from an earlier snapshot"
+          : latestSnapshot
+            ? "New Session and Sandbox from a snapshot of this one"
+            : "Start the Sandbox to fork it (there is no snapshot yet)"),
+      disabled: noSnapshot !== undefined || !defaultForkPoint,
+      onPick: () => defaultForkPoint && setForkFrom(defaultForkPoint),
     },
     ...(copiedRepos.length > 0
       ? [
@@ -1753,11 +2139,11 @@ function SessionView({
             void run(() => api.updateSession(session.id, { settings: patch })).finally(() => setSettingsBusy(false));
           }}
           onFork={
-            latestSnapshot
+            defaultForkPoint
               ? () => {
                   setSettingsOpen(false);
                   setForkWithSettings(true);
-                  setForkFrom(latestSnapshot.id);
+                  setForkFrom(defaultForkPoint);
                 }
               : null
           }

@@ -71,3 +71,24 @@ export function ContextMenu({
 export function ContextMenuItem({ className, ...props }: ComponentProps<typeof RadixContextMenu.Item>) {
   return <RadixContextMenu.Item className={cx("menu-item", className)} {...props} />;
 }
+
+/** A `ContextMenu` item that opens a nested list on hover ("Move to folder ▸" style). */
+export function ContextMenuSub({ children }: { children: ReactNode }) {
+  return <RadixContextMenu.Sub>{children}</RadixContextMenu.Sub>;
+}
+
+export function ContextMenuSubTrigger({ className, ...props }: ComponentProps<typeof RadixContextMenu.SubTrigger>) {
+  return <RadixContextMenu.SubTrigger className={cx("menu-item", "menu-sub", className)} {...props} />;
+}
+
+export function ContextMenuSubContent({ className, ...props }: ComponentProps<typeof RadixContextMenu.SubContent>) {
+  return (
+    <RadixContextMenu.Portal>
+      <RadixContextMenu.SubContent className={cx("menu", className)} collisionPadding={8} sideOffset={4} loop {...props} />
+    </RadixContextMenu.Portal>
+  );
+}
+
+export function ContextMenuSeparator(props: ComponentProps<typeof RadixContextMenu.Separator>) {
+  return <RadixContextMenu.Separator className="menu-separator" {...props} />;
+}

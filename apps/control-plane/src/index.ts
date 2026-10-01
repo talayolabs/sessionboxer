@@ -38,6 +38,7 @@ import {
   UpdatePrFollowRequest,
   PrFollowHookRequest,
   CreateScheduleRequest,
+  CreateFolderRequest,
   CreateSessionRequest,
   ForkSessionRequest,
   SchedulePreviewRequest,
@@ -60,6 +61,7 @@ import {
   SPEECH_LANGUAGE_PATTERN,
   SpeechModel,
   UpdateSavedMessageRequest,
+  UpdateFolderRequest,
   UpdateSessionRequest,
   UsbConnectRequest,
   UpdateSettingsRequest,
@@ -536,6 +538,15 @@ api.get("/options", (c) => c.json(sessions.providerOptions()));
 api.put("/uploads", async (c) => c.json(await sessions.staged.store(c.req.raw.body, c.req.query("name") ?? "", c.req.header("content-type"), c.req.header("content-length")), 201));
 api.delete("/uploads/:id", async (c) => {
   await sessions.staged.remove(c.req.param("id"));
+  return c.body(null, 204);
+});
+
+// Sidebar folders the Sessions are filed under (ADR-0074).
+api.get("/folders", (c) => c.json(sessions.folders()));
+api.post("/folders", async (c) => c.json(sessions.createFolder(CreateFolderRequest.parse(await c.req.json())), 201));
+api.patch("/folders/:id", async (c) => c.json(sessions.renameFolder(c.req.param("id"), UpdateFolderRequest.parse(await c.req.json()))));
+api.delete("/folders/:id", (c) => {
+  sessions.deleteFolder(c.req.param("id"));
   return c.body(null, 204);
 });
 

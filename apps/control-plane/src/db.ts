@@ -8,6 +8,7 @@ import {
   Provider,
   ROOT_BRANCH_ID,
   Session,
+  SessionFolder,
   SessionRepo,
   SessionSettings,
   SessionUsb,
@@ -72,8 +73,16 @@ interface SessionRow {
   /** Id of the Session whose Agent created this one, or NULL. */
   created_by: string | null;
   pinned: number;
+  /** Id of the Folder the Session is filed under, or NULL. */
+  folder_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface FolderRow {
+  id: string;
+  name: string;
+  created_at: string;
 }
 
 /** The columns `settings` replaced; an old database has the ones that existed when it was last opened. */
@@ -193,8 +202,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   usb TEXT,
   created_by TEXT,
   pinned INTEGER NOT NULL DEFAULT 0,
+  folder_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS folders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS snapshots (
   id TEXT PRIMARY KEY,
@@ -303,6 +318,7 @@ const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "sessions", column: "usb", ddl: "ALTER TABLE sessions ADD COLUMN usb TEXT" },
   { table: "sessions", column: "created_by", ddl: "ALTER TABLE sessions ADD COLUMN created_by TEXT" },
   { table: "sessions", column: "pinned", ddl: "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "folder_id", ddl: "ALTER TABLE sessions ADD COLUMN folder_id TEXT" },
   { table: "e2e_runs", column: "brief", ddl: "ALTER TABLE e2e_runs ADD COLUMN brief TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
@@ -452,8 +468,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_by, pinned, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_by, @pinned, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_by, pinned, folder_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_by, @pinned, @folder_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -467,11 +483,41 @@ export class Db {
         `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, error=@error,
            queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
            options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
-           active_branch_id=@active_branch_id, usage=@usage, usb=@usb, pinned=@pinned, updated_at=@updated_at
+           active_branch_id=@active_branch_id, usage=@usage, usb=@usb, pinned=@pinned, folder_id=@folder_id, updated_at=@updated_at
          WHERE id=@id`,
       )
       .run(sessionToRow(next));
     return next;
+  }
+
+  /** The sidebar's folders, alphabetical (case-insensitive). */
+  listFolders(): SessionFolder[] {
+    const rows = this.db.prepare("SELECT * FROM folders ORDER BY name COLLATE NOCASE, created_at").all() as FolderRow[];
+    return rows.map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at }));
+  }
+
+  getFolder(id: string): SessionFolder | null {
+    const row = this.db.prepare("SELECT * FROM folders WHERE id = ?").get(id) as FolderRow | undefined;
+    return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
+  }
+
+  insertFolder(name: string): SessionFolder {
+    const folder: SessionFolder = { id: randomBytes(4).toString("hex"), name, createdAt: new Date().toISOString() };
+    this.db.prepare("INSERT INTO folders (id, name, created_at) VALUES (@id, @name, @createdAt)").run(folder);
+    return folder;
+  }
+
+  renameFolder(id: string, name: string): SessionFolder | null {
+    this.db.prepare("UPDATE folders SET name = ? WHERE id = ?").run(name, id);
+    return this.getFolder(id);
+  }
+
+  /** Deletes the folder and unfiles its Sessions; returns their ids so callers can broadcast the change. */
+  deleteFolder(id: string): string[] {
+    const sessionIds = (this.db.prepare("SELECT id FROM sessions WHERE folder_id = ?").all(id) as Array<{ id: string }>).map((r) => r.id);
+    this.db.prepare("UPDATE sessions SET folder_id = NULL WHERE folder_id = ?").run(id);
+    this.db.prepare("DELETE FROM folders WHERE id = ?").run(id);
+    return sessionIds;
   }
 
   listBranches(sessionId: string): Branch[] {
@@ -939,6 +985,7 @@ export type SessionPatch = Partial<
     | "usage"
     | "usb"
     | "pinned"
+    | "folderId"
   >
 >;
 
@@ -1010,6 +1057,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     usb: row.usb === null ? null : SessionUsb.parse(JSON.parse(row.usb)),
     createdBy: row.created_by === null ? null : { sessionId: row.created_by },
     pinned: row.pinned === 1,
+    folderId: row.folder_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -1058,6 +1106,7 @@ function sessionToRow(s: Session): SessionRow {
     usb: s.usb === null ? null : JSON.stringify(s.usb),
     created_by: s.createdBy?.sessionId ?? null,
     pinned: s.pinned ? 1 : 0,
+    folder_id: s.folderId,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };

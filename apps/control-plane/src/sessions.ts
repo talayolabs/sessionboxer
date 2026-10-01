@@ -83,6 +83,7 @@ import {
   inBranchScope,
   type Branch,
   type CreateSessionRequest,
+  type CreateFolderRequest,
   type DaemonEvent,
   type DaemonPromptParams,
   type DeleteSnapshotsResult,
@@ -104,6 +105,7 @@ import {
   type SessionBroadcast,
   type SessionEvent,
   type SessionEventBody,
+  type SessionFolder,
   type SessionSettings,
   type SessionStatus,
   type Settings,
@@ -112,6 +114,7 @@ import {
   createRequestSettings,
   resolveSessionSettings,
   type SnapshotReason,
+  type UpdateFolderRequest,
   type UpdateSessionRequest,
   updateRequestSettings,
   type WorkspaceSource,
@@ -433,6 +436,37 @@ export class SessionManager {
     const s = this.db.getSession(id);
     if (!s) throw new HttpError(404, `session ${id} not found`);
     return s;
+  }
+
+  // --- Sidebar folders (ADR-0074) ------------------------------------------
+
+  folders(): SessionFolder[] {
+    return this.db.listFolders();
+  }
+
+  createFolder(req: CreateFolderRequest): SessionFolder {
+    const name = req.name.trim();
+    if (!name) throw new HttpError(400, "A folder needs a name.");
+    const folder = this.db.insertFolder(name);
+    this.broadcast({ type: "folders", folders: this.db.listFolders() });
+    return folder;
+  }
+
+  renameFolder(id: string, req: UpdateFolderRequest): SessionFolder {
+    const name = req.name?.trim();
+    if (req.name !== undefined && !name) throw new HttpError(400, "A folder needs a name.");
+    const folder = name !== undefined ? this.db.renameFolder(id, name) : this.db.getFolder(id);
+    if (!folder) throw new HttpError(404, `folder ${id} not found`);
+    this.broadcast({ type: "folders", folders: this.db.listFolders() });
+    return folder;
+  }
+
+  /** Deletes the folder; its Sessions go back to the unfiled list (each broadcast as changed). */
+  deleteFolder(id: string): void {
+    if (!this.db.getFolder(id)) throw new HttpError(404, `folder ${id} not found`);
+    const sessionIds = this.db.deleteFolder(id);
+    for (const sessionId of sessionIds) this.update(sessionId, { folderId: null });
+    this.broadcast({ type: "folders", folders: this.db.listFolders() });
   }
 
   events(id: string, afterSeq = 0): SessionEvent[] {
@@ -1125,6 +1159,7 @@ export class SessionManager {
       usb: null,
       createdBy: createdBy ? { sessionId: createdBy } : null,
       pinned: false,
+      folderId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1187,13 +1222,14 @@ export class SessionManager {
    * a session of its own (the Daemon ignores the origin's on the first boot), or, with
    * `"handoff"`, that plus a handoff document the origin's Agent writes first (a hidden
    * turn in the origin) and the fork's Agent gets as its first message. The fork's Agent
-   * may be another Provider with `new` or `handoff`. The origin Session, its Sandbox and
-   * its saved messages are untouched.
+   * may be another Provider with `new` or `handoff`. Without a `snapshotId` the fork point is
+   * now: a manual Snapshot is taken once the request is known to be acceptable. The origin
+   * Session, its Sandbox and its saved messages are untouched.
    */
   async fork(fromId: string, req: ForkSessionRequest, createdBy?: string): Promise<Session> {
     const origin = this.get(fromId);
-    const snapshot = this.db.getSnapshot(fromId, req.snapshotId);
-    if (!snapshot) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
+    const existing = req.snapshotId !== undefined ? this.db.getSnapshot(fromId, req.snapshotId) : undefined;
+    if (req.snapshotId !== undefined && !existing) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
     const settings = this.settings();
     const provider = req.provider ?? origin.provider;
     const sameAgent = provider === origin.provider;
@@ -1209,8 +1245,8 @@ export class SessionManager {
     if (hiddenHandoff) this.assertCanWriteHandoff(origin);
     if (createdBy) this.assertChildAllowed(createdBy);
     this.assertSnapshottable(origin.settings.sandbox.environment);
-    if (!(await this.docker.imageExists(snapshot.imageId))) {
-      throw new HttpError(409, `The image of snapshot ${snapshot.ordinal} is gone from Docker; delete the snapshot.`);
+    if (existing && !(await this.docker.imageExists(existing.imageId))) {
+      throw new HttpError(409, `The image of snapshot ${existing.ordinal} is gone from Docker; delete the snapshot.`);
     }
     const base = origin.settings;
     const input = req.settings;
@@ -1219,6 +1255,7 @@ export class SessionManager {
     if (base.sandbox.dockerMode !== "none" && wantsDocker && dockerMode !== base.sandbox.dockerMode) {
       throw new HttpError(409, `The origin ran with ${base.sandbox.dockerMode} Docker, which this host no longer offers.`);
     }
+    const snapshot = existing ?? (await this.snapshot(fromId, "manual"));
 
     const id = randomBytes(6).toString("hex");
     const now = new Date().toISOString();
@@ -1273,6 +1310,8 @@ export class SessionManager {
       usb: null,
       createdBy: createdBy ? { sessionId: createdBy } : null,
       pinned: false,
+      // Forks stay filed next to their origin; the pin does not carry (ADR-0074).
+      folderId: origin.folderId,
       createdAt: now,
       updatedAt: now,
     };
@@ -2367,9 +2406,13 @@ export class SessionManager {
         ...(patch.sandbox?.memoryGb !== undefined ? { memoryGb: patch.sandbox.memoryGb } : {}),
       },
     };
+    if (req.folderId !== undefined && req.folderId !== null && !this.db.getFolder(req.folderId)) {
+      throw new HttpError(404, `folder ${req.folderId} not found`);
+    }
     const s = this.update(id, {
       ...(req.title !== undefined ? { title: req.title } : {}),
       ...(req.pinned !== undefined ? { pinned: req.pinned } : {}),
+      ...(req.folderId !== undefined ? { folderId: req.folderId } : {}),
       ...(Object.keys(patch).length > 0 ? { settings: next } : {}),
     });
     const policyChanged = patch.agentTools !== undefined && this.agentToolsPolicy(current.settings) !== this.agentToolsPolicy(next);

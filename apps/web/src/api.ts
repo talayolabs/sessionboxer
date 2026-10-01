@@ -66,6 +66,7 @@ import type {
   SavedMessage,
   Session,
   SessionBroadcast,
+  SessionFolder,
   SessionEvent,
   SandboxImageStatus,
   Snapshot,
@@ -84,6 +85,7 @@ import type {
   UiClientMessage,
   TunnelNameCheck,
   TunnelServerInfo,
+  UpdateFolderRequest,
   UpdateSettingsRequest,
   WindowsBaseStatus,
   MacosBaseStatus,
@@ -232,6 +234,11 @@ export const api = {
   runAutomation: (id: string) => request<AutomationRun>(`/automations/${id}/run`, { method: "POST" }),
   automationRuns: (id: string) => request<AutomationRun[]>(`/automations/${id}/runs`),
   schedulePreview: (req: SchedulePreviewRequest) => request<SchedulePreview>("/automations/preview", { method: "POST", body: JSON.stringify(req) }),
+  folders: () => request<SessionFolder[]>("/folders"),
+  createFolder: (name: string) => request<SessionFolder>("/folders", { method: "POST", body: JSON.stringify({ name }) }),
+  updateFolder: (id: string, patch: UpdateFolderRequest) =>
+    request<SessionFolder>(`/folders/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteFolder: (id: string) => request<void>(`/folders/${id}`, { method: "DELETE" }),
   sessions: () => request<Session[]>("/sessions"),
   createSession: (req: CreateSessionRequest) =>
     request<Session>("/sessions", { method: "POST", body: JSON.stringify(req) }),

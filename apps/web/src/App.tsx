@@ -2114,7 +2114,7 @@ function SessionView({
           <PaneTab
             icon="verification"
             active={pane === "e2e"}
-            className={e2eLive ? "e2e-tab-live" : undefined}
+            className={cx(e2eLive && "e2e-tab-live", e2eEnabled && "e2e-tab-on")}
             tip={pane === "e2e" ? "Hide the Auto QA runs" : `End-to-end verification of the Agent's turns${e2eLive ? " (running now)" : e2eEnabled ? "" : " (off for this Session)"}`}
             onClick={() => togglePane("e2e")}
           >

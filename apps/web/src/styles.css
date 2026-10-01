@@ -698,6 +698,8 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 .e2e-run { flex: none; margin: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); overflow: hidden; }
 .e2e-run-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: default; }
 .e2e-earlier .e2e-run-header { cursor: pointer; }
+/* The header's Auto QA tab: a green icon while verification is on for the Session. */
+.e2e-tab-on .icon { color: var(--ok); }
 .e2e-run-headline { font-weight: 600; }
 .e2e-badge { text-transform: uppercase; letter-spacing: 0.02em; }
 .e2e-badge-planning, .e2e-badge-running { color: var(--accent); border-color: var(--accent); }

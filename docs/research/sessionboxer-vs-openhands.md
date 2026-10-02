@@ -10,7 +10,7 @@ Reviewed on **2026-09-28**. OpenHands moves fast (Agent Canvas shipped v1.20 →
 
 | Thing | What | Where |
 | --- | --- | --- |
-| Sessionboxer | 1.4.1 plus the unreleased `main` at `0490893` (automations, followed pull requests, Auto review, Auto QA on a PR, webhooks, start from a snapshot — [ADR-0063](../adr/0063-automations-triggers-actions-and-limits-run-by-the-control-plane.md) to [ADR-0069](../adr/0069-new-sessions-and-automations-start-from-a-snapshot.md)) | this repository: `README.md`, `docs/GUIDE.md`, `docs/MCP.md`, `CHANGELOG.md`, `docs/adr/` |
+| Sessionboxer | **1.5.0** (`main` at `706f82c`, 2026-10-02): seven agents (Claude Code, Codex, Cursor, Devin, pi, OpenCode, fx — [ADR-0075](../adr/0075-pi-as-a-fifth-provider-on-its-own-model-logins.md)–[0077](../adr/0077-fx-as-a-seventh-provider-on-an-fx-login.md)), automations and followed pull requests ([ADR-0063](../adr/0063-automations-triggers-actions-and-limits-run-by-the-control-plane.md)–[0069](../adr/0069-new-sessions-and-automations-start-from-a-snapshot.md)), recordings at 30 FPS with a drawn pointer ([ADR-0070](../adr/0070-recordings-at-30-fps-with-hand-paced-actions.md), [0072](../adr/0072-recordings-draw-their-own-pointer.md)), pins and folders ([ADR-0071](../adr/0071-pinned-sessions-stay-at-the-top-of-the-list.md), [0074](../adr/0074-sessions-grouped-into-folders.md)), Utilities ([ADR-0073](../adr/0073-utilities-for-runtime-debugging.md)), HTML apps in the chat ([ADR-0078](../adr/0078-workspace-html-files-as-sandboxed-artifacts-in-the-chat.md)), MCP Apps ([ADR-0079](../adr/0079-mcp-apps-through-a-transparent-tee.md)), camera/screen/drawing attachments and `transcribe_media` ([CHANGELOG](../../CHANGELOG.md)) | https://github.com/talayolabs/sessionboxer |
 | OpenHands Agent Canvas (the app, formerly `All-Hands-AI/OpenHands`) | v1.24.0, commit `c3c252ad6196de1237324b81b7d19146acce444c` | https://github.com/OpenHands/OpenHands |
 | OpenHands Software Agent SDK + Agent Server (the V1 agent, tools, sandbox images) | commit `978f3b46130416528fd076628ef685343819f05c` (v1.49.6 released 2026-09-25) | https://github.com/OpenHands/software-agent-sdk |
 | OpenHands legacy app (V0 GUI, archived) | commit `ee9e78b7defdfa744e0bbe48c9cafa90b6135ad7`, last commit 2026-07-25 | https://github.com/OpenHands/legacy |
@@ -18,7 +18,7 @@ Reviewed on **2026-09-28**. OpenHands moves fast (Agent Canvas shipped v1.20 →
 | Run locally | legacy GUI `docker.openhands.dev/openhands/openhands:1.8` (prints *OpenHands SDK v1.27.0*) and Agent Canvas `ghcr.io/openhands/agent-canvas:1.24.0` | screenshots at the end |
 | Site table | `pages/features.mjs`, OpenHands column | https://github.com/talayolabs/sessionboxer-site |
 
-Updated later on 2026-09-28 for the Sessionboxer commits `1ef237b` → `0490893` (Automations replacing Scheduled tasks, the Pull requests page, Auto review and Auto QA on PRs, webhooks); the OpenHands side was not re-checked and is still at the commits above.
+Updated on 2026-09-28 for the Sessionboxer commits `1ef237b` → `0490893` (Automations replacing Scheduled tasks, the Pull requests page, Auto review and Auto QA on PRs, webhooks). **Updated again on 2026-10-02** for Sessionboxer 1.5.0 (`0490893` → `706f82c`, 53 commits) with the consolidated [features table](#the-features-table-october-2026) below. For that pass the OpenHands *docs* were re-read on 2026-10-02 (`llms.txt`, the Agent Canvas release notes up to v1.21, the Conversations, Secrets, Apps (Beta), GitHub PR Review Assistant and GitHub Repository Monitor pages) and the GitHub release notes of Canvas v1.22–v1.24 were searched; the *source* checks still refer to Canvas `c3c252a` (v1.24.0, 2026-09-25, the latest release) and SDK `978f3b4` (the SDK has since released v1.50.1 on 2026-09-30, not reviewed). Two OpenHands statements from the first version were corrected in this pass: OpenHands *does* ship a pre-built PR review automation, and its agent *can* launch child conversations.
 
 Two things changed since the site's table was written and since the task brief was drafted:
 
@@ -31,13 +31,106 @@ Four editions of OpenHands are compared, because features differ between them: *
 
 Legend for the tables: **✓** verified available · **✗** verified absent (stated in the docs, or the mechanism to provide it does not exist in the reviewed source) · **—** not found in the reviewed docs/source (not proof of absence) · **Cloud** / **Ent** only in that edition.
 
+## The features table (October 2026)
+
+One row per feature, Sessionboxer 1.5.0 against OpenHands Agent Canvas v1.24 + SDK, with a verdict. **S** = Sessionboxer ahead, **O** = OpenHands ahead, **=** same, **≠** different by design. The detailed sections (§1–§11) keep the citations per row; this table is the summary the owner asked for.
+
+**Agents and models**
+
+| Feature | Sessionboxer | OpenHands | Verdict |
+| --- | --- | --- | --- |
+| Agents | Seven vendor agents over ACP: Claude Code, Codex, Cursor, Devin, pi, OpenCode, fx ([README](../../README.md), [ADR-0075](../adr/0075-pi-as-a-fifth-provider-on-its-own-model-logins.md), [0076](../adr/0076-opencode-as-a-sixth-provider-on-its-auth-json.md), [0077](../adr/0077-fx-as-a-seventh-provider-on-an-fx-login.md)). No agent of its own. | Its own agent **plus** Claude Code, Codex, Gemini CLI and any custom ACP server ([ACP agents](https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md)). | ≠ — both run vendor agents over ACP; Sessionboxer lists more of them (7 vs 3 named), OpenHands has its own agent and accepts any ACP server. |
+| Own agent, any model (LiteLLM, local models) | ✗ by design. | ✓ ([model configuration](https://docs.openhands.dev/openhands/usage/agent-canvas/model-configuration.md)). | O |
+| Paying | Each agent on its own subscription or key (pi/OpenCode/fx bring several provider logins each); usage bars and auto-continue at reset ([GUIDE](../GUIDE.md#usage-limits-the-bars-the-no-entry-sign-continue-and-auto-continue)). | API key per token; subscription login for some providers/ACP agents ([LLM subscriptions](https://docs.openhands.dev/sdk/guides/llm-subscriptions.md)); budgets in Cloud. | ≠ |
+| Skills, hooks, plugins of the platform | The agent's own formats (`CLAUDE.md`, `AGENTS.md`, Claude Code skills); Sessionboxer adds one skill, Procedures saved as skills ([ADR-0073](../adr/0073-utilities-for-runtime-debugging.md)). | `.openhands/` skills, setup script, hooks (Stop hooks gate completion), plugins ([hooks](https://docs.openhands.dev/openhands/usage/customization/hooks.md), [plugins](https://docs.openhands.dev/openhands/usage/agent-canvas/plugins.md)). | O |
+| Context gauge, compaction detail | ✓ gauge, per-turn tokens and `$`, what a compaction dropped vs the summary ([ADR-0030](../adr/0030-context-observability-from-acp-usage-and-the-agents-own-context-report.md), [0031](../adr/0031-compaction-details-read-from-the-providers-own-records-in-the-sandbox.md)). | ✓ context meter, manual compaction, `$` per conversation ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)). | = (Sessionboxer finer-grained) |
+| Exact model API calls, byte for byte | ✓ Claude Code ([ADR-0032](../adr/0032-exact-model-api-calls-recorded-by-a-loopback-proxy-in-the-sandbox.md)). | — metrics and transcript export only. | S (—) |
+| Critic / judge of the result | ✗ (Auto QA instead, below). | ✓ ([critic](https://docs.openhands.dev/openhands/usage/agent-canvas/critic.md)). | O |
+
+**The machine**
+
+| Feature | Sessionboxer | OpenHands | Verdict |
+| --- | --- | --- | --- |
+| Where the agent runs | Docker (Sysbox) with a desktop, or a QEMU Windows/macOS VM with the agent inside ([ADR-0001](../adr/0001-agent-runs-inside-the-sandbox.md), [0060](../adr/0060-the-agent-runs-inside-the-windows-vm.md), [0061](../adr/0061-the-agent-runs-inside-the-macos-vm.md)). | Docker, process (no sandbox), remote VM, Modal, Cloud, Enterprise ([backends](https://docs.openhands.dev/openhands/usage/agent-canvas/backends.md)). | ≠ — more places (O), more kinds of machine (S). |
+| Windows and macOS *sessions* | ✓ | ✗ hosts only ([setup](https://docs.openhands.dev/openhands/usage/agent-canvas/setup.md)). | S |
+| Stop and resume with the machine intact | ✓ ([ADR-0009](../adr/0009-snapshots-via-docker-commit-and-forks-as-new-sandboxes.md)). | ✗ conversation persists, container is not kept ([FAQ](https://docs.openhands.dev/overview/faqs.md)). | S |
+| Snapshot and fork the whole machine | ✓ by hand, after every turn, and **Fork from "Now"** with no prior snapshot ([CHANGELOG](../../CHANGELOG.md)). | ✗ for the machine; conversation fork only ([convo-fork](https://docs.openhands.dev/sdk/guides/convo-fork.md)). | S |
+| Docker inside the sandbox | ✓ Sysbox ([ADR-0008](../adr/0008-docker-inside-sandboxes-via-sysbox.md)). | — not in the agent-server image @ `978f3b4`. | S (—) |
+| Custom sandbox image | ✗ one image, extended at runtime. | ✓ ([Docker sandbox](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox.md)). | O |
+| USB devices into the box | ✓ ([README](../../README.md)). | — | S (—) |
+
+**Desktop, browser, verification**
+
+| Feature | Sessionboxer | OpenHands | Verdict |
+| --- | --- | --- | --- |
+| What the agent drives | A whole desktop: 21 `desktop` tools ([MCP.md](../MCP.md)). | A browser (browser-use / Playwright) (`openhands-tools/openhands/tools/browser_use/definition.py` @ `978f3b4`). | S |
+| Watch live and take over | ✓ noVNC, **Take control** ([GUIDE](../GUIDE.md#watch-and-take-over-the-desktop)). | Browser tab, non-interactive ([key features](https://docs.openhands.dev/openhands/usage/key-features.md)). | S |
+| VS Code and terminals in the sandbox | ✓ | ✓ OpenVSCode Server, Terminal tab. | = |
+| Recordings in the chat | ✓ desktop video at 30 FPS, hand-paced actions, drawn pointer and click badge, captions and narration burned in + VTT ([ADR-0017](../adr/0017-desktop-recording-with-ffmpeg-and-inline-workspace-media-in-the-chat.md), [0026](../adr/0026-recording-captions-narrated-by-the-agent-burned-in-and-as-a-vtt-track.md), [0070](../adr/0070-recordings-at-30-fps-with-hand-paced-actions.md), [0072](../adr/0072-recordings-draw-their-own-pointer.md)). | Browser-session recording tools, screenshots in the chat; no captions found (`BrowserStartRecordingTool` @ `978f3b4`). | S |
+| Tests its own work after each turn | ✓ Auto QA: planned e2e cases run on the desktop, on video, failures fixed ([ADR-0044](../adr/0044-end-to-end-verification-after-each-turn.md)). | Critic score and Stop hooks, not an e2e loop. | S |
+
+**The conversation**
+
+| Feature | Sessionboxer | OpenHands | Verdict |
+| --- | --- | --- | --- |
+| Revert and branch | ✓ in the same box, with the snapshot ([ADR-0012](../adr/0012-conversation-branches-in-one-sandbox-via-acp-fork-or-replay.md)). | *Branch from here* = a new conversation from that point ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)); no in-place revert found. | S |
+| Hand off to a different vendor's agent | ✓ handoff written by the origin's agent ([ADR-0052](../adr/0052-forks-with-another-agent-and-handoffs-written-by-the-origins-agent.md)). | — | S (—) |
+| Agent creates and talks to other sessions | ✓ `sessionboxer` MCP behind an approval card ([ADR-0062](../adr/0062-the-sessionboxer-mcp-in-every-box-self-knowledge-and-control-plane-actions.md)). | ✓ `launch_child_conversation` to a local worktree/shared workspace or to Cloud; delegate tools ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)). | = |
+| Prompt queue | ✓ ([GUIDE](../GUIDE.md#talk-to-the-agent)). | — | S (—) |
+| Files and images attached | ✓ ([GUIDE](../GUIDE.md#talk-to-the-agent)). | ✓ any file type (`hidden-file-input.tsx` `accept="*/*"` @ `c3c252a`), image lightbox ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)). | = |
+| Photo, video, screen capture from the composer; what you say in them transcribed | ✓ Camera button, `transcribe_media` ([CHANGELOG](../../CHANGELOG.md), [MCP.md](../MCP.md)). | — no `getUserMedia`/`getDisplayMedia` in the Canvas source @ `c3c252a`; a video file can be uploaded, transcription not found. | S (—) |
+| Drawing / sketch attached, also over an image | ✓ ([CHANGELOG](../../CHANGELOG.md)). | — | S (—) |
+| Offline dictation | ✓ whisper.cpp ([GUIDE](../GUIDE.md#talk-to-the-agent)). | — | S (—) |
+| An HTML file the agent writes runs in the chat | ✓ sandboxed (`/fs/app`, CSP `sandbox`, `Origin: null` refused by the API) inline and in an **App** pane that reloads as the agent edits ([ADR-0078](../adr/0078-workspace-html-files-as-sandboxed-artifacts-in-the-chat.md)). | Markdown files render inline; the **App** tab shows a dev server the agent starts ([key features](https://docs.openhands.dev/openhands/usage/key-features.md)); an HTML artifact viewer not found. *Apps (Beta)* are user-installed Canvas pages, not agent output, and run unsandboxed in the Canvas origin ([Apps](https://docs.openhands.dev/openhands/usage/agent-canvas/canvas-extensions.md)). | S for agent-written artifacts; O for extending the UI itself. |
+| Folders and pins in the sidebar | ✓ folders you create, drag and drop, context menu; pin to the top ([ADR-0074](../adr/0074-sessions-grouped-into-folders.md), [0071](../adr/0071-pinned-sessions-stay-at-the-top-of-the-list.md)). | ✓ conversations grouped by workspace folder, collapse all; pinned conversations ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md), [v1.24 notes](https://github.com/OpenHands/OpenHands/releases/tag/v1.24.0)). | = |
+| Confirmation prompts | None inside the box. | Confirmation mode with always-approve. | = |
+
+**Repositories, pull requests, automations**
+
+| Feature | Sessionboxer | OpenHands | Verdict |
+| --- | --- | --- | --- |
+| Several repositories per session, several Git accounts | ✓ ([ADR-0037](../adr/0037-several-repositories-per-session-under-workspace-name.md)). | — one repository/workspace per conversation in the reviewed docs. | S (—) |
+| Git hosts | GitHub, Bitbucket Data Center ([GUIDE](../GUIDE.md#pull-requests-attached-to-a-session)). | GitHub, GitLab, Bitbucket Cloud ([integrations](https://docs.openhands.dev/openhands/usage/settings/integrations-settings.md)). | O |
+| Pull requests followed: comments and checks sent to the agent, auto-merge | ✓ ([ADR-0027](../adr/0027-pull-requests-attached-to-a-session-watched-through-gh-in-the-sandbox.md), [0040](../adr/0040-auto-merge-attached-pull-requests-when-github-allows-it.md), [0050](../adr/0050-pr-checks-watched-announced-and-fixed-from-the-pr-pane.md)). | Addressed when asked; auto-merge not found. | S |
+| Follow a repository's or account's PRs without a session, behind NAT | ✓ polled by the Control Plane, webhooks optional ([ADR-0064](../adr/0064-followed-pull-requests-polled-by-the-control-plane.md), [0067](../adr/0067-webhooks-only-accelerate-polling-of-followed-pull-requests.md)). | Pre-built *GitHub Repository Monitor* (PAT + GitHub MCP) ([repo monitor](https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/github-repo-monitor.md)); webhook events need a reachable backend ([event automations](https://docs.openhands.dev/openhands/usage/automations/event-automations.md)). | = |
+| Auto review of every PR | ✓ one review with inline findings posted **under your own login** through the Control Plane, verdict capped by the automation, fork PRs with no credential in the box ([ADR-0065](../adr/0065-auto-review-sessions-post-through-the-control-plane.md)). | ✓ pre-built *GitHub PR Review Assistant*: the agent posts a summary comment or inline feedback through the GitHub MCP with a PAT it holds ([PR review](https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/github-pr-review.md)). | = (mechanism differs: Sessionboxer keeps the token out of the box) |
+| Auto QA of every PR, the video posted on the PR | ✓ ([ADR-0066](../adr/0066-auto-qa-sessions-record-a-pr-and-the-control-plane-posts-the-video.md)). | — | S (—) |
+| Issue / `@mention` / label / Slack triggers | ✗ PR events, schedule and manual only ([ADR-0063](../adr/0063-automations-triggers-actions-and-limits-run-by-the-control-plane.md)). | ✓ ([event automations](https://docs.openhands.dev/openhands/usage/automations/event-automations.md), [GitHub Cloud](https://docs.openhands.dev/openhands/usage/cloud/github-installation.md)). | O |
+| Scheduled automations with a run history | ✓ | ✓ ([automations](https://docs.openhands.dev/openhands/usage/automations/overview.md)). | = |
+| Automation runs start from a snapshot | ✓ ([ADR-0069](../adr/0069-new-sessions-and-automations-start-from-a-snapshot.md)). | ✗ fresh sandbox per run. | S |
+| Slack, Jira, Linear | ✗ | ✓ Cloud or MCP templates. | O |
+
+**MCP and the systems around the software**
+
+| Feature | Sessionboxer | OpenHands | Verdict |
+| --- | --- | --- | --- |
+| MCP servers | Global registry, switched on per session, native in Windows/macOS guests ([ADR-0010](../adr/0010-mcp-servers-global-registry-per-session-switches-restart-on-toggle.md)). | Global settings, scoped per agent profile (v1.19), OAuth ([MCP settings](https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md), [v1.19 notes](https://docs.openhands.dev/openhands/usage/agent-canvas/release-notes/v1.19.0.md)). | = |
+| MCP Apps / MCP-UI: a tool's view rendered under the call | ✓ sandboxed, through a transparent per-server tee, verified against the official ext-apps examples ([ADR-0079](../adr/0079-mcp-apps-through-a-transparent-tee.md)). | — no `ui://` / MCP-UI handling in Canvas `c3c252a` or SDK `978f3b4`; not in the v1.18–v1.24 release notes. | S (—) |
+| Built-in MCP servers | `desktop` (21 tools), `sessionboxer` (self-knowledge, PRs, automations, snapshots, utilities, `transcribe_media`, cross-session) ([MCP.md](../MCP.md)). | Built-in *tools* instead (terminal, editor, browser, tasks, delegate). | ≠ |
+| Credentials the agent uses but never sees | ✓ **Utilities**: named systems (observability, apps, databases, SSH hosts) per environment, write-only credentials resolved in the Control Plane, the agent writes `${util:<name>.password}` ([ADR-0073](../adr/0073-utilities-for-runtime-debugging.md)). | Secrets manager exports secrets **as environment variables in the agent's runtime** ([secrets](https://docs.openhands.dev/openhands/usage/settings/secrets-settings.md)); the SDK Secret Registry masks values in command output ([Secret Registry](https://docs.openhands.dev/sdk/guides/secrets.md)); per-profile secret scoping (v1.20). | S on keeping the value out of the box; both have a secret store. |
+| Procedures saved as reusable skills (investigate/verify runbooks) | ✓ ([ADR-0073](../adr/0073-utilities-for-runtime-debugging.md)). | `.openhands/skills` (any instructions) ([repository customisation](https://docs.openhands.dev/openhands/usage/customization/repository.md)). | = |
+
+**Remote access, team, operations**
+
+| Feature | Sessionboxer | OpenHands | Verdict |
+| --- | --- | --- | --- |
+| Login in front of the UI | ✓ token, device cookies, revoke ([ADR-0033](../adr/0033-access-token-and-device-cookies-in-front-of-everything-remote-access-stage-1.md)). | — locally ([FAQ](https://docs.openhands.dev/overview/faqs.md)); Cloud/Enterprise. | S locally |
+| Phone | PWA, Web Push, QR pairing over a built-in tunnel ([ADR-0034](../adr/0034-embedded-cloudflare-quick-tunnel-for-zero-setup-phone-access.md)–[0036](../adr/0036-selectable-pairing-transports-cloudflare-sessionboxer-frp-tunnel-and-own-ssh-server.md)). | Web UI over your own tunnel ([mobile access](https://docs.openhands.dev/openhands/usage/agent-canvas/mobile-access.md)). | S |
+| Team edition (accounts, RBAC, budgets, SSO) | ✗ | Cloud / Enterprise ([Ent vs OSS](https://docs.openhands.dev/enterprise/enterprise-vs-oss.md)). | O |
+| Programmatic API / SDK | `sessionboxer` MCP, `/api` used by the UI. | Python SDK, REST API ([SDK](https://docs.openhands.dev/sdk), [API V1](https://docs.openhands.dev/openhands/usage/api/v1.md)). | O |
+| Hosts | Linux + Docker (KVM for VM sessions). | Linux, macOS, Windows. | O |
+| Licence | MIT. | MIT (Cloud/Enterprise commercial). | = |
+| Benchmarks | None (vendors' agents). | SWE-bench for its own agent (§11). | ≠ |
+
+Count, for what it is worth: Sessionboxer ahead on 25 rows, OpenHands on 10, same on 12, different by design on 5. The rows marked (—) rest on "not found" in the reviewed OpenHands docs and source, not on a statement that the feature is absent.
+
 ## Feature by feature
 
 ### 1. The agent
 
 | | Sessionboxer | OpenHands | Notes |
 | --- | --- | --- | --- |
-| Who is the agent | The vendors' own: Claude Code, Codex, Cursor, Devin, over ACP, on your subscription ([README](../../README.md), [ADR-0001](../adr/0001-agent-runs-inside-the-sandbox.md)). No agent of its own. | Its own agent (SDK `Agent`, default tools: terminal, file editor, task tracker, browser toolset, delegate/task toolset — `openhands-tools/openhands/tools/preset/default.py` @ `978f3b4`) **and** Claude Code / Codex / Gemini CLI / any custom ACP server ([ACP agents](https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md)). | Both run vendor agents over ACP. Only OpenHands has an agent of its own. |
+| Who is the agent | The vendors' own: Claude Code, Codex, Cursor, Devin, and since 1.5.0 pi, OpenCode and fx, over ACP, on your subscription or keys ([README](../../README.md), [ADR-0001](../adr/0001-agent-runs-inside-the-sandbox.md), [ADR-0075](../adr/0075-pi-as-a-fifth-provider-on-its-own-model-logins.md), [0076](../adr/0076-opencode-as-a-sixth-provider-on-its-auth-json.md), [0077](../adr/0077-fx-as-a-seventh-provider-on-an-fx-login.md); fx is Linux/macOS only). No agent of its own. | Its own agent (SDK `Agent`, default tools: terminal, file editor, task tracker, browser toolset, delegate/task toolset — `openhands-tools/openhands/tools/preset/default.py` @ `978f3b4`) **and** Claude Code / Codex / Gemini CLI / any custom ACP server ([ACP agents](https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md)). | Both run vendor agents over ACP; Sessionboxer names seven, OpenHands three plus any custom ACP server. Only OpenHands has an agent of its own. |
 | Model choice | Whatever the vendor agent offers, switched mid-conversation ([GUIDE](../GUIDE.md#talk-to-the-agent)). | Any LiteLLM-supported provider, OpenAI-compatible endpoints, OpenHands-hosted keys; profiles per agent ([model configuration](https://docs.openhands.dev/openhands/usage/agent-canvas/model-configuration.md), [agent profiles](https://docs.openhands.dev/openhands/usage/agent-canvas/agent-profiles.md)). | OpenHands ahead for its own agent (open-weight and local models included). Same for ACP agents (the vendor decides). |
 | Paying for it | The subscription's meter; Sessionboxer shows the vendor's 5-hour / weekly bars and auto-continues at reset ([GUIDE](../GUIDE.md#usage-limits-the-bars-the-no-entry-sign-continue-and-auto-continue)). | API key per token by default; subscription login exists for some providers/ACP agents ([LLM subscriptions](https://docs.openhands.dev/sdk/guides/llm-subscriptions.md)); Cloud has organisation budgets ([budgets](https://docs.openhands.dev/openhands/usage/cloud/organizations/budgets.md), Cloud). | Different. Flat-rate subscriptions favour Sessionboxer's model for heavy users; metered API favours OpenHands for occasional or bring-your-own-model use. |
 | Tool-calling, quality | The vendor's; Sessionboxer adds two MCP servers (`desktop`, `sessionboxer`) and the `e2e-verification` skill ([MCP.md](../MCP.md)). | Own agent: tools, condenser, critic, skills are OpenHands'. For ACP agents the SDK is explicit that `tools`, `mcp_config`, `condenser`, `critic` do not apply — the external agent owns them ([agent-acp](https://docs.openhands.dev/sdk/guides/agent-acp.md)). | Not comparable head to head; see §11. |
@@ -77,18 +170,19 @@ Legend for the tables: **✓** verified available · **✗** verified absent (st
 
 | | Sessionboxer | OpenHands | Notes |
 | --- | --- | --- | --- |
-| Many at once, resume | ✓ sessions; stopped ones use nothing and come back ([README](../../README.md)). | ✓ conversations; folders per workspace/repository ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md), sidebar in screenshot 06). | Equivalent. |
+| Many at once, resume | ✓ sessions; stopped ones use nothing and come back ([README](../../README.md)); folders you create, drag and drop between them, pin to the top ([ADR-0074](../adr/0074-sessions-grouped-into-folders.md), [ADR-0071](../adr/0071-pinned-sessions-stay-at-the-top-of-the-list.md)). | ✓ conversations; grouped by workspace folder, collapse all, pinned conversations ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md), sidebar in screenshot 06). | Equivalent. |
 | Revert / branch | ✓ revert to a turn and branch, in the same box, with the machine snapshot if one exists ([ADR-0012](../adr/0012-conversation-branches-in-one-sandbox-via-acp-fork-or-replay.md)). | Conversation fork = new conversation from the copied history ([convo-fork](https://docs.openhands.dev/sdk/guides/convo-fork.md)). Revert-in-place: —. | Sessionboxer ahead (revert + snapshot together). OpenHands' fork covers "try another way". |
-| Hand off to another agent | ✓ fork with another agent, handoff written by the origin's agent ([ADR-0052](../adr/0052-forks-with-another-agent-and-handoffs-written-by-the-origins-agent.md)). | — not found. Delegation to sub-agents of the *same* kind exists (`openhands-tools/openhands/tools/delegate` @ `978f3b4`). | Sessionboxer ahead. |
+| Hand off to another agent | ✓ fork with another agent, handoff written by the origin's agent ([ADR-0052](../adr/0052-forks-with-another-agent-and-handoffs-written-by-the-origins-agent.md)). | — not found. Child conversations exist (`launch_child_conversation`, local worktree or Cloud — [conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)) and delegation to sub-agents (`openhands-tools/openhands/tools/delegate` @ `978f3b4`), with the same kind of agent. | Sessionboxer ahead. |
 | Queue | ✓ Enqueue (Ctrl+S), plays when idle ([GUIDE](../GUIDE.md#talk-to-the-agent)). | — not found. | Sessionboxer ahead (—). |
-| Attachments | ✓ files and images uploaded into the box, images to the model ([GUIDE](../GUIDE.md#talk-to-the-agent)). | ✓ image paste/upload in the chat (`src/components/features/chat/uploaded-image.tsx`, `chat-add-file-button.tsx` @ `c3c252a`). | Equivalent. |
+| Attachments | ✓ files and images uploaded into the box, images to the model; since 1.5.0 a **Camera** button for photo, video and screen capture, a **Draw** sheet (also over an image) attached as PNG, thumbnails and previews, and `transcribe_media` so the agent hears what you said in a recording ([GUIDE](../GUIDE.md#talk-to-the-agent), [CHANGELOG](../../CHANGELOG.md), [MCP.md](../MCP.md)). | ✓ any file type and image paste/upload in the chat, image lightbox (`hidden-file-input.tsx` `accept="*/*"`, `uploaded-image.tsx` @ `c3c252a`; [conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)). Camera/screen capture and transcription: — (no `getUserMedia`/`getDisplayMedia` @ `c3c252a`). | Equivalent for files and images; Sessionboxer ahead (—) on capture, drawing and transcription. |
+| An HTML file the agent writes, run in the chat | ✓ served sandboxed from `/fs/app` (CSP `sandbox allow-scripts`, `Origin: null` refused by the API), inline and in an **App** pane that reloads as the agent edits ([ADR-0078](../adr/0078-workspace-html-files-as-sandboxed-artifacts-in-the-chat.md)). | Markdown files render inline; the **App** tab shows a dev server the agent starts ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md), [key features](https://docs.openhands.dev/openhands/usage/key-features.md)). *Apps (Beta)* are different: pages a *user* installs from a Git repository to extend Canvas, unsandboxed, local backends only ([Apps](https://docs.openhands.dev/openhands/usage/agent-canvas/canvas-extensions.md)). | Sessionboxer ahead for agent output; OpenHands has UI extensions instead. |
 | Voice input | ✓ whisper.cpp on your machine, offline ([GUIDE](../GUIDE.md#talk-to-the-agent)). | — no `SpeechRecognition`/`getUserMedia` in the Canvas source @ `c3c252a`. | Sessionboxer ahead (—). |
 | Context / tokens display | ✓ gauge, per-turn tokens and cost, compaction dialog, `/context` breakdown ([GUIDE](../GUIDE.md#how-full-is-the-context)). | ✓ context meter, manual compaction, per-conversation cost and metrics (`src/utils/conversation-metrics.ts`, `budget-usage-text.tsx` @ `c3c252a`; [conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)). | Both have it. Sessionboxer's is finer-grained (per turn, what a compaction dropped). The site's `—` is wrong. |
 | Per-call LLM inspection | ✓ every request/response byte for byte, `LLM #n` labels, Claude Code only ([ADR-0032](../adr/0032-exact-model-api-calls-recorded-by-a-loopback-proxy-in-the-sandbox.md)). | Transcript export and metrics; an exact request/response viewer — not found. | Sessionboxer ahead (—). |
 | Cost display | ✓ `$` per turn ([GUIDE](../GUIDE.md#how-full-is-the-context)). | ✓ `$` per conversation and in automation runs. | Equivalent. |
 | Confirmation / "don't ask" | Agents run with every permission inside the box ([README](../../README.md)). | Confirmation mode with an always-approve setting ([critic page](https://docs.openhands.dev/openhands/usage/agent-canvas/critic.md), Verification settings in screenshot 03). | Equivalent. |
 
-**Verdict**: close. Sessionboxer ahead on revert-with-machine, handoff, queue, dictation and exact LLM calls; equivalent on the rest.
+**Verdict**: close. Sessionboxer ahead on revert-with-machine, handoff, queue, dictation, capture/drawing/transcription, HTML apps in the chat and exact LLM calls; equivalent on the rest.
 
 ### 5. Repositories and Git
 
@@ -120,11 +214,13 @@ Legend for the tables: **✓** verified available · **✗** verified absent (st
 | | Sessionboxer | OpenHands | Notes |
 | --- | --- | --- | --- |
 | Transports | stdio and remote servers, registered once in Global settings, switched on per session, the agent restarted on toggle ([ADR-0010](../adr/0010-mcp-servers-global-registry-per-session-switches-restart-on-toggle.md), [mcp-servers research](mcp-servers.md)). | stdio, SSE, streamable HTTP, OAuth; configured in the UI, `config.toml`, or `mcp_config` in the SDK ([MCP settings](https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md), [SDK MCP](https://docs.openhands.dev/sdk/guides/mcp.md)). Stdio in production is recommended through a proxy such as SuperGateway. | Equivalent; OpenHands documents OAuth explicitly. |
-| Scope | Global registry + per-session toggle. | Global settings; per-conversation switching — not found. | Sessionboxer slightly ahead (—). |
+| Scope | Global registry + per-session toggle. | Global settings; scoped per agent profile with `mcp_server_refs` since v1.19 ([release notes v1.19.0](https://docs.openhands.dev/openhands/usage/agent-canvas/release-notes/v1.19.0.md)); per-conversation switching — not found. | Equivalent in effect. |
 | Where servers run | In the box; on Windows/macOS natively in the guest ([MCP.md](../MCP.md)). | In the agent-server sandbox (own agent); for ACP agents the external agent's own MCP config applies ([agent-acp](https://docs.openhands.dev/sdk/guides/agent-acp.md)). | Equivalent. |
-| Built-ins | `desktop` (21 tools) and `sessionboxer` (self-knowledge, PRs, PR follows, review submission, snapshots, queue, verify, automations, cross-session) ([MCP.md](../MCP.md)). | No built-in MCP servers; built-in *tools* instead (terminal, editor, browser, tasks, delegate). | Different shape, same idea. |
+| Built-ins | `desktop` (21 tools) and `sessionboxer` (self-knowledge, PRs, PR follows, review submission, snapshots, queue, verify, automations, utilities, `transcribe_media`, cross-session) ([MCP.md](../MCP.md)). | No built-in MCP servers; built-in *tools* instead (terminal, editor, browser, tasks, delegate). | Different shape, same idea. |
+| MCP Apps / MCP-UI | ✓ a tool that carries a view (`ui://` resource) has it rendered under the call, sandboxed, through a transparent per-server tee that mirrors initialise, tool lists and results; verified against the official ext-apps examples ([ADR-0079](../adr/0079-mcp-apps-through-a-transparent-tee.md)). | — no `ui://`/MCP-UI handling found in Canvas `c3c252a` or SDK `978f3b4`, nothing in the v1.18–v1.24 release notes. | Sessionboxer ahead (—). |
+| Systems around the software | ✓ **Utilities**: a named system (monitoring, QA app, database, SSH host) per environment with web/HTTP/SSH/CLI/MCP facets, credentials write-only and resolved in the Control Plane, the agent uses `${util:<name>.password}` and never sees the value; Procedures saved as skills ([ADR-0073](../adr/0073-utilities-for-runtime-debugging.md), [GUIDE](../GUIDE.md#utilities)). | Secrets manager: values exported as environment variables in the agent's runtime ([secrets](https://docs.openhands.dev/openhands/usage/settings/secrets-settings.md)); SDK Secret Registry masks them in command output ([Secret Registry](https://docs.openhands.dev/sdk/guides/secrets.md)); per-profile secret scoping (v1.20). MCP library entries (GitHub, …) take a token. | Both store secrets; only Sessionboxer keeps the value out of the agent's reach. |
 
-**Verdict**: equivalent.
+**Verdict**: equivalent on MCP servers; Sessionboxer ahead on MCP Apps (—) and on credentials the agent never sees.
 
 ### 8. Verification and QA
 
@@ -169,10 +265,17 @@ Verified against the docs and source listed above. "—" means not found rather 
 - **Captioned, narrated desktop recordings in the chat** ([ADR-0017](../adr/0017-desktop-recording-with-ffmpeg-and-inline-workspace-media-in-the-chat.md), [ADR-0026](../adr/0026-recording-captions-narrated-by-the-agent-burned-in-and-as-a-vtt-track.md)); OpenHands records the browser session, without captions.
 - **Auto QA after every turn**: planned e2e cases, run on the desktop, on video, failures fixed ([ADR-0044](../adr/0044-end-to-end-verification-after-each-turn.md)); OpenHands has Critic scoring and hooks, not this loop.
 - **Auto QA on every pull request of a repository, the video posted on the PR** ([ADR-0066](../adr/0066-auto-qa-sessions-record-a-pr-and-the-control-plane-posts-the-video.md)); OpenHands' *QA changes* template edits the PR description, no recording of a desktop was found.
-- **Auto review posted as one review with inline findings under your own login**, verdict capped by the automation, fork PRs reviewed with no credential in the box ([ADR-0065](../adr/0065-auto-review-sessions-post-through-the-control-plane.md)) — —.
+- **Auto review posted as one review under your own login, with the token kept out of the box**, verdict capped by the automation, fork PRs reviewed with no credential in the sandbox ([ADR-0065](../adr/0065-auto-review-sessions-post-through-the-control-plane.md)); OpenHands' pre-built PR Review Assistant has the agent post through the GitHub MCP with a PAT it holds ([PR review](https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/github-pr-review.md)).
 - **Follow the PRs of a repository or account without a session, behind NAT**: polling with the Control Plane's login, webhooks optional ([ADR-0064](../adr/0064-followed-pull-requests-polled-by-the-control-plane.md), [ADR-0067](../adr/0067-webhooks-only-accelerate-polling-of-followed-pull-requests.md)); OpenHands' event automations need a reachable backend ([event automations](https://docs.openhands.dev/openhands/usage/automations/event-automations.md)).
 - **Automation runs that start from a snapshot** instead of a fresh clone ([ADR-0069](../adr/0069-new-sessions-and-automations-start-from-a-snapshot.md)); OpenHands runs each automation in a fresh sandbox ([automations](https://docs.openhands.dev/openhands/usage/automations/overview.md)).
 - **Revert to a turn in the same box**, with the snapshot ([ADR-0012](../adr/0012-conversation-branches-in-one-sandbox-via-acp-fork-or-replay.md)).
+- **MCP Apps**: tool views rendered inline, sandboxed, through a transparent tee ([ADR-0079](../adr/0079-mcp-apps-through-a-transparent-tee.md)) — —.
+- **HTML written by the agent runs in the chat and in an App pane**, sandboxed off the Sessionboxer origin ([ADR-0078](../adr/0078-workspace-html-files-as-sandboxed-artifacts-in-the-chat.md)); OpenHands renders Markdown inline and shows a dev server in its App tab.
+- **Utilities**: named systems with credentials the agent uses by name and never sees, Procedures as skills ([ADR-0073](../adr/0073-utilities-for-runtime-debugging.md)); OpenHands exports secrets as environment variables ([secrets](https://docs.openhands.dev/openhands/usage/settings/secrets-settings.md)).
+- **Photo, video and screen capture from the composer, drawing over an image, and `transcribe_media`** ([CHANGELOG](../../CHANGELOG.md)) — —.
+- **Fork from "Now"** without a snapshot made beforehand ([CHANGELOG](../../CHANGELOG.md)); OpenHands forks the conversation, not the machine.
+- **Recordings with a drawn pointer, click badges and hand-paced actions at 30 FPS** ([ADR-0070](../adr/0070-recordings-at-30-fps-with-hand-paced-actions.md), [ADR-0072](../adr/0072-recordings-draw-their-own-pointer.md)) — —.
+- **Seven vendor agents** (pi, OpenCode and fx added in 1.5.0, each bringing several provider logins) ([ADR-0075](../adr/0075-pi-as-a-fifth-provider-on-its-own-model-logins.md)–[0077](../adr/0077-fx-as-a-seventh-provider-on-an-fx-login.md)); OpenHands names three ACP agents plus custom servers.
 - **Hand off to a different vendor's agent**, with the handoff written by the origin's agent ([ADR-0052](../adr/0052-forks-with-another-agent-and-handoffs-written-by-the-origins-agent.md)) — —.
 - **Exact model API calls**, byte for byte, per bubble ([ADR-0032](../adr/0032-exact-model-api-calls-recorded-by-a-loopback-proxy-in-the-sandbox.md)) — —.
 - **Compaction shown as what was dropped vs the summary** ([ADR-0031](../adr/0031-compaction-details-read-from-the-providers-own-records-in-the-sandbox.md)) — —.
@@ -183,15 +286,16 @@ Verified against the docs and source listed above. "—" means not found rather 
 - **Docker inside the box** via Sysbox ([ADR-0008](../adr/0008-docker-inside-sandboxes-via-sysbox.md)) — —.
 - **USB devices into a box** ([README](../../README.md)) — —.
 - **Subscription usage bars and auto-continue at reset** ([GUIDE](../GUIDE.md#usage-limits-the-bars-the-no-entry-sign-continue-and-auto-continue)) — —.
-- **An agent that knows its session and can create, message, fork and wait on other sessions behind an approval card** ([ADR-0062](../adr/0062-the-sessionboxer-mcp-in-every-box-self-knowledge-and-control-plane-actions.md)); OpenHands delegates to sub-agents of the same kind and offers an API to humans.
+- **An agent that knows its session and can create, message, fork and wait on other sessions behind an approval card** ([ADR-0062](../adr/0062-the-sessionboxer-mcp-in-every-box-self-knowledge-and-control-plane-actions.md)); OpenHands' agent can launch child conversations and delegate to sub-agents of the same kind ([conversations](https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md)); no approval card found.
 
 ## What OpenHands has that Sessionboxer doesn't
 
-- **Its own agent with any model** (LiteLLM, OpenAI-compatible, local models) ([model configuration](https://docs.openhands.dev/openhands/usage/agent-canvas/model-configuration.md)). Sessionboxer is limited to the four vendors' agents and their models.
-- **Gemini CLI and custom ACP servers** as agents ([ACP agents](https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md)); Sessionboxer has Claude Code, Codex, Cursor, Devin.
+- **Its own agent with any model** (LiteLLM, OpenAI-compatible, local models) ([model configuration](https://docs.openhands.dev/openhands/usage/agent-canvas/model-configuration.md)). Sessionboxer is limited to the seven vendors' agents and the models they offer.
+- **Gemini CLI and any custom ACP server** as agents ([ACP agents](https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md)); Sessionboxer has a fixed list of seven.
 - **Skills, plugins, hooks and setup scripts of its own** (`.openhands/`), including Stop hooks that gate completion ([hooks](https://docs.openhands.dev/openhands/usage/customization/hooks.md), [plugins](https://docs.openhands.dev/openhands/usage/agent-canvas/plugins.md)).
 - **A context condenser it controls**, and persistent memory ([context condenser](https://docs.openhands.dev/sdk/guides/context-condenser.md)).
 - **Critic**: a model that scores the result and can make the agent iterate ([critic](https://docs.openhands.dev/openhands/usage/agent-canvas/critic.md)).
+- **Apps (Beta)**: custom pages a user installs from a Git repository to extend the Canvas UI ([Apps](https://docs.openhands.dev/openhands/usage/agent-canvas/canvas-extensions.md)); Sessionboxer has no UI extension format.
 - **Event-driven automations and a resolver**: `@openhands` on an issue or PR, labels, webhooks, Slack mentions → a conversation, a PR, a reply ([event automations](https://docs.openhands.dev/openhands/usage/automations/event-automations.md), [GitHub Cloud](https://docs.openhands.dev/openhands/usage/cloud/github-installation.md)). Sessionboxer reacts to pull request events only — not to issues, mentions, labels-as-a-command, Slack or generic webhooks ([ADR-0063](../adr/0063-automations-triggers-actions-and-limits-run-by-the-control-plane.md)).
 - **Slack, Jira, Linear, GitLab, Bitbucket Cloud integrations** (Cloud, or via MCP templates) ([integrations](https://docs.openhands.dev/openhands/usage/settings/integrations-settings.md)).
 - **A Python SDK and REST API** for building agents and creating conversations programmatically ([SDK](https://docs.openhands.dev/sdk), [API V1](https://docs.openhands.dev/openhands/usage/api/v1.md)).
@@ -209,6 +313,10 @@ Verified against the docs and source listed above. "—" means not found rather 
 - Screenshots the agent takes shown in the chat; a browser the agent drives.
 - Many conversations, resume, a fork/branch of the conversation.
 - Image and file attachments.
+- Folders and pinned items in the sidebar.
+- A secret store (OpenHands as environment variables; Sessionboxer as Utilities the agent uses by name).
+- The agent starting and talking to other sessions/conversations (Sessionboxer with an approval card; OpenHands `launch_child_conversation`).
+- Automatic review of every pull request of a repository (Sessionboxer under your login through the Control Plane; OpenHands' pre-built PR Review Assistant through the GitHub MCP with a PAT).
 - Context meter and cost display (Sessionboxer per turn, OpenHands per conversation).
 - Model switched per session/conversation.
 - MCP servers (stdio and remote), configured centrally.
@@ -221,7 +329,7 @@ Verified against the docs and source listed above. "—" means not found rather 
 
 ## A positioning paragraph for the site
 
-> OpenHands is an open-source agent platform: its own agent with any model, a Python SDK, automations that react to issues, PRs and Slack, and a paid cloud for teams. Sessionboxer is a workbench for the agents you already pay for — Claude Code, Codex, Cursor, Devin — each in its own machine: a Linux desktop or a Windows or macOS VM that you can watch, take over, snapshot, fork, stop and resume, where the agent tests its work on video after every turn, and where every pull request of a repository you follow can get a review and a QA video without you asking. Pick OpenHands if you want to build with or automate an agent; pick Sessionboxer if you want to see one work and keep the machine it worked in.
+> OpenHands is an open-source agent platform: its own agent with any model, a Python SDK, automations that react to issues, PRs and Slack, and a paid cloud for teams. Sessionboxer is a workbench for the agents you already pay for — Claude Code, Codex, Cursor, Devin, pi, OpenCode, fx — each in its own machine: a Linux desktop or a Windows or macOS VM that you can watch, take over, snapshot, fork, stop and resume, where the agent tests its work on video after every turn, and where every pull request of a repository you follow can get a review and a QA video without you asking. Pick OpenHands if you want to build with or automate an agent; pick Sessionboxer if you want to see one work and keep the machine it worked in.
 
 ## Proposed changes to the OpenHands column in `pages/features.mjs`
 
@@ -230,7 +338,7 @@ Old → new, with the source. Keep `—` where nothing was found; use a short ph
 | Row | Old | New | Why |
 | --- | --- | --- | --- |
 | `subscription` | `API key` | `API key or provider login` | Subscription login for some providers / ACP agents: https://docs.openhands.dev/sdk/guides/llm-subscriptions.md |
-| `agents` | `own agent, any model` | `own agent (any model), Claude Code, Codex, Gemini CLI` | https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md; screenshot 04 |
+| `agents` | `own agent, any model` | `own agent (any model), Claude Code, Codex, Gemini CLI, custom ACP` | https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md; screenshot 04. (The Sessionboxer cell already lists the seven agents.) |
 | `sandbox` | `Docker` | `Docker, VM, Modal, cloud` | https://docs.openhands.dev/openhands/usage/agent-canvas/backends.md (also a no-sandbox *process* mode) |
 | `desktop` | `browser` | `browser` (keep) | Browser tools only: `openhands-tools/openhands/tools/browser_use/definition.py` @ `978f3b4` |
 | `watch` | `—` | `browser tab, read-only` | https://docs.openhands.dev/openhands/usage/key-features.md ("The browser is non-interactive") |
@@ -244,7 +352,7 @@ Old → new, with the source. Keep `—` where nothing was found; use a short ph
 | `contextGauge` | `—` | `meter + manual compact` | https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md; `budget-usage-text.tsx` @ `c3c252a` |
 | `recordings` | `—` | `browser only, no captions` | `BrowserStartRecordingTool` in `browser_use/definition.py` @ `978f3b4` |
 | `pause` | `—` | `—` (keep; add note "agent loop pauses, container not kept") | `openhands-sdk/openhands/sdk/conversation/base.py` @ `978f3b4`; https://docs.openhands.dev/overview/faqs.md |
-| `mcp` | `✓` | `✓ (stdio, SSE, HTTP, OAuth)` | https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md |
+| `mcp` | `✓` | `✓ (stdio, SSE, HTTP, OAuth)` (and extend the Sessionboxer cell to `✓, switched per session; MCP Apps rendered inline`) | https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md; [ADR-0079](../adr/0079-mcp-apps-through-a-transparent-tee.md) |
 | `proxy` | `host's setup` | `LLM base URL / LiteLLM` | https://docs.openhands.dev/openhands/usage/agent-canvas/model-configuration.md |
 | `verify` | `—` | `critic score, hooks` | https://docs.openhands.dev/openhands/usage/agent-canvas/critic.md; https://docs.openhands.dev/openhands/usage/customization/hooks.md |
 | `usage` | `n/a` | `$ per conversation; budgets in Cloud` | `conversation-metrics.ts` @ `c3c252a`; https://docs.openhands.dev/openhands/usage/cloud/organizations/budgets.md |
@@ -255,14 +363,19 @@ Old → new, with the source. Keep `—` where nothing was found; use a short ph
 New rows worth adding (values Sessionboxer / OpenHands):
 
 - **Event automations** (issue/PR mention, webhook, Slack → a run): `PR events only (polled, no public URL needed)` / `✓ (needs a reachable backend)` — [ADR-0064](../adr/0064-followed-pull-requests-polled-by-the-control-plane.md); https://docs.openhands.dev/openhands/usage/automations/event-automations.md
-- **Auto review of every PR, inline, under your login**: `✓` / `— (Cloud App replies to mentions)` — [ADR-0065](../adr/0065-auto-review-sessions-post-through-the-control-plane.md); https://docs.openhands.dev/openhands/usage/cloud/github-installation.md
+- **Auto review of every PR**: `✓ inline, under your login, token outside the box` / `✓ pre-built workflow (agent posts with a PAT)` — [ADR-0065](../adr/0065-auto-review-sessions-post-through-the-control-plane.md); https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/github-pr-review.md
 - **QA video posted on the PR**: `✓` / `—` — [ADR-0066](../adr/0066-auto-qa-sessions-record-a-pr-and-the-control-plane-posts-the-video.md)
 - **Windows/macOS sessions** (agent inside a Windows or macOS machine): `✓` / `✗` — https://docs.openhands.dev/openhands/usage/agent-canvas/setup.md documents hosts only
 - **Own agent, any model**: `✗` / `✓` — https://docs.openhands.dev/openhands/usage/agent-canvas/model-configuration.md
 - **Skills/hooks/plugins format**: `agent's own` / `✓ .openhands/` — https://docs.openhands.dev/openhands/usage/customization/repository.md
 - **Login in front of the UI**: `✓ token + devices` / `— locally; Cloud/Enterprise` — https://docs.openhands.dev/overview/faqs.md
 - **Team edition** (accounts, RBAC, budgets): `✗` / `Cloud/Enterprise` — https://docs.openhands.dev/enterprise/enterprise-vs-oss.md
-- **Agent-to-agent orchestration with approval**: `✓ sessionboxer MCP` / `delegate to sub-agents` — `openhands-tools/openhands/tools/delegate` @ `978f3b4`
+- **Agent-to-agent orchestration with approval**: `✓ sessionboxer MCP` / `child conversations, no approval card` — https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md; `openhands-tools/openhands/tools/delegate` @ `978f3b4`
+- **MCP Apps (tool views rendered in the chat)**: `✓` / `—` — [ADR-0079](../adr/0079-mcp-apps-through-a-transparent-tee.md); not found in Canvas `c3c252a`, SDK `978f3b4`, release notes v1.18–v1.24
+- **HTML written by the agent runs in the chat**: `✓ sandboxed, App pane` / `Markdown preview, App tab for a dev server` — [ADR-0078](../adr/0078-workspace-html-files-as-sandboxed-artifacts-in-the-chat.md); https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md
+- **Credentials the agent uses but never sees (Utilities)**: `✓` / `secrets as env vars` — [ADR-0073](../adr/0073-utilities-for-runtime-debugging.md); https://docs.openhands.dev/openhands/usage/settings/secrets-settings.md
+- **Photo, video, screen capture and drawing from the composer, transcribed**: `✓` / `files and images` — [CHANGELOG](../../CHANGELOG.md); `hidden-file-input.tsx` @ `c3c252a`
+- **Folders and pins**: `✓` / `✓` — [ADR-0074](../adr/0074-sessions-grouped-into-folders.md); https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md
 
 ## Features of OpenHands worth considering for Sessionboxer
 

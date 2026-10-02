@@ -154,6 +154,49 @@ provider-neutral already.
   information available. Showing the redacted RPC bytes was considered and dropped: it is not an
   LLM call, the protobuf is not decodable without the schema, and the token is inside the body.
 
+#### Addendum (same day): is the protobuf RPC itself inspectable?
+
+Asked after the first cut: granted that it is not the model call, could we at least show the
+RPC? Checked against the binaries in `sessionboxer/sandbox:dev`:
+
+* **Bytes: yes, with the same recorder, for Devin.** Connect-RPC runs over plain HTTP/1.1 POSTs
+  (`application/connect+proto`, `connect-protocol-version: 1`), which is what the Devin turn in
+  §2 already went through. Nothing to add in the proxy.
+* **Bytes: only after a config flip, for Cursor.** `cursor-agent` talks to the agent backend over
+  **HTTP/2 by default** — `index.js` builds the transport with `httpVersion:"2"` plus an http2
+  session manager, and only falls back to `httpVersion:"1.1"` (bidi emulated through
+  `BidiService` `BidiAppendRequest`/`BidiPollRequest`) when the CLI config has
+  `network.useHttp1ForAgent: true` (default `false`) or the server config forces it
+  (`FORCE_ALL_DISABLED`/`FORCE_BIDI_DISABLED`). The current recorder is `node:http` (HTTP/1.1
+  only), so Cursor would need the h1 flag set in its config, or an `http2` listener
+  (`allowHTTP1`) in the recorder. The h2 branch also honours `HTTPS_PROXY`/`HTTP_PROXY`, but that
+  is CONNECT-tunnelled TLS, useless without MITM — not an option we take.
+* **Schema: yes for Cursor, no for Devin.** The Cursor bundle ships its protobuf-es descriptors
+  in compact form — ~4 200 strings like
+  `"BidiAppendRequest|1 data 9|2 request_id #0|3 append_seqno 3|4 data_binary 12"` and
+  `"AgentClientMessage|1 run_request #0 message|2 exec_client_message #1 message|…"` in
+  `/opt/cursor-agent/159.index.js` and `5380.index.js` (`aiserver/v1/chat_pb.js`,
+  `aiserver_pb.js`, `agent_store_pb.js`, …) — so field names and numbers for every
+  `aiserver.v1.*` message are recoverable and a real decoder is possible. The Devin CLI is a Rust
+  binary (prost, `mio`, 173 MB); it embeds no `.proto` descriptors for `exa.api_server_pb`
+  (`strings` finds only `browser_context.proto`/`browser_preview.proto`), and the field *names*
+  it does carry are the `Debug`-derived ones of responses
+  (`GetChatMessageResponse message_id delta_text delta_tokens stop_reason usage redact
+  delta_thinking …`) — no field numbers, and nothing for `GetChatMessageRequest`. Devin would
+  be a schema-less wire decode (field numbers, wire types, strings guessed from UTF-8) with
+  hand-maintained name guesses.
+* **Content: still not the prompt.** For both agents the client→server message is the new user
+  text plus conversation/session identifiers and auth material (Devin puts the session token in
+  the body; Cursor's `AgentClientMessage` is `run_request`/`conversation_action`/…); the system
+  prompt, tool list and history are server-side. Decoding it gives an "RPC to the vendor" view,
+  not an LLM-call view, and the token would have to be redacted field-by-field before anything
+  is persisted (the current recorder's "bodies yes, headers never" rule assumes credentials are
+  in headers; here they are in the body).
+
+Verdict unchanged: feasible as a separate, clearly labelled "vendor RPC" inspector (Cursor
+decodable, Devin raw), with its own redaction design; it would not deliver what "LLM call
+details" means for the other agents, so it stays out of the plan in §3 unless wanted on its own.
+
 ## 3. Plan
 
 One session of Daemon + Control Plane + Web work, no image rebuild (all knobs are config/env the
@@ -237,3 +280,6 @@ headers; a Devin/Cursor "backend RPC" view.
   binary strings `FX_GATEWAY_BASE_URL`, `ignoring FX_GATEWAY_BASE_URL: not loopback http`,
   `https://ai-gateway.vercel.sh/v4/ai/language-model`.
 * Cursor: `/opt/cursor-agent/*.index.js` (`CURSOR_API_ENDPOINT`, `api2.cursor.sh`, `aiserver.v1.*`).
+* Addendum: `/opt/cursor-agent/index.js` (`useHttp1ForAgent`, `httpVersion:"2"` agent transport,
+  `x-cursor-streaming`), `159.index.js`/`5380.index.js` (compact protobuf-es descriptors);
+  `~/.local/share/devin/cli/_versions/3000.10.27/bin/devin` (`strings`: prost `Debug` names only).

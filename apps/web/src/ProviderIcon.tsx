@@ -3,7 +3,7 @@ import { PROVIDER_LABELS, type Provider } from "@sessionboxer/protocol";
 // Hand-drawn approximations of the Providers' marks: Claude's orange starburst,
 // Devin's three linked hexagons, Codex's (OpenAI's) hexagonal knot, pi's π in
 // a rounded square, OpenCode's pixel terminal, fx's lowercase "fx" wordmark
-// (fx.sh), GitHub Copilot's goggled face and Mistral's blocky "M", drawn in the current text colour.
+// (fx.sh), GitHub Copilot's goggled face, Mistral's blocky "M" and Grok's slanted slash mark, drawn in the current text colour.
 
 const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [0, 9.5],
@@ -189,6 +189,18 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
             {MISTRAL_BLOCKS.map(([col, row, light]) => (
               <rect key={`${col}-${row}`} x={2 + col * 4} y={2 + row * 4} width={4} height={4} opacity={light ? 0.55 : 1} />
             ))}
+          </g>
+        </svg>
+      );
+    case "grok":
+      // Grok's mark: a long slash with a short one across its top, as on grok.com (xAI's logo).
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <g fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19.5 4.5 5 19.5" />
+            <path d="M12.3 4.5 18.8 11.3" />
+            <path d="M5 12.6 11.5 19.5" />
           </g>
         </svg>
       );

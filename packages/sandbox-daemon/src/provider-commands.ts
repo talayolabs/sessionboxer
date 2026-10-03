@@ -19,4 +19,6 @@ export const ACP_COMMANDS: Record<Provider, string[]> = {
   copilot: ["copilot", "--acp", "--allow-all", "--no-auto-update", "--no-ask-user"],
   // Mistral Vibe ships `vibe-acp`, its ACP server, as a standalone binary (ADR-0085).
   vibe: ["vibe-acp"],
+  // Grok Build's ACP server is built in (ADR-0086); `--always-approve` is its full-permission flag (the Daemon still answers permission requests).
+  grok: ["grok", "agent", "--always-approve", "stdio"],
 };

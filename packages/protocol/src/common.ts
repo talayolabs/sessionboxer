@@ -4,7 +4,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -19,11 +19,13 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   kimi: "Kimi CLI",
   copilot: "GitHub Copilot",
   vibe: "Mistral Vibe",
+  grok: "Grok Build",
 };
 
 /**
  * Why a Provider cannot run in an Environment, or `null` when it can. fx ships no Windows build
  * (ADR-0077), so a `qemu-windows` Session cannot run it; the UI disables the choice with this text.
+ * Grok Build (ADR-0086) ships for Linux, macOS and Windows, so it runs everywhere.
  */
 export function providerUnavailableIn(provider: Provider, environment: Environment): string | null {
   if (provider === "kimi" && environment === "qemu-macos") return "Kimi CLI has no macOS x86_64 build for the QEMU · macOS guest; use Linux or Windows.";
@@ -50,6 +52,8 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   // Copilot's login (ADR-0082) too: the token goes into the Agent process alone, a config.json on tmpfs.
   copilot: [],
   vibe: [],
+  // Grok Build's login (ADR-0086) likewise: `auth.json` on tmpfs, an xAI API key into the Agent process alone.
+  grok: [],
 };
 
 /** Metadata of ~/.kimi/credentials/kimi-code.json (ADR-0084); never the tokens. */
@@ -91,6 +95,19 @@ export const VibeLogin = z.object({
   kind: z.enum(["api-key", "env-file"]),
 });
 export type VibeLogin = z.infer<typeof VibeLogin>;
+
+/**
+ * What the stored Grok Build login (ADR-0086) is: an xAI API key (console.x.ai), or the
+ * `~/.grok/auth.json` a `grok login` wrote (an xAI account session, refreshed by Grok Build).
+ */
+export const GrokLogin = z.object({
+  kind: z.enum(["api-key", "account"]),
+  /** The account's e-mail when the file says it (`email`); `null` for API keys or when absent. */
+  email: z.string().nullable(),
+  /** When the session's access token expires (`expires_at`), ISO 8601; `null` for API keys or when the file does not say. */
+  expiresAt: z.string().nullable(),
+});
+export type GrokLogin = z.infer<typeof GrokLogin>;
 
 /**
  * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT

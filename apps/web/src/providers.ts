@@ -23,6 +23,8 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.copilot.COPILOT_LOGIN;
     case "vibe":
       return settings.providerSecretsSet.vibe.VIBE_LOGIN;
+    case "grok":
+      return settings.providerSecretsSet.grok.GROK_LOGIN;
   }
 }
 
@@ -31,7 +33,7 @@ export function providerSignsInFromBrowser(provider: Provider): boolean {
   return provider !== "pi";
 }
 
-/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex, Cursor, pi and OpenCode a login. */
+/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex, Cursor, pi, OpenCode, fx and Grok Build a login. */
 export function providerCredentialNoun(provider: Provider): "token" | "login" {
   return provider === "claude-code" || provider === "devin" ? "token" : "login";
 }

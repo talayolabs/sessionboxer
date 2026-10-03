@@ -25,6 +25,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   fx: "fx does not report its usage windows to Sessionboxer; see vercel.com → AI Gateway for the Gateway balance, or run `fx credits`.",
   copilot: "GitHub Copilot counts premium requests on GitHub's side and reports no usage windows; see github.com → Settings → Copilot → Usage.",
   vibe: "Mistral Vibe reports its context and tokens per turn but no usage windows; see console.mistral.ai → Usage for your Mistral account.",
+  grok: "Grok Build reports tokens per turn but no usage windows; see console.x.ai for the account's usage and credits.",
 };
 
 /** The current time, ticking every second while `live`. */

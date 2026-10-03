@@ -56,7 +56,7 @@ export function AgentSettings({
             help={
               <p>
                 Given to the Agent itself rather than left in a file it may or may not read: {deliveryNote("claude-code")} {deliveryNote("devin")}{" "}
-                {deliveryNote("codex")} {deliveryNote("cursor")} {deliveryNote("pi")} {deliveryNote("opencode")} {deliveryNote("fx")} {deliveryNote("kimi")} {deliveryNote("copilot")} {deliveryNote("vibe")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
+                {deliveryNote("codex")} {deliveryNote("cursor")} {deliveryNote("pi")} {deliveryNote("opencode")} {deliveryNote("fx")} {deliveryNote("kimi")} {deliveryNote("copilot")} {deliveryNote("vibe")} {deliveryNote("grok")} Comes on top of the Sandbox briefing (desktop, recordings, handing files to you)
                 and the project&apos;s own CLAUDE.md / AGENTS.md. Empty sends none. Default for new Sessions; each Session can change it in its
                 settings.
               </p>

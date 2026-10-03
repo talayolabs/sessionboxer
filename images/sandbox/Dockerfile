@@ -1,6 +1,6 @@
 # Sessionboxer Sandbox image: one container per Session, with an X11 Desktop
 # (Xvfb + xfce4 + x11vnc + noVNC), the Provider ACP adapters (Claude Code,
-# Devin, Codex, Cursor, fx, GitHub Copilot, Mistral Vibe), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
+# Devin, Codex, Cursor, fx, GitHub Copilot, Mistral Vibe, Grok Build), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
 #   npm run build:image        (scripts/build-image.mjs)
 # which is `docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .` plus the
 # `extra-ca` build secret: the CA certificates this machine trusts beyond the public ones
@@ -330,6 +330,32 @@ RUN arch="$(dpkg --print-architecture)" \
     && ln -s /opt/vibe/vibe-acp /usr/local/bin/vibe-acp \
     && HOME=/tmp vibe-acp --version && rm -rf /tmp/.vibe
 
+# Grok Build (`grok agent stdio` is spawned by the Sandbox Daemon; `grok` in the terminal, ADR-0086):
+# xAI's proprietary agent, one static binary. Its npm package (@xai-official/grok) only unpacks the
+# Brotli-compressed binary of the platform package into ~/.grok/bin at postinstall, so the platform
+# package is fetched directly for the pinned version, checked against the sha256 npm publishes for it,
+# and decompressed with node. Root-owned under /opt/grok; the auto-updater is off per process (the
+# Daemon sets GROK_DISABLE_AUTOUPDATER=1; `cli.auto_update = false` in its config covers the terminal).
+ARG GROK_VERSION=1.0.49
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+         amd64) arch=x64; sha=578c9be9d1e3316c04acff2dada0d9cf9e9937e0a44bc1bfe33e08c2cfb6e7cf ;; \
+         arm64) arch=arm64; sha=7945ed6d352e23378c346cde3b5fdee51c5132a21a9a9006c8e0ef83e6e4d6d1 ;; \
+         *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+       esac \
+    && mkdir -p /opt/grok /tmp/grok \
+    && for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/grok.tgz \
+           "https://registry.npmjs.org/@xai-official/grok-linux-${arch}/-/grok-linux-${arch}-${GROK_VERSION}.tgz" && break; \
+         [ "$i" = 5 ] && exit 1; sleep 5; \
+       done \
+    && echo "$sha  /tmp/grok.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/grok.tgz --no-same-owner -C /tmp/grok --strip-components=2 package/bin/grok.br \
+    && node -e 'const z = require("zlib"), f = require("fs"); f.writeFileSync("/opt/grok/grok", z.brotliDecompressSync(f.readFileSync("/tmp/grok/grok.br")), { mode: 0o755 })' \
+    && rm -rf /tmp/grok /tmp/grok.tgz \
+    && ln -s /opt/grok/grok /usr/local/bin/grok \
+    && HOME=/tmp GROK_DISABLE_AUTOUPDATER=1 grok --version && rm -rf /tmp/.grok
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -435,12 +461,15 @@ COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.confi
 # Copilot reads its user-level instructions from ~/.copilot/copilot-instructions.md; its settings allow
 # plaintext token storage, so a `copilot login` in the terminal lands in the config.json the Daemon keeps on tmpfs (ADR-0082).
 # Mistral Vibe reads its user-level AGENTS.md from ~/.vibe (ADR-0085); the Daemon writes its trusted_folders.toml there.
+# Grok Build reads its config from ~/.grok/config.toml and every *.md in ~/.grok/rules/ as an always-on
+# rule, whatever the project (ADR-0086); the briefing goes there.
 COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
 COPY --chown=agent:agent images/sandbox/pi-settings.json /home/agent/.pi/agent/settings.json
 COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.cursor/cli-config.json
 COPY --chown=agent:agent images/sandbox/opencode-config.json /home/agent/.config/opencode/opencode.json
 COPY --chown=agent:agent images/sandbox/fx-settings.json /home/agent/.fx/settings.json
 COPY --chown=agent:agent images/sandbox/copilot-settings.json /home/agent/.copilot/settings.json
+COPY --chown=agent:agent images/sandbox/grok-config.toml /home/agent/.grok/config.toml
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -460,6 +489,7 @@ COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.config/
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.fx/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.copilot/copilot-instructions.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.vibe/AGENTS.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.grok/rules/sandbox-briefing.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md

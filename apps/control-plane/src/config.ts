@@ -45,6 +45,8 @@ import { copilotLogin, normalizeCopilotLogin } from "./copilot-login.js";
 export { piApiKeyEnv, piApiKeys, piAuthJson, piAuthNewer, normalizePiApiKeys, normalizePiAuthJson, describePiLogin } from "./pi-login.js";
 export { copilotLogin, copilotAuthNewer, normalizeCopilotLogin } from "./copilot-login.js";
 import { describeVibeLogin, normalizeVibeLogin, vibeLogin } from "./vibe-login.js";
+import { describeGrokLogin, grokLogin, normalizeGrokLogin } from "./grok-login.js";
+export { grokLogin, grokAuthNewer, normalizeGrokLogin, describeGrokLogin } from "./grok-login.js";
 import { generateVapidKeys } from "./web-push.js";
 import { mergeProcedures, mergeUtilities, mergeUtilityEnvironments, toPublicUtility } from "./utilities.js";
 
@@ -271,6 +273,9 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     if (providerSecrets.vibe?.VIBE_LOGIN !== undefined) {
       next.providerSecrets.vibe.VIBE_LOGIN = normalizeVibeLogin(providerSecrets.vibe.VIBE_LOGIN);
     }
+    if (providerSecrets.grok?.GROK_LOGIN !== undefined) {
+      next.providerSecrets.grok.GROK_LOGIN = normalizeGrokLogin(providerSecrets.grok.GROK_LOGIN);
+    }
   }
   return Settings.parse(next);
 }
@@ -314,6 +319,7 @@ export function toPublicSettings(
       kimi: { KIMI_LOGIN: kimiLogin(settings) !== "" },
       copilot: { COPILOT_LOGIN: copilotLogin(settings) !== "" },
       vibe: { VIBE_LOGIN: vibeLogin(settings) !== "" },
+      grok: { GROK_LOGIN: grokLogin(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
     cursorLogin: describeCursorLogin(cursorLogin(settings)),
@@ -323,6 +329,7 @@ export function toPublicSettings(
     kimiLogin: describeKimiLogin(kimiLogin(settings)),
     copilotLogin: describeCopilotLogin(copilotLogin(settings)),
     vibeLogin: describeVibeLogin(vibeLogin(settings)),
+    grokLogin: describeGrokLogin(grokLogin(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -749,6 +756,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return copilotLogin(settings) !== "";
     case "vibe":
       return vibeLogin(settings) !== "";
+    case "grok":
+      return grokLogin(settings) !== "";
   }
 }
 
@@ -782,6 +791,7 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "kimi":
     case "copilot":
     case "vibe":
+    case "grok":
       return {};
   }
 }

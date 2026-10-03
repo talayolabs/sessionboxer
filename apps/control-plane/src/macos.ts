@@ -62,6 +62,7 @@ const CURSOR_CLI_VERSION = "2026.09.23-86fc751";
 const PI_VERSION = "0.99.2";
 const PI_ACP_VERSION = "0.0.34";
 const COPILOT_VERSION = "1.0.91"; // GitHub Copilot CLI (ADR-0082), the npm package; same pin as the Sandbox image.
+const GROK_VERSION = "1.0.49"; // Grok Build (ADR-0086), the npm package; same pin as the Sandbox image.
 
 interface BaseRecord {
   version: string;
@@ -761,6 +762,8 @@ function provisionScript(): string {
     // GitHub Copilot CLI (ADR-0082); its first start unpacks the application files into ~/Library/Caches/copilot, done here once.
     `npm install -g --no-fund --no-audit @github/copilot@${COPILOT_VERSION} 2>&1 | tail -3 || fail "npm install -g @github/copilot"`,
     `command -v copilot >/dev/null && say "copilot $(COPILOT_AUTO_UPDATE=false copilot --no-auto-update --version 2>/dev/null | head -1)" || fail "copilot is not on PATH after the install"`,
+    `GROK_DISABLE_AUTOUPDATER=1 npm install -g --no-fund --no-audit @xai-official/grok@${GROK_VERSION} 2>&1 | tail -3 || fail "npm install -g @xai-official/grok"`,
+    `command -v grok >/dev/null || fail "grok is not on PATH after the install"`,
     // uv.
     `if [ "$("$HOME/.local/bin/uv" --version 2>/dev/null | awk '{ print $2 }')" = "${UV_VERSION}" ]; then`,
     `  say "uv ${UV_VERSION} present"`,
@@ -794,7 +797,7 @@ function provisionScript(): string {
     "fi",
     `ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/cursor-agent" && ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/agent"`,
     ...archiveToolLines(),
-    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx copilot vibe-acp in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
+    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx copilot vibe-acp grok in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
     "echo SBX_PROVISIONED",
     // Detached, after this SSH session has returned: `nohup` could not run the `sudo` function above.
     `(sleep 3; printf '%s\\n' "$SBX_PW" | command sudo -S -p '' shutdown -h now) </dev/null >/dev/null 2>&1 &`,

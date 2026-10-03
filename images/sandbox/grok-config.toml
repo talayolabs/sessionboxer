@@ -1,0 +1,4 @@
+# Grok Build's user config in the Sandbox (ADR-0086). The image pins its version: no update check
+# (the Daemon also sets GROK_DISABLE_AUTOUPDATER=1 on the Agent process). Everything else is its default.
+[cli]
+auto_update = false

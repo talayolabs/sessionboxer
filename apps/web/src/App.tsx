@@ -397,7 +397,7 @@ export function App() {
         <SandboxImageBanner />
         {!anyTokenSet && route.view !== "settings" && route.view !== "new" && !(route.view === "session" && !selected) && (
           <div className="banner banner-warn" onClick={() => setProviderConnect({ provider: null })}>
-            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, GitHub Copilot or Mistral Vibe login. Click to connect one.
+            No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, GitHub Copilot, Mistral Vibe or Grok Build login. Click to connect one.
           </div>
         )}
         {settings && (

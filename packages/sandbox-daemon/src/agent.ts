@@ -34,7 +34,7 @@ import type {
 import { fingerprint } from "@sessionboxer/protocol/node-telemetry";
 import { caEnv } from "./ca-env.js";
 import { acpMcpServers, type BuiltinMcp, type McpTee } from "./mcp-config.js";
-import { modelOption, otherOptions, sessionOptions, toModelOptions, turnUsage } from "./agent-options.js";
+import { contextOccupancy, modelOption, modelWindows, otherOptions, sessionOptions, toModelOptions, turnUsage } from "./agent-options.js";
 import { promptBlocks } from "./prompt-blocks.js";
 
 /**
@@ -222,6 +222,9 @@ export class AgentManager {
   canFork = false;
   /** Which non-text prompt blocks the Agent takes (both claude-agent-acp and devin acp: images + embedded context). */
   private promptCaps: PromptCapabilities = {};
+  /** Each model's context window when the Agent states it on its model list (Grok Build's `_meta.totalContextTokens`). */
+  private modelWindows: Record<string, number> = {};
+  private usageUpdateSeen = false;
   turnActive = false;
   ready = false;
   error: string | null = null;
@@ -650,6 +653,7 @@ export class AgentManager {
           this.reportSink(update);
           return;
         }
+        if (update.sessionUpdate === "usage_update") this.usageUpdateSeen = true;
         this.events.onUpdate(ctx.params.update);
       });
     const conn = app.connect(stream);
@@ -686,6 +690,7 @@ export class AgentManager {
           this.cfg.log(`loaded ACP session ${this.acpSessionId}`);
           if (this.cfg.legacyModels) this.currentModel = null;
           this.captureConfigOptions(sessionOptions(result));
+          Object.assign(this.modelWindows, modelWindows(result));
           await this.ensureBypassMode(conn, this.acpSessionId, result?.modes);
         } catch (e) {
           this.cfg.log(`session/load failed, creating a new session: ${String(e)}`);
@@ -700,6 +705,7 @@ export class AgentManager {
         this.writeState({ acpSessionId: created.sessionId, freshSessionIds: [...this.freshSessionIds(), created.sessionId] });
         this.cfg.log(`created ACP session ${created.sessionId}`);
         this.captureConfigOptions(sessionOptions(created));
+        Object.assign(this.modelWindows, modelWindows(created));
         await this.ensureBypassMode(conn, created.sessionId, created.modes);
       }
       if (this.acpSessionId) {
@@ -782,12 +788,18 @@ export class AgentManager {
       });
       const promptText = this.firstPromptText(built.text);
       this.markPrompted(this.acpSessionId);
+      this.usageUpdateSeen = false;
       const result = await this.conn.agent.request("session/prompt", {
         sessionId: this.acpSessionId,
         prompt: [{ type: "text", text: promptText }, ...built.blocks],
       });
       await this.reportUsage();
-      this.events.onTurnEnded(result.stopReason, turnUsage(result.usage));
+      const usage = turnUsage(result);
+      // No `usage_update` from the Agent but the turn's tokens and the model's window: derive the gauge (Grok Build).
+      const modelId = result._meta?.modelId;
+      const size = this.modelWindows[typeof modelId === "string" ? modelId : (this.currentModel ?? "")];
+      if (usage && size && !this.usageUpdateSeen) this.events.onUpdate({ sessionUpdate: "usage_update", used: contextOccupancy(usage), size });
+      this.events.onTurnEnded(result.stopReason, usage);
     } catch (e) {
       this.cfg.log(`session/prompt on ${this.acpSessionId} failed: ${String(e)}`);
       this.events.onError(e instanceof Error ? e.message : String(e));

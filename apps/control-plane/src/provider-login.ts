@@ -9,6 +9,7 @@ import { parseDevinCredentials, readFirst, readHostLogin } from "./host-logins.j
 
 export { claudeHostAccount, parseDevinCredentials, readHostLogin } from "./host-logins.js";
 import { describeVibeLogin, normalizeVibeLogin } from "./vibe-login.js";
+import { describeGrokLogin, normalizeGrokLogin } from "./grok-login.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
 import { kimiLoginRecipe } from "./kimi-login-recipe.js";
 import { HttpError } from "./http-error.js";
@@ -245,6 +246,30 @@ export const RECIPES: Partial<Record<Provider, Recipe>> = {
     },
     secret: (login) => ({ vibe: { VIBE_LOGIN: login } }),
   },
+  // `grok login --device-auth` is xAI's device flow (ADR-0086): Grok Build prints "To sign in, open this URL in
+  // your browser:", `https://accounts.x.ai/oauth2/device?user_code=XXXX-XXXX`, "Confirm this code in your
+  // browser:" and the code on a line of its own, then polls xAI; the page prefills the code from the URL.
+  grok: {
+    bin: ["grok"],
+    args: ["login", "--device-auth"],
+    env: { ...noBrowser, GROK_DISABLE_AUTOUPDATER: "1" },
+    isLoginUrl: (u) => /(^|\.)x\.ai$/.test(u.hostname) && /device/i.test(u.pathname),
+    code: "page",
+    prompt: null,
+    userCode: (text) => /^\s*([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\s*$/m.exec(text)?.[1] ?? null,
+    rejected: (text) => (/denied|expired|rejected/i.test(text) ? "xAI did not confirm the code" : null),
+    files: [".grok/auth.json"],
+    result: (_output, file) => {
+      if (!file) return null;
+      try {
+        const login = normalizeGrokLogin(file);
+        return login && describeGrokLogin(login) ? { login, account: describeGrokLogin(login)?.email ?? null } : null;
+      } catch {
+        return null;
+      }
+    },
+    secret: (login) => ({ grok: { GROK_LOGIN: login } }),
+  },
 };
 
 interface SettingsStore {
@@ -463,7 +488,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot", vibe: "Mistral Vibe" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot", vibe: "Mistral Vibe", grok: "Grok Build" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {

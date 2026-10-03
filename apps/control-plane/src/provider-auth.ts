@@ -17,14 +17,15 @@ import {
 } from "./config.js";
 import { kimiAuthNewer, kimiLogin } from "./kimi-login.js";
 import { vibeAuthNewer, vibeLogin } from "./vibe-login.js";
+import { grokAuthNewer, grokLogin } from "./grok-login.js";
 
 /**
  * The Agents whose login the Control Plane hands to the Sandbox Daemon and takes back when the CLI
  * refreshes its tokens (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075, OpenCode ADR-0076, fx
- * ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085). Claude Code and Devin get their credentials as environment at
+ * ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085, Grok Build ADR-0086). Claude Code and Devin get their credentials as environment at
  * container start instead.
  */
-export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe"] as const;
+export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok"] as const;
 export type SyncedAuthProvider = (typeof SYNCED_AUTH_PROVIDERS)[number];
 
 /** How one Agent's login travels between the stored Settings and its Sandbox. */
@@ -126,6 +127,16 @@ export const PROVIDER_AUTH: Record<SyncedAuthProvider, ProviderAuthSync> = {
     newer: vibeAuthNewer,
     storeUpdate: (authJson) => ({ providerSecrets: { vibe: { VIBE_LOGIN: authJson } } }),
     changedBy: (update) => update.providerSecrets?.vibe?.VIBE_LOGIN !== undefined,
+    tolerateMissingMethod: false,
+  },
+  grok: {
+    setMethod: DAEMON_METHODS.grokAuthSet,
+    changedMethod: DAEMON_METHODS.grokAuthChanged,
+    params: (settings) => ({ login: grokLogin(settings) }),
+    stored: grokLogin,
+    newer: grokAuthNewer,
+    storeUpdate: (authJson) => ({ providerSecrets: { grok: { GROK_LOGIN: authJson } } }),
+    changedBy: (update) => update.providerSecrets?.grok?.GROK_LOGIN !== undefined,
     tolerateMissingMethod: false,
   },
 };

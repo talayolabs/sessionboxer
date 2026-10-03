@@ -1,14 +1,16 @@
 import { useRef } from "react";
 import { type PublicSettings, type VibeLogin } from "@sessionboxer/protocol";
 import { KimiProviderSettings } from "./KimiProviderSettings";
-import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin } from "./provider-login-labels";
+import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin, describeGrokLogin } from "./provider-login-labels";
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
 import { LoginFileField } from "./LoginFileField";
 import { Caption } from "../ui";
 import { ClaudeApiSettings } from "./ClaudeApiSettings";
 import { CopilotLoginCard } from "./CopilotSettings";
+import { LoginFileField } from "./LoginFileField";
 import { useSectionState, type Setter } from "./shared";
+
 
 /** Global settings → Providers: the stored Provider logins and the Claude API base URL / proxy credentials. */
 /** One line about the stored Mistral Vibe login (ADR-0085): an API key as such, or inside a `.env` Vibe wrote. */
@@ -39,6 +41,8 @@ export function useProvidersSettings(settings: PublicSettings) {
     forgetCopilotLogin: false,
     vibeLogin: "",
     forgetVibeLogin: false,
+    grokLogin: "",
+    forgetGrokLogin: false,
     claudeBaseUrl: settings.claudeApi.baseUrl,
     claudeAuthToken: "",
     claudeApiKey: "",
@@ -88,6 +92,10 @@ export function ProvidersSettings({
   setVibeLogin,
   forgetVibeLogin,
   setForgetVibeLogin,
+  grokLogin,
+  setGrokLogin,
+  forgetGrokLogin,
+  setForgetGrokLogin,
   claudeBaseUrl,
   setClaudeBaseUrl,
   claudeAuthToken,
@@ -144,6 +152,10 @@ export function ProvidersSettings({
   setVibeLogin: Setter<string>;
   forgetVibeLogin: boolean;
   setForgetVibeLogin: Setter<boolean>;
+  grokLogin: string;
+  setGrokLogin: Setter<string>;
+  forgetGrokLogin: boolean;
+  setForgetGrokLogin: Setter<boolean>;
   claudeBaseUrl: string;
   setClaudeBaseUrl: Setter<string>;
   claudeAuthToken: string;
@@ -164,6 +176,7 @@ export function ProvidersSettings({
   const piAuthSet = settings.providerSecretsSet.pi.PI_AUTH_JSON && !forgetPiAuth;
   const piApiKeysSet = settings.providerSecretsSet.pi.PI_API_KEYS && !forgetPiApiKeys;
   const opencodeAuthSet = settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && !forgetOpenCodeAuth;
+
 
   const codexFileRef = useRef<HTMLInputElement>(null);
   const cursorFileRef = useRef<HTMLInputElement>(null);
@@ -220,7 +233,7 @@ export function ProvidersSettings({
         <button type="button" className="primary" onClick={() => setGuided(true)}>
           Connect a Provider…
         </button>
-        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot or Mistral Vibe</span>
+        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe or Grok Build</span>
       </div>
       {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
       <KimiProviderSettings settings={settings} value={kimiLogin} setValue={setKimiLogin} forget={forgetKimiLogin} setForget={setForgetKimiLogin} />

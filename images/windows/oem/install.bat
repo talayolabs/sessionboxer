@@ -27,6 +27,7 @@ set "KIMI_VERSION=1.52.0"
 set "COPILOT_VERSION=1.0.91"
 set "VIBE_VERSION=2.25.8"
 set "VIBE_SHA256=4eb3099bd06b034f62582f7b5ed701febbce3cf013ef95490aca9c79e82c4bd1"
+set "GROK_VERSION=1.0.49"
 set "LOG=C:\sessionboxer-install.log"
 set "DL=%TEMP%\sessionboxer-install"
 mkdir "%DL%" 2>nul
@@ -116,6 +117,13 @@ call npm cache clean --force >> "%LOG%" 2>&1
 set "COPILOT_AUTO_UPDATE=false"
 call copilot --no-auto-update --version >> "%LOG%" 2>&1
 
+rem Grok Build (`grok agent stdio`, ADR-0086): its npm package; the postinstall copies the Windows
+rem binary to %USERPROFILE%\.grok\bin\grok.exe, where the `grok` shim runs it. Same pin as the Sandbox image.
+echo [%time%] grok %GROK_VERSION%>> "%LOG%"
+set "GROK_DISABLE_AUTOUPDATER=1"
+call npm install -g --no-fund --no-audit @xai-official/grok@%GROK_VERSION% >> "%LOG%" 2>&1
+call npm cache clean --force >> "%LOG%" 2>&1
+
 rem Devin CLI (`devin acp`): the pinned bundle its installer would fetch, checked against the
 rem manifest's sha256, put where the installer puts it; the installer itself is not run as it ends
 rem in an interactive `devin setup` that would wait for a login here.
@@ -191,6 +199,7 @@ call "%LOCALAPPDATA%\Programs\opencode\opencode.exe" --version >> "%LOG%" 2>&1
 call copilot --no-auto-update --version >> "%LOG%" 2>&1
 set "VIBE_ENABLE_AUTO_UPDATE=false"
 call "%LOCALAPPDATA%\Programs\vibe\vibe-acp.exe" --version >> "%LOG%" 2>&1
+call grok --version >> "%LOG%" 2>&1
 
 rmdir /s /q "%DL%" 2>nul
 echo [%time%] done>> "%LOG%"

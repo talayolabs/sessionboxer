@@ -6,9 +6,9 @@ import { PROVIDER_AUTH, SYNCED_AUTH_PROVIDERS, isSyncedAuthProvider, providerOfA
 
 // Characterization tests: these pin what each Agent's login looked like on the wire before the
 // per-provider methods were folded into PROVIDER_AUTH (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075,
-// OpenCode ADR-0076, fx ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085). Values are the observed ones, not recomputed from the code.
+// OpenCode ADR-0076, fx ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085, Grok Build ADR-0086). Values are the observed ones, not recomputed from the code.
 
-for (const key of ["CURSOR_API_KEY", "AI_GATEWAY_API_KEY", "COPILOT_GITHUB_TOKEN"]) delete process.env[key];
+for (const key of ["CURSOR_API_KEY", "AI_GATEWAY_API_KEY", "COPILOT_GITHUB_TOKEN", "XAI_API_KEY"]) delete process.env[key];
 
 const jwt = (claims) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
 const codexFile = (lastRefresh) => JSON.stringify({ tokens: { id_token: jwt({ email: "a@b.c" }), access_token: "a", refresh_token: "r" }, last_refresh: lastRefresh });
@@ -17,6 +17,8 @@ const piFile = (expires) => JSON.stringify({ anthropic: { type: "oauth", access:
 const opencodeFile = (expires) => JSON.stringify({ anthropic: { type: "oauth", access: "a", refresh: "r", expires } });
 const fxFile = (expiresAtMs) => JSON.stringify({ version: 1, access_token: "a", refresh_token: "r", expires_at_ms: expiresAtMs, account_id: "acc" });
 const copilotFile = (token) => JSON.stringify({ authTokens: { "github.com:octocat": { token } }, lastLoggedInUser: { host: "github.com", login: "octocat" } });
+const grokFile = (expiresAt) =>
+  JSON.stringify({ "https://auth.x.ai::client-1": { key: "k", auth_mode: "oauth", create_time: "2026-10-01T00:00:00Z", user_id: "u", email: "a@x.ai", refresh_token: "r", expires_at: expiresAt } });
 
 const base = Settings.parse({});
 const settings = applySettingsUpdate(base, {
@@ -28,11 +30,12 @@ const settings = applySettingsUpdate(base, {
     fx: { FX_LOGIN: fxFile(1_800_000_000_000) },
     copilot: { COPILOT_LOGIN: copilotFile("ghu_a") },
     vibe: { VIBE_LOGIN: "MISTRAL_API_KEY='key_vibe_1'" },
+    grok: { GROK_LOGIN: grokFile("2027-01-01T00:00:00Z") },
   },
 });
 
-test("the synced Agents are Codex, Cursor, pi, OpenCode, fx, Kimi, GitHub Copilot and Mistral Vibe; Claude Code and Devin are not", () => {
-  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe"]);
+test("the synced Agents are Codex, Cursor, pi, OpenCode, fx, Kimi, GitHub Copilot, Mistral Vibe and Grok Build; Claude Code and Devin are not", () => {
+  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok"]);
   assert.equal(isSyncedAuthProvider("claude-code"), false);
   assert.equal(isSyncedAuthProvider("devin"), false);
   assert.equal(isSyncedAuthProvider("pi"), true);
@@ -58,6 +61,8 @@ test("each Agent's login goes to the Daemon method and params it always did", ()
   assert.equal(stored.copilot.COPILOT_LOGIN, copilotFile("ghu_a"));
   assert.equal(PROVIDER_AUTH.vibe.setMethod, "_sessionboxer/vibe/auth/set");
   assert.deepEqual(PROVIDER_AUTH.vibe.params(settings), { login: stored.vibe.VIBE_LOGIN });
+  assert.equal(PROVIDER_AUTH.grok.setMethod, "_sessionboxer/grok/auth/set");
+  assert.deepEqual(PROVIDER_AUTH.grok.params(settings), { login: stored.grok.GROK_LOGIN });
 });
 
 test("only Codex tolerates a Daemon that predates its auth method", () => {
@@ -67,21 +72,24 @@ test("only Codex tolerates a Daemon that predates its auth method", () => {
   );
 });
 
-test("an environment API key overrides the stored Cursor, fx, GitHub Copilot and Mistral Vibe logins, as before", () => {
+test("an environment API key overrides the stored Cursor, fx, GitHub Copilot, Mistral Vibe and Grok Build logins, as before", () => {
   process.env.CURSOR_API_KEY = " key_cursor ";
   process.env.AI_GATEWAY_API_KEY = "key_fx";
   process.env.COPILOT_GITHUB_TOKEN = " github_pat_x ";
   process.env.MISTRAL_API_KEY = "key_vibe_env";
+  process.env.XAI_API_KEY = " xai-key ";
   try {
     assert.deepEqual(PROVIDER_AUTH.cursor.params(settings), { login: "key_cursor" });
     assert.deepEqual(PROVIDER_AUTH.fx.params(settings), { login: "key_fx" });
     assert.deepEqual(PROVIDER_AUTH.copilot.params(settings), { login: "github_pat_x" });
     assert.deepEqual(PROVIDER_AUTH.vibe.params(settings), { login: "key_vibe_env" });
+    assert.deepEqual(PROVIDER_AUTH.grok.params(settings), { login: "xai-key" });
     assert.deepEqual(PROVIDER_AUTH.codex.params(settings), { authJson: settings.providerSecrets.codex.CODEX_AUTH_JSON });
   } finally {
     delete process.env.CURSOR_API_KEY;
     delete process.env.AI_GATEWAY_API_KEY;
     delete process.env.COPILOT_GITHUB_TOKEN;
+    delete process.env.XAI_API_KEY;
   }
 });
 
@@ -96,6 +104,7 @@ test("a Settings update pushes exactly the logins it touches", () => {
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { vibe: { VIBE_LOGIN: "k" } } }), ["vibe"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { codex: { CODEX_AUTH_JSON: "" }, fx: { FX_LOGIN: "" } } }), ["codex", "fx"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { copilot: { COPILOT_LOGIN: "github_pat_x" } } }), ["copilot"]);
+  assert.deepEqual(providersAuthChangedBy({ providerSecrets: { grok: { GROK_LOGIN: "xai-k" } } }), ["grok"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: "t" } } }), []);
   assert.deepEqual(providersAuthChangedBy({ mcpServers: [] }), []);
 });
@@ -108,6 +117,7 @@ test("each *AuthChanged notification maps back to its Agent", () => {
   assert.equal(providerOfAuthChanged("_sessionboxer/fx/auth/changed"), "fx");
   assert.equal(providerOfAuthChanged("_sessionboxer/copilot/auth/changed"), "copilot");
   assert.equal(providerOfAuthChanged("_sessionboxer/vibe/auth/changed"), "vibe");
+  assert.equal(providerOfAuthChanged("_sessionboxer/grok/auth/changed"), "grok");
   assert.equal(providerOfAuthChanged(DAEMON_METHODS.codexAuthSet), null);
   assert.equal(providerOfAuthChanged("event"), null);
 });
@@ -120,6 +130,7 @@ test("a refreshed file is stored under the Agent's own secret key", () => {
   assert.deepEqual(PROVIDER_AUTH.fx.storeUpdate("{}"), { providerSecrets: { fx: { FX_LOGIN: "{}" } } });
   assert.deepEqual(PROVIDER_AUTH.copilot.storeUpdate("{}"), { providerSecrets: { copilot: { COPILOT_LOGIN: "{}" } } });
   assert.deepEqual(PROVIDER_AUTH.vibe.storeUpdate("MISTRAL_API_KEY=k"), { providerSecrets: { vibe: { VIBE_LOGIN: "MISTRAL_API_KEY=k" } } });
+  assert.deepEqual(PROVIDER_AUTH.grok.storeUpdate("{}"), { providerSecrets: { grok: { GROK_LOGIN: "{}" } } });
 });
 
 test("a refreshed file replaces the stored one only when it is newer, per Agent", () => {
@@ -159,4 +170,11 @@ test("a refreshed file replaces the stored one only when it is newer, per Agent"
   assert.equal(PROVIDER_AUTH.vibe.newer("MISTRAL_API_KEY='key_vibe_2'", "key_vibe_1"), true);
   assert.equal(PROVIDER_AUTH.vibe.newer("OTHER=x", "key_vibe_1"), false);
   assert.equal(PROVIDER_AUTH.vibe.newer("", "key_vibe_1"), false);
+  // Grok Build: by expires_at; a stored API key is never replaced; an empty store accepts.
+  assert.equal(PROVIDER_AUTH.grok.newer(grokFile("2027-06-01T00:00:00Z"), grokFile("2027-01-01T00:00:00Z")), true);
+  assert.equal(PROVIDER_AUTH.grok.newer(grokFile("2026-06-01T00:00:00Z"), grokFile("2027-01-01T00:00:00Z")), false);
+  assert.equal(PROVIDER_AUTH.grok.newer(grokFile("2027-01-01T00:00:00Z"), grokFile("2027-01-01T00:00:00Z")), false);
+  assert.equal(PROVIDER_AUTH.grok.newer(grokFile("2027-06-01T00:00:00Z"), "xai-key"), false);
+  assert.equal(PROVIDER_AUTH.grok.newer(grokFile("2027-06-01T00:00:00Z"), ""), true);
+  assert.equal(PROVIDER_AUTH.grok.newer("xai-key", grokFile("2027-01-01T00:00:00Z")), false);
 });

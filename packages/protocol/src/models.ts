@@ -82,7 +82,8 @@ export const INSTRUCTIONS_MAX_CHARS = 20_000;
 
 /**
  * How a Session's `instructions` reach the Agent. `system-prompt`: appended to the Agent's system
- * prompt (claude-agent-acp accepts `_meta.systemPrompt.append` on session/new and session/load).
+ * prompt (claude-agent-acp accepts `_meta.systemPrompt.append` on session/new and session/load;
+ * fx `_meta.fx.systemPrompt`, Grok Build `_meta.rules`).
  * `first-prompt`: the Agent has no such hook (Devin CLI), so they are prepended to the first prompt
  * of every fresh ACP session the Daemon creates.
  */
@@ -90,5 +91,5 @@ export const InstructionsDelivery = z.enum(["system-prompt", "first-prompt"]);
 export type InstructionsDelivery = z.infer<typeof InstructionsDelivery>;
 
 export function instructionsDelivery(provider: Provider): InstructionsDelivery {
-  return provider === "claude-code" || provider === "fx" ? "system-prompt" : "first-prompt";
+  return provider === "claude-code" || provider === "fx" || provider === "grok" ? "system-prompt" : "first-prompt";
 }

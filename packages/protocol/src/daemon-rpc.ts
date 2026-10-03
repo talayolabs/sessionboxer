@@ -46,6 +46,8 @@ export const DAEMON_METHODS = {
   copilotAuthChanged: "_sessionboxer/copilot/auth/changed",
   vibeAuthSet: "_sessionboxer/vibe/auth/set",
   vibeAuthChanged: "_sessionboxer/vibe/auth/changed",
+  grokAuthSet: "_sessionboxer/grok/auth/set",
+  grokAuthChanged: "_sessionboxer/grok/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -362,6 +364,22 @@ export const DaemonVibeAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonVibeAuthChangedParams = z.infer<typeof DaemonVibeAuthChangedParams>;
+
+/**
+ * The Grok Build login for the Sandbox (ADR-0086): a `grok login` file goes on tmpfs behind
+ * `~/.grok/auth.json`, an xAI API key becomes the Agent's `XAI_API_KEY`. Sent before the MCP set
+ * and again whenever the stored login changes. When Grok Build refreshes the session's tokens in
+ * the file, the rewritten file comes back as the `grokAuthChanged` notification.
+ */
+export const DaemonGrokAuthParams = z.object({
+  login: z.string(),
+});
+export type DaemonGrokAuthParams = z.infer<typeof DaemonGrokAuthParams>;
+
+export const DaemonGrokAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonGrokAuthChangedParams = z.infer<typeof DaemonGrokAuthChangedParams>;
 
 /** Every `*AuthChanged` notification carries the rewritten login file the same way. */
 export const DaemonAuthChangedParams = z.object({

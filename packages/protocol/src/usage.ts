@@ -185,6 +185,19 @@ const VIBE_LIMIT = [
   /exceeded your (?:current )?(?:usage|quota|budget)/i,
   /\b429\b/,
 ];
+/** Grok Build relays xAI's API refusals (a spent prepaid balance, a rate limit) and its own session-limit wording. */
+const GROK_LIMIT = [
+  /insufficient[_ ]credits?/i,
+  /out of credits/i,
+  /credit balance (?:is )?(?:too low|exhausted|depleted)/i,
+  /insufficient (?:funds|balance)/i,
+  /usage[_ ]limit/i,
+  /rate[_ ]limit(?:ed| exceeded| reached)/i,
+  /hit your (?:usage |rate )?limit/i,
+  /reached your (?:usage |rate )?limit/i,
+  /quota[_ ]exceeded/i,
+  /exceeded your (?:current )?quota/i,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -192,7 +205,7 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi" | "copilot" | "vibe", message: string, now: Date = new Date()): UsageLimitHit | null {
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi" | "copilot" | "vibe" | "grok", message: string, now: Date = new Date()): UsageLimitHit | null {
   const patterns =
     provider === "claude-code"
       ? CLAUDE_LIMIT
@@ -210,7 +223,9 @@ export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" |
                   ? COPILOT_LIMIT
                   : provider === "vibe"
                     ? VIBE_LIMIT
-                    : DEVIN_LIMIT;
+                    : provider === "grok"
+                      ? GROK_LIMIT
+                      : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

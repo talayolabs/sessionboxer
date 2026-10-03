@@ -22,5 +22,7 @@ export function providerSetupHint(provider: Provider): string {
       return "No GitHub Copilot login configured. Sign in with GitHub Copilot, or paste a GitHub token with the Copilot Requests permission, in Global settings → Providers.";
     case "vibe":
       return "No Mistral Vibe login configured. Sign in with Mistral Vibe, or paste a Mistral API key (console.mistral.ai → API Keys), in Global settings → Providers.";
+    case "grok":
+      return "No Grok Build login configured. Paste an xAI API key (console.x.ai), or run `grok login` and paste ~/.grok/auth.json, in Global settings → Providers.";
   }
 }

@@ -40,6 +40,7 @@ export const PROVIDER_BLURB: Record<Provider, string> = {
   fx: "Vercel Labs' Agent; runs on Vercel's AI Gateway, or your ChatGPT or Grok subscription",
   copilot: "GitHub's Agent; runs on your GitHub Copilot subscription",
   vibe: "Mistral's open-source Agent; runs on your Mistral account or a Mistral API key",
+  grok: "xAI's own Agent (Grok Build); runs on your xAI account or an xAI API key",
 };
 
 interface Step {
@@ -202,6 +203,24 @@ function steps(provider: Provider, os: Os): Step[] {
           commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.vibe\\.env" : "cat ~/.vibe/.env"],
         },
       ];
+    case "grok":
+      return [
+        {
+          title: "Install Grok Build (skip if you already use it)",
+          body: `In ${shell} (Node.js 20+; Grok Build runs on Linux, macOS and Windows):`,
+          commands: ["npm install -g @xai-official/grok"],
+        },
+        {
+          title: "Log in",
+          body: "Opens the browser with your xAI account (`grok login --device-auth` prints a URL and a code instead). Or skip this and paste an API key from console.x.ai below.",
+          commands: ["grok login"],
+        },
+        {
+          title: "Copy the login file it wrote and paste it below",
+          body: "The whole file, or use Import below. An xAI API key from console.x.ai → API keys works too. The Sandbox keeps it in memory only; refreshed tokens flow back here.",
+          commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.grok\\auth.json" : "cat ~/.grok/auth.json"],
+        },
+      ];
     case "devin":
       return [
         {
@@ -331,6 +350,13 @@ function credentialField(provider: Provider): {
       };
     case "vibe":
       return { label: "Mistral Vibe login (a Mistral API key, or the contents of ~/.vibe/.env)", multiline: true, file: true, placeholder: "The API key, or MISTRAL_API_KEY='…'" };
+    case "grok":
+      return {
+        label: "Grok Build login (contents of ~/.grok/auth.json, or an xAI API key)",
+        multiline: true,
+        file: true,
+        placeholder: '{ "key": … } or xai-…',
+      };
   }
 }
 
@@ -356,6 +382,8 @@ function secretUpdate(provider: Provider, value: string) {
       return { copilot: { COPILOT_LOGIN: value } };
     case "vibe":
       return { vibe: { VIBE_LOGIN: value } };
+    case "grok":
+      return { grok: { GROK_LOGIN: value } };
   }
 }
 

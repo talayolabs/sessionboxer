@@ -1288,10 +1288,34 @@ export class SessionManager {
    */
   async fork(fromId: string, req: ForkSessionRequest, createdBy?: string): Promise<Session> {
     const origin = this.get(fromId);
-    const existing = req.snapshotId !== undefined ? this.db.getSnapshot(fromId, req.snapshotId) : undefined;
-    if (req.snapshotId !== undefined && !existing) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
     const settings = this.settings();
     const provider = req.provider ?? origin.provider;
+    // A document supplied with the request (the origin's Agent wrote it itself) needs no hidden turn.
+    const hiddenHandoff = req.conversation === "handoff" && req.document === undefined;
+    const existing = await this.assertForkable(origin, req, provider, settings, hiddenHandoff, createdBy);
+    const dockerMode = await this.forkDockerMode(origin.settings, req.settings);
+    const snapshot = existing ?? (await this.snapshotPolicy.take(fromId, "manual"));
+
+    const session = this.forkedSession(origin, req, provider, snapshot, settings, dockerMode, createdBy);
+    const marker = this.recordFork(origin, session, snapshot, req);
+    this.broadcast({ type: "session", session });
+    this.broadcast({ type: "event", event: marker });
+    void this.copyBaselines(origin, session);
+    this.launchFork(origin, session, snapshot, settings, req, hiddenHandoff);
+    return session;
+  }
+
+  /** Everything a fork request can be refused for, in the order the user sees it; returns the Snapshot to fork from when one was named. */
+  private async assertForkable(
+    origin: Session,
+    req: ForkSessionRequest,
+    provider: Provider,
+    settings: Settings,
+    hiddenHandoff: boolean,
+    createdBy: string | undefined,
+  ): Promise<Snapshot | undefined> {
+    const existing = req.snapshotId !== undefined ? this.db.getSnapshot(origin.id, req.snapshotId) : undefined;
+    if (req.snapshotId !== undefined && !existing) throw new HttpError(404, `snapshot ${req.snapshotId} not found`);
     const sameAgent = provider === origin.provider;
     if (!sameAgent && req.conversation === "continue") {
       throw new HttpError(400, `${PROVIDER_LABELS[provider]} cannot continue ${PROVIDER_LABELS[origin.provider]}'s conversation; start a new one or hand off.`);
@@ -1301,27 +1325,66 @@ export class SessionManager {
     }
     this.assertProviderRunsIn(provider, origin.settings.sandbox.environment);
     if (req.document !== undefined && req.conversation !== "handoff") throw new HttpError(400, "A handoff document goes with conversation: handoff.");
-    // A document supplied with the request (the origin's Agent wrote it itself) needs no hidden turn.
-    const hiddenHandoff = req.conversation === "handoff" && req.document === undefined;
     if (hiddenHandoff) this.assertCanWriteHandoff(origin);
     if (createdBy) this.assertChildAllowed(createdBy);
     this.snapshotPolicy.assertSnapshottable(origin.settings.sandbox.environment);
     if (existing && !(await this.docker.imageExists(existing.imageId))) {
       throw new HttpError(409, `The image of snapshot ${existing.ordinal} is gone from Docker; delete the snapshot.`);
     }
-    const base = origin.settings;
-    const input = req.settings;
+    return existing ?? undefined;
+  }
+
+  /** The fork's Docker-in-Docker mode: the origin's unless the request changes it, and only what this host offers. */
+  private async forkDockerMode(base: Session["settings"], input: ForkSessionRequest["settings"]): Promise<DockerMode> {
     const wantsDocker = input.sandbox?.docker ?? base.sandbox.dockerMode !== "none";
     const dockerMode: DockerMode = wantsDocker ? await this.dockerModeAvailable() : "none";
     if (base.sandbox.dockerMode !== "none" && wantsDocker && dockerMode !== base.sandbox.dockerMode) {
       throw new HttpError(409, `The origin ran with ${base.sandbox.dockerMode} Docker, which this host no longer offers.`);
     }
-    const snapshot = existing ?? (await this.snapshotPolicy.take(fromId, "manual"));
+    return dockerMode;
+  }
 
-    const id = randomBytes(6).toString("hex");
+  /** The fork's Settings: the request's where given, else the origin's — except that another Provider starts from its own defaults. */
+  private forkSettings(origin: Session, input: ForkSessionRequest["settings"], provider: Provider, settings: Settings, dockerMode: DockerMode): Session["settings"] {
+    const base = origin.settings;
+    const sameAgent = provider === origin.provider;
+    return {
+      // Model and options are the origin Provider's; another Provider starts from its defaults.
+      model: input.model !== undefined ? input.model : sameAgent ? base.model : null,
+      options: input.options ?? (sameAgent ? base.options : {}),
+      inspectLlm: provider === "claude-code" && (input.inspectLlm ?? (sameAgent ? base.inspectLlm : true)),
+      mcpEnabled: knownMcpIds(settings, input.mcpEnabled ?? base.mcpEnabled),
+      utilitiesEnabled: knownUtilityIds(settings, input.utilitiesEnabled ?? base.utilitiesEnabled),
+      instructions: (input.instructions ?? base.instructions).trim(),
+      autoSnapshot: input.autoSnapshot !== undefined ? input.autoSnapshot : base.autoSnapshot,
+      snapshotKeep: input.snapshotKeep !== undefined ? input.snapshotKeep : base.snapshotKeep,
+      e2eVerify: input.e2eVerify !== undefined ? input.e2eVerify : base.e2eVerify,
+      agentTools: input.agentTools !== undefined ? input.agentTools : base.agentTools,
+      approveCreate: input.approveCreate !== undefined ? input.approveCreate : base.approveCreate,
+      sandbox: {
+        environment: base.sandbox.environment,
+        dockerMode,
+        cpus: input.sandbox?.cpus !== undefined ? input.sandbox.cpus : base.sandbox.cpus,
+        memoryGb: input.sandbox?.memoryGb !== undefined ? input.sandbox.memoryGb : base.sandbox.memoryGb,
+        gitIdentity: input.sandbox?.gitIdentity ? resolveGitIdentity(settings, input.sandbox.gitIdentity) : base.sandbox.gitIdentity,
+      },
+    };
+  }
+
+  /** The fork's row as it is inserted: `creating`, no Sandbox yet, filed next to its origin. */
+  private forkedSession(
+    origin: Session,
+    req: ForkSessionRequest,
+    provider: Provider,
+    snapshot: Snapshot,
+    settings: Settings,
+    dockerMode: DockerMode,
+    createdBy: string | undefined,
+  ): Session {
+    const sameAgent = provider === origin.provider;
     const now = new Date().toISOString();
-    const session: Session = {
-      id,
+    return {
+      id: randomBytes(6).toString("hex"),
       title: req.title ?? `${origin.title} (${sameAgent ? "fork" : `${PROVIDER_LABELS[provider]}, fork`} ${snapshot.ordinal})`,
       provider,
       status: "creating",
@@ -1333,27 +1396,7 @@ export class SessionManager {
       },
       // The Snapshot holds the origin's directories; their records come along (fresh ids, state re-read on connect).
       repos: origin.repos.map((r) => ({ ...r, id: randomBytes(4).toString("hex"), git: null })),
-      settings: {
-        // Model and options are the origin Provider's; another Provider starts from its defaults.
-        model: input.model !== undefined ? input.model : sameAgent ? base.model : null,
-        options: input.options ?? (sameAgent ? base.options : {}),
-        inspectLlm: provider === "claude-code" && (input.inspectLlm ?? (sameAgent ? base.inspectLlm : true)),
-        mcpEnabled: knownMcpIds(settings, input.mcpEnabled ?? base.mcpEnabled),
-        utilitiesEnabled: knownUtilityIds(settings, input.utilitiesEnabled ?? base.utilitiesEnabled),
-        instructions: (input.instructions ?? base.instructions).trim(),
-        autoSnapshot: input.autoSnapshot !== undefined ? input.autoSnapshot : base.autoSnapshot,
-        snapshotKeep: input.snapshotKeep !== undefined ? input.snapshotKeep : base.snapshotKeep,
-        e2eVerify: input.e2eVerify !== undefined ? input.e2eVerify : base.e2eVerify,
-        agentTools: input.agentTools !== undefined ? input.agentTools : base.agentTools,
-        approveCreate: input.approveCreate !== undefined ? input.approveCreate : base.approveCreate,
-        sandbox: {
-          environment: base.sandbox.environment,
-          dockerMode,
-          cpus: input.sandbox?.cpus !== undefined ? input.sandbox.cpus : base.sandbox.cpus,
-          memoryGb: input.sandbox?.memoryGb !== undefined ? input.sandbox.memoryGb : base.sandbox.memoryGb,
-          gitIdentity: input.sandbox?.gitIdentity ? resolveGitIdentity(settings, input.sandbox.gitIdentity) : base.sandbox.gitIdentity,
-        },
-      },
+      settings: this.forkSettings(origin, req.settings, provider, settings, dockerMode),
       containerId: null,
       error: null,
       queueRunning: req.savedMessages.length > 0,
@@ -1376,27 +1419,33 @@ export class SessionManager {
       createdAt: now,
       updatedAt: now,
     };
+  }
+
+  /** Writes the fork: its row, the origin's conversation up to the Snapshot when continuing, the `forked` marker, the saved messages. */
+  private recordFork(origin: Session, session: Session, snapshot: Snapshot, req: ForkSessionRequest): SessionEvent {
     this.db.insertSession(session);
     if (req.conversation === "continue") {
-      this.db.copyEvents(origin.id, id, snapshot.eventSeq, branchScope(origin.branches, snapshot.branchId));
+      this.db.copyEvents(origin.id, session.id, snapshot.eventSeq, branchScope(origin.branches, snapshot.branchId));
     }
-    const marker = this.db.appendEvent(id, {
+    const marker = this.db.appendEvent(session.id, {
       type: "forked",
       fromSessionId: origin.id,
       fromTitle: origin.title,
       snapshotId: snapshot.id,
       snapshotOrdinal: snapshot.ordinal,
       conversation: req.conversation,
-      ...(sameAgent ? {} : { fromProvider: origin.provider }),
+      ...(session.provider === origin.provider ? {} : { fromProvider: origin.provider }),
     });
-    for (const text of req.savedMessages) this.db.insertSavedMessage(id, text);
-    this.broadcast({ type: "session", session });
-    this.broadcast({ type: "event", event: marker });
-    void this.copyBaselines(origin, session);
+    for (const text of req.savedMessages) this.db.insertSavedMessage(session.id, text);
+    return marker;
+  }
 
+  /** Gets the fork going in the background: a hidden handoff turn on the origin first, else the first prompt is queued and the Sandbox provisioned. */
+  private launchFork(origin: Session, session: Session, snapshot: Snapshot, settings: Settings, req: ForkSessionRequest, hiddenHandoff: boolean): void {
+    const { id, provider } = session;
     if (hiddenHandoff) {
       void this.forkWithHandoff(origin, session, snapshot.imageId, snapshot.ordinal, settings, req.prompt);
-      return session;
+      return;
     }
     if (req.document !== undefined) {
       this.pendingPrompts.set(id, { text: handoffMessage(req.document, origin, origin.provider, provider, snapshot.ordinal, req.prompt), origin: "handoff" });
@@ -1405,7 +1454,6 @@ export class SessionManager {
       this.log(`provision fork ${id} failed: ${String(e)}`);
       this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
     });
-    return session;
   }
 
   /** The origin's Agent must be there, idle, to write the handoff; a clear 409 otherwise. */

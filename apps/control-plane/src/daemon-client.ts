@@ -1,11 +1,7 @@
 import WebSocket from "ws";
 import {
   DAEMON_METHODS,
-  DaemonCodexAuthParams,
-  DaemonCursorAuthChangedParams,
-  DaemonPiAuthChangedParams,
-  DaemonOpenCodeAuthChangedParams,
-  DaemonFxAuthChangedParams,
+  DaemonAuthChangedParams,
   FsChangedParams,
   DaemonStatus,
   PtyExitParams,
@@ -17,22 +13,15 @@ import {
   type DaemonHelloParams,
   type JsonRpcId,
 } from "@sessionboxer/protocol";
+import { providerOfAuthChanged, type SyncedAuthProvider } from "./provider-auth.js";
 
 export interface DaemonClientHandlers {
   onEvent: (event: DaemonEvent) => void;
   onStatus: (status: DaemonStatus) => void;
   onPtyOutput: (ptyId: string, data: Buffer) => void;
   onPtyExit: (ptyId: string, exitCode: number) => void;
-  /** Codex rewrote its `auth.json` (refreshed tokens); the whole file. */
-  onCodexAuthChanged: (authJson: string) => void;
-  /** The Cursor CLI rewrote its `auth.json` (refreshed tokens); the whole file. */
-  onCursorAuthChanged: (authJson: string) => void;
-  /** pi rewrote its `auth.json` (refreshed OAuth tokens); the whole file. */
-  onPiAuthChanged: (authJson: string) => void;
-  /** OpenCode rewrote its `auth.json` (refreshed OAuth tokens); the whole file. */
-  onOpenCodeAuthChanged: (authJson: string) => void;
-  /** fx rewrote one of its login files (refreshed tokens); the whole file. */
-  onFxAuthChanged: (authJson: string) => void;
+  /** The Agent's CLI rewrote its login file with refreshed tokens; the whole file. */
+  onProviderAuthChanged: (provider: SyncedAuthProvider, authJson: string) => void;
   /** A Workspace file the Control Plane asked to watch (`fs/watch`) changed. */
   onFsChanged: (change: FsChangedParams) => void;
   onConnected: (status: DaemonStatus) => void;
@@ -144,18 +133,11 @@ export class DaemonClient {
       } else if (msg.method === DAEMON_METHODS.ptyExit) {
         const p = PtyExitParams.parse(msg.params);
         this.handlers.onPtyExit(p.id, p.exitCode);
-      } else if (msg.method === DAEMON_METHODS.codexAuthChanged) {
-        this.handlers.onCodexAuthChanged(DaemonCodexAuthParams.parse(msg.params).authJson);
-      } else if (msg.method === DAEMON_METHODS.cursorAuthChanged) {
-        this.handlers.onCursorAuthChanged(DaemonCursorAuthChangedParams.parse(msg.params).authJson);
-      } else if (msg.method === DAEMON_METHODS.piAuthChanged) {
-        this.handlers.onPiAuthChanged(DaemonPiAuthChangedParams.parse(msg.params).authJson);
-      } else if (msg.method === DAEMON_METHODS.opencodeAuthChanged) {
-        this.handlers.onOpenCodeAuthChanged(DaemonOpenCodeAuthChangedParams.parse(msg.params).authJson);
-      } else if (msg.method === DAEMON_METHODS.fxAuthChanged) {
-        this.handlers.onFxAuthChanged(DaemonFxAuthChangedParams.parse(msg.params).authJson);
       } else if (msg.method === DAEMON_METHODS.fsChanged) {
         this.handlers.onFsChanged(FsChangedParams.parse(msg.params));
+      } else {
+        const provider = providerOfAuthChanged(msg.method);
+        if (provider) this.handlers.onProviderAuthChanged(provider, DaemonAuthChangedParams.parse(msg.params).authJson);
       }
     }
   }

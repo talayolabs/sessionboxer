@@ -166,6 +166,7 @@ import { pickGitHubAccount } from "./github-account.js";
 import { parseContextReport } from "./context-report.js";
 import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
+import { PROVIDER_AUTH, isSyncedAuthProvider, providerAuthLabel, type SyncedAuthProvider } from "./provider-auth.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { E2eVerification } from "./e2e.js";
 import { extractHandoff, handoffMessage, handoffRequestPrompt, isHiddenTurn, lastAgentMessage } from "./handoff.js";
@@ -2616,135 +2617,39 @@ export class SessionManager {
   }
 
   /**
-   * Hands the stored Codex `auth.json` to a Codex Session's Daemon, which keeps it on tmpfs where
-   * Codex reads it (ADR-0046). Before the MCP set at connect time so the Agent finds it at start;
-   * again whenever the stored file changes.
+   * Hands the stored login of a synced Agent (`PROVIDER_AUTH`: Codex, Cursor, pi, OpenCode, fx) to
+   * its Session's Daemon: an `auth.json` goes on tmpfs where the CLI reads it, API keys into the
+   * Agent's environment. Before the MCP set at connect time so the Agent finds it at start; again
+   * whenever the stored login changes. Other Agents: nothing to do.
    */
-  async pushCodexAuth(id: string): Promise<void> {
+  async pushProviderAuth(id: string): Promise<void> {
     const s = this.get(id);
     const client = this.clients.get(id);
-    if (s.provider !== "codex" || !client?.connected) return;
-    const params: DaemonCodexAuthParams = { authJson: codexAuthJson(this.settings()) };
+    if (!isSyncedAuthProvider(s.provider) || !client?.connected) return;
+    const sync = PROVIDER_AUTH[s.provider];
     try {
-      await client.request(DAEMON_METHODS.codexAuthSet, params);
+      await client.request(sync.setMethod, sync.params(this.settings()));
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) {
-        this.log(`daemon ${id} predates Codex; Stop and Resume the session to refresh it`);
+      if (sync.tolerateMissingMethod && e instanceof DaemonRpcError && e.code === -32601) {
+        this.log(`daemon ${id} predates ${providerAuthLabel(s.provider)}; Stop and Resume the session to refresh it`);
         return;
       }
       throw e;
     }
   }
 
-  /** The stored Codex login changed (Settings, or a Sandbox refreshed it): every live Codex Session gets the file. */
-  async pushCodexAuthToAll(): Promise<void> {
+  /** The stored login of `provider` changed (Settings, or a Sandbox refreshed it): every live Session of that Agent gets it. */
+  async pushProviderAuthToAll(provider: SyncedAuthProvider): Promise<void> {
     for (const s of this.list()) {
-      if (s.provider !== "codex" || (s.status !== "idle" && s.status !== "running")) continue;
-      await this.pushCodexAuth(s.id).catch((e: unknown) => this.log(`codex auth push ${s.id} failed: ${String(e)}`));
+      if (s.provider !== provider || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushProviderAuth(s.id).catch((e: unknown) => this.log(`${provider} auth push ${s.id} failed: ${String(e)}`));
     }
   }
 
-  /** A Codex Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
-  codexAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
+  /** A Sandbox rewrote its Agent's login file with refreshed tokens; set by the owner to store it. */
+  providerAuthRefreshed: (provider: SyncedAuthProvider, sessionId: string, authJson: string) => void = () => undefined;
   /** Stores a Settings change the way `PUT /settings` does; the server wires it (the Agent's `utilities_*` / `procedure_save` use it). */
   applySettings: (update: UpdateSettingsRequest) => Promise<void> = () => Promise.reject(new Error("Settings are not available yet."));
-
-  /**
-   * Hands the stored Cursor login to a Cursor Session's Daemon (ADR-0054): an `auth.json` goes on
-   * tmpfs where the CLI reads it, an API key into the Agent's environment. Before the MCP set at
-   * connect time; again whenever the stored login changes.
-   */
-  async pushCursorAuth(id: string): Promise<void> {
-    const s = this.get(id);
-    const client = this.clients.get(id);
-    if (s.provider !== "cursor" || !client?.connected) return;
-    const params: DaemonCursorAuthParams = { login: cursorLogin(this.settings()) };
-    await client.request(DAEMON_METHODS.cursorAuthSet, params);
-  }
-
-  /** The stored Cursor login changed (Settings, or a Sandbox refreshed it): every live Cursor Session gets it. */
-  async pushCursorAuthToAll(): Promise<void> {
-    for (const s of this.list()) {
-      if (s.provider !== "cursor" || (s.status !== "idle" && s.status !== "running")) continue;
-      await this.pushCursorAuth(s.id).catch((e: unknown) => this.log(`cursor auth push ${s.id} failed: ${String(e)}`));
-    }
-  }
-
-  /** A Cursor Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
-  cursorAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
-
-  /**
-   * Hands the stored pi login to a pi Session's Daemon (ADR-0075): the `auth.json` goes on tmpfs
-   * where pi reads it, the API keys into the Agent's environment. Before the MCP set at connect
-   * time; again whenever the stored login changes.
-   */
-  async pushPiAuth(id: string): Promise<void> {
-    const s = this.get(id);
-    const client = this.clients.get(id);
-    if (s.provider !== "pi" || !client?.connected) return;
-    const settings = this.settings();
-    const params: DaemonPiAuthParams = { authJson: piAuthJson(settings), apiKeys: piApiKeyEnv(piApiKeys(settings)) };
-    await client.request(DAEMON_METHODS.piAuthSet, params);
-  }
-
-  /** The stored pi login changed (Settings, or a Sandbox refreshed it): every live pi Session gets it. */
-  async pushPiAuthToAll(): Promise<void> {
-    for (const s of this.list()) {
-      if (s.provider !== "pi" || (s.status !== "idle" && s.status !== "running")) continue;
-      await this.pushPiAuth(s.id).catch((e: unknown) => this.log(`pi auth push ${s.id} failed: ${String(e)}`));
-    }
-  }
-
-  /** A pi Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
-  piAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
-
-  /**
-   * Hands the stored OpenCode `auth.json` to an OpenCode Session's Daemon, which keeps it on tmpfs
-   * where OpenCode reads it (ADR-0076). Before the MCP set at connect time so the Agent finds it at
-   * start; again whenever the stored file changes.
-   */
-  async pushOpenCodeAuth(id: string): Promise<void> {
-    const s = this.get(id);
-    const client = this.clients.get(id);
-    if (s.provider !== "opencode" || !client?.connected) return;
-    const params: DaemonOpenCodeAuthParams = { authJson: opencodeAuthJson(this.settings()) };
-    await client.request(DAEMON_METHODS.opencodeAuthSet, params);
-  }
-
-  /** The stored OpenCode login changed (Settings, or a Sandbox refreshed it): every live OpenCode Session gets the file. */
-  async pushOpenCodeAuthToAll(): Promise<void> {
-    for (const s of this.list()) {
-      if (s.provider !== "opencode" || (s.status !== "idle" && s.status !== "running")) continue;
-      await this.pushOpenCodeAuth(s.id).catch((e: unknown) => this.log(`opencode auth push ${s.id} failed: ${String(e)}`));
-    }
-  }
-
-  /** An OpenCode Sandbox rewrote its `auth.json` with refreshed tokens; set by the owner to store it. */
-  opencodeAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
-
-  /**
-   * Hands the stored fx login to an fx Session's Daemon (ADR-0077): a login file is written 0600 into
-   * `~/.fx` (a volume `docker commit` never sees), an API key goes into the Agent's environment. Before the MCP set at connect time; again
-   * whenever the stored login changes.
-   */
-  async pushFxAuth(id: string): Promise<void> {
-    const s = this.get(id);
-    const client = this.clients.get(id);
-    if (s.provider !== "fx" || !client?.connected) return;
-    const params: DaemonFxAuthParams = { login: fxLogin(this.settings()) };
-    await client.request(DAEMON_METHODS.fxAuthSet, params);
-  }
-
-  /** The stored fx login changed (Settings, or a Sandbox refreshed it): every live fx Session gets it. */
-  async pushFxAuthToAll(): Promise<void> {
-    for (const s of this.list()) {
-      if (s.provider !== "fx" || (s.status !== "idle" && s.status !== "running")) continue;
-      await this.pushFxAuth(s.id).catch((e: unknown) => this.log(`fx auth push ${s.id} failed: ${String(e)}`));
-    }
-  }
-
-  /** An fx Sandbox rewrote a login file with refreshed tokens; set by the owner to store it. */
-  fxAuthRefreshed: (sessionId: string, authJson: string) => void = () => undefined;
 
   /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
   async pushRecordingPrefs(id: string): Promise<void> {
@@ -2869,11 +2774,7 @@ export class SessionManager {
       onPtyExit: (ptyId, exitCode) => {
         for (const sink of this.sinksOf(id, ptyId)) sink.exit(exitCode);
       },
-      onCodexAuthChanged: (authJson) => this.codexAuthRefreshed(id, authJson),
-      onCursorAuthChanged: (authJson) => this.cursorAuthRefreshed(id, authJson),
-      onPiAuthChanged: (authJson) => this.piAuthRefreshed(id, authJson),
-      onOpenCodeAuthChanged: (authJson) => this.opencodeAuthRefreshed(id, authJson),
-      onFxAuthChanged: (authJson) => this.fxAuthRefreshed(id, authJson),
+      onProviderAuthChanged: (provider, authJson) => this.providerAuthRefreshed(provider, id, authJson),
       onFsChanged: (change) => this.broadcast({ type: "fs_changed", sessionId: id, ...change }),
       onDisconnected: () => {
         this.log(`daemon ${id} disconnected`);
@@ -2904,11 +2805,7 @@ export class SessionManager {
       .then(() => seeded)
       .then(() => this.pushSessionInfo(id))
       .then(() => this.pushRepos(id))
-      .then(() => this.pushCodexAuth(id))
-      .then(() => this.pushCursorAuth(id))
-      .then(() => this.pushPiAuth(id))
-      .then(() => this.pushOpenCodeAuth(id))
-      .then(() => this.pushFxAuth(id))
+      .then(() => this.pushProviderAuth(id))
       .then(() => this.pushUtilities(id))
       .then(() => this.pushMcpServers(id))
       .then(() => this.pushModel(id))

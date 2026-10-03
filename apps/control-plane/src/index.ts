@@ -88,16 +88,6 @@ import {
   accessToken,
   accessTokenSource,
   applySettingsUpdate,
-  codexAuthJson,
-  codexAuthNewer,
-  cursorAuthNewer,
-  cursorLogin,
-  piAuthJson,
-  piAuthNewer,
-  opencodeAuthJson,
-  opencodeAuthNewer,
-  fxAuthNewer,
-  fxLogin,
   ensureAccessToken,
   ensureTunnelSecret,
   ensureVapidKeys,
@@ -113,6 +103,7 @@ import { applyTrustedCas, trustedCaBundle } from "./ca-certs.js";
 import { bridgeCodeSocket, codePrefix, codeTarget, forwardedHeaders, proxyCodeRequest } from "./code-proxy.js";
 import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
+import { PROVIDER_AUTH, providersAuthChangedBy } from "./provider-auth.js";
 import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { findDockerEngine, noDockerAdvice } from "./docker-engine.js";
@@ -196,71 +187,21 @@ const macos = new MacosVms(
   (status) => sessions.notify({ type: "macos_base", status }),
 );
 const sessions = new SessionManager(db, docker, windows, macos, () => settings, log, (msg) => push.send(msg));
-// Codex rotates its ChatGPT tokens inside the Sandbox; the rewritten auth.json replaces the stored one
-// (unless it is older than what another Sandbox already sent) and reaches the other Codex Sessions.
-sessions.codexAuthRefreshed = (sessionId, authJson) => {
-  if (!codexAuthNewer(authJson, codexAuthJson(settings))) return;
+// Codex, Cursor, pi, OpenCode and fx rotate their tokens inside the Sandbox; the rewritten login file
+// replaces the stored one (unless it is older than what another Sandbox already sent, or the stored
+// login is an API key) and reaches the other Sessions of that Agent.
+sessions.providerAuthRefreshed = (provider, sessionId, authJson) => {
+  const sync = PROVIDER_AUTH[provider];
+  if (!sync.newer(authJson, sync.stored(settings))) return;
   try {
-    settings = applySettingsUpdate(settings, { providerSecrets: { codex: { CODEX_AUTH_JSON: authJson } } });
+    settings = applySettingsUpdate(settings, sync.storeUpdate(authJson));
   } catch (e) {
-    log(`codex auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
+    log(`${provider} auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
     return;
   }
   saveSettings(settings);
-  log(`codex login refreshed by session ${sessionId}; stored`);
-  void sessions.pushCodexAuthToAll();
-};
-// The Cursor CLI refreshes the tokens of an auth.json the same way (an API key login is left alone).
-sessions.cursorAuthRefreshed = (sessionId, authJson) => {
-  if (!cursorAuthNewer(authJson, cursorLogin(settings))) return;
-  try {
-    settings = applySettingsUpdate(settings, { providerSecrets: { cursor: { CURSOR_LOGIN: authJson } } });
-  } catch (e) {
-    log(`cursor auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
-    return;
-  }
-  saveSettings(settings);
-  log(`cursor login refreshed by session ${sessionId}; stored`);
-  void sessions.pushCursorAuthToAll();
-};
-// pi refreshes the OAuth tokens of its auth.json the same way (API keys are left alone).
-sessions.piAuthRefreshed = (sessionId, authJson) => {
-  if (!piAuthNewer(authJson, piAuthJson(settings))) return;
-  try {
-    settings = applySettingsUpdate(settings, { providerSecrets: { pi: { PI_AUTH_JSON: authJson } } });
-  } catch (e) {
-    log(`pi auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
-    return;
-  }
-  saveSettings(settings);
-  log(`pi login refreshed by session ${sessionId}; stored`);
-  void sessions.pushPiAuthToAll();
-};
-// OpenCode refreshes the OAuth logins in its auth.json the same way (API keys are left alone).
-sessions.opencodeAuthRefreshed = (sessionId, authJson) => {
-  if (!opencodeAuthNewer(authJson, opencodeAuthJson(settings))) return;
-  try {
-    settings = applySettingsUpdate(settings, { providerSecrets: { opencode: { OPENCODE_AUTH_JSON: authJson } } });
-  } catch (e) {
-    log(`opencode auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
-    return;
-  }
-  saveSettings(settings);
-  log(`opencode login refreshed by session ${sessionId}; stored`);
-  void sessions.pushOpenCodeAuthToAll();
-};
-// fx refreshes the tokens of its login files the same way (an API key login is left alone).
-sessions.fxAuthRefreshed = (sessionId, authJson) => {
-  if (!fxAuthNewer(authJson, fxLogin(settings))) return;
-  try {
-    settings = applySettingsUpdate(settings, { providerSecrets: { fx: { FX_LOGIN: authJson } } });
-  } catch (e) {
-    log(`fx auth from session ${sessionId} ignored: ${e instanceof Error ? e.message : String(e)}`);
-    return;
-  }
-  saveSettings(settings);
-  log(`fx login refreshed by session ${sessionId}; stored`);
-  void sessions.pushFxAuthToAll();
+  log(`${provider} login refreshed by session ${sessionId}; stored`);
+  void sessions.pushProviderAuthToAll(provider);
 };
 const automations = new Automations({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
 const tunnels = new Tunnels(
@@ -449,11 +390,7 @@ async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void
   if (update.mcpServers) void sessions.pushMcpServersToAll();
   if (update.utilities || update.utilityEnvironments || update.procedures) void sessions.pushUtilitiesToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
-  if (update.providerSecrets?.codex?.CODEX_AUTH_JSON !== undefined) void sessions.pushCodexAuthToAll();
-  if (update.providerSecrets?.cursor?.CURSOR_LOGIN !== undefined) void sessions.pushCursorAuthToAll();
-  if (update.providerSecrets?.pi?.PI_AUTH_JSON !== undefined || update.providerSecrets?.pi?.PI_API_KEYS !== undefined) void sessions.pushPiAuthToAll();
-  if (update.providerSecrets?.opencode?.OPENCODE_AUTH_JSON !== undefined) void sessions.pushOpenCodeAuthToAll();
-  if (update.providerSecrets?.fx?.FX_LOGIN !== undefined) void sessions.pushFxAuthToAll();
+  for (const provider of providersAuthChangedBy(update)) void sessions.pushProviderAuthToAll(provider);
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
 }

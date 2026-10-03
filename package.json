@@ -16,6 +16,7 @@
     "test:attachments": "tsc -b && node --test scripts/attachment-paths.test.mjs",
     "test:auth": "tsc -b && node --test scripts/auth-origin.test.mjs",
     "test:desktop-tools": "tsc -b && node --test scripts/desktop-tool-descriptions.test.mjs",
+    "test:provider-auth": "tsc -b && node --test scripts/provider-auth.test.mjs",
     "audit:tools": "python3 scripts/audit_tools.py",
     "clean": "tsc -b --clean",
     "build:image": "node scripts/build-image.mjs",

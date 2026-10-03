@@ -8,6 +8,7 @@
  */
 import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+import { PROVIDERS } from "@sessionboxer/protocol";
 import { fingerprint, instrumentTool, reportMcpExecution } from "@sessionboxer/protocol/node-telemetry";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -258,7 +259,6 @@ registerTool(
 // The Control Plane refuses these under the `session` policy with the reason; `session_create` may
 // answer `{ pending: true, id }` when the user has to allow it first (a card in their chat).
 
-const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx"] as const;
 const SESSION_REF = z.string().min(1).max(100).describe("A Session id from sessions_list (a prefix of 6+ characters does)");
 const REPOS = z
   .array(

@@ -4922,6 +4922,12 @@ export const DaemonFxAuthChangedParams = z.object({
 });
 export type DaemonFxAuthChangedParams = z.infer<typeof DaemonFxAuthChangedParams>;
 
+/** Every `*AuthChanged` notification carries the rewritten login file the same way. */
+export const DaemonAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonAuthChangedParams = z.infer<typeof DaemonAuthChangedParams>;
+
 /**
  * Switches the Agent's model (ACP `session/set_config_option` on the `model` option). Applied right
  * away when idle, otherwise once the current turn ends; `model_changed` is emitted when it took effect.

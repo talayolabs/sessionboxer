@@ -359,6 +359,14 @@ Ordered by risk-reduction per hour; each a behaviour-preserving commit with its 
 20. **`AutomationForm` and `SessionView`** the `SettingsView` way (sections, one state hook each) —
     only once 17 has shown the pattern holds for a component with a live WebSocket feed.
 
+**Status (2026-10-03):** 15 is on `main` — 66a75ee: `packages/protocol/src/sandbox-image.ts` and `vm-bases.ts`
+(move-only, bodies identical; `speech.ts` 158 → 81 lines), `newSessionDefaults()` in `sessions.ts` (the fork spreads it and
+overrides `queueRunning`/`folderId`, key order kept), `computer-use-mcp` on protocol's `totpCode` (its `fillUtilityPlaceholders`
+is now async — a Sandbox image change, so it reaches Sessions after `npm run build:image`), `KeyValueList` with
+`nameOptions`/`valuePlaceholder(kv)`/`multiline`/`labelTitle`/`newItemSecret` replacing `CredentialList`,
+`QemuVms.isInstalling()`, and `scripts/cross-package.test.mjs` (`npm run test:cross-package`, in CI: the two Docker socket
+lists are equal; `totpCode` answers the RFC 6238 appendix-B vectors). 16–20 are open.
+
 Still not recommended: `HttpError` out of the domain classes (round 2's reasoning stands); a daemon
 `AgentManager` harness (a scripted ACP agent is a project of its own; the daemon changes rarely —
 27 commits in 90 days against 126 for `App.tsx`); unifying `host-sync`/`workspace-sync`.

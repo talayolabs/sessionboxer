@@ -376,3 +376,111 @@ one bug pinned as-is: `pollFollowNow` and the webhook hint `touchFollow` (polled
 Still not recommended: `HttpError` out of the domain classes (round 2's reasoning stands); a daemon
 `AgentManager` harness (a scripted ACP agent is a project of its own; the daemon changes rarely —
 27 commits in 90 days against 126 for `App.tsx`); unifying `host-sync`/`workspace-sync`.
+
+---
+
+# Round 4 (2026-10-03, after fixes 15–20, `0db70f5`)
+
+Same five skills, same method. Round 3's list is done. The gate is lint + typecheck + build +
+`size-budget` + `dup` + 16 node suites and 4 script suites (277 tests) + the Python audit test, in CI.
+
+## The shape of the codebase, now
+
+| File | Lines | Round 3 | What changed |
+|---|---|---|---|
+| `apps/control-plane/src/sessions.ts` | 2,966 | 2,952 | 155 methods under 17 section headers; `newSessionDefaults()`, `PrTransports`. The "Repositories" section (lines 727–1056, 20 methods: `syncPlan`/`syncPull`, `normalizeRepos`, `seedRepo(s)`, `addRepo`/`updateRepo`/`removeRepo`, `refreshRepoStates`, `pushRepos`) is round 2's item 14, never done |
+| `apps/control-plane/src/agent-tools.ts` | 1,176 | 1,176 | 44 `case`s → one private method each (table-shaped, fine); `AgentToolsDeps` is 34 function-shaped fields — a seam nobody has used: 0 tests, and `scrub()` + `HIDDEN_SETTINGS_KEYS` ("nothing secret-shaped leaves the Control Plane") are untested |
+| `packages/sandbox-daemon/src/agent.ts` | 1,147 | 1,147 | unchanged; still not recommended (below) |
+| `apps/control-plane/src/followed-prs.ts` / `pull-requests.ts` | 1,055 / 1,058 | 1,052 / 1,047 | 41 tests through `PrTransports` |
+| `apps/web/src/SessionSettingsForm.tsx` | 916 | 916 | one 575-line component over a props-driven `SessionSettingsDraft`; five `<section className="ss-section">` blocks and a `show(section)` switch already mark the seams; lines 66–170 are the pure converters (`draftFromDefaults`/`draftFromSettings`/`draftToInput`, 0 React, 10 call sites). 17 commits in the 90 days before these rounds |
+| `apps/web/src/Transcript.tsx` + `transcript-model.ts` | 874 + 382 | — | `buildTranscript` is 219 lines, pure, 25 event-type branches, 18 pre-round commits, 0 tests — the same shape `feedReducer` had before fix 17 |
+| `apps/web/src/Sidebar.tsx` | 647 | 648 | `Sidebar` 524 lines of which `sessionEntry` is a 219-line closure |
+| `apps/web/src/App.tsx` / control-plane `index.ts` | 548 / 411 | 1,322 / 1,149 | fixes 17 and 18 |
+| `apps/web/src/Automations.tsx` / `SessionView.tsx` | 455 / 413 | 1,067 / 1,017 | fix 20; both off the size-budget list |
+
+Function sizes (TypeScript AST over `apps/*/src`, `packages/*/src`, arrow functions included this
+time: 6,611 functions): 90 % under 20 lines, 166 ≥ 50, 70 ≥ 100, 26 ≥ 200. Of the 26, 24 are React
+components in `apps/web` (the other two: `vscodeColors`, the daemon's `handle()` dispatch). The
+biggest: `SessionSettingsForm` 575, `ProvidersSettings` 554, `Devices` 530, `Sidebar` 524, `App` 453,
+`Composer` 438. Fix 20 took `SessionView` (651 → 179) and `AutomationForm` (615 → gone) off the list,
+and put `SessionHeader` (268) and `TriggerStep` (220) on it: a section component is still 200 lines
+of JSX. Clean Code's 20-line rule was written for imperative code; for markup the honest measure is
+"one `<section>` per component, state next to the markup that uses it", which these pass.
+
+Duplication (`npm run dup`: jscpd, 277 files, 67,718 lines): 16 clones, 244 lines, 0.36 % against
+the 0.5 % gate. Round 3's five pairs are gone except `MacosBase` ↔ `EnvironmentSettings` (12 + 13
+lines, the `useBaseDiskAction()` hook was listed under fix 15 and not done). The rest is the
+"not worth touching" list from round 3, unchanged.
+
+Dead exports (`ts-prune`, barrel re-exports excluded): `uiHintApplies` (`AgentActions.tsx`),
+`firstFileRef` (`file-links.ts`), `bitbucketTokenPageUrl` (`bitbucket.ts`). Three; two rounds ago
+it was not measured at all.
+
+## Scores
+
+| Skill | Round 1 | Round 2 | Round 3 | Round 4 | Rows still failing |
+|---|---|---|---|---|---|
+| Pragmatic Programmer | 4/10 | 8/10 | 8/10 | 9/10 | design by contract: the Agent-tools policy gate and `scrub()` are the two promises the Control Plane makes to the user about what an Agent can reach, and neither has a test; broken windows: three dead exports, `useSectionState` filed under `settings/` and imported from `automations/` |
+| Clean Code | 4/10 | 6/10 | 7/10 | 7/10 | functions under 20 lines (24 React components ≥ 200); a test per public method (no: `AgentTools`, `buildTranscript`, the Session repo methods, `ProviderLogins`' 30 recipe functions) |
+| Refactoring Patterns | — | 7/10 | 8/10 | 8/10 | Large Class (`SessionManager`, 155 methods, one unextracted section left with a clear name); Long Method in React |
+| Philosophy of Software Design | 5/10 | 7/10 | 8/10 | 8/10 | `DESIGN.md` now states the layers (+); two leaks from fix 20 (below); 16 of 38 Control Plane classes have no interface comment and 51 of 57 modules no header line |
+| Working with Legacy Code | — | 7/10 | 8/10 | 9/10 | fixes 15–20 all landed pins first and the pins passed unchanged across the moves; the untested change points left are `AgentTools`, `buildTranscript`, and the repo section of `SessionManager` |
+
+## Did round 3's moves hold up?
+
+- `feedReducer`/`useSessionFeed`: yes. Pure reducer, 26 pins, the socket in a 155-line hook.
+- Routes: `registerSessionRoutes` is 364 lines for 76 routes — under five lines per handler; thin.
+  `RouteDeps` has 17 fields and is constructed once. Yes.
+- `PrTransports`: an optional trailing constructor argument with a production default. Yes.
+- `form-model.ts`: the pins are real (hand-written expected bodies). One smell: `draftFromInput(input,
+  settings, draftFromDefaults)` takes `draftFromDefaults` as a parameter *only because* that function
+  lives in `SessionSettingsForm.tsx` and `node --test` cannot load TSX. A configuration parameter is a
+  decision the module declined to make (Ousterhout §4). The fix is upstream: move the pure converters
+  out of the `.tsx` file (fix 21), then the parameter goes.
+- `session/*`: `SessionPane` is 67 lines and 22 props — a pass-through switch (Ousterhout's
+  red flag). It is the `shown ===` ladder from `SessionView` with a name, which is a small gain; the
+  cost is that its props, like `SessionHeader`'s and `SessionChat`'s, are typed as `Pick<SessionViewProps,
+  …> & Pick<ReturnType<typeof useSessionDialogs>, …>`: the children's contracts are spelled in terms of
+  the parent's prop type and a hook's return type. Changing either changes three files' types. Not
+  worth a fix now — a context would change re-render behaviour, and the three components are each
+  read in one sitting — but the next person who adds a prop to `SessionViewProps` should know why
+  three `Pick`s light up.
+- `useSectionState`: 17 lines, now ten importers across `settings/` and `automations/`. It is a web-app
+  utility living under `settings/shared.ts`. One `git mv` to `apps/web/src/useSectionState.ts`.
+- `size-budget`/`dup`: both have fired zero times in CI so far, which is the point.
+
+## Safety-net map, round 4
+
+| Change point | Seam | Characterization test to write |
+|---|---|---|
+| `buildTranscript` (`apps/web/src/transcript-model.ts`, 219 lines, 25 branches, pure) | none needed; `(events, snapshots) → items` | `scripts/transcript.test.mjs`: one hand-written event list per event type → the items (text merging across `agent_text` chunks, tool call/result pairing, compaction markers, snapshot interleave by `eventSeq`, handoff turns, `llmCallsOf`). The `feed.ts` recipe |
+| `AgentTools` (`agent-tools.ts`, 1,176 lines) | `AgentToolsDeps`: 34 fields, all functions or `Db`/`PullRequests` | `scripts/agent-tools.test.mjs` on an in-memory `Db` and fakes: the policy gate (`off` throws; a cross-Session tool under `"session"` throws with the Settings path in the message; `all` passes), `settings_get` drops every `HIDDEN_SETTINGS_KEYS` key, `scrub()` masks secret-shaped keys at depth, `session_message` `now` vs `queue`, `approval_*` round trip through `settleApproval`, `pr_list` summaries |
+| `SessionManager` repos section (lines 727–1056) | the existing harness (`scripts/session-manager.test.mjs`, fake Docker) | `addRepo` → row + `seedRepo` call; `updateRepo` on a missing repo 404s; `removeRepo` with dirty git state returns `blocked`; `refreshRepoStates` writes `git`; `normalizeRepos` rejects a duplicate name — then Extract Class |
+| `ProviderLogins` (`provider-login.ts`, 752 lines) | `LoginRunner` (exists); `RECIPES` is 30 pure functions | per-provider: `isLoginUrl`, `userCode`, `rejected`, `result` on recorded CLI output; `loginUrl`, `stripTerminal`. Low churn (1 commit) — do it when the next Provider is added, not before |
+| Session settings converters | pure once moved out of the `.tsx` | `draftFromSettings(draftToInput(d))` round-trips; `draftFromDefaults` for a Settings with/without Utilities; `defaultUtilitiesEnabled` |
+
+## Prioritised fixes, round 4
+
+Ordered by risk-reduction per hour; each a behaviour-preserving commit with its pins first.
+
+21. **Housekeeping batch** (tsc is the test): delete the three dead exports; `git mv` `useSectionState`
+    to `apps/web/src/useSectionState.ts` (`settings/shared.ts` re-exports); `apps/web/src/session-settings-model.ts`
+    for `draftFromDefaults`/`draftFromSettings`/`draftToInput`/`defaultUtilitiesEnabled` (move-only, 10
+    call sites) and the pins above, then `draftFromInput` loses its third parameter; `useBaseDiskAction()`
+    for `MacosBase`/`EnvironmentSettings`. Direct.
+22. **`buildTranscript` pins** (`npm run test:transcript`): the most-changed pure function in the web app
+    without a test. Direct.
+23. **`AgentTools` harness** (`npm run test:agent-tools`): the policy gate and `scrub()` are security
+    behaviour; pin them before the next tool is added. One child session.
+24. **`SessionRepos` out of `SessionManager`** (round 2's item 14): pins through the existing harness,
+    then Extract Class, `sessions.ts` 2,966 → ~2,600. One child session.
+25. **`SessionSettingsForm` by section** (`session-settings/{Environment,Agent,Mcp,Utilities,Qa}Section.tsx`,
+    props-driven so no state hooks; the `show(section)` switch stays) and **`Sidebar.sessionEntry` →
+    `SessionRow`**; move-only, browser-checked. One child session.
+26. **`ProviderLogins` recipe pins** — when a Provider is next added.
+
+Not recommended: splitting `Composer` (18 props and 7 effects are the textarea's DOM glue; a split
+adds props, not depth) or `Devices` (one page, nine polling effects — a `usePairing()` hook would
+be the move, when it next changes); replacing the `Pick<SessionViewProps>` typing with a context
+(changes re-render timing); the daemon `AgentManager` harness and `HttpError` out of the domain
+classes (rounds 2–3's reasoning stands); unifying `host-sync`/`workspace-sync`.

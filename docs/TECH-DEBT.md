@@ -228,8 +228,14 @@ the "N Sessions still use the base disk" refusal as `assertBaseUnused`, and `cre
 container, volume removed again on failure; `windows.ts` 368 → 305 lines, `macos.ts` 884 → 822; bodies moved verbatim,
 pins unchanged). Not pulled up: the two install-log followers — macOS's also flips the phase on "Booting macOS", passes
 `provisioned`/`reprovision` to `finishInstall` and clears its poll timer, so they differ in more than names. Gate on
-HEAD: lint, typecheck, build, 11 suites green. 11/12/14 are open; 11 and 12 touch disjoint web files and can run as
-parallel sessions.
+HEAD: lint, typecheck, build, 11 suites green. 11 is on `main` — f569174 (move-only: `apps/web/src/SettingsView.tsx`
+1,732 → 492 lines; one file per section under `apps/web/src/settings/` — `ProvidersSettings`, `EnvironmentSettings`,
+`AgentSettings`, `McpSettings`, `UtilitiesSettings`, `AutoQaSettings`, `InterfaceSettings`, `DevicesSettings`, plus
+`shared.ts`; the moved bodies line-diffed against the original: 0 non-plumbing lines) and 0d1dba3 (`useSectionState` in
+`shared.ts` and one `use<Section>Settings(settings)` next to each section component, returning `{ values, set, dirty }`;
+`SettingsView.tsx` 492 → 260 lines; on a worked example that fills every control of every section the
+`PUT /api/settings` body is byte-identical before and after). 12/14 are open; 12 touches only the web PR panes and can
+run as a parallel session.
 
 Deliberately not recommended: replacing `HttpError` in the domain classes with a domain error type
 and one HTTP mapping. It is the textbook fix for "error handling mixed with logic", but every

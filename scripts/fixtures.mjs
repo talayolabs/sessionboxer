@@ -46,3 +46,19 @@ export function sessionRow(id, overrides = {}) {
     ...rest,
   };
 }
+
+/** A cloned repository row as `SessionManager` records it once the Sandbox has it: a git source, ready, no login bound. */
+export function gitRepo(url, overrides = {}) {
+  const name = url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, "");
+  return {
+    id: `repo-${name}`,
+    name,
+    source: { type: "git", url },
+    status: "ready",
+    error: null,
+    git: null,
+    account: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}

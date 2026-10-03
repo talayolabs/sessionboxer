@@ -9,6 +9,7 @@ import type { Db } from "../db.js";
 import type { SandboxDocker } from "../docker.js";
 import type { FollowedPrs } from "../followed-prs.js";
 import type { MacosVms } from "../macos.js";
+import type { McpEvents } from "../mcp-events.js";
 import type { ProviderLogins } from "../provider-login.js";
 import type { PushNotifier } from "../push.js";
 import type { SessionManager } from "../sessions.js";
@@ -28,6 +29,7 @@ export interface RouteDeps {
   sessions: SessionManager;
   automations: Automations;
   followedPrs: FollowedPrs;
+  mcpEvents: McpEvents;
   auth: Auth;
   push: PushNotifier;
   windows: WindowsVms;

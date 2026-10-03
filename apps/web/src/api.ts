@@ -1,4 +1,5 @@
 import type {
+  McpEventsCatalog,
   AddRepoRequest,
   UpdateRepoRequest,
   AskResult,
@@ -216,6 +217,7 @@ export const api = {
   prAccounts: () => request<Array<{ kind: ConnectorKind; host: string; account: string }>>("/prs/accounts"),
   prFollows: () => request<PrFollow[]>("/prs/follows"),
   prPeople: () => request<PrPeople>("/prs/people"),
+  mcpEventsCatalog: (refresh = false) => request<McpEventsCatalog>(`/mcp-events/catalog${refresh ? "?refresh=1" : ""}`),
   createPrFollow: (req: CreatePrFollowRequest) => request<PrFollow>("/prs/follows", { method: "POST", body: JSON.stringify(req) }),
   updatePrFollow: (id: string, enabled: boolean) => request<PrFollow>(`/prs/follows/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
   deletePrFollow: (id: string) => request<void>(`/prs/follows/${id}`, { method: "DELETE" }),

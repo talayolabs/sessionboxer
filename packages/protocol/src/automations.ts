@@ -10,6 +10,7 @@ import { Provider } from "./common.js";
 import { RepoSpec } from "./repositories.js";
 import { SessionSettingsInput } from "./session-settings.js";
 import { INSTRUCTIONS_MAX_CHARS } from "./models.js";
+import { McpRunEvent } from "./mcp-events.js";
 
 export const AUTOMATION_NAME_MAX_CHARS = SCHEDULE_NAME_MAX_CHARS;
 /** How many runs an automation keeps in its history. */
@@ -95,7 +96,21 @@ export type PrEventTrigger = z.infer<typeof PrEventTrigger>;
 export const PrPeople = z.object({ authors: z.array(z.string()), reviewers: z.array(z.string()) });
 export type PrPeople = z.infer<typeof PrPeople>;
 
-export const AutomationTrigger = z.discriminatedUnion("type", [ScheduleTrigger, PrEventTrigger, ManualTrigger]);
+/**
+ * An event of a registry MCP server (ADR-0081): `events/stream` when the event type offers push and
+ * `delivery` allows it, `events/poll` otherwise. `arguments` are the subscription arguments the
+ * server's `inputSchema` describes.
+ */
+export const McpEventTrigger = z.object({
+  type: z.literal("mcp_event"),
+  serverId: z.string().min(1),
+  event: z.string().min(1).max(200),
+  arguments: z.record(z.unknown()).default({}),
+  delivery: z.enum(["auto", "push", "poll"]).default("auto"),
+});
+export type McpEventTrigger = z.infer<typeof McpEventTrigger>;
+
+export const AutomationTrigger = z.discriminatedUnion("type", [ScheduleTrigger, PrEventTrigger, ManualTrigger, McpEventTrigger]);
 export type AutomationTrigger = z.infer<typeof AutomationTrigger>;
 
 /** Sends a prompt to an existing Session (resumed if stopped, queued if busy); `attached` = whichever Session the PR is attached to. */
@@ -199,7 +214,7 @@ export const AutomationLimits = z.object({
 });
 export type AutomationLimits = z.infer<typeof AutomationLimits>;
 
-export const AutomationRunTrigger = z.enum(["cron", "manual", "catch_up", "pr_event"]);
+export const AutomationRunTrigger = z.enum(["cron", "manual", "catch_up", "pr_event", "mcp_event"]);
 export type AutomationRunTrigger = z.infer<typeof AutomationRunTrigger>;
 
 export const AutomationRunStatus = z.enum(["queued", "running", "succeeded", "failed", "skipped"]);
@@ -233,6 +248,8 @@ export const AutomationRun = z.object({
   status: AutomationRunStatus,
   /** The PR event that fired it, when the trigger is `pr_event`. */
   event: AutomationRunEvent.nullable(),
+  /** The MCP event that fired it, when the trigger is `mcp_event`. */
+  mcpEvent: McpRunEvent.nullable().default(null),
   followedPrId: z.string().nullable(),
   prUrl: z.string().nullable(),
   prTitle: z.string().nullable(),

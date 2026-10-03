@@ -45,6 +45,7 @@ import { HostOrSandboxRunner, ProviderLogins } from "./provider-login.js";
 import { PushNotifier } from "./push.js";
 import { Automations } from "./automations.js";
 import { FollowedPrs } from "./followed-prs.js";
+import { McpEvents } from "./mcp-events.js";
 import { PrReviews } from "./pr-reviews.js";
 import { PrQa } from "./pr-qa.js";
 import { HttpError, SessionManager } from "./sessions.js";
@@ -54,6 +55,7 @@ import { Speech } from "./speech.js";
 import { Tunnels } from "./tunnels.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
+import { registerMcpEventRoutes } from "./routes/mcp-events.js";
 import { registerConnectorRoutes } from "./routes/connectors.js";
 import { registerFolderRoutes } from "./routes/folders.js";
 import { registerPrHookRoute, registerPrRoutes } from "./routes/prs.js";
@@ -147,6 +149,9 @@ sessions.providerAuthRefreshed = (provider, sessionId, authJson) => {
   void sessions.pushProviderAuthToAll(provider);
 };
 const automations = new Automations({ db, sessions, broadcast: (msg) => sessions.notify(msg), push: (msg) => push.send(msg), log });
+const mcpEvents = new McpEvents({ db, settings: () => settings, automations, broadcast: (msg) => sessions.notify(msg), log });
+automations.mcpServerExists = (id) => settings.mcpServers.some((m) => m.id === id);
+automations.listChanged = () => mcpEvents.reconcile();
 const tunnels = new Tunnels(
   LOCAL_ORIGIN,
   settings.tunnels,
@@ -260,7 +265,10 @@ async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void
   saveSettings(settings);
   if (settings.agentTools !== agentToolsBefore) void sessions.agentToolsPolicyChanged();
   if (update.extraCaCerts !== undefined || update.trustHostCaCerts !== undefined) applyTrustedCas(settings);
-  if (update.mcpServers) void sessions.pushMcpServersToAll();
+  if (update.mcpServers) {
+    void sessions.pushMcpServersToAll();
+    mcpEvents.settingsChanged();
+  }
   if (update.utilities || update.utilityEnvironments || update.procedures) void sessions.pushUtilitiesToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
   for (const provider of providersAuthChangedBy(update)) void sessions.pushProviderAuthToAll(provider);
@@ -278,6 +286,7 @@ const deps: RouteDeps = {
   sessions,
   automations,
   followedPrs,
+  mcpEvents,
   auth,
   push,
   windows,
@@ -311,6 +320,7 @@ registerConnectorRoutes(api, deps);
 registerFolderRoutes(api, deps);
 registerSessionRoutes(api, deps);
 registerAutomationRoutes(api, deps);
+registerMcpEventRoutes(api, deps);
 registerRepositoryRoutes(api, deps);
 registerPrRoutes(api, deps);
 registerWsRoutes(api, deps);
@@ -331,6 +341,7 @@ await macos.init().catch((e: unknown) => log(`macos: ${e instanceof Error ? e.me
 await sessions.boot();
 automations.start();
 followedPrs.start();
+mcpEvents.start();
 void sessions.staged.sweep();
 setInterval(() => void sessions.staged.sweep(), 60 * 60 * 1000).unref();
 if (TLS && (TLS_CERT_FILE === "" || TLS_KEY_FILE === "")) {
@@ -393,6 +404,7 @@ const shutdown = (): void => {
     clearInterval(keepalive);
     automations.stop();
     followedPrs.stop();
+    void mcpEvents.stop();
     tunnels.close();
     db.close();
     server.close();

@@ -127,6 +127,7 @@ export function App() {
     prChecks,
     automations,
     automationRuns,
+    mcpEventSubscriptions,
     prFollows,
     followedPrs,
     fprItems,
@@ -458,6 +459,7 @@ export function App() {
             models={models ?? EMPTY_MODELS}
             options={options ?? EMPTY_OPTIONS}
             follows={prFollows.map((f) => ({ id: f.id, label: followLabel(f) }))}
+            mcpSubscriptions={mcpEventSubscriptions}
             onOpenSession={(id) => setRoute({ view: "session", id })}
             loadRuns={loadAutomationRuns}
             run={run}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { PR_EVENT_LABELS, PrEventType, SCHEDULE_MISSED_POLICY_LABELS, SCHEDULE_PREVIEW_COUNT, type AutomationTrigger, type PrEventFilters, type PrPeople, type ScheduleMissedPolicy, type Session } from "@sessionboxer/protocol";
+import { PR_EVENT_LABELS, PrEventType, SCHEDULE_MISSED_POLICY_LABELS, SCHEDULE_PREVIEW_COUNT, type AutomationTrigger, type McpEventTrigger, type McpEventsCatalog, type PrEventFilters, type PrPeople, type ScheduleMissedPolicy, type Session } from "@sessionboxer/protocol";
 import { api } from "../api";
 import type { FollowOption, Step } from "../Automations";
 import { FollowRepoInline } from "../FollowRepo";
@@ -36,11 +36,16 @@ export function useTriggerState(t: AutomationTrigger | undefined) {
     prFollows: t?.type === "pr_event" ? t.follows : [],
     prEvents: t?.type === "pr_event" ? t.events : ["opened", "synchronize", "ready_for_review"],
     filters: t?.type === "pr_event" ? t.filters : { drafts: "skip", forks: "review_only", authors: "not_self", includeOwn: false },
+    mcpServerId: t?.type === "mcp_event" ? t.serverId : "",
+    mcpEvent: t?.type === "mcp_event" ? t.event : "",
+    mcpArguments: t?.type === "mcp_event" && Object.keys(t.arguments).length > 0 ? JSON.stringify(t.arguments, null, 2) : "",
+    mcpDelivery: t?.type === "mcp_event" ? t.delivery : "auto",
   });
 }
 
 export function TriggerStep({
-  triggerType, cron, timezone, missedRun, prFollows, prEvents, filters, setTriggerType, setCron, setTimezone, setMissedRun, setPrFollows, setPrEvents, setFilters,
+  triggerType, cron, timezone, missedRun, prFollows, prEvents, filters, mcpServerId, mcpEvent, mcpArguments, mcpDelivery,
+  setTriggerType, setCron, setTimezone, setMissedRun, setPrFollows, setPrEvents, setFilters, setMcpServerId, setMcpEvent, setMcpArguments, setMcpDelivery,
   forSession, follows, busy, preview, showAction, triggerError, setStep,
 }: TriggerValues & SectionSetters<TriggerValues> & {
   forSession?: Session;
@@ -76,6 +81,10 @@ export function TriggerStep({
           <label className="check">
             <input type="radio" name="trigger" checked={triggerType === "pr_event"} onChange={() => setTriggerType("pr_event")} />
             When a followed pull request changes
+          </label>
+          <label className="check">
+            <input type="radio" name="trigger" checked={triggerType === "mcp_event"} onChange={() => setTriggerType("mcp_event")} />
+            When an MCP server reports an event
           </label>
           <label className="check">
             <input type="radio" name="trigger" checked={triggerType === "manual"} onChange={() => setTriggerType("manual")} />
@@ -259,6 +268,9 @@ export function TriggerStep({
           </details>
         </>
       )}
+      {triggerType === "mcp_event" && (
+        <McpEventFields serverId={mcpServerId} event={mcpEvent} args={mcpArguments} delivery={mcpDelivery} setServerId={setMcpServerId} setEvent={setMcpEvent} setArgs={setMcpArguments} setDelivery={setMcpDelivery} />
+      )}
       {triggerType === "manual" && <p className="field-hint">Nothing starts it but the Run now button (or an agent's `automation_run`); useful to keep a template at hand.</p>}
       {!showAction && (
         <div className="actions">
@@ -268,5 +280,120 @@ export function TriggerStep({
         </div>
       )}
     </section>
+  );
+}
+
+const DELIVERY_LABELS: Record<McpEventTrigger["delivery"], string> = {
+  auto: "Push when the server offers it, poll otherwise",
+  push: "Push only (events/stream)",
+  poll: "Poll only (events/poll)",
+};
+
+/** Property names of a JSON Schema object, for hints; nothing when the schema is not of that shape. */
+function schemaKeys(schema: Record<string, unknown> | undefined): string[] {
+  const props = schema?.properties;
+  return props && typeof props === "object" ? Object.keys(props as object) : [];
+}
+
+/** The MCP event trigger (ADR-0081): the registry's servers asked for their event types on the spot. */
+function McpEventFields({
+  serverId, event, args, delivery, setServerId, setEvent, setArgs, setDelivery,
+}: {
+  serverId: string;
+  event: string;
+  args: string;
+  delivery: McpEventTrigger["delivery"];
+  setServerId: Setter<string>;
+  setEvent: Setter<string>;
+  setArgs: Setter<string>;
+  setDelivery: Setter<McpEventTrigger["delivery"]>;
+}) {
+  const [catalog, setCatalog] = useState<McpEventsCatalog | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = (refresh: boolean) => {
+    setLoading(true);
+    setError(null);
+    api.mcpEventsCatalog(refresh).then(setCatalog, (e: unknown) => setError(e instanceof Error ? e.message : String(e))).finally(() => setLoading(false));
+  };
+  useEffect(() => load(false), []);
+  const server = catalog?.servers.find((s) => s.serverId === serverId) ?? null;
+  const type = server?.events.find((e) => e.name === event) ?? null;
+  const inputKeys = schemaKeys(type?.inputSchema);
+  const payloadKeys = schemaKeys(type?.payloadSchema);
+  return (
+    <>
+      <div className="row">
+        <label>
+          MCP server
+          <select value={serverId} onChange={(e) => { setServerId(e.target.value); setEvent(""); }}>
+            <option value="">{loading && !catalog ? "Asking the servers…" : "Pick a server"}</option>
+            {catalog?.servers.map((s) => (
+              <option key={s.serverId} value={s.serverId}>
+                {s.server}
+                {s.state === "none" ? " (no events)" : s.state === "error" ? " (unreachable)" : ` (${s.events.length} event type${s.events.length === 1 ? "" : "s"})`}
+              </option>
+            ))}
+            {serverId && catalog && !server && <option value={serverId}>{serverId} (not in the registry)</option>}
+          </select>
+        </label>
+        <label>
+          Event
+          <select value={event} onChange={(e) => setEvent(e.target.value)} disabled={!server || server.events.length === 0}>
+            <option value="">{server?.events.length ? "Pick an event" : "—"}</option>
+            {server?.events.map((e) => (
+              <option key={e.name} value={e.name}>
+                {e.name}
+              </option>
+            ))}
+            {event && server && !type && <option value={event}>{event} (no longer offered)</option>}
+          </select>
+        </label>
+      </div>
+      {error && <p className="field-hint warn">{error}</p>}
+      {server?.state === "error" && <p className="field-hint warn">Could not ask {server.server}: {server.error}</p>}
+      {server?.state === "none" && <p className="field-hint warn">{server.server} is a plain MCP server: it answers no `events/list`.</p>}
+      {catalog && catalog.servers.length === 0 && <p className="field-hint">No MCP servers in the registry yet: add one under Global settings → MCP &amp; connectors.</p>}
+      {type && (
+        <p className="field-hint">
+          {type.description && <>{type.description} · </>}
+          Delivery: {type.delivery.join(", ") || "none"}.
+          {payloadKeys.length > 0 && (
+            <>
+              {" "}
+              Payload fields for the prompt: {payloadKeys.map((k, i) => (
+                <span key={k}>
+                  {i > 0 && ", "}
+                  <code>{`{event.data.${k}}`}</code>
+                </span>
+              ))}
+              .
+            </>
+          )}
+        </p>
+      )}
+      <div className="row">
+        <label>
+          Arguments (JSON{inputKeys.length > 0 ? `: ${inputKeys.join(", ")}` : ""})
+          <textarea rows={3} value={args} onChange={(e) => setArgs(e.target.value)} placeholder={inputKeys.length > 0 ? `{"${inputKeys[0]}": "…"}` : "{}"} spellCheck={false} />
+        </label>
+        <label>
+          Delivery
+          <select value={delivery} onChange={(e) => setDelivery(e.target.value as McpEventTrigger["delivery"])}>
+            {(Object.keys(DELIVERY_LABELS) as Array<McpEventTrigger["delivery"]>).map((d) => (
+              <option key={d} value={d}>
+                {DELIVERY_LABELS[d]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="field-hint">
+        The Control Plane keeps its own connection to the server (push: a long-lived `events/stream`; poll: `events/poll` at the server's pace), so events arrive with no Session running. Each event runs the action once; the payload reaches the prompt as data.{" "}
+        <button type="button" className="link" onClick={() => load(true)} disabled={loading}>
+          {loading ? "Asking…" : "Ask the servers again"}
+        </button>
+      </p>
+    </>
   );
 }

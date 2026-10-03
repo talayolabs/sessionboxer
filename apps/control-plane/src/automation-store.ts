@@ -8,6 +8,7 @@ import {
   AutomationRunStatus,
   AutomationRunTrigger,
   AutomationTrigger,
+  McpRunEvent,
   PrEventType,
   type Automation,
   type AutomationRun,
@@ -57,7 +58,14 @@ CREATE TABLE IF NOT EXISTS automation_pr_state (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (automation_id, followed_pr_id)
 );
+CREATE TABLE IF NOT EXISTS automation_mcp_state (
+  automation_id TEXT PRIMARY KEY REFERENCES automations(id) ON DELETE CASCADE,
+  cursor TEXT,
+  updated_at TEXT NOT NULL
+);
 `;
+/** Columns added after 1.5.0, for databases created before them. */
+const MIGRATIONS: Array<{ column: string; ddl: string }> = [{ column: "mcp_event", ddl: "ALTER TABLE automation_runs ADD COLUMN mcp_event TEXT" }];
 
 /** What an automation last did to one PR (the delta of the next review starts here). */
 export interface AutomationPrState {
@@ -95,6 +103,7 @@ interface RunRow {
   followed_pr_id: string | null;
   pr_url: string | null;
   pr_title: string | null;
+  mcp_event: string | null;
   session_id: string | null;
   queued_at: string;
   started_at: string | null;
@@ -158,6 +167,7 @@ function rowToRun(r: RunRow): AutomationRun {
     trigger: AutomationRunTrigger.parse(r.trigger),
     status: AutomationRunStatus.parse(r.status),
     event: r.event_id && r.event_type && r.head_sha !== null ? { id: r.event_id, type: PrEventType.parse(r.event_type), headSha: r.head_sha } : null,
+    mcpEvent: r.mcp_event === null ? null : McpRunEvent.parse(JSON.parse(r.mcp_event)),
     followedPrId: r.followed_pr_id,
     prUrl: r.pr_url,
     prTitle: r.pr_title,
@@ -174,9 +184,10 @@ function rowToRun(r: RunRow): AutomationRun {
 export type AutomationPatch = Partial<Pick<Automation, "name" | "enabled" | "trigger" | "action" | "limits" | "nextRunAt">>;
 export type RunPatch = Partial<Pick<AutomationRun, "status" | "startedAt" | "finishedAt" | "detail" | "error" | "sessionId" | "result">>;
 
-/** What a new run is about: the PR event that fired it, when there is one. */
+/** What a new run is about: the PR event or the MCP event that fired it, when there is one. */
 export interface RunContext {
   event?: { id: string; type: PrEventType; headSha: string };
+  mcpEvent?: McpRunEvent;
   followedPrId?: string;
   prUrl?: string;
   prTitle?: string;
@@ -185,6 +196,8 @@ export interface RunContext {
 export class AutomationStore {
   constructor(private readonly db: Database.Database) {
     this.db.exec(SCHEMA);
+    const columns = this.db.prepare("PRAGMA table_info(automation_runs)").all() as Array<{ name: string }>;
+    for (const m of MIGRATIONS) if (!columns.some((c) => c.name === m.column)) this.db.exec(m.ddl);
     this.migrateSchedules();
   }
 
@@ -350,6 +363,33 @@ export class AutomationStore {
     return row !== undefined;
   }
 
+  /** Whether an MCP event (by its server-assigned id) already fired this automation; a skipped run does not count. */
+  hasMcpRunFor(automationId: string, eventId: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM automation_runs WHERE automation_id = ? AND trigger = 'mcp_event' AND event_id = ? AND status <> 'skipped' LIMIT 1`)
+      .get(automationId, eventId);
+    return row !== undefined;
+  }
+
+  /** The persisted cursor of an `mcp_event` automation's subscription; `null` when none (start from now). */
+  getMcpCursor(automationId: string): string | null {
+    const row = this.db.prepare("SELECT cursor FROM automation_mcp_state WHERE automation_id = ?").get(automationId) as { cursor: string | null } | undefined;
+    return row?.cursor ?? null;
+  }
+
+  setMcpCursor(automationId: string, cursor: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO automation_mcp_state (automation_id, cursor, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(automation_id) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`,
+      )
+      .run(automationId, cursor, new Date().toISOString());
+  }
+
+  clearMcpCursor(automationId: string): void {
+    this.db.prepare("DELETE FROM automation_mcp_state WHERE automation_id = ?").run(automationId);
+  }
+
   insertRun(automationId: string, trigger: AutomationRun["trigger"], status: "queued" | "running", ctx: RunContext = {}): AutomationRun {
     const now = new Date().toISOString();
     const run: AutomationRun = {
@@ -358,6 +398,7 @@ export class AutomationStore {
       trigger,
       status,
       event: ctx.event ?? null,
+      mcpEvent: ctx.mcpEvent ?? null,
       followedPrId: ctx.followedPrId ?? null,
       prUrl: ctx.prUrl ?? null,
       prTitle: ctx.prTitle ?? null,
@@ -372,20 +413,21 @@ export class AutomationStore {
     this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO automation_runs (id, automation_id, trigger, status, event_id, event_type, head_sha, followed_pr_id, pr_url, pr_title, session_id, queued_at, started_at, finished_at, detail, error, result)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, NULL)`,
+          `INSERT INTO automation_runs (id, automation_id, trigger, status, event_id, event_type, head_sha, followed_pr_id, pr_url, pr_title, mcp_event, session_id, queued_at, started_at, finished_at, detail, error, result)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, NULL)`,
         )
         .run(
           run.id,
           automationId,
           trigger,
           status,
-          run.event?.id ?? null,
-          run.event?.type ?? null,
+          run.event?.id ?? run.mcpEvent?.eventId ?? null,
+          run.event?.type ?? run.mcpEvent?.name ?? null,
           run.event?.headSha ?? null,
           run.followedPrId,
           run.prUrl,
           run.prTitle,
+          run.mcpEvent === null ? null : JSON.stringify(run.mcpEvent),
           run.queuedAt,
           run.startedAt,
         );

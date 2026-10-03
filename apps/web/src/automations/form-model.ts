@@ -1,5 +1,5 @@
 import type {
-  AutomationAction, AutomationTrigger, PrEventFilters, PrEventType,
+  AutomationAction, AutomationTrigger, McpEventTrigger, PrEventFilters, PrEventType,
   Provider, RepoSpec, ReviewVerdict, ScheduleMissedPolicy, Session,
 } from "@sessionboxer/protocol";
 import type { RepoDraft } from "../Repos";
@@ -14,6 +14,11 @@ export type TriggerValues = {
   prFollows: string[];
   prEvents: PrEventType[];
   filters: PrEventFilters;
+  mcpServerId: string;
+  mcpEvent: string;
+  /** The subscription arguments as the user types them: JSON of an object. */
+  mcpArguments: string;
+  mcpDelivery: McpEventTrigger["delivery"];
 };
 
 export type ActionValues = {
@@ -44,12 +49,25 @@ type ActionConverters = {
   draftsToSpecs: (repos: RepoDraft[]) => RepoSpec[];
 };
 
-export function buildTrigger({ triggerType, cron, timezone, missedRun, prFollows, prEvents, filters }: TriggerValues): AutomationTrigger {
+export function buildTrigger({ triggerType, cron, timezone, missedRun, prFollows, prEvents, filters, mcpServerId, mcpEvent, mcpArguments, mcpDelivery }: TriggerValues): AutomationTrigger {
   return triggerType === "schedule"
       ? { type: "schedule", cron: cron.trim(), timezone: timezone.trim(), missedRun }
       : triggerType === "pr_event"
         ? { type: "pr_event", follows: prFollows, events: prEvents, filters: cleanFilters(filters) }
-        : { type: "manual" };
+        : triggerType === "mcp_event"
+          ? { type: "mcp_event", serverId: mcpServerId, event: mcpEvent.trim(), arguments: parseArguments(mcpArguments) ?? {}, delivery: mcpDelivery }
+          : { type: "manual" };
+}
+
+/** The arguments field as an object; `null` when it is not JSON of an object (`""` and whitespace count as `{}`). */
+export function parseArguments(text: string): Record<string, unknown> | null {
+  if (text.trim() === "") return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function buildAction({
@@ -82,7 +100,7 @@ export function buildAction({
 }
 
 export function getTriggerError(
-  { triggerType, prEvents, prFollows }: Pick<TriggerValues, "triggerType" | "prEvents" | "prFollows">,
+  { triggerType, prEvents, prFollows, mcpServerId, mcpEvent, mcpArguments }: Pick<TriggerValues, "triggerType" | "prEvents" | "prFollows"> & Partial<Pick<TriggerValues, "mcpServerId" | "mcpEvent" | "mcpArguments">>,
   preview: SchedulePreview,
   follows: readonly unknown[],
 ): string | null {
@@ -96,7 +114,15 @@ export function getTriggerError(
           : follows.length === 0 && prFollows.length === 0
             ? "Follow a repository below, or your PRs on the Pull requests page."
             : null
-        : null;
+        : triggerType === "mcp_event"
+          ? !mcpServerId
+            ? "Pick an MCP server."
+            : !mcpEvent?.trim()
+              ? "Pick an event."
+              : parseArguments(mcpArguments ?? "") === null
+                ? "Arguments must be a JSON object, like {\"priority\": \"high\"}."
+                : null
+          : null;
 }
 
 export function getActionError(

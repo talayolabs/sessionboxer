@@ -19,6 +19,7 @@ import { SavedMessage } from "./queue.js";
 import { PullRequest, PrItem, PrCheckItem, PrActivity, PrMergedNotice } from "./pull-requests.js";
 import { UiHint } from "./sessionboxer-mcp.js";
 import { Automation, AutomationRun } from "./automations.js";
+import { McpEventSubscription } from "./mcp-events.js";
 import { PrFollow } from "./followed-prs.js";
 import { FollowedPr, PrEvent } from "./known-repositories.js";
 import { RemoteAccess } from "./auth.js";
@@ -253,6 +254,8 @@ export type SessionBroadcast =
   | { type: "automations"; automations: Automation[] }
   /** The run history of one automation changed. */
   | { type: "automation_runs"; automationId: string; runs: AutomationRun[] }
+  /** The live state of the MCP event subscriptions (ADR-0081): one per enabled `mcp_event` automation. */
+  | { type: "mcp_event_subscriptions"; subscriptions: McpEventSubscription[] }
   /** The follows changed (one added, paused, removed, or polled). */
   | { type: "pr_follows"; follows: PrFollow[] }
   /** Followed PRs appeared, changed or went away. */

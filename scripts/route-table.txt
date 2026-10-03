@@ -1,4 +1,4 @@
-# 171 routes, in registration order
+# 172 routes, in registration order
 GET /api/health
 GET /api/sandbox-image
 POST /api/sandbox-image/pull
@@ -145,6 +145,7 @@ PATCH /api/schedules/:id
 DELETE /api/schedules/:id
 POST /api/schedules/:id/run
 GET /api/schedules/:id/runs
+GET /api/mcp-events/catalog
 GET /api/repositories
 DELETE /api/repositories/:id
 GET /api/prs/accounts

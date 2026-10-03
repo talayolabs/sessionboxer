@@ -44,6 +44,17 @@ test("PR event: retains follows/events and omits empty optional filters", () => 
     filters: { drafts: "skip", forks: "review_only", authors: "not_self", includeOwn: false, reviewers: ["reviewer"], baseRef: "main" } });
 });
 
+test("MCP event: trims the event, parses the arguments JSON (empty = {}), keeps the delivery; the error names what is missing or malformed", () => {
+  const mcp = { ...trigger, triggerType: "mcp_event", mcpServerId: "srv-1", mcpEvent: " ticket.created ", mcpArguments: '{"priority": "high"}', mcpDelivery: "poll" };
+  assert.deepEqual(buildTrigger(mcp), { type: "mcp_event", serverId: "srv-1", event: "ticket.created", arguments: { priority: "high" }, delivery: "poll" });
+  assert.deepEqual(buildTrigger({ ...mcp, mcpArguments: "  " }).arguments, {});
+  assert.equal(getTriggerError(mcp, null, []), null);
+  assert.equal(getTriggerError({ ...mcp, mcpServerId: "" }, null, []), "Pick an MCP server.");
+  assert.equal(getTriggerError({ ...mcp, mcpEvent: " " }, null, []), "Pick an event.");
+  assert.match(getTriggerError({ ...mcp, mcpArguments: "[1]" }, null, []), /JSON object/);
+  assert.match(getTriggerError({ ...mcp, mcpArguments: "{nope" }, null, []), /JSON object/);
+});
+
 test("manual: ignores the other trigger fields", () => {
   assert.deepEqual(buildTrigger({ ...trigger, triggerType: "manual" }), { type: "manual" });
 });

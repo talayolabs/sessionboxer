@@ -39,7 +39,7 @@ export function useActionState(a: AutomationAction | undefined, sessions: Sessio
 export function ActionStep({
   actionType, sessionId, text, provider, repos, draft, title, prompt, stopAfter, checkoutPrHead, notifyText, instructions, maxVerdict, deltaOnly, notifyOn, publish, commentOnSkip, maxMinutes,
   setActionType, setSessionId, setText, setProvider, setRepos, setDraft, setTitle, setPrompt, setStopAfter, setCheckoutPrHead, setNotifyText, setInstructions, setMaxVerdict, setDeltaOnly, setNotifyOn, setPublish, setCommentOnSkip, setMaxMinutes,
-  forSession, sessions, settings, models, options, busy, isPr, showLimits, actionError, setStep,
+  forSession, sessions, settings, models, options, busy, isPr, isMcp, showLimits, actionError, setStep,
 }: ActionValues & SectionSetters<ActionValues> & {
   forSession?: Session;
   sessions: Session[];
@@ -48,6 +48,8 @@ export function ActionStep({
   options: ProviderOptions;
   busy: boolean;
   isPr: boolean;
+  /** An `mcp_event` trigger: the `{event.*}` placeholders apply. */
+  isMcp?: boolean;
   showLimits: boolean;
   actionError: string | null;
   setStep: Setter<Step>;
@@ -87,11 +89,11 @@ export function ActionStep({
           )}
           <p className="field-hint">
             Sent right away when the Session is idle, queued behind the running turn otherwise; a stopped Session is resumed first. The Session keeps its transcript and
-            snapshots.{isPr && <> Placeholders: <code>{"{pr.url}"}</code>, <code>{"{pr.number}"}</code>, <code>{"{pr.title}"}</code>, <code>{"{pr.repo}"}</code>, <code>{"{pr.headSha}"}</code>, <code>{"{event}"}</code>.</>}
+            snapshots.{isPr && <> Placeholders: <code>{"{pr.url}"}</code>, <code>{"{pr.number}"}</code>, <code>{"{pr.title}"}</code>, <code>{"{pr.repo}"}</code>, <code>{"{pr.headSha}"}</code>, <code>{"{event}"}</code>.</>}{isMcp && <> Placeholders: <code>{"{event.name}"}</code>, <code>{"{event.id}"}</code>, <code>{"{event.data}"}</code>, <code>{"{event.data.<field>}"}</code>; without one of <code>{"{event.data…}"}</code> the payload is appended as a fenced block.</>}
           </p>
           <label>
             Prompt
-            <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder={isPr ? "PR {pr.url} was {event}: address the new comments and failing checks." : undefined} />
+            <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder={isPr ? "PR {pr.url} was {event}: address the new comments and failing checks." : isMcp ? "A {event.name} event arrived: look into it." : undefined} />
           </label>
         </>
       )}
@@ -149,7 +151,7 @@ export function ActionStep({
           </label>
           <label>
             First prompt
-            <textarea rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={isPr ? "Pull request {pr.url} ({event}). …" : undefined} />
+            <textarea rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={isPr ? "Pull request {pr.url} ({event}). …" : isMcp ? "Event {event.name}: …" : undefined} />
           </label>
         </>
       )}
@@ -228,7 +230,7 @@ export function ActionStep({
       {actionType === "notify" && (
         <label>
           Text (optional; placeholders work)
-          <input value={notifyText} onChange={(e) => setNotifyText(e.target.value)} placeholder={isPr ? "{pr.title} was {event}" : "Time for the morning triage"} />
+          <input value={notifyText} onChange={(e) => setNotifyText(e.target.value)} placeholder={isPr ? "{pr.title} was {event}" : isMcp ? "{event.name} from {event.server}" : "Time for the morning triage"} />
         </label>
       )}
       {!showLimits && (

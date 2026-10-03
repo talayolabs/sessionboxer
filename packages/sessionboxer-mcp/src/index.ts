@@ -569,7 +569,7 @@ registerTool(
   "automation_create",
   {
     description:
-      "Create an automation (the user's Automations page shows it): a trigger — a cron schedule, a followed pull request's event (opened, new commits, comment, failing check…), or manual — and an action — prompt a Session (this one; another or a new one with the all-Sessions policy), auto-review or auto-QA the PR, attach the PR to its Session, or notify the user. PR-event triggers need the user to follow repositories on the Pull requests page first (pr_follow). Say what you created in your reply.",
+      "Create an automation (the user's Automations page shows it): a trigger — a cron schedule, a followed pull request's event (opened, new commits, comment, failing check…), an event of a registry MCP server that offers MCP Events (mcp_event: the server's id from settings and an event name from its events/list; the payload reaches the prompt as {event.data…} or is appended as data), or manual — and an action — prompt a Session (this one; another or a new one with the all-Sessions policy), auto-review or auto-QA the PR, attach the PR to its Session, or notify the user. PR-event triggers need the user to follow repositories on the Pull requests page first (pr_follow). Say what you created in your reply.",
     inputSchema: {
       name: z.string().min(1).max(200),
       enabled: z.boolean().default(true),
@@ -595,6 +595,13 @@ registerTool(
               labels: z.array(z.string()).max(20).optional(),
             })
             .default({}),
+        }),
+        z.object({
+          type: z.literal("mcp_event"),
+          serverId: z.string().min(1).describe("the registry MCP server's id (settings_get → mcpServers)"),
+          event: z.string().min(1).max(200).describe("an event name the server lists under events/list"),
+          arguments: z.record(z.unknown()).default({}).describe("subscription arguments, per the event's inputSchema"),
+          delivery: z.enum(["auto", "push", "poll"]).default("auto"),
         }),
         z.object({ type: z.literal("manual") }),
       ]),

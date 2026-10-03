@@ -7,6 +7,7 @@ import {
   type E2eRun,
   type FollowedPr,
   type MacosBaseStatus,
+  type McpEventSubscription,
   type ModelOption,
   type PrActivity,
   type PrCheckItem,
@@ -65,6 +66,7 @@ export type FeedState = {
   prChecks: Record<string, PrCheckItem[]>;
   automations: Automation[];
   automationRuns: Record<string, AutomationRun[]>;
+  mcpEventSubscriptions: McpEventSubscription[];
   // Followed pull requests (ADR-0064): the follows, the PRs and, per PR opened on the page, its detail.
   prFollows: PrFollow[];
   followedPrs: FollowedPr[];
@@ -103,6 +105,7 @@ export function initialFeed(): FeedState {
     prChecks: {},
     automations: [],
     automationRuns: {},
+    mcpEventSubscriptions: [],
     prFollows: [],
     followedPrs: [],
     fprItems: {},
@@ -208,6 +211,8 @@ export function feedReducer(state: FeedState, msg: ServerMessage): FeedState {
       }
       return { ...state, automationRuns, fprRuns: next };
     }
+    case "mcp_event_subscriptions":
+      return { ...state, mcpEventSubscriptions: msg.subscriptions };
     case "pr_follows":
       return { ...state, prFollows: msg.follows };
     case "followed_prs":

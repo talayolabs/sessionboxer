@@ -22,7 +22,7 @@ const columns = (db, table) => db.connection.prepare(`PRAGMA table_info(${table}
 test("a fresh database has exactly these tables", () => {
   const db = new Db(":memory:");
   assert.deepEqual(tables(db), [
-    "automation_pr_state", "automation_runs", "automations", "branches", "daemon_cursors", "e2e_cases",
+    "automation_mcp_state", "automation_pr_state", "automation_runs", "automations", "branches", "daemon_cursors", "e2e_cases",
     "e2e_runs", "events", "folders", "followed_pr_checks", "followed_pr_items", "followed_pr_sources",
     "followed_prs", "pr_checks", "pr_events", "pr_follows", "pr_items", "provider_models", "provider_options",
     "pull_requests", "repositories", "saved_messages", "sessions", "snapshots",

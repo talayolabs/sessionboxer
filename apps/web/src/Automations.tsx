@@ -8,6 +8,8 @@ import {
   type AutomationRunStatus,
   type AutomationTrigger,
   type CreateAutomationRequest,
+  type McpEventSubscription,
+  type PublicMcpServerDef,
   type ProviderModels,
   type ProviderOptions,
   type PublicSettings,
@@ -34,7 +36,8 @@ export interface FollowOption {
 }
 
 export const RUN_LABEL: Record<AutomationRunStatus, string> = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", skipped: "skipped" };
-const TRIGGER_LABEL: Record<AutomationRun["trigger"], string> = { cron: "on schedule", manual: "run now", catch_up: "catch-up", pr_event: "PR event" };
+const TRIGGER_LABEL: Record<AutomationRun["trigger"], string> = { cron: "on schedule", manual: "run now", catch_up: "catch-up", pr_event: "PR event", mcp_event: "MCP event" };
+const SUBSCRIPTION_LABEL: Record<McpEventSubscription["state"], string> = { connecting: "connecting", listening: "listening", polling: "polling", error: "not subscribed", off: "off" };
 const DEFAULT_LIMITS: AutomationLimits = { maxConcurrent: 2, maxRunsPerDay: 20, maxRunsPerPrPerDay: 4, debounceSeconds: 120, timeoutMinutes: 360 };
 const PR_ACTIONS: ReadonlyArray<AutomationAction["type"]> = ["auto_review", "auto_qa", "attach"];
 
@@ -51,12 +54,16 @@ export function promptsSession(a: Automation, sessionId: string): boolean {
   return a.action.type === "prompt" && a.action.sessionId === sessionId;
 }
 
-function triggerSummary(t: AutomationTrigger, follows: FollowOption[]): string {
+function triggerSummary(t: AutomationTrigger, follows: FollowOption[], servers: PublicMcpServerDef[]): string {
   if (t.type === "schedule") {
     const words = describeCron(t.cron);
     return `${t.cron}${words ? ` — ${words}` : ""} · ${t.timezone}`;
   }
   if (t.type === "manual") return "Runs only when you press Run now";
+  if (t.type === "mcp_event") {
+    const server = servers.find((s) => s.id === t.serverId)?.name ?? `${t.serverId} (not in the registry)`;
+    return `When ${server} reports ${t.event}${t.delivery === "auto" ? "" : ` · ${t.delivery}`}`;
+  }
   const which = t.follows.length === 0 ? "every followed PR" : t.follows.map((id) => follows.find((f) => f.id === id)?.label ?? id).join(", ");
   return `When a PR is ${t.events.map((e) => PR_EVENT_LABELS[e]).join(" / ")} · ${which}`;
 }
@@ -93,6 +100,7 @@ export function Automations({
   run,
   forSession,
   follows = [],
+  mcpSubscriptions = [],
   focusId = null,
   onFocus,
 }: {
@@ -109,6 +117,8 @@ export function Automations({
   forSession?: Session;
   /** The PR follows a `pr_event` trigger can pick from; the form can also follow a repository on the spot. */
   follows?: FollowOption[];
+  /** The live MCP event subscriptions (ADR-0081), one per enabled `mcp_event` automation. */
+  mcpSubscriptions?: McpEventSubscription[];
   /** `#/automations/<id>`: that one opens with its history. */
   focusId?: string | null;
   onFocus?: (id: string | null) => void;
@@ -174,6 +184,7 @@ export function Automations({
           const running = (runs[a.id] ?? []).some((r) => r.status === "running" || r.status === "queued");
           const status = running ? "running" : a.lastStatus;
           const manualOnly = a.trigger.type === "pr_event" && (PR_ACTIONS.includes(a.action.type) || (a.action.type === "prompt" && a.action.sessionId === "attached"));
+          const subscription = a.trigger.type === "mcp_event" ? mcpSubscriptions.find((s) => s.automationId === a.id) : undefined;
           return (
             <li key={a.id} id={`automation-${a.id}`} className={`schedule${a.enabled ? "" : " disabled"}`}>
               <div className="schedule-line">
@@ -184,8 +195,14 @@ export function Automations({
                   <div className="schedule-title">
                     <strong>{a.name}</strong>
                     {status && <span className={`e2e-badge e2e-badge-${badgeClass(status)}`}>{RUN_LABEL[status]}</span>}
+                    {subscription && (
+                      <span className={`e2e-badge e2e-badge-${subscription.state === "error" ? "failed" : subscription.state === "off" ? "skipped" : "running"}`} title={subscription.error ?? (subscription.mode ? `${subscription.mode} delivery` : undefined)}>
+                        {SUBSCRIPTION_LABEL[subscription.state]}
+                      </span>
+                    )}
                   </div>
-                  <div className="muted small-text">{triggerSummary(a.trigger, follows)}</div>
+                  <div className="muted small-text">{triggerSummary(a.trigger, follows, settings.mcpServers)}</div>
+                  {subscription?.error && <div className="warn small-text">{subscription.error}</div>}
                   <div className="small-text">{actionSummary(a.action, sessions)}</div>
                   <div className="muted small-text">
                     {a.trigger.type === "schedule" &&
@@ -236,6 +253,12 @@ export function Automations({
   );
 }
 
+/** The first line of an event's payload for the history table. */
+function eventPreview(data: Record<string, unknown>): string {
+  const json = JSON.stringify(data);
+  return json.length > 120 ? `${json.slice(0, 120)}…` : json;
+}
+
 export function badgeClass(status: AutomationRunStatus): string {
   return status === "succeeded" ? "passed" : status === "queued" ? "running" : status;
 }
@@ -265,7 +288,7 @@ export function RunHistory({ runs, onOpenSession, compact }: { runs: AutomationR
         {runs.map((r) => (
           <tr key={r.id} className={`schedule-run-${r.status}`}>
             <td title={r.queuedAt}>{formatAt(r.queuedAt)}</td>
-            <td>{r.event ? `PR ${PR_EVENT_LABELS[r.event.type]}` : TRIGGER_LABEL[r.trigger]}</td>
+            <td>{r.event ? `PR ${PR_EVENT_LABELS[r.event.type]}` : r.mcpEvent ? `${r.mcpEvent.server} ${r.mcpEvent.name}` : TRIGGER_LABEL[r.trigger]}</td>
             <td>
               <span className={`e2e-badge e2e-badge-${badgeClass(r.status)}`}>{RUN_LABEL[r.status]}</span>
             </td>
@@ -276,6 +299,11 @@ export function RunHistory({ runs, onOpenSession, compact }: { runs: AutomationR
                   <a href={r.prUrl} target="_blank" rel="noreferrer">
                     {r.prTitle ?? r.prUrl}
                   </a>
+                </div>
+              )}
+              {!compact && r.mcpEvent && (
+                <div className="muted small-text" title={JSON.stringify(r.mcpEvent.data, null, 2)}>
+                  {r.mcpEvent.eventId} · {eventPreview(r.mcpEvent.data)}
                 </div>
               )}
               {r.error && <div className="warn">{r.error}</div>}
@@ -376,6 +404,7 @@ function AutomationForm({
   const [preview, setPreview] = useState<{ ok: true; next: string[] } | { ok: false; error: string } | null>(null);
 
   const isPr = triggerType === "pr_event";
+  const isMcp = triggerType === "mcp_event";
   useEffect(() => {
     if (triggerType !== "schedule" || cron.trim() === "" || timezone.trim() === "") {
       setPreview(null);
@@ -428,13 +457,13 @@ function AutomationForm({
       <h2>{automation ? "Edit automation" : "New automation"}</h2>
       <label>
         Name
-        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={isPr ? "Review every PR" : "Morning triage"} />
+        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={isPr ? "Review every PR" : isMcp ? "Triage new tickets" : "Morning triage"} />
       </label>
 
       <TriggerStep {...trigger.values} {...trigger.set} forSession={forSession} follows={follows} busy={busy}
         preview={preview} showAction={showAction} triggerError={triggerError} setStep={setStep} />
       {showAction && <ActionStep {...action.values} {...action.set} forSession={forSession} sessions={sessions}
-        settings={settings} models={models} options={options} busy={busy} isPr={isPr}
+        settings={settings} models={models} options={options} busy={busy} isPr={isPr} isMcp={isMcp}
         showLimits={showLimits} actionError={actionError} setStep={setStep} />}
       {showLimits && <LimitsStep limits={limits} setLimits={setLimits} enabled={enabled} setEnabled={setEnabled} isPr={isPr} />}
 

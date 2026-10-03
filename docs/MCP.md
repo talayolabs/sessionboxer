@@ -42,6 +42,14 @@ Not verified: `pip` display mode (the card offers `inline` and `fullscreen`), `u
 
 `GET /api/sessions/:id/mcp-apps/resource?server=&uri=`, `GET /api/sessions/:id/mcp-apps/tool-results/:toolCallId`, `POST /api/sessions/:id/mcp-apps/call-tool`, `POST /api/sessions/:id/mcp-apps/read-resource` and `POST /api/mcp-apps/approve` are the API behind the card.
 
+## MCP Events
+
+A server can also **produce events** ([MCP Events](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/main/docs/design-sketch-proposal.md), experimental; the extension behind [OpenAI's MCP events](https://developers.openai.com/plugins/build/mcp-events)): `events/list` describes what it offers (`email.received`, `ticket.created`, …), and a client receives occurrences by holding an `events/stream` request open (push), by calling `events/poll` (poll), or by registering a webhook URL. Sessionboxer consumes them in the **Control Plane** (ADR-0081), as an Automations trigger — *When an MCP server reports an event* — so an event reaches you with no Session running: the action prompts a Session (resumed if stopped), starts a new one, or notifies you.
+
+How it works: for every enabled automation with that trigger the Control Plane connects to the server itself, from the host, with the command, URL and credentials you registered (one connection per automation, so the server's notifications need no routing), asks `events/list`, and then streams when the event offers push and polls otherwise (the trigger's **Delivery** can force one); a server that offers only webhooks is reported on the automation as not subscribable. Each occurrence runs the action once: duplicates by `eventId` are dropped, the server's cursor is stored per automation and sent back after a restart so the server replays what you missed, and the automation's limits (Sessions at once, runs per day) apply as skipped runs. No event or heartbeat for 90 s, or a server that ends the stream, reconnects with backoff; the automation shows **listening**, **polling**, **connecting** or **not subscribed** with the reason. The event's payload reaches the prompt as `{event.name}`, `{event.id}`, `{event.timestamp}`, `{event.server}`, `{event.data}` or `{event.data.<field>}`; a prompt that places none of `{event.data…}` gets the payload appended as a fenced JSON block introduced as data, not instructions. The run history shows the event and its payload.
+
+In the form, the server and event lists come from `GET /api/mcp-events/catalog`, which asks every registry server `events/list` (cached a minute; **Ask the servers again** refreshes) and says which servers have no events or could not be reached. `scripts/mock-events-mcp-server.mjs` is a server to try it with: register `node scripts/mock-events-mcp-server.mjs` (stdio) and it offers `ticket.created`, three occurrences, push and poll. Not offered: webhook delivery (it needs an inbound HTTPS URL) and Sessionboxer producing events of its own.
+
 ## The `desktop` server
 
 The desktop MCP mirrors Anthropic's computer-use tool set, implemented with xdotool and ffmpeg on the box's X display. Coordinates are integer pixels, `[x, y]`, origin at the top-left of the screen; the `screenshot` tool's description tells the agent the screen size. Every tool that moves the pointer to a target *glides* there (an eased motion of 100–300 ms, about 120 positions a second) so hover effects and drag-and-drop see a moving pointer; `SESSIONBOXER_MOUSE_GLIDE=0` in the server's environment makes it jump. While a recording runs, the pointer and the keys move at a hand's pace instead — glides of 350–700 ms, about 30 keys a second — so the video shows the pointer travel and the text arrive letter by letter rather than in blocks; without a recording the agent works at full speed. The video does not carry X's small pointer: when the recording stops, a large white arrow is drawn along the path the pointer took — smaller while a button is down, so clicks and drags show — with the Sessionboxer badge at the top-right corner (ADR-0072).
@@ -592,7 +600,7 @@ Returns the approval: `{ id, kind, summary, status, expiresAt, result?, error? }
 
 ### Automations
 
-An automation (Automations page; ADR-0063) is a trigger — a cron schedule, an event on a followed pull request, or manual — an action, and limits. Scheduled tasks are automations with a schedule trigger; the `schedule_*` tools below are the older, narrower way to make one.
+An automation (Automations page; ADR-0063) is a trigger — a cron schedule, an event on a followed pull request, an event of a registry MCP server (ADR-0081), or manual — an action, and limits. Scheduled tasks are automations with a schedule trigger; the `schedule_*` tools below are the older, narrower way to make one.
 
 #### `automation_create`
 
@@ -608,6 +616,7 @@ An automation (Automations page; ADR-0063) is a trigger — a cron schedule, an 
 
 - `{ type: "schedule", cron, timezone, missedRun? }`: a 5-field cron expression and an IANA time zone; `missedRun` is `skip` (default) or `catch_up`.
 - `{ type: "pr_event", follows?, events, filters? }`: `follows` are `pr_follows` ids (empty = every follow the user has; the user follows repositories on the Pull requests page or with `pr_follow`); `events` among `opened`, `synchronize`, `ready_for_review`, `converted_to_draft`, `review_requested`, `review_submitted`, `comment`, `check_failed`, `merged`, `closed`, `reopened`; `filters` `{ drafts: skip|include, forks: skip|review_only|allow, authors: any|not_self|self_only, includeOwn, baseRef?, titleMatch?, labels? }`.
+- `{ type: "mcp_event", serverId, event, arguments?, delivery? }`: `serverId` is a registry MCP server's id (`settings_get` → `mcpServers`), `event` an event name from its `events/list`, `arguments` the subscription arguments its `inputSchema` describes (default `{}`), `delivery` `auto` (default; push when offered, poll otherwise), `push` or `poll`. PR-only actions are refused. The prompt gets `{event.name}`, `{event.id}`, `{event.data}`, `{event.data.<field>}`, or the payload appended as data.
 - `{ type: "manual" }`: only Run now.
 
 `action`:

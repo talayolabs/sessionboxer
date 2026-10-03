@@ -1,6 +1,7 @@
 import { Cron } from "croner";
 import {
   AUTOMATIONS_ROUTE,
+  MCP_EVENT_ARGUMENTS_MAX_CHARS,
   SCHEDULE_PREVIEW_COUNT,
   automationRoute,
   type Automation,
@@ -25,6 +26,7 @@ import {
 import type { RunContext } from "./automation-store.js";
 import type { Db } from "./db.js";
 import { HttpError } from "./http-error.js";
+import { mcpEventField, withMcpEventPayload } from "./mcp-event-text.js";
 import type { TurnOutcome } from "./sessions.js";
 
 const TICK_MS = 30_000;
@@ -111,15 +113,22 @@ function nextAfter(job: Cron, from: Date): string | null {
   return job.nextRun(from)?.toISOString() ?? null;
 }
 
-/** `{pr.number}`, `{pr.title}`, `{pr.url}`, `{pr.repo}`, `{pr.headSha}`, `{pr.headRef}`, `{pr.baseRef}`, `{pr.author}`, `{event}`. */
+/** `{pr.number}`, `{pr.title}`, `{pr.url}`, `{pr.repo}`, `{pr.headSha}`, `{pr.headRef}`, `{pr.baseRef}`, `{pr.author}`, `{event}`; for MCP events also `{event.name}`, `{event.id}`, `{event.timestamp}`, `{event.server}`, `{event.data}`, `{event.data.<path>}`. */
 export function fillPlaceholders(text: string, ctx: PrRunContext): string {
   const pr = ctx.pr;
-  return text.replace(/\{(pr\.(?:number|title|url|repo|headSha|headRef|baseRef|author)|event)\}/g, (whole, key: string) => {
+  return text.replace(/\{(pr\.(?:number|title|url|repo|headSha|headRef|baseRef|author)|event(?:\.[A-Za-z0-9_.-]+)?)\}/g, (whole, key: string) => {
     if (key === "event") return ctx.eventLabel ?? whole;
+    if (key.startsWith("event.")) return (ctx.mcpEvent && mcpEventField(ctx.mcpEvent, key.slice("event.".length))) ?? whole;
     if (!pr) return whole;
     const field = key.slice(3) as keyof NonNullable<PrRunContext["pr"]>;
     return String(pr[field]);
   });
+}
+
+/** A prompt or first prompt with its placeholders filled; an MCP event's payload follows as data unless the text placed it. */
+function promptText(text: string, ctx: PrRunContext): string {
+  const filled = fillPlaceholders(text, ctx);
+  return ctx.mcpEvent ? withMcpEventPayload(filled, text, ctx.mcpEvent) : filled;
 }
 
 // --- Scheduled tasks as the wire format of the aliases (ADR-0047 → ADR-0063) ----------------------
@@ -162,7 +171,7 @@ export function scheduleRunOf(r: AutomationRun): ScheduleRun {
   return {
     id: r.id,
     scheduleId: r.automationId,
-    trigger: r.trigger === "pr_event" ? "manual" : r.trigger,
+    trigger: r.trigger === "pr_event" || r.trigger === "mcp_event" ? "manual" : r.trigger,
     status: r.status === "queued" ? "running" : r.status,
     startedAt: r.startedAt ?? r.queuedAt,
     finishedAt: r.finishedAt,
@@ -333,6 +342,11 @@ export class Automations {
     return this.execute(automation, "pr_event", ctx);
   }
 
+  /** An MCP event reached this automation's subscription (ADR-0081; the consumer did the dedupe and the caps). */
+  async runForMcpEvent(automation: Automation, ctx: PrRunContext & { mcpEvent: NonNullable<RunContext["mcpEvent"]> }): Promise<AutomationRun> {
+    return this.execute(automation, "mcp_event", ctx);
+  }
+
   /** Records a run that did not happen and says why (a cap, a filter, an earlier run at this head). */
   recordSkipped(automation: Automation, trigger: AutomationRunTrigger, reason: string, ctx: RunContext = {}): AutomationRun {
     const run = this.deps.db.automations.insertRun(automation.id, trigger, "running", ctx);
@@ -402,6 +416,10 @@ export class Automations {
           throw new HttpError(400, `Cannot read the title pattern: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
+    }
+    if (trigger.type === "mcp_event") {
+      if (!this.mcpServerExists(trigger.serverId)) throw new HttpError(400, `MCP server ${trigger.serverId} is not in the registry.`);
+      if (JSON.stringify(trigger.arguments).length > MCP_EVENT_ARGUMENTS_MAX_CHARS) throw new HttpError(400, `The event arguments exceed ${MCP_EVENT_ARGUMENTS_MAX_CHARS} characters of JSON.`);
     }
     return trigger;
   }
@@ -488,7 +506,7 @@ export class Automations {
       if (action.type === "prompt") {
         const targets = action.sessionId === "attached" ? (ctx.attachedSessionIds ?? []) : [action.sessionId];
         if (targets.length === 0) return this.finish(run.id, "skipped", { detail: join(note, "The PR is not attached to any Session.") });
-        const text = fillPlaceholders(action.text, ctx);
+        const text = promptText(action.text, ctx);
         const hows = await Promise.all(targets.map((id) => this.deps.sessions.promptScheduled(id, text)));
         const how = hows.includes("queued") ? "queued" : hows.includes("resumed") ? "resumed" : "sent";
         const detail =
@@ -504,14 +522,14 @@ export class Automations {
       }
       if (action.type === "notify") {
         const text = fillPlaceholders(action.text?.trim() || `{event}`, ctx);
-        const body = ctx.pr ? `${ctx.pr.repo}#${ctx.pr.number} ${ctx.pr.title}: ${text}` : text === "{event}" ? "Run now" : text;
+        const body = ctx.pr ? `${ctx.pr.repo}#${ctx.pr.number} ${ctx.pr.title}: ${text}` : text === "{event}" ? "Run now" : ctx.mcpEvent && text === ctx.eventLabel ? `Event ${ctx.mcpEvent.name} from ${ctx.mcpEvent.server}.` : text;
         this.deps.push({ title: automation.name, body, tag: `sessionboxer-automation-${automation.id}`, url: ctx.pr ? ctx.pr.url : automationRoute(automation.id) });
         return this.finish(run.id, "succeeded", { detail: join(note, "Notified."), result: { type: "notify" } });
       }
       if (action.type === "new_session") {
         const fromSnapshot = action.snapshotId !== undefined;
         const repos = fromSnapshot ? [] : ctx.pr && action.checkoutPrHead ? await this.prHeadRepos(action, ctx) : action.repos;
-        const prompt = fillPlaceholders(action.prompt, ctx);
+        const prompt = promptText(action.prompt, ctx);
         const session = await this.deps.sessions.create({
           title: action.title ? fillPlaceholders(action.title, ctx) : undefined,
           provider: action.provider,
@@ -551,6 +569,12 @@ export class Automations {
 
   /** Set by the followed-PR side: whether a `pr_follows` row exists. */
   followExists: (id: string) => boolean = () => false;
+
+  /** Set by the composition root: whether the registry has this MCP server (for `mcp_event` triggers). */
+  mcpServerExists: (id: string) => boolean = () => false;
+
+  /** Set by the MCP events consumer: the list of automations changed (one to subscribe to, or to let go). */
+  listChanged: () => void = () => {};
 
   /** Set by the followed-PR side: how to clone `owner/repo` at `pull/{n}/head` (provider- and account-aware). */
   prHeadRepo: (repo: string, number: number, followedPrId: string | undefined) => Promise<RepoSpec> = async (repo) => {
@@ -681,6 +705,7 @@ export class Automations {
 
   private broadcastList(): void {
     this.deps.broadcast({ type: "automations", automations: this.deps.db.automations.list() });
+    this.listChanged();
   }
 
   broadcastRuns(automationId: string): void {

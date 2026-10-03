@@ -33,6 +33,7 @@ export * from "./known-repositories.js";
 export * from "./daemon-rpc.js";
 export * from "./json-rpc.js";
 export * from "./mcp-apps.js";
+export * from "./mcp-events.js";
 export * from "./common.js";
 export * from "./themes.js";
 export * from "./usage.js";

@@ -146,6 +146,11 @@ test("automations: the whole list is replaced", () => {
   assert.deepEqual(feedReducer(base(), { type: "automations", automations }), base({ automations }));
 });
 
+test("mcp_event_subscriptions: the live subscription list is replaced", () => {
+  const subscriptions = [{ automationId: "au-1", state: "listening", mode: "push", error: null, lastEventAt: null, hasCursor: false }];
+  assert.deepEqual(feedReducer(base(), { type: "mcp_event_subscriptions", subscriptions }), base({ mcpEventSubscriptions: subscriptions }));
+});
+
 test("automation_runs: the automation's history is replaced; a followed PR's opened runs merge the fresh ones in, newest first", () => {
   const r1 = { id: "r1", followedPrId: "fpr-1", queuedAt: "2026-02-01T10:00:00.000Z", status: "done" };
   const r2 = { id: "r2", followedPrId: "fpr-1", queuedAt: "2026-02-01T12:00:00.000Z", status: "running" };

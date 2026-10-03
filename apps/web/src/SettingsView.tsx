@@ -186,6 +186,14 @@ export function SettingsView({
           ...(providers.values.vibeLogin.trim() ? { vibe: { VIBE_LOGIN: providers.values.vibeLogin.trim() } } : providers.values.forgetVibeLogin ? { vibe: { VIBE_LOGIN: "" } } : {}),
           ...(providers.values.grokLogin.trim() ? { grok: { GROK_LOGIN: providers.values.grokLogin.trim() } } : providers.values.forgetGrokLogin ? { grok: { GROK_LOGIN: "" } } : {}),
           ...(providers.values.geminiLogin.trim() ? { gemini: { GEMINI_LOGIN: providers.values.geminiLogin.trim() } } : providers.values.forgetGeminiLogin ? { gemini: { GEMINI_LOGIN: "" } } : {}),
+          ...(providers.values.qwenAuth.trim() || providers.values.forgetQwenAuth || providers.values.qwenApiKeys.trim() || providers.values.forgetQwenApiKeys
+            ? {
+                qwen: {
+                  ...(providers.values.qwenAuth.trim() ? { QWEN_OAUTH_JSON: providers.values.qwenAuth.trim() } : providers.values.forgetQwenAuth ? { QWEN_OAUTH_JSON: "" } : {}),
+                  ...(providers.values.qwenApiKeys.trim() ? { QWEN_API_KEYS: providers.values.qwenApiKeys.trim() } : providers.values.forgetQwenApiKeys ? { QWEN_API_KEYS: "" } : {}),
+                },
+              }
+            : {}),
         },
         claudeApi: {
           baseUrl: providers.values.claudeBaseUrl.trim(),
@@ -213,6 +221,10 @@ export function SettingsView({
       providers.set.setForgetGrokLogin(false);
       providers.set.setGeminiLogin("");
       providers.set.setForgetGeminiLogin(false);
+      providers.set.setQwenAuth("");
+      providers.set.setForgetQwenAuth(false);
+      providers.set.setQwenApiKeys("");
+      providers.set.setForgetQwenApiKeys(false);
       providers.set.setClaudeAuthToken("");
       providers.set.setClaudeApiKey("");
       providers.set.setForgetClaudeAuthToken(false);

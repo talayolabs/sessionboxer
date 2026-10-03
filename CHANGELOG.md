@@ -14,6 +14,7 @@ The Sandbox image changed: `npm run build:image`, then Stop → Resume existing 
 - Fix: the standing instructions reached a `first-prompt` Agent (Codex, Cursor, OpenCode, Devin, pi) only on paper: the first prompt was marked sent before the prefix was built, so it went without them.
 - **Mistral Vibe** as an eighth agent, via `vibe-acp`, on a Mistral account (**Sign in with Mistral Vibe**) or a Mistral API key; Linux, macOS and Windows. (ADR-0085)
 - **Gemini CLI** as a Provider, via `gemini --acp`, on a Google login (`~/.gemini/oauth_creds.json`) or a Gemini API key. ([ADR-0087](docs/adr/0087-gemini-cli-as-a-provider-on-a-google-login-or-api-key.md))
+- **Qwen Code** as an eighth agent, via `qwen --acp`, on a Qwen OAuth login (`oauth_creds.json`) or any OpenAI-compatible endpoint (`OPENAI_API_KEY`/`OPENAI_MODEL`/`OPENAI_BASE_URL`); Linux, macOS and Windows. (ADR-0083)
 
 ## 1.5.0 — 2026-10-01
 

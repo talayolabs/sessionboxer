@@ -45,6 +45,7 @@ import { copilotLogin, normalizeCopilotLogin } from "./copilot-login.js";
 
 export { piApiKeyEnv, piApiKeys, piAuthJson, piAuthNewer, normalizePiApiKeys, normalizePiAuthJson, describePiLogin } from "./pi-login.js";
 export { copilotLogin, copilotAuthNewer, normalizeCopilotLogin } from "./copilot-login.js";
+import { describeQwenLogin, normalizeQwenApiKeys, normalizeQwenOauthJson, qwenApiKeys, qwenOauthJson } from "./qwen-login.js";
 import { describeVibeLogin, normalizeVibeLogin, vibeLogin } from "./vibe-login.js";
 import { describeGrokLogin, grokLogin, normalizeGrokLogin } from "./grok-login.js";
 export { grokLogin, grokAuthNewer, normalizeGrokLogin, describeGrokLogin } from "./grok-login.js";
@@ -281,6 +282,12 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     if (providerSecrets.gemini?.GEMINI_LOGIN !== undefined) {
       next.providerSecrets.gemini.GEMINI_LOGIN = normalizeGeminiLogin(providerSecrets.gemini.GEMINI_LOGIN);
     }
+    if (providerSecrets.qwen?.QWEN_OAUTH_JSON !== undefined) {
+      next.providerSecrets.qwen.QWEN_OAUTH_JSON = normalizeQwenOauthJson(providerSecrets.qwen.QWEN_OAUTH_JSON);
+    }
+    if (providerSecrets.qwen?.QWEN_API_KEYS !== undefined) {
+      next.providerSecrets.qwen.QWEN_API_KEYS = normalizeQwenApiKeys(providerSecrets.qwen.QWEN_API_KEYS);
+    }
   }
   return Settings.parse(next);
 }
@@ -326,6 +333,7 @@ export function toPublicSettings(
       vibe: { VIBE_LOGIN: vibeLogin(settings) !== "" },
       grok: { GROK_LOGIN: grokLogin(settings) !== "" },
       gemini: { GEMINI_LOGIN: geminiLogin(settings) !== "" },
+      qwen: { QWEN_OAUTH_JSON: qwenOauthJson(settings) !== "", QWEN_API_KEYS: qwenApiKeys(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
     cursorLogin: describeCursorLogin(cursorLogin(settings)),
@@ -337,6 +345,7 @@ export function toPublicSettings(
     vibeLogin: describeVibeLogin(vibeLogin(settings)),
     grokLogin: describeGrokLogin(grokLogin(settings)),
     geminiLogin: describeGeminiLogin(geminiLogin(settings)),
+    qwenLogin: describeQwenLogin(qwenOauthJson(settings), qwenApiKeys(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -756,6 +765,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return grokLogin(settings) !== "";
     case "gemini":
       return geminiLogin(settings) !== "";
+    case "qwen":
+      return qwenOauthJson(settings) !== "" || qwenApiKeys(settings) !== "";
   }
 }
 
@@ -792,6 +803,7 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "copilot":
     case "vibe":
     case "grok":
+    case "qwen":
       return {};
     case "gemini":
       return process.env.GOOGLE_GEMINI_BASE_URL?.trim() ? { GOOGLE_GEMINI_BASE_URL: rewriteHostUrl(process.env.GOOGLE_GEMINI_BASE_URL.trim()) } : {};

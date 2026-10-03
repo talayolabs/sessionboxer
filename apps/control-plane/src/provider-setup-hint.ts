@@ -22,6 +22,8 @@ export function providerSetupHint(provider: Provider): string {
       return "No Kimi CLI login configured. Run `kimi login` and paste ~/.kimi/credentials/kimi-code.json in Global settings → Providers, or Sign in with Kimi CLI there.";
     case "copilot":
       return "No GitHub Copilot login configured. Sign in with GitHub Copilot, or paste a GitHub token with the Copilot Requests permission, in Global settings → Providers.";
+    case "qwen":
+      return "No Qwen Code login configured. Sign in with Qwen Code, paste ~/.qwen/oauth_creds.json, or paste OPENAI_API_KEY=... and OPENAI_MODEL=... lines, in Global settings → Providers.";
     case "vibe":
       return "No Mistral Vibe login configured. Sign in with Mistral Vibe, or paste a Mistral API key (console.mistral.ai → API Keys), in Global settings → Providers.";
     case "grok":

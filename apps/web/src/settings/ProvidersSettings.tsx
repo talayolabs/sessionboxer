@@ -1,13 +1,15 @@
 import { useRef } from "react";
 import { type PublicSettings, type VibeLogin } from "@sessionboxer/protocol";
 import { KimiProviderSettings } from "./KimiProviderSettings";
-import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin, describeGrokLogin, describeGeminiLogin } from "./provider-login-labels";
+import { describeCodexLogin, describeCursorLogin, describeFxLogin, describeGrokLogin, describeGeminiLogin } from "./provider-login-labels";
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
 import { Caption } from "../ui";
 import { ClaudeApiSettings } from "./ClaudeApiSettings";
 import { CopilotLoginCard } from "./CopilotSettings";
 import { LoginFileField } from "./LoginFileField";
+import { OpenCodeProviderCard } from "./OpenCodeProviderCard";
+import { QwenProviderCard } from "./QwenProviderCard";
 import { useSectionState, type Setter } from "./shared";
 
 
@@ -44,6 +46,10 @@ export function useProvidersSettings(settings: PublicSettings) {
     forgetGrokLogin: false,
     geminiLogin: "",
     forgetGeminiLogin: false,
+    qwenAuth: "",
+    forgetQwenAuth: false,
+    qwenApiKeys: "",
+    forgetQwenApiKeys: false,
     claudeBaseUrl: settings.claudeApi.baseUrl,
     claudeAuthToken: "",
     claudeApiKey: "",
@@ -101,6 +107,14 @@ export function ProvidersSettings({
   setGeminiLogin,
   forgetGeminiLogin,
   setForgetGeminiLogin,
+  qwenAuth,
+  setQwenAuth,
+  forgetQwenAuth,
+  setForgetQwenAuth,
+  qwenApiKeys,
+  setQwenApiKeys,
+  forgetQwenApiKeys,
+  setForgetQwenApiKeys,
   claudeBaseUrl,
   setClaudeBaseUrl,
   claudeAuthToken,
@@ -165,6 +179,14 @@ export function ProvidersSettings({
   setGeminiLogin: Setter<string>;
   forgetGeminiLogin: boolean;
   setForgetGeminiLogin: Setter<boolean>;
+  qwenAuth: string;
+  setQwenAuth: Setter<string>;
+  forgetQwenAuth: boolean;
+  setForgetQwenAuth: Setter<boolean>;
+  qwenApiKeys: string;
+  setQwenApiKeys: Setter<string>;
+  forgetQwenApiKeys: boolean;
+  setForgetQwenApiKeys: Setter<boolean>;
   claudeBaseUrl: string;
   setClaudeBaseUrl: Setter<string>;
   claudeAuthToken: string;
@@ -184,13 +206,11 @@ export function ProvidersSettings({
   const cursorLoginSet = settings.providerSecretsSet.cursor.CURSOR_LOGIN && !forgetCursorLogin;
   const piAuthSet = settings.providerSecretsSet.pi.PI_AUTH_JSON && !forgetPiAuth;
   const piApiKeysSet = settings.providerSecretsSet.pi.PI_API_KEYS && !forgetPiApiKeys;
-  const opencodeAuthSet = settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && !forgetOpenCodeAuth;
 
 
   const codexFileRef = useRef<HTMLInputElement>(null);
   const cursorFileRef = useRef<HTMLInputElement>(null);
   const piFileRef = useRef<HTMLInputElement>(null);
-  const opencodeFileRef = useRef<HTMLInputElement>(null);
 
   const importCursorAuth = (file: File | undefined) => {
     if (!file) return;
@@ -205,14 +225,6 @@ export function ProvidersSettings({
     void file.text().then((text) => {
       setPiAuth(text);
       setForgetPiAuth(false);
-    });
-  };
-
-  const importOpenCodeAuth = (file: File | undefined) => {
-    if (!file) return;
-    void file.text().then((text) => {
-      setOpencodeAuth(text);
-      setForgetOpenCodeAuth(false);
     });
   };
 
@@ -242,7 +254,7 @@ export function ProvidersSettings({
         <button type="button" className="primary" onClick={() => setGuided(true)}>
           Connect a Provider…
         </button>
-        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe, Grok Build or Gemini CLI</span>
+        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe, Grok Build, Gemini CLI or Qwen Code</span>
       </div>
       {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
       <KimiProviderSettings settings={settings} value={kimiLogin} setValue={setKimiLogin} forget={forgetKimiLogin} setForget={setForgetKimiLogin} />
@@ -515,67 +527,7 @@ export function ProvidersSettings({
           </label>
         </div>
       )}
-      <label>
-        <Caption
-          help={
-            <>
-              <p>
-                OpenCode runs on the model providers you log into with its CLI on your own machine (Anthropic with a Claude Pro/Max login,
-                OpenAI with ChatGPT, OpenCode Zen, Google, API keys…): paste or import the file it writes (the Sandbox keeps it in memory
-                only; refreshed tokens flow back here), or paste an OpenCode Zen API key from opencode.ai/auth.
-              </p>
-              <CopyCommand command="opencode auth login" />
-              <CopyCommand command="cat ~/.local/share/opencode/auth.json" />
-            </>
-          }
-        >
-          OpenCode: login (auth.json or OpenCode Zen API key){" "}
-          {opencodeAuthSet ? (
-            <span className="ok">(set{settings.opencodeLogin && !forgetOpenCodeAuth ? `: ${describeOpenCodeLogin(settings.opencodeLogin)}` : ""})</span>
-          ) : (
-            <span className="warn">(not set)</span>
-          )}
-        </Caption>
-        <textarea
-          rows={3}
-          spellCheck={false}
-          autoComplete="off"
-          value={opencodeAuth}
-          onChange={(e) => {
-            setOpencodeAuth(e.target.value);
-            if (e.target.value.trim()) setForgetOpenCodeAuth(false);
-          }}
-          placeholder={opencodeAuthSet ? "Leave empty to keep the current login" : "Paste the contents of OpenCode's auth.json, or an OpenCode Zen API key"}
-        />
-      </label>
-      <div className="field-hint">
-        <input
-          ref={opencodeFileRef}
-          type="file"
-          accept=".json,application/json"
-          hidden
-          onChange={(e) => {
-            importOpenCodeAuth(e.target.files?.[0]);
-            e.target.value = "";
-          }}
-        />
-        <button type="button" onClick={() => opencodeFileRef.current?.click()}>
-          Import auth.json…
-        </button>
-        {settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && (
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={forgetOpenCodeAuth}
-              onChange={(e) => {
-                setForgetOpenCodeAuth(e.target.checked);
-                if (e.target.checked) setOpencodeAuth("");
-              }}
-            />{" "}
-            Forget the stored login
-          </label>
-        )}
-      </div>
+      <OpenCodeProviderCard settings={settings} auth={opencodeAuth} setAuth={setOpencodeAuth} forget={forgetOpenCodeAuth} setForget={setForgetOpenCodeAuth} />
       <LoginFileField
         caption="fx: login (auth.json or AI Gateway API key)"
         help={
@@ -678,6 +630,18 @@ export function ProvidersSettings({
       />
 
       <CopilotLoginCard settings={settings} login={copilotLogin} setLogin={setCopilotLogin} forget={forgetCopilotLogin} setForget={setForgetCopilotLogin} />
+      <QwenProviderCard
+        settings={settings}
+        auth={qwenAuth}
+        setAuth={setQwenAuth}
+        forgetAuth={forgetQwenAuth}
+        setForgetAuth={setForgetQwenAuth}
+        apiKeys={qwenApiKeys}
+        setApiKeys={setQwenApiKeys}
+        forgetApiKeys={forgetQwenApiKeys}
+        setForgetApiKeys={setForgetQwenApiKeys}
+      />
+
       <ClaudeApiSettings
         settings={settings}
         claudeBaseUrl={claudeBaseUrl}

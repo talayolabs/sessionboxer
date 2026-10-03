@@ -1,0 +1,9 @@
+{
+  "$version": 4,
+  "general": {
+    "enableAutoUpdate": false
+  },
+  "privacy": {
+    "usageStatisticsEnabled": false
+  }
+}

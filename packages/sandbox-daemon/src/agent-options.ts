@@ -1,5 +1,13 @@
 import type { PromptResponse, SessionConfigOption } from "@agentclientprotocol/sdk";
-import type { AgentOption, ModelOption, OptionChoice, TurnUsage } from "@sessionboxer/protocol";
+import type { AgentOption, ModelOption, OptionChoice, SessionUpdate, TurnUsage } from "@sessionboxer/protocol";
+
+/** The usage an `agent_message_chunk` carries in `_meta.usage`, for Agents that report tokens per chunk rather than per turn (Qwen Code, ADR-0083). */
+export function chunkUsage(update: SessionUpdate): PromptResponse["usage"] | undefined {
+  if (update.sessionUpdate !== "agent_message_chunk") return undefined;
+  const meta = (update as { _meta?: Record<string, unknown> })._meta;
+  const usage = meta?.usage;
+  return typeof usage === "object" && usage !== null ? (usage as PromptResponse["usage"]) : undefined;
+}
 
 /**
  * The prompt response's `usage` as the event carries it. Agents leave out what they do not know (fx

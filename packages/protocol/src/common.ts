@@ -4,7 +4,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini", "qwen"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -21,6 +21,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   vibe: "Mistral Vibe",
   grok: "Grok Build",
   gemini: "Gemini CLI",
+  qwen: "Qwen Code",
 };
 
 /**
@@ -57,6 +58,8 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   grok: [],
   // Gemini CLI's too (ADR-0087): `oauth_creds.json` goes on tmpfs, a `GEMINI_API_KEY` into the Agent process alone.
   gemini: [],
+  // Qwen Code (ADR-0083): its `oauth_creds.json` goes on tmpfs, OpenAI-compatible keys into the Agent process alone.
+  qwen: [],
 };
 
 /** Metadata of ~/.kimi/credentials/kimi-code.json (ADR-0084); never the tokens. */
@@ -124,6 +127,26 @@ export const GeminiLogin = z.object({
   email: z.string().nullable(),
 });
 export type GeminiLogin = z.infer<typeof GeminiLogin>;
+
+/**
+ * What the stored Qwen Code login (ADR-0083) holds: the `oauth_creds.json` a Qwen OAuth device
+ * flow wrote (refreshed by Qwen Code) and/or the `OPENAI_*` variables of an OpenAI-compatible
+ * endpoint; nothing secret.
+ */
+export const QwenLogin = z.object({
+  /** The OAuth login, `null` when none is stored. */
+  oauth: z
+    .object({
+      /** When its access token expires (`expiry_date`), ISO 8601; `null` when the file does not say. */
+      expiresAt: z.string().nullable(),
+      /** The API host the token is for (`resource_url`, e.g. `portal.qwen.ai`); `null` when absent. */
+      resourceUrl: z.string().nullable(),
+    })
+    .nullable(),
+  /** Names of the stored `OPENAI_*` variables (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`); never their values. */
+  apiKeyNames: z.array(z.string()),
+});
+export type QwenLogin = z.infer<typeof QwenLogin>;
 
 /**
  * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT

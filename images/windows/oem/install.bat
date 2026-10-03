@@ -29,6 +29,7 @@ set "VIBE_VERSION=2.25.8"
 set "VIBE_SHA256=4eb3099bd06b034f62582f7b5ed701febbce3cf013ef95490aca9c79e82c4bd1"
 set "GROK_VERSION=1.0.49"
 set "GEMINI_CLI_VERSION=0.62.0"
+set "QWEN_CODE_VERSION=0.24.7"
 set "LOG=C:\sessionboxer-install.log"
 set "DL=%TEMP%\sessionboxer-install"
 mkdir "%DL%" 2>nul
@@ -132,6 +133,11 @@ call npm install -g --no-fund --no-audit --omit=optional ^
   @google/gemini-cli@%GEMINI_CLI_VERSION% >> "%LOG%" 2>&1
 call npm cache clean --force >> "%LOG%" 2>&1
 
+rem Qwen Code (ADR-0083), whose ACP server is `qwen --acp`: the same pin as the Sandbox image.
+echo [%time%] qwen-code %QWEN_CODE_VERSION%>> "%LOG%"
+call npm install -g --no-fund --no-audit @qwen-code/qwen-code@%QWEN_CODE_VERSION% >> "%LOG%" 2>&1
+call npm cache clean --force >> "%LOG%" 2>&1
+
 rem Devin CLI (`devin acp`): the pinned bundle its installer would fetch, checked against the
 rem manifest's sha256, put where the installer puts it; the installer itself is not run as it ends
 rem in an interactive `devin setup` that would wait for a login here.
@@ -200,6 +206,7 @@ call claude-agent-acp --version >> "%LOG%" 2>&1
 call codex-acp --version >> "%LOG%" 2>&1
 set "PI_SKIP_VERSION_CHECK=1"
 call pi --version >> "%LOG%" 2>&1
+call qwen --version >> "%LOG%" 2>&1
 call "%LOCALAPPDATA%\devin\cli\bin\devin.exe" --version >> "%LOG%" 2>&1
 call "%LOCALAPPDATA%\Programs\cursor-agent\cursor-agent.cmd" --version >> "%LOG%" 2>&1
 set "OPENCODE_DISABLE_AUTOUPDATE=1"

@@ -19,6 +19,9 @@ export const ACP_COMMANDS: Record<Provider, string[]> = {
   // Copilot's ACP server is built in (ADR-0082); every permission is granted on the command line and the
   // pinned version runs (`--no-auto-update`); `--no-ask-user` keeps it from waiting on a question no client answers.
   copilot: ["copilot", "--acp", "--allow-all", "--no-auto-update", "--no-ask-user"],
+  // Qwen Code's ACP server is built in (ADR-0083); `--yolo` grants every permission. `--experimental-skills` (the registry's
+  // extra flag) is deprecated in 0.24.7 and ignored: skills are on by default.
+  qwen: ["qwen", "--acp", "--yolo"],
   // Mistral Vibe ships `vibe-acp`, its ACP server, as a standalone binary (ADR-0085).
   vibe: ["vibe-acp"],
   // Grok Build's ACP server is built in (ADR-0086); `--always-approve` is its full-permission flag (the Daemon still answers permission requests).

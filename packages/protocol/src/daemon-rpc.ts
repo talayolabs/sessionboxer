@@ -50,6 +50,8 @@ export const DAEMON_METHODS = {
   grokAuthChanged: "_sessionboxer/grok/auth/changed",
   geminiAuthSet: "_sessionboxer/gemini/auth/set",
   geminiAuthChanged: "_sessionboxer/gemini/auth/changed",
+  qwenAuthSet: "_sessionboxer/qwen/auth/set",
+  qwenAuthChanged: "_sessionboxer/qwen/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -398,6 +400,24 @@ export const DaemonGeminiAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonGeminiAuthChangedParams = z.infer<typeof DaemonGeminiAuthChangedParams>;
+
+/**
+ * The Qwen Code login for the Sandbox (ADR-0083): `authJson` is the `oauth_creds.json` for the
+ * tmpfs behind `~/.qwen/oauth_creds.json` (`""` removes it), `apiKeys` the `OPENAI_API_KEY`,
+ * `OPENAI_BASE_URL` and `OPENAI_MODEL` of an OpenAI-compatible endpoint, which reach the Agent
+ * process as its environment. Sent before the MCP set and again whenever the stored login changes.
+ * When Qwen Code refreshes the OAuth token, the rewritten file comes back as `qwenAuthChanged`.
+ */
+export const DaemonQwenAuthParams = z.object({
+  authJson: z.string(),
+  apiKeys: z.record(z.string(), z.string()),
+});
+export type DaemonQwenAuthParams = z.infer<typeof DaemonQwenAuthParams>;
+
+export const DaemonQwenAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonQwenAuthChangedParams = z.infer<typeof DaemonQwenAuthChangedParams>;
 
 /** Every `*AuthChanged` notification carries the rewritten login file the same way. */
 export const DaemonAuthChangedParams = z.object({

@@ -27,6 +27,8 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.grok.GROK_LOGIN;
     case "gemini":
       return settings.providerSecretsSet.gemini.GEMINI_LOGIN;
+    case "qwen":
+      return settings.providerSecretsSet.qwen.QWEN_OAUTH_JSON || settings.providerSecretsSet.qwen.QWEN_API_KEYS;
   }
 }
 
@@ -35,7 +37,7 @@ export function providerSignsInFromBrowser(provider: Provider): boolean {
   return provider !== "pi";
 }
 
-/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex, Cursor, pi, OpenCode, fx, Grok Build and Gemini CLI a login. */
+/** What the Provider's credential is called in the UI: Claude Code and Devin take a token, Codex, Cursor, pi, OpenCode, fx, Grok Build, Gemini CLI and Qwen Code a login. */
 export function providerCredentialNoun(provider: Provider): "token" | "login" {
   return provider === "claude-code" || provider === "devin" ? "token" : "login";
 }
@@ -54,4 +56,5 @@ export const PROVIDER_BLURB: Record<Provider, string> = {
   vibe: "Mistral's open-source Agent; runs on your Mistral account or a Mistral API key",
   grok: "xAI's own Agent (Grok Build); runs on your xAI account or an xAI API key",
   gemini: "Google's open-source Agent; runs on your Google account (Gemini Code Assist) or a Gemini API key",
+  qwen: "Alibaba's open-source Agent; runs on a free qwen.ai account or any OpenAI-compatible endpoint",
 };

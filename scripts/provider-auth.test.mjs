@@ -8,13 +8,14 @@ import { PROVIDER_AUTH, SYNCED_AUTH_PROVIDERS, isSyncedAuthProvider, providerOfA
 // per-provider methods were folded into PROVIDER_AUTH (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075,
 // OpenCode ADR-0076, fx ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085, Grok Build ADR-0087, Gemini CLI ADR-0087). Values are the observed ones, not recomputed from the code.
 
-for (const key of ["CURSOR_API_KEY", "AI_GATEWAY_API_KEY", "COPILOT_GITHUB_TOKEN", "XAI_API_KEY", "GEMINI_API_KEY"]) delete process.env[key];
+for (const key of ["CURSOR_API_KEY", "AI_GATEWAY_API_KEY", "COPILOT_GITHUB_TOKEN", "XAI_API_KEY", "GEMINI_API_KEY", "QWEN_OPENAI_API_KEY", "QWEN_OPENAI_MODEL", "QWEN_OPENAI_BASE_URL"]) delete process.env[key];
 
 const jwt = (claims) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
 const codexFile = (lastRefresh) => JSON.stringify({ tokens: { id_token: jwt({ email: "a@b.c" }), access_token: "a", refresh_token: "r" }, last_refresh: lastRefresh });
 const cursorFile = (exp) => JSON.stringify({ accessToken: jwt({ exp }), refreshToken: "r" });
 const piFile = (expires) => JSON.stringify({ anthropic: { type: "oauth", access: "a", refresh: "r", expires } });
 const opencodeFile = (expires) => JSON.stringify({ anthropic: { type: "oauth", access: "a", refresh: "r", expires } });
+const qwenFile = (expiryDate) => JSON.stringify({ access_token: "a", refresh_token: "r", token_type: "Bearer", resource_url: "portal.qwen.ai", expiry_date: expiryDate });
 const fxFile = (expiresAtMs) => JSON.stringify({ version: 1, access_token: "a", refresh_token: "r", expires_at_ms: expiresAtMs, account_id: "acc" });
 const copilotFile = (token) => JSON.stringify({ authTokens: { "github.com:octocat": { token } }, lastLoggedInUser: { host: "github.com", login: "octocat" } });
 const grokFile = (expiresAt) =>
@@ -33,11 +34,12 @@ const settings = applySettingsUpdate(base, {
     vibe: { VIBE_LOGIN: "MISTRAL_API_KEY='key_vibe_1'" },
     grok: { GROK_LOGIN: grokFile("2027-01-01T00:00:00Z") },
     gemini: { GEMINI_LOGIN: geminiFile(1_800_000_000_000) },
+    qwen: { QWEN_OAUTH_JSON: qwenFile(1_800_000_000_000), QWEN_API_KEYS: "OPENAI_API_KEY=sk-q\nOPENAI_MODEL=m" },
   },
 });
 
-test("the synced Agents are Codex, Cursor, pi, OpenCode, fx, Kimi, GitHub Copilot, Mistral Vibe, Grok Build and Gemini CLI; Claude Code and Devin are not", () => {
-  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini"]);
+test("the synced Agents are Codex, Cursor, pi, OpenCode, fx, Kimi, GitHub Copilot, Mistral Vibe, Grok Build, Gemini CLI and Qwen Code; Claude Code and Devin are not", () => {
+  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini", "qwen"]);
   assert.equal(isSyncedAuthProvider("claude-code"), false);
   assert.equal(isSyncedAuthProvider("devin"), false);
   assert.equal(isSyncedAuthProvider("pi"), true);
@@ -67,6 +69,11 @@ test("each Agent's login goes to the Daemon method and params it always did", ()
   assert.deepEqual(PROVIDER_AUTH.grok.params(settings), { login: stored.grok.GROK_LOGIN });
   assert.equal(PROVIDER_AUTH.gemini.setMethod, "_sessionboxer/gemini/auth/set");
   assert.deepEqual(PROVIDER_AUTH.gemini.params(settings), { login: stored.gemini.GEMINI_LOGIN });
+  assert.equal(PROVIDER_AUTH.qwen.setMethod, "_sessionboxer/qwen/auth/set");
+  assert.deepEqual(PROVIDER_AUTH.qwen.params(settings), {
+    authJson: stored.qwen.QWEN_OAUTH_JSON,
+    apiKeys: { OPENAI_API_KEY: "sk-q", OPENAI_MODEL: "m" },
+  });
 });
 
 test("only Codex tolerates a Daemon that predates its auth method", () => {
@@ -100,6 +107,20 @@ test("an environment API key overrides the stored Cursor, fx, GitHub Copilot, Mi
   }
 });
 
+test("QWEN_OPENAI_* in the environment override the stored Qwen Code key lines, not its OAuth login", () => {
+  process.env.QWEN_OPENAI_API_KEY = " sk-env ";
+  process.env.QWEN_OPENAI_MODEL = "env-model";
+  process.env.QWEN_OPENAI_BASE_URL = "http://127.0.0.1:1/v1";
+  try {
+    assert.deepEqual(PROVIDER_AUTH.qwen.params(settings), {
+      authJson: settings.providerSecrets.qwen.QWEN_OAUTH_JSON,
+      apiKeys: { OPENAI_API_KEY: "sk-env", OPENAI_MODEL: "env-model", OPENAI_BASE_URL: "http://127.0.0.1:1/v1" },
+    });
+  } finally {
+    for (const key of ["QWEN_OPENAI_API_KEY", "QWEN_OPENAI_MODEL", "QWEN_OPENAI_BASE_URL"]) delete process.env[key];
+  }
+});
+
 test("a Settings update pushes exactly the logins it touches", () => {
   assert.deepEqual(providersAuthChangedBy({}), []);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { codex: { CODEX_AUTH_JSON: "" } } }), ["codex"]);
@@ -110,6 +131,8 @@ test("a Settings update pushes exactly the logins it touches", () => {
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { fx: { FX_LOGIN: "k" } } }), ["fx"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { vibe: { VIBE_LOGIN: "k" } } }), ["vibe"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { gemini: { GEMINI_LOGIN: "k" } } }), ["gemini"]);
+  assert.deepEqual(providersAuthChangedBy({ providerSecrets: { qwen: { QWEN_OAUTH_JSON: "{}" } } }), ["qwen"]);
+  assert.deepEqual(providersAuthChangedBy({ providerSecrets: { qwen: { QWEN_API_KEYS: "OPENAI_API_KEY=k\nOPENAI_MODEL=m" } } }), ["qwen"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { codex: { CODEX_AUTH_JSON: "" }, fx: { FX_LOGIN: "" } } }), ["codex", "fx"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { copilot: { COPILOT_LOGIN: "github_pat_x" } } }), ["copilot"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { grok: { GROK_LOGIN: "xai-k" } } }), ["grok"]);
@@ -127,6 +150,7 @@ test("each *AuthChanged notification maps back to its Agent", () => {
   assert.equal(providerOfAuthChanged("_sessionboxer/vibe/auth/changed"), "vibe");
   assert.equal(providerOfAuthChanged("_sessionboxer/grok/auth/changed"), "grok");
   assert.equal(providerOfAuthChanged("_sessionboxer/gemini/auth/changed"), "gemini");
+  assert.equal(providerOfAuthChanged("_sessionboxer/qwen/auth/changed"), "qwen");
   assert.equal(providerOfAuthChanged(DAEMON_METHODS.codexAuthSet), null);
   assert.equal(providerOfAuthChanged("event"), null);
 });
@@ -141,6 +165,7 @@ test("a refreshed file is stored under the Agent's own secret key", () => {
   assert.deepEqual(PROVIDER_AUTH.vibe.storeUpdate("MISTRAL_API_KEY=k"), { providerSecrets: { vibe: { VIBE_LOGIN: "MISTRAL_API_KEY=k" } } });
   assert.deepEqual(PROVIDER_AUTH.grok.storeUpdate("{}"), { providerSecrets: { grok: { GROK_LOGIN: "{}" } } });
   assert.deepEqual(PROVIDER_AUTH.gemini.storeUpdate("{}"), { providerSecrets: { gemini: { GEMINI_LOGIN: "{}" } } });
+  assert.deepEqual(PROVIDER_AUTH.qwen.storeUpdate("{}"), { providerSecrets: { qwen: { QWEN_OAUTH_JSON: "{}" } } });
 });
 
 test("a refreshed file replaces the stored one only when it is newer, per Agent", () => {
@@ -192,4 +217,10 @@ test("a refreshed file replaces the stored one only when it is newer, per Agent"
   assert.equal(PROVIDER_AUTH.gemini.newer(geminiFile(1_700_000_000_000), geminiFile(1_800_000_000_000)), false);
   assert.equal(PROVIDER_AUTH.gemini.newer(geminiFile(1_900_000_000_000), "AIzaKey"), false);
   assert.equal(PROVIDER_AUTH.gemini.newer(geminiFile(1_900_000_000_000), ""), true);
+  // Qwen Code: by expiry_date; an identical file never replaces; an empty store accepts.
+  assert.equal(PROVIDER_AUTH.qwen.newer(qwenFile(1_900_000_000_000), qwenFile(1_800_000_000_000)), true);
+  assert.equal(PROVIDER_AUTH.qwen.newer(qwenFile(1_700_000_000_000), qwenFile(1_800_000_000_000)), false);
+  assert.equal(PROVIDER_AUTH.qwen.newer(qwenFile(1_800_000_000_000), qwenFile(1_800_000_000_000)), false);
+  assert.equal(PROVIDER_AUTH.qwen.newer("not json", qwenFile(1_800_000_000_000)), false);
+  assert.equal(PROVIDER_AUTH.qwen.newer(qwenFile(1_900_000_000_000), ""), true);
 });

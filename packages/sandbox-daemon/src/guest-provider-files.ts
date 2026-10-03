@@ -11,6 +11,8 @@ export interface GuestProviderPaths {
   fxAuthPaths: Record<FxLoginKind, string>;
   vibeHome: string;
   grokHome: string;
+  qwenHome: string;
+  qwenAuthPath: string;
   opencodeAuthPath: string;
   copilotHome: string;
 }
@@ -22,7 +24,7 @@ export interface GuestProviderPaths {
  * its user-level instructions (Cursor: `AGENTS.md` at the drive root on Windows, in the home on macOS).
  */
 export function guestProviderFiles(provider: Provider, guest: Guest | null, home: string, p: GuestProviderPaths): GuestProviderFile[] {
-  const { codexHome, cursorAuthPath, piAgentDir, fxAuthPaths, vibeHome, grokHome, opencodeAuthPath, copilotHome } = p;
+  const { codexHome, cursorAuthPath, piAgentDir, fxAuthPaths, vibeHome, grokHome, qwenHome, qwenAuthPath, opencodeAuthPath, copilotHome } = p;
   const guestBriefingFile = `${home}/.sessionboxer/${guest?.os === "macos" ? "macos" : "windows"}-briefing.md`;
   return (
     {
@@ -63,6 +65,11 @@ export function guestProviderFiles(provider: Provider, guest: Guest | null, home
         { local: `${vibeHome}/.env`, guest: ".vibe/.env", pullBack: true, mode: 0o600 },
       ],
       grok: grokGuestFiles(grokHome, guestBriefingFile),
+      qwen: [
+        { local: `${qwenHome}/settings.json`, guest: ".qwen/settings.json" },
+        { local: guestBriefingFile, guest: ".qwen/QWEN.md" },
+        { local: qwenAuthPath, guest: ".qwen/oauth_creds.json", pullBack: true, mode: 0o600 },
+      ],
       gemini: [
         { local: `${home}/.gemini/settings.json`, guest: ".gemini/settings.json" },
         { local: guestBriefingFile, guest: ".gemini/GEMINI.md" },

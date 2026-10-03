@@ -27,6 +27,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   vibe: "Mistral Vibe reports its context and tokens per turn but no usage windows; see console.mistral.ai → Usage for your Mistral account.",
   grok: "Grok Build reports tokens per turn but no usage windows; see console.x.ai for the account's usage and credits.",
   gemini: "Gemini CLI reports tokens per turn but no usage windows; see aistudio.google.com for an API key's quota, or run `/stats` in Gemini CLI.",
+  qwen: "Qwen Code reports tokens per turn but no usage windows; see chat.qwen.ai for the free tier's quota, or your OpenAI-compatible provider's console.",
 };
 
 /** The current time, ticking every second while `live`. */

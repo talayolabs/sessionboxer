@@ -3,7 +3,8 @@ import { PROVIDER_LABELS, type Provider } from "@sessionboxer/protocol";
 // Hand-drawn approximations of the Providers' marks: Claude's orange starburst,
 // Devin's three linked hexagons, Codex's (OpenAI's) hexagonal knot, pi's π in
 // a rounded square, OpenCode's pixel terminal, fx's lowercase "fx" wordmark
-// (fx.sh), GitHub Copilot's goggled face, Mistral's blocky "M", Grok's slanted slash mark and Gemini's four-pointed star, drawn in the current text colour.
+// (fx.sh), GitHub Copilot's goggled face, Mistral's blocky "M", Grok's slanted slash mark, Gemini's four-pointed star
+// and Qwen's two interlaced hexagons, drawn in the current text colour.
 
 const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [0, 9.5],
@@ -210,6 +211,17 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
         <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
           <title>{label}</title>
           <path d="M12 2C12 7.52 16.48 12 22 12C16.48 12 12 16.48 12 22C12 16.48 7.52 12 2 12C7.52 12 12 7.52 12 2Z" fill="currentColor" />
+        </svg>
+      );
+    case "qwen":
+      // Qwen's mark: a hexagon with a second one turned 30° through it, as on qwen.ai.
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+            <path d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4z" />
+            <path d="M3.2 12 7.6 4.2h8.8L20.8 12l-4.4 7.8H7.6z" />
+          </g>
         </svg>
       );
   }

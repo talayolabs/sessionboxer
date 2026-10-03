@@ -1,4 +1,3 @@
-
 /**
  * The shapes of what the Providers read from disk, apart from the files themselves (`index.ts` puts
  * those in place): which fx login file a pasted login is (ADR-0077), Mistral Vibe's `.env` and

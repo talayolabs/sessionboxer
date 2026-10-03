@@ -1,4 +1,4 @@
-import type { CodexLogin, CursorLogin, OpenCodeLogin, FxLogin, GrokLogin, GeminiLogin } from "@sessionboxer/protocol";
+import type { CodexLogin, CursorLogin, OpenCodeLogin, FxLogin, GrokLogin, GeminiLogin, QwenLogin } from "@sessionboxer/protocol";
 
 /** One line about the stored Codex login, from the metadata the Control Plane exposes (never the tokens). */
 export function describeCodexLogin(login: CodexLogin): string {
@@ -37,4 +37,10 @@ export function describeGeminiLogin(login: GeminiLogin): string {
   if (login.kind === "api-key") return "Gemini API key";
   const who = login.email ? `Google login (${login.email})` : "Google login";
   return login.expiresAt ? `${who}, token valid until ${new Date(login.expiresAt).toLocaleString()}` : who;
+}
+
+/** Qwen Code (ADR-0083): the OAuth login's expiry, or which OPENAI_* names the key lines set. */
+export function describeQwenOauth(login: QwenLogin): string {
+  if (!login.oauth) return "Qwen OAuth";
+  return login.oauth.expiresAt ? `Qwen OAuth, token valid until ${new Date(login.oauth.expiresAt).toLocaleString()}` : "Qwen OAuth";
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type PiLogin, type Settings } from "@sessionboxer/protocol";
+import { envOfLines, normalizeEnvLines } from "./env-lines.js";
 import { HttpError } from "./http-error.js";
 
 /**
@@ -41,27 +42,11 @@ export function normalizePiAuthJson(text: string): string {
 
 /** Accepts `NAME=value` lines (`export NAME=value` too; blank and `#` lines skipped); `""` forgets them. */
 export function normalizePiApiKeys(text: string): string {
-  const lines: string[] = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim().replace(/^export\s+/, "");
-    if (line === "" || line.startsWith("#")) continue;
-    const m = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
-    const value = m?.[2]?.trim().replace(/^(["'])(.*)\1$/, "$2") ?? "";
-    if (!m || value === "") throw new HttpError(400, `pi API keys are \`NAME=value\` lines, one per model provider (ANTHROPIC_API_KEY=..., OPENAI_API_KEY=...): "${raw.trim()}" is not one.`);
-    lines.push(`${m[1]}=${value}`);
-  }
-  return lines.join("\n");
+  return normalizeEnvLines(text, (line) => `pi API keys are \`NAME=value\` lines, one per model provider (ANTHROPIC_API_KEY=..., OPENAI_API_KEY=...): "${line}" is not one.`);
 }
 
 /** The API keys as the environment the Agent process gets. */
-export function piApiKeyEnv(apiKeys: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const line of apiKeys.split("\n")) {
-    const i = line.indexOf("=");
-    if (i > 0) env[line.slice(0, i)] = line.slice(i + 1);
-  }
-  return env;
-}
+export const piApiKeyEnv = envOfLines;
 
 /** What the stored login holds, for Settings; names only, nothing is verified. `null` when nothing is stored. */
 export function describePiLogin(authJson: string, apiKeys: string): PiLogin | null {

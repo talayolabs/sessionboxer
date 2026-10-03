@@ -8,7 +8,7 @@ import { UtilityDef, UtilityEnvironment, DEFAULT_UTILITY_ENVIRONMENTS, Procedure
 import { DEFAULT_CLAUDE_MODELS, INSTRUCTIONS_MAX_CHARS, DEFAULT_INSTRUCTIONS, DEFAULT_HTML_APP_CDNS } from "./models.js";
 import { SpeechSettings } from "./speech.js";
 import { TunnelSettings, PublicTunnelSettings, RemoteAccess, TunnelSettingsUpdate } from "./auth.js";
-import { EnvironmentAvailability, CodexLogin, CursorLogin, PiLogin, OpenCodeLogin, FxLogin, KimiLogin, CopilotLogin, VibeLogin, GrokLogin, GeminiLogin, DockerMode } from "./common.js";
+import { EnvironmentAvailability, CodexLogin, CursorLogin, PiLogin, OpenCodeLogin, FxLogin, KimiLogin, CopilotLogin, VibeLogin, GrokLogin, GeminiLogin, QwenLogin, DockerMode } from "./common.js";
 import { GitIdentity } from "./branches.js";
 
 /**
@@ -210,6 +210,8 @@ export const Settings = z.object({
       grok: z.object({ GROK_LOGIN: z.string().default("") }).default({}),
       /** A Gemini API key, or the whole `~/.gemini/oauth_creds.json` a "Login with Google" wrote (ADR-0087). */
       gemini: z.object({ GEMINI_LOGIN: z.string().default("") }).default({}),
+      /** Qwen Code's `~/.qwen/oauth_creds.json` (its Qwen OAuth device flow) and/or `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` as `NAME=value` lines (ADR-0083). */
+      qwen: z.object({ QWEN_OAUTH_JSON: z.string().default(""), QWEN_API_KEYS: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -264,6 +266,7 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     vibe: z.object({ VIBE_LOGIN: z.boolean() }),
     grok: z.object({ GROK_LOGIN: z.boolean() }),
     gemini: z.object({ GEMINI_LOGIN: z.boolean() }),
+    qwen: z.object({ QWEN_OAUTH_JSON: z.boolean(), QWEN_API_KEYS: z.boolean() }),
   }),
   /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
   codexLogin: CodexLogin.nullable(),
@@ -283,6 +286,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   grokLogin: GrokLogin.nullable(),
   /** What the stored Gemini CLI login is; `null` when none is stored. */
   geminiLogin: GeminiLogin.nullable(),
+  /** What the stored Qwen Code login holds (names and expiry only); `null` when none is stored. */
+  qwenLogin: QwenLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -325,6 +330,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, utilities
       vibe: z.object({ VIBE_LOGIN: z.string() }).partial(),
       grok: z.object({ GROK_LOGIN: z.string() }).partial(),
       gemini: z.object({ GEMINI_LOGIN: z.string() }).partial(),
+      qwen: z.object({ QWEN_OAUTH_JSON: z.string(), QWEN_API_KEYS: z.string() }).partial(),
     })
     .partial()
     .optional(),

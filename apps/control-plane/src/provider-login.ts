@@ -12,6 +12,7 @@ import { describeVibeLogin, normalizeVibeLogin } from "./vibe-login.js";
 import { describeGrokLogin, normalizeGrokLogin } from "./grok-login.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
 import { kimiLoginRecipe } from "./kimi-login-recipe.js";
+import { qwenLoginRecipe, spawnHostPiped } from "./qwen-login-recipe.js";
 import { HttpError } from "./http-error.js";
 
 /**
@@ -19,7 +20,8 @@ import { HttpError } from "./http-error.js";
  * needs no callback to the machine the CLI runs on: it prints a sign-in URL, the user signs in in a
  * browser, and either the page hands out a code the CLI wants pasted back (Claude Code, Devin), the
  * CLI hands out a code to type into the page (Codex), or the CLI just polls until the page is done
- * (Cursor). Sessionboxer runs that CLI on a pty — the one installed on this machine when there is
+ * (Cursor), or the CLI is an ACP server whose `authenticate` starts the device flow (Qwen Code).
+ * Sessionboxer runs that CLI on a pty — the one installed on this machine when there is
  * one, else in a throwaway container from the Sandbox image — with a scratch home so the login of
  * the person running the Control Plane is never touched, hands the URL to the Settings page (so it
  * opens in the browser the user is already signed in with, saved passwords and all), types the
@@ -62,6 +64,12 @@ export interface Recipe {
   /** The login to store (and a non-secret account label) from the CLI's complete output and the file it wrote, after it exited 0. */
   result(output: string, file: string | null): { login: string; account: string | null } | null;
   secret(login: string): NonNullable<UpdateSettingsRequest["providerSecrets"]>;
+  /**
+   * For a CLI that is an ACP server rather than a login command: `input` is typed as soon as it
+   * runs (the `initialize` and `authenticate` requests), and once `done` matches its plain-text
+   * output (the `authenticate` response) it gets EOF, so it exits and the login file can be read.
+   */
+  drive?: { input: string; done: RegExp };
 }
 
 const noBrowser = { BROWSER: platform() === "win32" ? "" : "true", NO_OPEN_BROWSER: "1" };
@@ -75,6 +83,7 @@ const BROWSER_OPENERS = ["xdg-open", "open", "sensible-browser", "x-www-browser"
  * only in its full-screen TUI, which does not quit on a pty once logged in, and `gemini -p` refuses
  * to log in (ADR-0081); the user pastes its `oauth_creds.json` instead.
  */
+
 export const RECIPES: Partial<Record<Provider, Recipe>> = {
   kimi: kimiLoginRecipe(noBrowser),
   "claude-code": {
@@ -273,7 +282,11 @@ export const RECIPES: Partial<Record<Provider, Recipe>> = {
     },
     secret: (login) => ({ grok: { GROK_LOGIN: login } }),
   },
+  qwen: qwenLoginRecipe(noBrowser),
 };
+
+/** A driven CLI that ignores EOF (a Windows console) is killed this long after `done`; its login file is read all the same. */
+const DRIVE_EXIT_WAIT_MS = 5_000;
 
 interface SettingsStore {
   get(): Settings;
@@ -302,6 +315,8 @@ interface Flow {
   pendingCode: string | null;
   /** Where in `output` the code was typed; what follows is the CLI's verdict. */
   typedAt: number;
+  /** A `drive` recipe's CLI was told to exit (EOF) after `done` matched. */
+  driven: boolean;
   timer: NodeJS.Timeout | null;
 }
 
@@ -340,6 +355,7 @@ export class ProviderLogins {
       output: "",
       pendingCode: null,
       typedAt: 0,
+      driven: false,
       timer: null,
     };
     this.flows.set(flow.state.id, flow);
@@ -416,10 +432,16 @@ export class ProviderLogins {
       return;
     }
     flow.proc = proc;
+    if (recipe.drive) proc.write(recipe.drive.input);
     proc.onData((chunk) => {
       const overflow = Math.max(0, flow.output.length + chunk.length - OUTPUT_CAP);
       flow.output = (flow.output + chunk).slice(overflow);
       flow.typedAt = Math.max(0, flow.typedAt - overflow);
+      if (recipe.drive && !flow.driven && recipe.drive.done.test(stripTerminal(flow.output))) {
+        flow.driven = true;
+        proc.write("\x04");
+        setTimeout(() => void proc.kill().catch(() => undefined), DRIVE_EXIT_WAIT_MS);
+      }
       if (flow.state.status === "starting") {
         const url = loginUrl(flow.output, recipe);
         if (!url) return;
@@ -438,11 +460,12 @@ export class ProviderLogins {
       }
     });
     const exit = await proc.exited;
-    const file = exit === 0 ? await proc.file().catch(() => null) : null;
+    const ok = exit === 0 || (exit === null && flow.driven);
+    const file = ok ? await proc.file().catch(() => null) : null;
     await proc.dispose().catch(() => undefined);
     if (finished(flow.state)) return;
     this.disarm(flow);
-    if (exit !== 0) {
+    if (!ok) {
       this.fail(flow, `${name} exited${exit === null ? "" : ` (${exit})`}: ${lastLine(flow.output) || "no details"}`);
       return;
     }
@@ -491,7 +514,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot", vibe: "Mistral Vibe", grok: "Grok Build", gemini: "Gemini CLI" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot", vibe: "Mistral Vibe", grok: "Grok Build", gemini: "Gemini CLI", qwen: "Qwen Code" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {
@@ -525,6 +548,7 @@ export function spawnHost(bin: string, recipe: Recipe, id: string): LoginProcess
     XDG_DATA_HOME: join(home, ".local", "share"),
     // Codex refuses to start when this one is missing.
     CODEX_HOME: join(home, ".codex"),
+    QWEN_HOME: join(home, ".qwen"),
   };
   mkdirSync(home, { recursive: true, mode: 0o700 });
   for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -551,6 +575,9 @@ export function spawnHost(bin: string, recipe: Recipe, id: string): LoginProcess
     env.PATH = `${shims}${delimiter}${env.PATH ?? ""}`;
   }
   const script = /\.(cmd|bat)$/i.test(bin);
+  const dispose = async () => rmSync(home, { recursive: true, force: true });
+  const file = async () => readFirst(recipe.files.map((f) => join(home, f)));
+  if (recipe.drive) return spawnHostPiped(script ? "cmd.exe" : bin, script ? ["/c", bin, ...recipe.args] : recipe.args, { cwd: home, env }, file, dispose);
   const proc = pty.spawn(script ? "cmd.exe" : bin, script ? ["/c", bin, ...recipe.args] : recipe.args, {
     name: "xterm-256color",
     cols: TTY_COLUMNS,
@@ -583,10 +610,11 @@ export function spawnHost(bin: string, recipe: Recipe, id: string): LoginProcess
         /* already gone */
       }
     },
-    file: async () => readFirst(recipe.files.map((f) => join(home, f))),
-    dispose: async () => rmSync(home, { recursive: true, force: true }),
+    file,
+    dispose,
   };
 }
+
 
 /** Runs the CLI in a throwaway container; it prints the login file after a marker on the way out. */
 export async function spawnInSandbox(docker: SandboxDocker, recipe: Recipe, id: string): Promise<LoginProcess> {
@@ -595,8 +623,10 @@ export async function spawnInSandbox(docker: SandboxDocker, recipe: Recipe, id: 
   const seeds = Object.entries(recipe.seed ?? {})
     .map(([path, text]) => `mkdir -p "$(dirname ${quote(`$HOME/${path}`)})" && printf '%s' ${quote(text)} > ${quote(`$HOME/${path}`)}; `)
     .join("");
-  const script = `${seeds}"$@" || exit $?; printf '\\n%s\\n' "$MARK"; for f in ${files}; do if [ -f "$f" ]; then cat "$f"; break; fi; done; exit 0`;
-  const proc = await docker.runTty(["sh", "-c", script, "login", recipe.bin[0]!, ...recipe.args], `login-${id}`, { ...recipe.env, MARK: CREDENTIALS_MARK });
+  // A driven CLI (ACP over stdin, which must not be the terminal) gets its input from a pipe that closes once the login file exists.
+  const run = recipe.drive ? `{ printf '%s' "$SBX_DRIVE"; until for f in ${files}; do [ -f "$f" ] && break; done; do sleep 1; done; sleep 1; } | "$@"` : `"$@"`;
+  const script = `${seeds}${run} || exit $?; printf '\\n%s\\n' "$MARK"; for f in ${files}; do if [ -f "$f" ]; then cat "$f"; break; fi; done; exit 0`;
+  const proc = await docker.runTty(["sh", "-c", script, "login", recipe.bin[0]!, ...recipe.args], `login-${id}`, { ...recipe.env, MARK: CREDENTIALS_MARK, ...(recipe.drive ? { SBX_DRIVE: recipe.drive.input } : {}) });
   let output = "";
   proc.onData((chunk) => {
     output = (output + chunk).slice(-OUTPUT_CAP);

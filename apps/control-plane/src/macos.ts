@@ -51,7 +51,7 @@ const PROVISION_TIMEOUT_S = 60 * 60;
  * and the Sandbox image. Bump `TOOLCHAIN` when they change: bases with an older number show
  * "Reprovision" and cannot start Sessions until it ran.
  */
-const TOOLCHAIN = 5;
+const TOOLCHAIN = 6;
 const NODE_VERSION = "22.23.3";
 const UV_VERSION = "0.12.13";
 const CLAUDE_CODE_VERSION = "2.1.272";
@@ -61,6 +61,7 @@ const DEVIN_CLI_VERSION = "3000.10.27";
 const CURSOR_CLI_VERSION = "2026.09.23-86fc751";
 const PI_VERSION = "0.99.2";
 const PI_ACP_VERSION = "0.0.34";
+const QWEN_CODE_VERSION = "0.24.7"; // Qwen Code (ADR-0083), the npm package; same pin as the Sandbox image.
 const COPILOT_VERSION = "1.0.91"; // GitHub Copilot CLI (ADR-0082), the npm package; same pin as the Sandbox image.
 const GROK_VERSION = "1.0.49"; // Grok Build (ADR-0086), the npm package; same pin as the Sandbox image.
 /** Gemini CLI (ADR-0087): the npm package; same pin as the Sandbox image. */
@@ -680,7 +681,7 @@ function setupSteps(version: string): string[] {
  *   bundle under `~/.local/share/devin`, `~/.local/bin/devin`). Cursor: the pinned macOS package
  *   under `~/.local/share/cursor-agent`, `~/.local/bin/{cursor-agent,agent}`. fx: the pinned release
  *   archive under `~/.local/share/fx/<version>`, `~/.local/bin/fx`. Mistral Vibe: the pinned, checksummed
- *   `vibe-acp` archive under `~/.local/share/vibe/<version>`, `~/.local/bin/vibe-acp`.
+ *   `vibe-acp` archive under `~/.local/share/vibe/<version>`, `~/.local/bin/vibe-acp`. Qwen Code: `npm install -g`.
  */
 /** Encodes stdin as `/etc/kcpassword`: XOR with Apple's key, NUL-terminated and padded to 12 bytes. */
 const KCPASSWORD_PERL =
@@ -761,6 +762,8 @@ function provisionScript(): string {
     `say "installing @earendil-works/pi-coding-agent@${PI_VERSION}, pi-acp@${PI_ACP_VERSION}"`,
     `npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent@${PI_VERSION} pi-acp@${PI_ACP_VERSION} 2>&1 | tail -3 || fail "npm install -g pi"`,
     `command -v pi >/dev/null && command -v pi-acp >/dev/null || fail "pi is not on PATH after the install"`,
+    `say "installing @qwen-code/qwen-code@${QWEN_CODE_VERSION}"`,
+    `npm install -g --no-fund --no-audit @qwen-code/qwen-code@${QWEN_CODE_VERSION} 2>&1 | tail -3 && command -v qwen >/dev/null || fail "npm install -g qwen-code (ADR-0083)"`,
     // GitHub Copilot CLI (ADR-0082); its first start unpacks the application files into ~/Library/Caches/copilot, done here once.
     `npm install -g --no-fund --no-audit @github/copilot@${COPILOT_VERSION} 2>&1 | tail -3 || fail "npm install -g @github/copilot"`,
     `command -v copilot >/dev/null && say "copilot $(COPILOT_AUTO_UPDATE=false copilot --no-auto-update --version 2>/dev/null | head -1)" || fail "copilot is not on PATH after the install"`,
@@ -801,7 +804,7 @@ function provisionScript(): string {
     "fi",
     `ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/cursor-agent" && ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/agent"`,
     ...archiveToolLines(),
-    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx copilot vibe-acp grok gemini in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
+    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx copilot vibe-acp grok gemini qwen in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
     "echo SBX_PROVISIONED",
     // Detached, after this SSH session has returned: `nohup` could not run the `sudo` function above.
     `(sleep 3; printf '%s\\n' "$SBX_PW" | command sudo -S -p '' shutdown -h now) </dev/null >/dev/null 2>&1 &`,

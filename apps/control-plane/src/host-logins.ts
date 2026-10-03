@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describeCopilotLogin, type Provider } from "@sessionboxer/protocol";
 import { describeGeminiLogin, normalizeGeminiLogin } from "./gemini-login.js";
 import { describeKimiLogin, normalizeKimiLogin } from "./kimi-login.js";
+import { describeQwenLogin, normalizeQwenOauthJson } from "./qwen-login.js";
 import { describeVibeLogin, normalizeVibeLogin } from "./vibe-login.js";
 import { describeGrokLogin, normalizeGrokLogin } from "./grok-login.js";
 import {
@@ -126,6 +127,18 @@ export function readHostLogin(provider: Provider, home = homedir()): { account: 
       const what = describeGeminiLogin(login);
       if (!login || !what) return null;
       return { account: what.email ?? "signed in with Gemini CLI's Login with Google", login };
+    }
+    case "qwen": {
+      const text = readFirst([join(process.env.QWEN_HOME?.trim() || join(home, ".qwen"), "oauth_creds.json")]);
+      if (text === null) return null;
+      let login: string;
+      try {
+        login = normalizeQwenOauthJson(text);
+      } catch {
+        return null;
+      }
+      if (!login || !describeQwenLogin(login, "")) return null;
+      return { account: "signed in with Qwen OAuth", login };
     }
     case "vibe": {
       // Vibe keeps the key in the OS keyring when there is one; `~/.vibe/.env` is where it lands otherwise.

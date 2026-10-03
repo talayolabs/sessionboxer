@@ -375,6 +375,18 @@ RUN for i in 1 2 3 4 5; do \
     && npm cache clean --force \
     && HOME=/tmp gemini --version | grep -qx "${GEMINI_CLI_VERSION}" && rm -rf /tmp/.gemini
 
+# Qwen Code (ADR-0083): Alibaba's fork of Gemini CLI, whose ACP server is `qwen --acp`. The npm
+# tarball is pinned by version and checked against its sha256 before `npm install -g` (root-owned,
+# so a Sandbox runs the pinned version); its update check is off in ~/.qwen/settings.json (below).
+ARG QWEN_CODE_VERSION=0.24.7
+ARG QWEN_CODE_SHA256=64430248ab6e996fc0c6b9a0789361f868c3b97f83d16210e0424e51dffc5fa9
+RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/qwen-code.tgz \
+      "https://registry.npmjs.org/@qwen-code/qwen-code/-/qwen-code-${QWEN_CODE_VERSION}.tgz" \
+    && echo "${QWEN_CODE_SHA256}  /tmp/qwen-code.tgz" | sha256sum -c - \
+    && npm install -g /tmp/qwen-code.tgz \
+    && rm /tmp/qwen-code.tgz && npm cache clean --force \
+    && HOME=/tmp qwen --version && rm -rf /tmp/.qwen
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -490,6 +502,7 @@ COPY --chown=agent:agent images/sandbox/fx-settings.json /home/agent/.fx/setting
 COPY --chown=agent:agent images/sandbox/copilot-settings.json /home/agent/.copilot/settings.json
 COPY --chown=agent:agent images/sandbox/grok-config.toml /home/agent/.grok/config.toml
 COPY --chown=agent:agent images/sandbox/gemini-settings.json /home/agent/.gemini/settings.json
+COPY --chown=agent:agent images/sandbox/qwen-settings.json /home/agent/.qwen/settings.json
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -511,6 +524,7 @@ COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.copilot
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.vibe/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.grok/rules/sandbox-briefing.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.gemini/GEMINI.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.qwen/QWEN.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md

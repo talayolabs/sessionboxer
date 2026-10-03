@@ -31,6 +31,7 @@ import {
   DaemonFxAuthParams,
   DaemonKimiAuthParams,
   DaemonCopilotAuthParams,
+  DaemonQwenAuthParams,
   DaemonVibeAuthParams,
   DaemonGrokAuthParams,
   DaemonGeminiAuthParams,
@@ -344,6 +345,19 @@ const fxAuth: Record<FxLoginKind, AuthFile> | null =
  * The Sandbox is the isolation: fx runs in its `full-access` permission mode (ADR-0077; the Daemon
  * still answers any permission request it sends). Auto-upgrade is off: the image pins the version.
  */
+/**
+ * Qwen Code's login (ADR-0083): `oauth_creds.json` on tmpfs behind the path it reads (a refresh rewrites it and is
+ * reported back) and/or an OpenAI-compatible endpoint in the Agent's environment; the rest of `~/.qwen` stays on disk for `session/load`.
+ */
+const qwenHome = env.QWEN_HOME ?? `${home}/.qwen`;
+const qwenAuthPath = `${qwenHome}/oauth_creds.json`;
+const qwenAuth =
+  provider === "qwen"
+    ? new AuthFile("qwen", qwenAuthPath, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.qwenAuthChanged, { authJson }))
+    : null;
+/** Where Qwen Code sends OpenAI-compatible requests when the stored keys name no `OPENAI_BASE_URL` (it refuses to start without one). */
+const QWEN_DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+
 const FX_AGENT_ENV = { FX_PERMISSION_MODE: "full-access", FX_AUTO_UPGRADE: "0", FX_NO_OPEN_BROWSER: "1" };
 
 /** Copilot's login (ADR-0082): the token into the Agent's environment, a pasted `config.json` on tmpfs as well. */
@@ -354,7 +368,7 @@ const grokLogin = provider === "grok" ? new GrokLogin(grokHome, tmpfsDir, log, (
 
 const geminiLogin = provider === "gemini" ? new GeminiLogin(`${home}/.gemini`, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.geminiAuthChanged, { authJson })) : null;
 
-const guestProviderFilesList = guestProviderFiles(provider, guest, home, { codexHome, cursorAuthPath, piAgentDir, fxAuthPaths, vibeHome, grokHome, opencodeAuthPath, copilotHome });
+const guestProviderFilesList = guestProviderFiles(provider, guest, home, { codexHome, cursorAuthPath, piAgentDir, fxAuthPaths, qwenHome, qwenAuthPath, vibeHome, grokHome, opencodeAuthPath, copilotHome });
 /** The Provider's environment the Control Plane set on this Sandbox, for the Agent in the VM. */
 const guestProviderEnv: Record<string, string> = Object.fromEntries(
   PROVIDER_ENV_KEYS[provider].flatMap((k) => (env[k] !== undefined && env[k] !== "" ? [[k, env[k]]] : [])),
@@ -391,6 +405,20 @@ function setOpenCodeLogin(authJson: string): boolean {
   if (!opencodeAuth) throw new DaemonError("invalid_params", "this Sandbox does not run OpenCode");
   opencodeAuth.set(authJson);
   return agent.setAgentEnv(authJson === "" ? {} : { SESSIONBOXER_OPENCODE_LOGIN: "auth-json" });
+}
+
+/**
+ * Puts a Qwen Code login in place: the OAuth file on tmpfs and/or the endpoint variables in the Agent's
+ * environment. Qwen Code picks its auth type from that environment — `QWEN_OAUTH` for the login file,
+ * the three `OPENAI_*` for an endpoint — and the login file wins when both are there.
+ */
+function setQwenLogin(authJson: string, apiKeys: Record<string, string>): boolean {
+  if (!qwenAuth) throw new DaemonError("invalid_params", "this Sandbox does not run Qwen Code");
+  qwenAuth.set(authJson);
+  const names = Object.keys(apiKeys);
+  if (names.length > 0) log(`Qwen Code endpoint handed to the Agent process as ${names.join(", ")}`);
+  const endpoint = names.length > 0 ? { OPENAI_BASE_URL: QWEN_DEFAULT_OPENAI_BASE_URL, ...apiKeys } : {};
+  return agent.setAgentEnv({ ...endpoint, ...(authJson === "" ? {} : { QWEN_OAUTH: "1" }) });
 }
 
 /** Puts an fx login in place: one login file on tmpfs (the other two removed) or the API key in the Agent's environment (on top of `FX_AGENT_ENV`). */
@@ -562,6 +590,8 @@ const agent = new AgentManager(
     ...(provider === "vibe" ? { env: VIBE_AGENT_ENV, fullAccessModeIds: ["auto-approve"] } : {}),
     ...(provider === "grok" ? { env: GROK_AGENT_ENV } : {}),
     ...(provider === "gemini" ? { env: GEMINI_AGENT_ENV, fullAccessModeIds: ["yolo"] } : {}),
+    // Qwen Code starts in `yolo` (its flag in `ACP_COMMANDS`); the mode is pinned so a settings file cannot move it back.
+    ...(provider === "qwen" ? { fullAccessModeIds: ["yolo"] } : {}),
     builtinMcps,
     ...(mcpTee ? { mcpTee } : {}),
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
@@ -740,6 +770,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.copilotAuthSet: {
       if (!copilotLogin) throw new DaemonError("invalid_params", "this Sandbox does not run GitHub Copilot");
       return { applied: agent.setAgentEnv(copilotLogin.apply(DaemonCopilotAuthParams.parse(params).login)) };
+    }
+    case DAEMON_METHODS.qwenAuthSet: {
+      const p = DaemonQwenAuthParams.parse(params);
+      return { applied: setQwenLogin(p.authJson, p.apiKeys) };
     }
     case DAEMON_METHODS.vibeAuthSet: {
       if (!vibeLogin) throw new DaemonError("invalid_params", "this Sandbox does not run Mistral Vibe");

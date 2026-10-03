@@ -13,6 +13,7 @@ import {
   type NewSessionRequest,
   type NewSessionResponse,
   type PromptCapabilities,
+  type PromptResponse,
   type SessionConfigOption,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
@@ -34,7 +35,7 @@ import type {
 import { fingerprint } from "@sessionboxer/protocol/node-telemetry";
 import { caEnv } from "./ca-env.js";
 import { acpMcpServers, type BuiltinMcp, type McpTee } from "./mcp-config.js";
-import { contextOccupancy, modelOption, modelWindows, otherOptions, sessionOptions, toModelOptions, turnUsage } from "./agent-options.js";
+import { chunkUsage, contextOccupancy, modelOption, modelWindows, otherOptions, sessionOptions, toModelOptions, turnUsage } from "./agent-options.js";
 import { promptBlocks } from "./prompt-blocks.js";
 
 /**
@@ -172,6 +173,8 @@ export class AgentManager {
   private creatingOneShots = 0;
   /** A `contextReport()` is running on the main session: its updates are collected here, not emitted. */
   private reportSink: ((update: SessionUpdate) => void) | null = null;
+  /** The token counts the last `agent_message_chunk` of the turn carried in its `_meta.usage` (Qwen Code reports them there, not in the prompt response). */
+  private chunkUsage: PromptResponse["usage"] | undefined;
   get reporting(): boolean {
     return this.reportSink !== null;
   }
@@ -485,6 +488,8 @@ export class AgentManager {
    * Returns whether it was applied right away.
    */
   setAgentEnv(env: Record<string, string>): boolean {
+    // A turn waiting for the Agent's first start (a prompt that overtook the login after Resume) has
+    // nothing to restart: the environment goes into that start instead of waiting for the turn to end.
     if (this.turnActive && (this.child || this.starting)) {
       this.agentEnvPending = env;
       this.events.onStateChange();
@@ -658,6 +663,7 @@ export class AgentManager {
           return;
         }
         if (update.sessionUpdate === "usage_update") this.usageUpdateSeen = true;
+        this.chunkUsage = chunkUsage(update) ?? this.chunkUsage;
         this.events.onUpdate(ctx.params.update);
       });
     const conn = app.connect(stream);
@@ -768,6 +774,7 @@ export class AgentManager {
     if (this.reportSink) throw new DaemonError("conflict", "the Agent is reporting its context usage; retry in a moment");
     if (this.branching) throw new DaemonError("conflict", "the conversation is being branched; retry in a moment");
     this.turnActive = true;
+    this.chunkUsage = undefined;
     this.events.onStateChange();
     try {
       if (this.mcpServers === null && !this.child && !this.starting) {
@@ -798,7 +805,7 @@ export class AgentManager {
         prompt: [{ type: "text", text: promptText }, ...built.blocks],
       });
       await this.reportUsage();
-      const usage = turnUsage(result);
+      const usage = turnUsage(result) ?? turnUsage({ usage: this.chunkUsage });
       // No `usage_update` from the Agent but the turn's tokens and the model's window: derive the gauge (Grok Build).
       const modelId = result._meta?.modelId;
       const size = this.modelWindows[typeof modelId === "string" ? modelId : (this.currentModel ?? "")];

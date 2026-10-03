@@ -208,6 +208,17 @@ const GEMINI_LIMIT = [
   /daily (?:request )?(?:limit|quota)/i,
   /usage[_ ]limit/i,
 ];
+/** Qwen Code relays its endpoint's refusal: DashScope's quota throttling for Qwen OAuth, an OpenAI-compatible server's 429. */
+const QWEN_LIMIT = [
+  /quota[_ ]exceeded/i,
+  /insufficient[_ ](?:quota|balance|credits?)/i,
+  /throttling\.(?:rate)?quota/i,
+  /allocated quota exceeded/i,
+  /rate[_ ]limit/i,
+  /too many requests/i,
+  /usage[_ ]limit/i,
+  /exceeded your (?:current )?quota/i,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -215,7 +226,7 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi" | "copilot" | "vibe" | "grok" | "gemini", message: string, now: Date = new Date()): UsageLimitHit | null {
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi" | "copilot" | "vibe" | "grok" | "gemini" | "qwen", message: string, now: Date = new Date()): UsageLimitHit | null {
   const patterns =
     provider === "claude-code"
       ? CLAUDE_LIMIT
@@ -237,7 +248,9 @@ export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" |
                       ? GROK_LIMIT
                       : provider === "gemini"
                         ? GEMINI_LIMIT
-                        : DEVIN_LIMIT;
+                        : provider === "qwen"
+                          ? QWEN_LIMIT
+                          : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

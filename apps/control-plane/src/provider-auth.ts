@@ -16,6 +16,7 @@ import {
   piAuthNewer,
 } from "./config.js";
 import { kimiAuthNewer, kimiLogin } from "./kimi-login.js";
+import { qwenApiKeyEnv, qwenApiKeys, qwenAuthNewer, qwenOauthJson } from "./qwen-login.js";
 import { vibeAuthNewer, vibeLogin } from "./vibe-login.js";
 import { grokAuthNewer, grokLogin } from "./grok-login.js";
 import { geminiAuthNewer, geminiLogin } from "./gemini-login.js";
@@ -23,10 +24,10 @@ import { geminiAuthNewer, geminiLogin } from "./gemini-login.js";
 /**
  * The Agents whose login the Control Plane hands to the Sandbox Daemon and takes back when the CLI
  * refreshes its tokens (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075, OpenCode ADR-0076, fx
- * ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085, Grok Build ADR-0087, Gemini CLI ADR-0087). Claude Code and Devin get their credentials as environment at
+ * ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085, Grok Build ADR-0087, Gemini CLI ADR-0087, Qwen Code ADR-0083). Claude Code and Devin get their credentials as environment at
  * container start instead.
  */
-export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini"] as const;
+export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini", "qwen"] as const;
 export type SyncedAuthProvider = (typeof SYNCED_AUTH_PROVIDERS)[number];
 
 /** How one Agent's login travels between the stored Settings and its Sandbox. */
@@ -148,6 +149,16 @@ export const PROVIDER_AUTH: Record<SyncedAuthProvider, ProviderAuthSync> = {
     newer: geminiAuthNewer,
     storeUpdate: (authJson) => ({ providerSecrets: { gemini: { GEMINI_LOGIN: authJson } } }),
     changedBy: (update) => update.providerSecrets?.gemini?.GEMINI_LOGIN !== undefined,
+    tolerateMissingMethod: false,
+  },
+  qwen: {
+    setMethod: DAEMON_METHODS.qwenAuthSet,
+    changedMethod: DAEMON_METHODS.qwenAuthChanged,
+    params: (settings) => ({ authJson: qwenOauthJson(settings), apiKeys: qwenApiKeyEnv(qwenApiKeys(settings)) }),
+    stored: qwenOauthJson,
+    newer: qwenAuthNewer,
+    storeUpdate: (authJson) => ({ providerSecrets: { qwen: { QWEN_OAUTH_JSON: authJson } } }),
+    changedBy: (update) => update.providerSecrets?.qwen?.QWEN_OAUTH_JSON !== undefined || update.providerSecrets?.qwen?.QWEN_API_KEYS !== undefined,
     tolerateMissingMethod: false,
   },
 };

@@ -22,7 +22,7 @@ import { Automation, AutomationRun } from "./automations.js";
 import { PrFollow } from "./followed-prs.js";
 import { FollowedPr, PrEvent } from "./known-repositories.js";
 import { RemoteAccess } from "./auth.js";
-import { WindowsBaseStatus, MacosBaseStatus } from "./speech.js";
+import { WindowsBaseStatus, MacosBaseStatus } from "./vm-bases.js";
 
 export type { SessionUpdate, StopReason, ContentBlock, ToolCallContent, ToolCallLocation } from "@agentclientprotocol/sdk";
 

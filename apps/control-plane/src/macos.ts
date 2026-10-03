@@ -115,6 +115,10 @@ export class MacosVms extends QemuVms<BaseRecord, MacosBaseStatus> {
   readonly guestLabel = "macOS VM";
   protected installing: Install | null = null;
 
+  protected isInstalling(): boolean {
+    return this.installing !== null;
+  }
+
   constructor(
     private readonly sandboxDocker: SandboxDocker,
     settings: () => Settings,

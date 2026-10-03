@@ -65,6 +65,10 @@ export class WindowsVms extends QemuVms<BaseRecord, WindowsBaseStatus> {
   }
   protected installing: { startedAt: string; version: string; diskGb: number; log: string[]; container: Docker.Container } | null = null;
 
+  protected isInstalling(): boolean {
+    return this.installing !== null;
+  }
+
   constructor(
     docker: Docker,
     settings: () => Settings,

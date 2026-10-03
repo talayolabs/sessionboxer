@@ -13,7 +13,6 @@ import {
   parseProcedureSkill,
   procedureSkillMarkdown,
   type ProcedureDef,
-  type PublicMcpKeyValue,
   type PublicUtilityDef,
   type UtilityEnvironment,
   type UtilityGroup,
@@ -466,7 +465,23 @@ function UtilityForm({
         Read-only: the Agent is told to look, not change (MCP presets pass their read-only flag)
       </label>
 
-      <CredentialList items={u.credentials} onChange={(credentials) => onChange({ credentials })} />
+      <KeyValueList
+        label={
+          <>
+            Credentials — <code>{"${util:<name>.<credential>}"}</code> for the Agent
+          </>
+        }
+        labelTitle="Stored with the Utility, never shown again here, never in the transcript; the Agent uses them by name"
+        items={u.credentials}
+        namePlaceholder="password"
+        nameOptions={UTILITY_CREDENTIAL_HINTS}
+        onChange={(credentials) => onChange({ credentials })}
+        valuePlaceholder={(kv) => (kv.name === "ssh_key" ? "-----BEGIN OPENSSH PRIVATE KEY-----" : kv.name === "totp" ? "base32 secret from the 2FA setup" : "value")}
+        multiline={(kv) => kv.name === "ssh_key"}
+        secretTitle="Secret: write-only here, kept out of snapshots and the transcript"
+        addLabel="Add credential"
+        newItemSecret
+      />
 
       <Facet
         title="Web UI"
@@ -635,59 +650,6 @@ function Facet({ title, on, onToggle, hint, children }: { title: string; on: boo
         <span className="muted util-facet-hint">{hint}</span>
       </label>
       {on && <div className="util-facet-body">{children}</div>}
-    </div>
-  );
-}
-
-const CREDENTIAL_NAMES = Object.keys(UTILITY_CREDENTIAL_HINTS);
-
-/** The Utility's credentials: known names get their hint; secrets are write-only. */
-function CredentialList({ items, onChange }: { items: PublicMcpKeyValue[]; onChange: (items: PublicMcpKeyValue[]) => void }) {
-  const set = (i: number, patch: Partial<PublicMcpKeyValue>) => onChange(items.map((kv, j) => (j === i ? { ...kv, ...patch } : kv)));
-  return (
-    <div className="kv">
-      <span className="muted" title="Stored with the Utility, never shown again here, never in the transcript; the Agent uses them by name">
-        Credentials — <code>{"${util:<name>.<credential>}"}</code> for the Agent
-      </span>
-      {items.map((kv, i) => {
-        const stored = kv.secret && kv.value === null;
-        const multiline = kv.name === "ssh_key";
-        return (
-          <div key={i} className="kv-row">
-            <input list="util-credential-names" value={kv.name} placeholder="password" title={UTILITY_CREDENTIAL_HINTS[kv.name]} onChange={(e) => set(i, { name: e.target.value })} />
-            {multiline && !stored ? (
-              <textarea rows={3} value={kv.value ?? ""} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellCheck={false} onChange={(e) => set(i, { value: e.target.value })} />
-            ) : (
-              <input
-                type={kv.secret ? "password" : "text"}
-                autoComplete="off"
-                value={kv.value ?? ""}
-                placeholder={stored ? "(set; leave empty to keep)" : kv.name === "totp" ? "base32 secret from the 2FA setup" : "value"}
-                onChange={(e) => set(i, { value: e.target.value === "" && kv.secret && stored ? null : e.target.value })}
-              />
-            )}
-            <label className="check" title="Secret: write-only here, kept out of snapshots and the transcript">
-              <input type="checkbox" checked={kv.secret} onChange={(e) => set(i, { secret: e.target.checked, ...(e.target.checked ? {} : { value: kv.value ?? "" }) })} />
-              secret
-            </label>
-            <button type="button" className="small danger" onClick={() => onChange(items.filter((_, j) => j !== i))} title="Remove">
-              ×
-            </button>
-          </div>
-        );
-      })}
-      <datalist id="util-credential-names">
-        {CREDENTIAL_NAMES.map((n) => (
-          <option key={n} value={n}>
-            {UTILITY_CREDENTIAL_HINTS[n]}
-          </option>
-        ))}
-      </datalist>
-      <div>
-        <button type="button" className="small" onClick={() => onChange([...items, { name: "", value: "", secret: true }])}>
-          Add credential
-        </button>
-      </div>
     </div>
   );
 }

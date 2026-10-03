@@ -138,7 +138,7 @@ registerTool(
     inputSchema: { text: z.string().min(1) },
   },
   async ({ text }) => {
-    const filled = fillUtilityPlaceholders(text);
+    const filled = await fillUtilityPlaceholders(text);
     await typeText(display, hand(), filled);
     if (hasUtilityPlaceholder(text)) return okText(filled === text ? "OK (a ${util:…} placeholder was typed as written: no such Utility or credential is enabled)" : "OK (Utility credentials filled in)");
     return okText();

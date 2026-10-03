@@ -40,7 +40,8 @@ export abstract class QemuVms<Base extends QemuBaseRecord, Status> implements Gu
   protected readonly host: VmHost;
   protected base: Base | null = null;
   /** The base install that is running, with whatever the platform tracks about it; null when none is. */
-  protected abstract readonly installing: object | null;
+  /** Whether a base install is running (the subclass keeps its own record of it). */
+  protected abstract isInstalling(): boolean;
   protected lastError: string | null = null;
   protected errorLog: string[] = [];
 
@@ -79,7 +80,7 @@ export abstract class QemuVms<Base extends QemuBaseRecord, Status> implements Gu
 
   /** Deletes the base disk (no Session may build on it). */
   async removeBase(): Promise<Status> {
-    if (this.installing) throw new HttpError(409, `The ${this.platform.name} base disk is installing; cancel that first.`);
+    if (this.isInstalling()) throw new HttpError(409, `The ${this.platform.name} base disk is installing; cancel that first.`);
     this.assertBaseUnused("first");
     await this.host.removeContainer(this.platform.installContainer);
     await this.host.removeVolume(this.platform.baseVolume);

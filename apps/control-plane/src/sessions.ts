@@ -205,6 +205,56 @@ export interface TerminalSink {
   detached: (reason: string) => void;
 }
 
+type NewSessionDefaults = Pick<
+  Session,
+  | "containerId"
+  | "error"
+  | "queueRunning"
+  | "diskBytes"
+  | "mcpPending"
+  | "modelPending"
+  | "optionsPending"
+  | "availableOptions"
+  | "inspectLlmPending"
+  | "snapshotBytes"
+  | "snapshotCount"
+  | "branches"
+  | "activeBranchId"
+  | "usage"
+  | "usb"
+  | "createdBy"
+  | "pinned"
+  | "folderId"
+  | "createdAt"
+  | "updatedAt"
+>;
+
+/** What every new Session row starts with, after what the request decides; a fork overrides `queueRunning` and `folderId`. */
+function newSessionDefaults(now: string, createdBy: string | null | undefined): NewSessionDefaults {
+  return {
+    containerId: null,
+    error: null,
+    queueRunning: false,
+    diskBytes: null,
+    mcpPending: false,
+    modelPending: false,
+    optionsPending: false,
+    availableOptions: [],
+    inspectLlmPending: false,
+    snapshotBytes: 0,
+    snapshotCount: 0,
+    branches: [],
+    activeBranchId: ROOT_BRANCH_ID,
+    usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
+    usb: null,
+    createdBy: createdBy ? { sessionId: createdBy } : null,
+    pinned: false,
+    folderId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export class SessionManager {
   private readonly clients = new Map<string, DaemonClient>();
   private readonly terminalSinks = new Map<string, Set<TerminalSink>>();
@@ -1202,26 +1252,7 @@ export class SessionManager {
           gitIdentity: resolveGitIdentity(settings, input.sandbox?.gitIdentity),
         },
       },
-      containerId: null,
-      error: null,
-      queueRunning: false,
-      diskBytes: null,
-      mcpPending: false,
-      modelPending: false,
-      optionsPending: false,
-      availableOptions: [],
-      inspectLlmPending: false,
-      snapshotBytes: 0,
-      snapshotCount: 0,
-      branches: [],
-      activeBranchId: ROOT_BRANCH_ID,
-      usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
-      usb: null,
-      createdBy: createdBy ? { sessionId: createdBy } : null,
-      pinned: false,
-      folderId: null,
-      createdAt: now,
-      updatedAt: now,
+      ...newSessionDefaults(now, createdBy),
     };
     this.db.insertSession(session);
     this.broadcast({ type: "session", session });
@@ -1397,27 +1428,10 @@ export class SessionManager {
       // The Snapshot holds the origin's directories; their records come along (fresh ids, state re-read on connect).
       repos: origin.repos.map((r) => ({ ...r, id: randomBytes(4).toString("hex"), git: null })),
       settings: this.forkSettings(origin, req.settings, provider, settings, dockerMode),
-      containerId: null,
-      error: null,
+      ...newSessionDefaults(now, createdBy),
       queueRunning: req.savedMessages.length > 0,
-      diskBytes: null,
-      mcpPending: false,
-      modelPending: false,
-      optionsPending: false,
-      availableOptions: [],
-      inspectLlmPending: false,
-      snapshotBytes: 0,
-      snapshotCount: 0,
-      branches: [],
-      activeBranchId: ROOT_BRANCH_ID,
-      usage: { windows: [], updatedAt: null, limit: null, autoContinue: false },
-      usb: null,
-      createdBy: createdBy ? { sessionId: createdBy } : null,
-      pinned: false,
       // Forks stay filed next to their origin; the pin does not carry (ADR-0074).
       folderId: origin.folderId,
-      createdAt: now,
-      updatedAt: now,
     };
   }
 

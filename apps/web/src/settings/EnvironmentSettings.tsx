@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   DEFAULT_DOCKER_ADDRESS_POOL,
   DOCKER_ADDRESS_POOL_PATTERN,
@@ -13,6 +12,7 @@ import {
 import { api } from "../api";
 import { formatMb } from "../format";
 import { MacosBase } from "../MacosBase";
+import { useBaseDiskAction } from "../useBaseDiskAction";
 import { DockerModeNote } from "../SessionSettingsForm";
 import { Caption, Select } from "../ui";
 import { useSectionState, type Setter } from "./shared";
@@ -30,22 +30,8 @@ function WindowsBase({
   /** Edition or disk size changed in the form but not saved yet: installing now would use the saved ones. */
   dirty: boolean;
 }) {
-  const [error, setError] = useState<string | null>(null);
-  const [working, setWorking] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const { error, working, confirmDelete, setConfirmDelete, act } = useBaseDiskAction<WindowsBaseStatus>(onStatus);
   const availability = settings.environments["qemu-windows"];
-  const act = async (call: () => Promise<WindowsBaseStatus>) => {
-    setWorking(true);
-    setError(null);
-    try {
-      onStatus(await call());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setWorking(false);
-      setConfirmDelete(false);
-    }
-  };
   if (!status) return <p className="muted">Checking the base disk…</p>;
   const edition = WINDOWS_VERSIONS.find((v) => v.code === status.version)?.label ?? status.version;
   const started = status.startedAt ? new Date(status.startedAt) : null;

@@ -4,6 +4,7 @@ import { MACOS_VERSIONS, type MacosBaseStatus, type PublicSettings } from "@sess
 import { api } from "./api";
 import { formatMb } from "./format";
 import { currentTheme } from "./theme";
+import { useBaseDiskAction } from "./useBaseDiskAction";
 
 /** The VM's screen while the base is installed by hand (ADR-0059): `GET /api/macos/screen`, a noVNC websocket. */
 export function screenUrl(): string {
@@ -64,23 +65,9 @@ export function MacosBase({
   /** Release or disk size changed in the form but not saved yet: installing now would use the saved ones. */
   dirty: boolean;
 }) {
-  const [error, setError] = useState<string | null>(null);
-  const [working, setWorking] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const { error, working, confirmDelete, setConfirmDelete, act } = useBaseDiskAction<MacosBaseStatus>(onStatus);
   const [showPassword, setShowPassword] = useState(false);
   const availability = settings.environments["qemu-macos"];
-  const act = async (call: () => Promise<MacosBaseStatus>) => {
-    setWorking(true);
-    setError(null);
-    try {
-      onStatus(await call());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setWorking(false);
-      setConfirmDelete(false);
-    }
-  };
   if (!status) return <p className="muted">Checking the base disk…</p>;
   const release = MACOS_VERSIONS.find((v) => v.code === status.version)?.label ?? status.version;
   const started = status.startedAt ? new Date(status.startedAt) : null;

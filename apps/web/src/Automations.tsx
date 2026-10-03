@@ -22,9 +22,9 @@ import {
   type ReviewVerdict,
   type ScheduleMissedPolicy,
   type Session,
-  type SessionSettingsInput,
 } from "@sessionboxer/protocol";
 import cronstrue from "cronstrue";
+import { buildTrigger, buildAction, clamp, draftFromInput, getTriggerError, getActionError, getFormError } from "./automations/form-model";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { formatDuration } from "./E2e";
@@ -433,7 +433,7 @@ function AutomationForm({
   const [provider, setProvider] = useState<Provider>(newAction?.provider ?? reviewAction?.provider ?? qaAction?.provider ?? "claude-code");
   const [repos, setRepos] = useState<RepoDraft[]>(() => specsToDrafts(newAction?.repos ?? []));
   const [draft, setDraft] = useState<SessionSettingsDraft>(() =>
-    newAction ? { ...draftFromInput(newAction.settings, settings), snapshotId: newAction.snapshotId ?? null } : draftFromDefaults(settings),
+    newAction ? { ...draftFromInput(newAction.settings, settings, draftFromDefaults), snapshotId: newAction.snapshotId ?? null } : draftFromDefaults(settings),
   );
   const [title, setTitle] = useState(newAction?.title ?? "");
   const [prompt, setPrompt] = useState(newAction?.prompt ?? "");
@@ -487,72 +487,18 @@ function AutomationForm({
     }
   }, [isPr, actionType, sessionId, sessions]);
 
-  const triggerError =
-    triggerType === "schedule"
-      ? preview && !preview.ok
-        ? preview.error
-        : null
-      : triggerType === "pr_event"
-        ? prEvents.length === 0
-          ? "Pick at least one event."
-          : follows.length === 0 && prFollows.length === 0
-            ? "Follow a repository below, or your PRs on the Pull requests page."
-            : null
-        : null;
+  const triggerValues = { triggerType, cron, timezone, missedRun, prFollows, prEvents, filters };
+  const actionValues = { actionType, sessionId, text, provider, repos, draft, title, prompt, stopAfter, checkoutPrHead, notifyText, instructions, maxVerdict, deltaOnly, notifyOn, publish, commentOnSkip, maxMinutes };
+  const triggerError = getTriggerError(triggerValues, preview, follows);
   const repoError = draftsError(repos);
   const targetSession = sessionId === "attached" ? null : (sessions.find((s) => s.id === sessionId) ?? null);
-  const actionError =
-    actionType === "prompt"
-      ? sessionId !== "attached" && !targetSession
-        ? "Pick a Session."
-        : text.trim() === ""
-          ? "Write the prompt."
-          : null
-      : actionType === "new_session"
-        ? prompt.trim() === ""
-          ? "Write the first prompt."
-          : repoError
-        : null;
-  const formError = name.trim() === "" ? "Give the automation a name." : (triggerError ?? actionError);
-
-  const buildTrigger = (): AutomationTrigger =>
-    triggerType === "schedule"
-      ? { type: "schedule", cron: cron.trim(), timezone: timezone.trim(), missedRun }
-      : triggerType === "pr_event"
-        ? { type: "pr_event", follows: prFollows, events: prEvents, filters: cleanFilters(filters) }
-        : { type: "manual" };
-
-  const buildAction = (): AutomationAction => {
-    switch (actionType) {
-      case "prompt":
-        return { type: "prompt", sessionId, text: text.trim() };
-      case "new_session":
-        return {
-          type: "new_session",
-          provider,
-          repos: draft.snapshotId ? [] : draftsToSpecs(repos),
-          ...(draft.snapshotId ? { snapshotId: draft.snapshotId } : {}),
-          settings: draftToInput(draft),
-          prompt: prompt.trim(),
-          stopAfter,
-          checkoutPrHead,
-          ...(title.trim() ? { title: title.trim() } : {}),
-        };
-      case "auto_review":
-        return { type: "auto_review", provider, maxVerdict, deltaOnly, notifyOn, stopAfter, ...(instructions.trim() ? { instructions: instructions.trim() } : {}) };
-      case "auto_qa":
-        return { type: "auto_qa", provider, publish, commentOnSkip, maxMinutes, stopAfter, ...(instructions.trim() ? { instructions: instructions.trim() } : {}) };
-      case "attach":
-        return { type: "attach" };
-      case "notify":
-        return { type: "notify", ...(notifyText.trim() ? { text: notifyText.trim() } : {}) };
-    }
-  };
+  const actionError = getActionError(actionValues, targetSession, repoError);
+  const formError = getFormError(name, triggerError, actionError);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (formError) return;
-    const req: CreateAutomationRequest = { name: name.trim(), enabled, trigger: buildTrigger(), action: buildAction(), limits };
+    const req: CreateAutomationRequest = { name: name.trim(), enabled, trigger: buildTrigger(triggerValues), action: buildAction(actionValues, { draftsToSpecs, draftToInput }), limits };
     setBusy(true);
     void run(async () => {
       if (automation) await api.updateAutomation(automation.id, req);
@@ -1019,49 +965,4 @@ function AutomationForm({
       </div>
     </form>
   );
-}
-
-function clamp(raw: string, min: number, max: number, fallback: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && raw !== "" ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
-}
-
-/** Empty optional filters are left out rather than sent as "". */
-function cleanFilters(f: PrEventFilters): PrEventFilters {
-  return {
-    drafts: f.drafts,
-    forks: f.forks,
-    authors: f.authors,
-    includeOwn: f.includeOwn,
-    ...(f.authorLogins && f.authorLogins.length > 0 ? { authorLogins: f.authorLogins } : {}),
-    ...(f.reviewers && f.reviewers.length > 0 ? { reviewers: f.reviewers } : {}),
-    ...(f.baseRef?.trim() ? { baseRef: f.baseRef.trim() } : {}),
-    ...(f.titleMatch?.trim() ? { titleMatch: f.titleMatch.trim() } : {}),
-    ...(f.labels && f.labels.length > 0 ? { labels: f.labels } : {}),
-  };
-}
-
-/** A stored template's settings back into the form; omitted parts follow the current defaults. */
-function draftFromInput(input: SessionSettingsInput, settings: PublicSettings): SessionSettingsDraft {
-  const base = draftFromDefaults(settings);
-  return {
-    model: input.model ?? base.model,
-    options: input.options ?? base.options,
-    inspectLlm: input.inspectLlm ?? base.inspectLlm,
-    mcpEnabled: input.mcpEnabled ?? base.mcpEnabled,
-    utilitiesEnabled: input.utilitiesEnabled ?? base.utilitiesEnabled,
-    instructions: input.instructions ?? base.instructions,
-    autoSnapshot: input.autoSnapshot === undefined ? base.autoSnapshot : input.autoSnapshot,
-    snapshotKeep: input.snapshotKeep === undefined ? base.snapshotKeep : input.snapshotKeep,
-    e2eVerify: input.e2eVerify === undefined ? base.e2eVerify : input.e2eVerify,
-    agentTools: input.agentTools === undefined ? base.agentTools : input.agentTools,
-    approveCreate: input.approveCreate === undefined ? base.approveCreate : input.approveCreate,
-    environment: input.sandbox?.environment ?? base.environment,
-    snapshotId: base.snapshotId,
-    docker: input.sandbox?.docker ?? base.docker,
-    cpus: input.sandbox?.cpus === undefined ? base.cpus : input.sandbox.cpus,
-    memoryGb: input.sandbox?.memoryGb === undefined ? base.memoryGb : input.sandbox.memoryGb,
-    gitName: input.sandbox?.gitIdentity?.name ?? base.gitName,
-    gitEmail: input.sandbox?.gitIdentity?.email ?? base.gitEmail,
-  };
 }

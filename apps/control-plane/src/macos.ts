@@ -117,9 +117,11 @@ export class MacosVms implements GuestVms {
     private readonly saveSettings: (next: Settings) => void,
     private readonly countSessions: () => number,
     private readonly onStatus: (status: MacosBaseStatus) => void,
+    /** The Docker side of the VMs; the seam `scripts/guest-vms.test.mjs` puts a fake through. */
+    host?: VmHost,
   ) {
     this.docker = sandboxDocker.docker;
-    this.host = new VmHost(this.docker, "mac", MACOS_IMAGE, LABEL_MACOS, "macOS VMs");
+    this.host = host ?? new VmHost(this.docker, "mac", MACOS_IMAGE, LABEL_MACOS, "macOS VMs");
     if (existsSync(BASE_FILE)) {
       try {
         this.base = JSON.parse(readFileSync(BASE_FILE, "utf8")) as BaseRecord;

@@ -66,9 +66,11 @@ export class WindowsVms implements GuestVms {
     private readonly saveSettings: (next: Settings) => void,
     private readonly countSessions: () => number,
     private readonly onStatus: (status: WindowsBaseStatus) => void,
+    /** The Docker side of the VMs; the seam `scripts/guest-vms.test.mjs` puts a fake through. */
+    host?: VmHost,
   ) {
     this.docker = docker;
-    this.host = new VmHost(docker, "win", WINDOWS_IMAGE, LABEL_WINDOWS, "Windows VMs");
+    this.host = host ?? new VmHost(docker, "win", WINDOWS_IMAGE, LABEL_WINDOWS, "Windows VMs");
     if (existsSync(BASE_FILE)) {
       try {
         this.base = JSON.parse(readFileSync(BASE_FILE, "utf8")) as BaseRecord;

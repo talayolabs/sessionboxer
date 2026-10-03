@@ -22,6 +22,7 @@
     "test:daemon-errors": "tsc -b && node --test scripts/daemon-errors.test.mjs",
     "test:session-manager": "tsc -b && node --test scripts/session-manager.test.mjs",
     "test:automations": "tsc -b && node --test scripts/automations.test.mjs",
+    "test:guest-vms": "tsc -b && node --test scripts/guest-vms.test.mjs",
     "audit:tools": "python3 scripts/audit_tools.py",
     "clean": "tsc -b --clean",
     "build:image": "node scripts/build-image.mjs",

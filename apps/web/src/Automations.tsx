@@ -1,11 +1,6 @@
 import {
-  AUTOMATION_ACTION_LABELS,
   PR_EVENT_LABELS,
   PROVIDER_LABELS,
-  PROVIDERS,
-  PrEventType,
-  SCHEDULE_MISSED_POLICY_LABELS,
-  SCHEDULE_PREVIEW_COUNT,
   type Automation,
   type AutomationAction,
   type AutomationLimits,
@@ -13,25 +8,23 @@ import {
   type AutomationRunStatus,
   type AutomationTrigger,
   type CreateAutomationRequest,
-  type PrEventFilters,
-  type PrPeople,
-  type Provider,
   type ProviderModels,
   type ProviderOptions,
   type PublicSettings,
-  type ReviewVerdict,
-  type ScheduleMissedPolicy,
   type Session,
 } from "@sessionboxer/protocol";
-import cronstrue from "cronstrue";
-import { buildTrigger, buildAction, clamp, draftFromInput, getTriggerError, getActionError, getFormError } from "./automations/form-model";
-import { useEffect, useMemo, useState } from "react";
+import { describeCron, formatAt, VERDICT_LABELS } from "./automations/display";
+import { TriggerStep, useTriggerState } from "./automations/TriggerStep";
+import { ActionStep, useActionState } from "./automations/ActionStep";
+import { LimitsStep } from "./automations/LimitsStep";
+import { buildTrigger, buildAction, getTriggerError, getActionError, getFormError } from "./automations/form-model";
+import { useEffect, useState } from "react";
 import { api } from "./api";
 import { formatDuration } from "./E2e";
-import { FollowRepoInline } from "./FollowRepo";
-import { LoginList } from "./LoginList";
-import { RepoEditor, draftsError, draftsToSpecs, githubAccounts, specsToDrafts, type RepoDraft } from "./Repos";
-import { SessionSettingsForm, draftFromDefaults, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
+import { draftsError, draftsToSpecs } from "./Repos";
+import { draftToInput } from "./SessionSettingsForm";
+
+export { describeCron, formatAt } from "./automations/display";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -41,30 +34,10 @@ export interface FollowOption {
   label: string;
 }
 
-const CRON_EXAMPLES: Array<[string, string]> = [
-  ["0 9 * * 1-5", "weekdays at 09:00"],
-  ["0 */2 * * *", "every 2 hours"],
-  ["*/30 * * * *", "every 30 minutes"],
-  ["0 8 * * 1", "Mondays at 08:00"],
-  ["0 0 1 * *", "1st of the month at midnight"],
-  ["@hourly", "once an hour"],
-  ["@daily", "once a day at midnight"],
-];
-
 export const RUN_LABEL: Record<AutomationRunStatus, string> = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", skipped: "skipped" };
 const TRIGGER_LABEL: Record<AutomationRun["trigger"], string> = { cron: "on schedule", manual: "run now", catch_up: "catch-up", pr_event: "PR event" };
 const DEFAULT_LIMITS: AutomationLimits = { maxConcurrent: 2, maxRunsPerDay: 20, maxRunsPerPrPerDay: 4, debounceSeconds: 120, timeoutMinutes: 360 };
 const PR_ACTIONS: ReadonlyArray<AutomationAction["type"]> = ["auto_review", "auto_qa", "attach"];
-const VERDICT_LABELS: Record<ReviewVerdict, string> = { comment: "Comment only", request_changes: "May request changes", approve: "May approve" };
-
-function localTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-}
-
-function timeZones(): string[] {
-  const intl = Intl as typeof Intl & { supportedValuesOf?: (key: "timeZone") => string[] };
-  return intl.supportedValuesOf ? intl.supportedValuesOf("timeZone") : ["UTC"];
-}
 
 /** "in 2 h", "in 3 d", "5 min ago". */
 export function relativeTime(iso: string, now = Date.now()): string {
@@ -72,23 +45,6 @@ export function relativeTime(iso: string, now = Date.now()): string {
   const abs = Math.abs(diff);
   const unit = abs < 60_000 ? [Math.round(abs / 1000), "s"] : abs < 3_600_000 ? [Math.round(abs / 60_000), "min"] : abs < 86_400_000 ? [Math.round(abs / 3_600_000), "h"] : [Math.round(abs / 86_400_000), "d"];
   return diff >= 0 ? `in ${unit[0]} ${unit[1]}` : `${unit[0]} ${unit[1]} ago`;
-}
-
-export function formatAt(iso: string, timeZone?: string): string {
-  try {
-    return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short", ...(timeZone ? { timeZone } : {}) });
-  } catch {
-    return new Date(iso).toLocaleString();
-  }
-}
-
-/** Plain words for a cron expression, or `null` when cronstrue cannot read it (the Control Plane's preview is the authority). */
-export function describeCron(cron: string): string | null {
-  try {
-    return cronstrue.toString(cron.trim(), { use24HourTimeFormat: true, verbose: false });
-  } catch {
-    return null;
-  }
 }
 
 /** Whether the automation prompts this Session (the Session's Scheduled pane lists those). */
@@ -383,7 +339,7 @@ function RunResult({ result }: { result: AutomationRun["result"] }) {
   return null;
 }
 
-type Step = "trigger" | "action" | "limits";
+export type Step = "trigger" | "action" | "limits";
 
 function AutomationForm({
   automation,
@@ -406,61 +362,21 @@ function AutomationForm({
   onDone: () => void;
   forSession?: Session;
 }) {
-  const t = automation?.trigger;
-  const a = automation?.action;
   const [name, setName] = useState(automation?.name ?? "");
   const [enabled, setEnabled] = useState(automation?.enabled ?? true);
   // Progressive disclosure: trigger, then action, then limits; editing shows everything.
   const [step, setStep] = useState<Step>(automation ? "limits" : "trigger");
-  // trigger
-  const [triggerType, setTriggerType] = useState<AutomationTrigger["type"]>(t?.type ?? "schedule");
-  const [cron, setCron] = useState(t?.type === "schedule" ? t.cron : "0 9 * * 1-5");
-  const [timezone, setTimezone] = useState(t?.type === "schedule" ? t.timezone : localTimeZone());
-  const [missedRun, setMissedRun] = useState<ScheduleMissedPolicy>(t?.type === "schedule" ? t.missedRun : "skip");
-  const [prFollows, setPrFollows] = useState<string[]>(t?.type === "pr_event" ? t.follows : []);
-  const [prEvents, setPrEvents] = useState<PrEventType[]>(t?.type === "pr_event" ? t.events : ["opened", "synchronize", "ready_for_review"]);
-  const [filters, setFilters] = useState<PrEventFilters>(
-    t?.type === "pr_event" ? t.filters : { drafts: "skip", forks: "review_only", authors: "not_self", includeOwn: false },
-  );
-  // action
-  const [actionType, setActionType] = useState<AutomationAction["type"]>(a?.type ?? (forSession || sessions.length > 0 ? "prompt" : "new_session"));
-  const promptAction = a?.type === "prompt" ? a : null;
-  const newAction = a?.type === "new_session" ? a : null;
-  const reviewAction = a?.type === "auto_review" ? a : null;
-  const qaAction = a?.type === "auto_qa" ? a : null;
-  const [sessionId, setSessionId] = useState(promptAction?.sessionId ?? forSession?.id ?? sessions[0]?.id ?? "");
-  const [text, setText] = useState(promptAction?.text ?? "");
-  const [provider, setProvider] = useState<Provider>(newAction?.provider ?? reviewAction?.provider ?? qaAction?.provider ?? "claude-code");
-  const [repos, setRepos] = useState<RepoDraft[]>(() => specsToDrafts(newAction?.repos ?? []));
-  const [draft, setDraft] = useState<SessionSettingsDraft>(() =>
-    newAction ? { ...draftFromInput(newAction.settings, settings, draftFromDefaults), snapshotId: newAction.snapshotId ?? null } : draftFromDefaults(settings),
-  );
-  const [title, setTitle] = useState(newAction?.title ?? "");
-  const [prompt, setPrompt] = useState(newAction?.prompt ?? "");
-  const [stopAfter, setStopAfter] = useState(newAction?.stopAfter ?? reviewAction?.stopAfter ?? qaAction?.stopAfter ?? true);
-  const [checkoutPrHead, setCheckoutPrHead] = useState(newAction?.checkoutPrHead ?? true);
-  const [notifyText, setNotifyText] = useState(a?.type === "notify" ? (a.text ?? "") : "");
-  const [instructions, setInstructions] = useState(reviewAction?.instructions ?? qaAction?.instructions ?? "");
-  const [maxVerdict, setMaxVerdict] = useState<ReviewVerdict>(reviewAction?.maxVerdict ?? "comment");
-  const [deltaOnly, setDeltaOnly] = useState(reviewAction?.deltaOnly ?? true);
-  const [notifyOn, setNotifyOn] = useState<"always" | "findings" | "never">(reviewAction?.notifyOn ?? "findings");
-  const [publish, setPublish] = useState<"github_attachment" | "link_only">(qaAction?.publish ?? "github_attachment");
-  const [commentOnSkip, setCommentOnSkip] = useState(qaAction?.commentOnSkip ?? false);
-  const [maxMinutes, setMaxMinutes] = useState(qaAction?.maxMinutes ?? 10);
+  const trigger = useTriggerState(automation?.trigger);
+  const { triggerType, cron, timezone } = trigger.values;
+  const action = useActionState(automation?.action, sessions, settings, forSession);
+  const { actionType, sessionId, repos } = action.values;
+  const { setActionType, setSessionId } = action.set;
   // limits
   const [limits, setLimits] = useState<AutomationLimits>(automation?.limits ?? DEFAULT_LIMITS);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{ ok: true; next: string[] } | { ok: false; error: string } | null>(null);
 
-  const words = useMemo(() => describeCron(cron), [cron]);
-  const zones = useMemo(timeZones, []);
   const isPr = triggerType === "pr_event";
-  const [people, setPeople] = useState<PrPeople | null>(null);
-  useEffect(() => {
-    if (!isPr) return;
-    void api.prPeople().then(setPeople, () => undefined);
-  }, [isPr]);
-
   useEffect(() => {
     if (triggerType !== "schedule" || cron.trim() === "" || timezone.trim() === "") {
       setPreview(null);
@@ -487,18 +403,16 @@ function AutomationForm({
     }
   }, [isPr, actionType, sessionId, sessions]);
 
-  const triggerValues = { triggerType, cron, timezone, missedRun, prFollows, prEvents, filters };
-  const actionValues = { actionType, sessionId, text, provider, repos, draft, title, prompt, stopAfter, checkoutPrHead, notifyText, instructions, maxVerdict, deltaOnly, notifyOn, publish, commentOnSkip, maxMinutes };
-  const triggerError = getTriggerError(triggerValues, preview, follows);
+  const triggerError = getTriggerError(trigger.values, preview, follows);
   const repoError = draftsError(repos);
   const targetSession = sessionId === "attached" ? null : (sessions.find((s) => s.id === sessionId) ?? null);
-  const actionError = getActionError(actionValues, targetSession, repoError);
+  const actionError = getActionError(action.values, targetSession, repoError);
   const formError = getFormError(name, triggerError, actionError);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (formError) return;
-    const req: CreateAutomationRequest = { name: name.trim(), enabled, trigger: buildTrigger(triggerValues), action: buildAction(actionValues, { draftsToSpecs, draftToInput }), limits };
+    const req: CreateAutomationRequest = { name: name.trim(), enabled, trigger: buildTrigger(trigger.values), action: buildAction(action.values, { draftsToSpecs, draftToInput }), limits };
     setBusy(true);
     void run(async () => {
       if (automation) await api.updateAutomation(automation.id, req);
@@ -507,7 +421,6 @@ function AutomationForm({
     }).finally(() => setBusy(false));
   };
 
-  const actionChoices: AutomationAction["type"][] = isPr ? ["auto_review", "auto_qa", "prompt", "new_session", "attach", "notify"] : ["prompt", "new_session", "notify"];
   const showAction = step !== "trigger";
   const showLimits = step === "limits";
 
@@ -519,438 +432,12 @@ function AutomationForm({
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={isPr ? "Review every PR" : "Morning triage"} />
       </label>
 
-      <section className="automation-step">
-        <h3>
-          <span className="automation-step-n">1</span> When
-        </h3>
-        {!forSession && (
-          <fieldset className="choice">
-            <legend>Trigger</legend>
-            <label className="check">
-              <input type="radio" name="trigger" checked={triggerType === "schedule"} onChange={() => setTriggerType("schedule")} />
-              On a schedule
-            </label>
-            <label className="check">
-              <input type="radio" name="trigger" checked={triggerType === "pr_event"} onChange={() => setTriggerType("pr_event")} />
-              When a followed pull request changes
-            </label>
-            <label className="check">
-              <input type="radio" name="trigger" checked={triggerType === "manual"} onChange={() => setTriggerType("manual")} />
-              Only when I press Run now
-            </label>
-          </fieldset>
-        )}
-        {triggerType === "schedule" && (
-          <>
-            <div className="row">
-              <label>
-                Cron expression
-                <input value={cron} onChange={(e) => setCron(e.target.value)} list="cron-examples" spellCheck={false} />
-                <datalist id="cron-examples">
-                  {CRON_EXAMPLES.map(([expr, label]) => (
-                    <option key={expr} value={expr}>
-                      {label}
-                    </option>
-                  ))}
-                </datalist>
-              </label>
-              <label>
-                Time zone
-                <input value={timezone} onChange={(e) => setTimezone(e.target.value)} list="time-zones" spellCheck={false} />
-                <datalist id="time-zones">
-                  {zones.map((z) => (
-                    <option key={z} value={z} />
-                  ))}
-                </datalist>
-              </label>
-            </div>
-            <div className="schedule-preview">
-              {preview && !preview.ok ? (
-                <p className="field-hint warn">{preview.error}</p>
-              ) : (
-                <>
-                  {words && <p className="field-hint">{words}</p>}
-                  {preview?.ok && (
-                    <p className="field-hint">
-                      Next {SCHEDULE_PREVIEW_COUNT}:{" "}
-                      {preview.next.map((iso, i) => (
-                        <span key={iso}>
-                          {i > 0 && ", "}
-                          <span title={`${formatAt(iso, timezone)} in ${timezone}`}>{formatAt(iso)}</span>
-                        </span>
-                      ))}
-                      {preview.next.length === 0 && "never (the expression matches no future time)"}
-                      {preview.next.length > 0 && timezone.trim() !== localTimeZone() && ` (your time, ${localTimeZone()})`}
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-            <label>
-              Runs missed while the Control Plane was off
-              <select value={missedRun} onChange={(e) => setMissedRun(e.target.value as ScheduleMissedPolicy)}>
-                {(Object.keys(SCHEDULE_MISSED_POLICY_LABELS) as ScheduleMissedPolicy[]).map((p) => (
-                  <option key={p} value={p}>
-                    {SCHEDULE_MISSED_POLICY_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
-        )}
-        {triggerType === "pr_event" && (
-          <>
-            <fieldset className="choice">
-              <legend>Pull requests</legend>
-              <label className="check">
-                <input type="checkbox" checked={prFollows.length === 0} onChange={(e) => e.target.checked && setPrFollows([])} />
-                Every followed pull request
-              </label>
-              {follows.map((f) => (
-                <label key={f.id} className="check">
-                  <input
-                    type="checkbox"
-                    checked={prFollows.includes(f.id)}
-                    onChange={(e) => setPrFollows((cur) => (e.target.checked ? [...cur, f.id] : cur.filter((x) => x !== f.id)))}
-                  />
-                  {f.label}
-                </label>
-              ))}
-              <FollowRepoInline disabled={busy} onFollowed={(f) => setPrFollows((cur) => (cur.includes(f.id) ? cur : [...cur, f.id]))} />
-              <p className="field-hint">
-                {follows.length === 0
-                  ? "Nothing is followed yet: name a repository to follow every open PR of it. My PRs and Reviews asked of me are followed from the Pull requests page."
-                  : "Follow another repository here, or My PRs and Reviews asked of me from the Pull requests page."}
-              </p>
-            </fieldset>
-            <fieldset className="choice">
-              <legend>Events</legend>
-              <div className="automation-events">
-                {PrEventType.options.map((ev) => (
-                  <label key={ev} className="check">
-                    <input type="checkbox" checked={prEvents.includes(ev)} onChange={(e) => setPrEvents((cur) => (e.target.checked ? [...cur, ev] : cur.filter((x) => x !== ev)))} />
-                    {PR_EVENT_LABELS[ev]}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <details className="automation-filters">
-              <summary>Filters</summary>
-              <div className="row">
-                <label>
-                  Draft PRs
-                  <select value={filters.drafts} onChange={(e) => setFilters({ ...filters, drafts: e.target.value as PrEventFilters["drafts"] })}>
-                    <option value="skip">Skip until ready for review</option>
-                    <option value="include">Include</option>
-                  </select>
-                </label>
-                <label>
-                  PRs from forks
-                  <select value={filters.forks} onChange={(e) => setFilters({ ...filters, forks: e.target.value as PrEventFilters["forks"] })}>
-                    <option value="skip">Skip</option>
-                    <option value="review_only">Review only (no QA, no new Session on their code)</option>
-                    <option value="allow">Allow everything</option>
-                  </select>
-                </label>
-              </div>
-              <div className="row">
-                <label>
-                  Authors
-                  <select value={filters.authors} onChange={(e) => setFilters({ ...filters, authors: e.target.value as PrEventFilters["authors"] })}>
-                    <option value="any">Anyone</option>
-                    <option value="not_self">Not my own PRs</option>
-                    <option value="self_only">Only my own PRs</option>
-                  </select>
-                </label>
-                <label>
-                  Base branch (glob, optional)
-                  <input value={filters.baseRef ?? ""} onChange={(e) => setFilters({ ...filters, baseRef: e.target.value })} placeholder="main, release/*" spellCheck={false} />
-                </label>
-              </div>
-              <div className="row">
-                <label>
-                  Only PRs by these authors (optional)
-                  <LoginList
-                    value={filters.authorLogins ?? []}
-                    onChange={(authorLogins) => setFilters({ ...filters, authorLogins })}
-                    suggestions={people?.authors ?? []}
-                    placeholder="login — Enter adds"
-                  />
-                </label>
-                <label>
-                  Only PRs where one of these is asked to review (optional)
-                  <LoginList
-                    value={filters.reviewers ?? []}
-                    onChange={(reviewers) => setFilters({ ...filters, reviewers })}
-                    suggestions={people?.reviewers ?? []}
-                    placeholder="login, or a team as org/slug"
-                  />
-                </label>
-              </div>
-              <div className="row">
-                <label>
-                  Title must match (regular expression, optional)
-                  <input value={filters.titleMatch ?? ""} onChange={(e) => setFilters({ ...filters, titleMatch: e.target.value })} placeholder="^(?!WIP)" spellCheck={false} />
-                </label>
-                <label>
-                  Any of these labels (comma-separated, optional)
-                  <input
-                    value={(filters.labels ?? []).join(", ")}
-                    onChange={(e) =>
-                      setFilters({
-                        ...filters,
-                        labels: e.target.value
-                          .split(",")
-                          .map((x) => x.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                    placeholder="needs-review"
-                  />
-                </label>
-              </div>
-              <label className="check">
-                <input type="checkbox" checked={filters.includeOwn} onChange={(e) => setFilters({ ...filters, includeOwn: e.target.checked })} />
-                Also react to what my own account did (my review, my push)
-              </label>
-            </details>
-          </>
-        )}
-        {triggerType === "manual" && <p className="field-hint">Nothing starts it but the Run now button (or an agent's `automation_run`); useful to keep a template at hand.</p>}
-        {!showAction && (
-          <div className="actions">
-            <button type="button" className="primary" disabled={triggerError !== null} onClick={() => setStep("action")}>
-              Next: what to do
-            </button>
-          </div>
-        )}
-      </section>
-
-      {showAction && (
-        <section className="automation-step">
-          <h3>
-            <span className="automation-step-n">2</span> Do
-          </h3>
-          {!forSession && (
-            <fieldset className="choice">
-              <legend>Action</legend>
-              {actionChoices.map((type) => (
-                <label key={type} className="check">
-                  <input type="radio" name="action" checked={actionType === type} onChange={() => setActionType(type)} />
-                  {AUTOMATION_ACTION_LABELS[type]}
-                </label>
-              ))}
-            </fieldset>
-          )}
-          {actionType === "prompt" && (
-            <>
-              {!forSession && (
-                <label>
-                  Session
-                  <select value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
-                    {isPr && <option value="attached">The Session the PR is attached to</option>}
-                    {sessions.length === 0 && !isPr && <option value="">No Sessions yet</option>}
-                    {sessions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.title} ({PROVIDER_LABELS[s.provider]}, {s.status})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <p className="field-hint">
-                Sent right away when the Session is idle, queued behind the running turn otherwise; a stopped Session is resumed first. The Session keeps its transcript and
-                snapshots.{isPr && <> Placeholders: <code>{"{pr.url}"}</code>, <code>{"{pr.number}"}</code>, <code>{"{pr.title}"}</code>, <code>{"{pr.repo}"}</code>, <code>{"{pr.headSha}"}</code>, <code>{"{event}"}</code>.</>}
-              </p>
-              <label>
-                Prompt
-                <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder={isPr ? "PR {pr.url} was {event}: address the new comments and failing checks." : undefined} />
-              </label>
-            </>
-          )}
-          {(actionType === "new_session" || actionType === "auto_review" || actionType === "auto_qa") && (
-            <label>
-              Provider
-              <select
-                value={provider}
-                onChange={(e) => {
-                  setProvider(e.target.value as Provider);
-                  setDraft((d) => ({ ...d, model: null, options: {}, inspectLlm: true }));
-                }}
-              >
-                {PROVIDERS.map((p) => (
-                  <option key={p} value={p}>
-                    {PROVIDER_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {actionType === "new_session" && (
-            <>
-              {isPr && (
-                <label className="check">
-                  <input type="checkbox" checked={checkoutPrHead} onChange={(e) => setCheckoutPrHead(e.target.checked)} />
-                  {draft.snapshotId
-                    ? "Open the prompt with fetching the PR head into the snapshot's repository (nothing is cloned)"
-                    : "Clone the PR's repository at the PR head as the first repository"}
-                </label>
-              )}
-              {draft.snapshotId ? (
-                <p className="field-hint">The repositories come with the snapshot picked under Environment; each run starts a fresh Sandbox from that image.</p>
-              ) : (
-                <fieldset className="choice">
-                  <legend>
-                    {isPr && checkoutPrHead ? "Other repositories" : "Repositories"} (each goes to <code>/workspace/&lt;name&gt;</code>; cloned fresh on every run)
-                  </legend>
-                  <RepoEditor drafts={repos} onChange={setRepos} disabled={busy} accounts={githubAccounts(settings)} />
-                </fieldset>
-              )}
-              <SessionSettingsForm
-                mode="create"
-                provider={provider}
-                settings={settings}
-                models={models[provider]}
-                options={options[provider]}
-                value={draft}
-                onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-                disabled={busy}
-              />
-              <label>
-                Session title (optional; defaults to the first prompt{isPr && "; placeholders work"})
-                <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={isPr ? "PR #{pr.number}: {pr.title}" : undefined} />
-              </label>
-              <label>
-                First prompt
-                <textarea rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={isPr ? "Pull request {pr.url} ({event}). …" : undefined} />
-              </label>
-            </>
-          )}
-          {actionType === "auto_review" && (
-            <>
-              <p className="field-hint">
-                A new Session clones the repository at the PR head, reviews the diff (the PR's text is data, not instructions) and hands its findings to the Control Plane, which posts one review
-                comment on the PR under your connector account with a link back here.
-              </p>
-              <div className="row">
-                <label>
-                  Verdict
-                  <select value={maxVerdict} onChange={(e) => setMaxVerdict(e.target.value as ReviewVerdict)}>
-                    {(Object.keys(VERDICT_LABELS) as ReviewVerdict[]).map((v) => (
-                      <option key={v} value={v}>
-                        {VERDICT_LABELS[v]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Notify me
-                  <select value={notifyOn} onChange={(e) => setNotifyOn(e.target.value as typeof notifyOn)}>
-                    <option value="findings">When there are findings</option>
-                    <option value="always">After every review</option>
-                    <option value="never">Never</option>
-                  </select>
-                </label>
-              </div>
-              <label className="check">
-                <input type="checkbox" checked={deltaOnly} onChange={(e) => setDeltaOnly(e.target.checked)} />
-                On new commits, review only what changed since the last review
-              </label>
-              <label>
-                Instructions for the reviewer (optional: conventions, what to ignore)
-                <textarea rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
-              </label>
-            </>
-          )}
-          {actionType === "auto_qa" && (
-            <>
-              <p className="field-hint">
-                A new Session clones the repository at the PR head, plans 2–5 cases from the PR's title, description and diff, runs them on its desktop and records a video; the result is posted
-                on the PR with a link back here.
-              </p>
-              <div className="row">
-                <label>
-                  Publish the video
-                  <select value={publish} onChange={(e) => setPublish(e.target.value as typeof publish)}>
-                    <option value="github_attachment">Attached to the PR comment (GitHub)</option>
-                    <option value="link_only">Link to Sessionboxer only</option>
-                  </select>
-                </label>
-                <label>
-                  Time limit (minutes)
-                  <input type="number" min={1} max={30} value={maxMinutes} onChange={(e) => setMaxMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 10)))} />
-                </label>
-              </div>
-              <label className="check">
-                <input type="checkbox" checked={commentOnSkip} onChange={(e) => setCommentOnSkip(e.target.checked)} />
-                Comment on the PR even when nothing is testable on a desktop
-              </label>
-              <label>
-                Instructions for QA (optional: how to start the app, test accounts)
-                <textarea rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
-              </label>
-            </>
-          )}
-          {(actionType === "new_session" || actionType === "auto_review" || actionType === "auto_qa") && (
-            <label className="check">
-              <input type="checkbox" checked={stopAfter} onChange={(e) => setStopAfter(e.target.checked)} />
-              Stop the Session when the turn ends (the transcript and snapshots stay; resume it any time)
-            </label>
-          )}
-          {actionType === "attach" && <p className="field-hint">When a followed PR's head branch was pushed from one of your Sessions, the PR appears in that Session's PRs pane without pasting its URL.</p>}
-          {actionType === "notify" && (
-            <label>
-              Text (optional; placeholders work)
-              <input value={notifyText} onChange={(e) => setNotifyText(e.target.value)} placeholder={isPr ? "{pr.title} was {event}" : "Time for the morning triage"} />
-            </label>
-          )}
-          {!showLimits && (
-            <div className="actions">
-              <button type="button" className="primary" disabled={actionError !== null} onClick={() => setStep("limits")}>
-                Next: limits
-              </button>
-            </div>
-          )}
-        </section>
-      )}
-
-      {showLimits && (
-        <section className="automation-step">
-          <h3>
-            <span className="automation-step-n">3</span> Limits
-          </h3>
-          <div className="row">
-            <label>
-              Sessions at once
-              <input type="number" min={1} max={20} value={limits.maxConcurrent} onChange={(e) => setLimits({ ...limits, maxConcurrent: clamp(e.target.value, 1, 20, 2) })} />
-            </label>
-            <label>
-              Runs per day
-              <input type="number" min={1} max={1000} value={limits.maxRunsPerDay} onChange={(e) => setLimits({ ...limits, maxRunsPerDay: clamp(e.target.value, 1, 1000, 20) })} />
-            </label>
-            <label>
-              Time limit per run (minutes)
-              <input type="number" min={1} max={1440} value={limits.timeoutMinutes} onChange={(e) => setLimits({ ...limits, timeoutMinutes: clamp(e.target.value, 1, 1440, 360) })} />
-            </label>
-          </div>
-          {isPr && (
-            <div className="row">
-              <label>
-                Runs per PR per day
-                <input type="number" min={1} max={100} value={limits.maxRunsPerPrPerDay} onChange={(e) => setLimits({ ...limits, maxRunsPerPrPerDay: clamp(e.target.value, 1, 100, 4) })} />
-              </label>
-              <label>
-                Quiet period after a push (seconds)
-                <input type="number" min={0} max={3600} value={limits.debounceSeconds} onChange={(e) => setLimits({ ...limits, debounceSeconds: clamp(e.target.value, 0, 3600, 120) })} />
-              </label>
-            </div>
-          )}
-          <label className="check">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            Enabled
-          </label>
-        </section>
-      )}
+      <TriggerStep {...trigger.values} {...trigger.set} forSession={forSession} follows={follows} busy={busy}
+        preview={preview} showAction={showAction} triggerError={triggerError} setStep={setStep} />
+      {showAction && <ActionStep {...action.values} {...action.set} forSession={forSession} sessions={sessions}
+        settings={settings} models={models} options={options} busy={busy} isPr={isPr}
+        showLimits={showLimits} actionError={actionError} setStep={setStep} />}
+      {showLimits && <LimitsStep limits={limits} setLimits={setLimits} enabled={enabled} setEnabled={setEnabled} isPr={isPr} />}
 
       {showLimits && formError && <p className="field-hint warn">{formError}</p>}
       <div className="actions">

@@ -649,6 +649,8 @@ export class AgentManager {
         }
         if (this.creatingOneShots > 0 && sessionId !== this.acpSessionId) return;
         if (this.replaying) return;
+        // Vibe echoes the prompt it was given as a user message; it is on record as user_prompt already (ADR-0085).
+        if (update.sessionUpdate === "user_message_chunk" && this.turnActive) return;
         if (this.reportSink) {
           this.reportSink(update);
           return;

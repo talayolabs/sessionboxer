@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { describeKimiLogin, kimiLogin, normalizeKimiLogin } from "./kimi-login.js";
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
   type BoxCredential,
@@ -261,6 +262,10 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
         ...current.providerSecrets.fx,
         ...stripUndefined(providerSecrets.fx ?? {}),
       },
+      kimi: {
+        ...current.providerSecrets.kimi,
+        ...stripUndefined(providerSecrets.kimi ?? {}),
+      },
     };
     if (providerSecrets.codex?.CODEX_AUTH_JSON !== undefined) {
       next.providerSecrets.codex.CODEX_AUTH_JSON = normalizeCodexAuthJson(providerSecrets.codex.CODEX_AUTH_JSON);
@@ -279,6 +284,9 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     }
     if (providerSecrets.fx?.FX_LOGIN !== undefined) {
       next.providerSecrets.fx.FX_LOGIN = normalizeFxLogin(providerSecrets.fx.FX_LOGIN);
+    }
+    if (providerSecrets.kimi?.KIMI_LOGIN !== undefined) {
+      next.providerSecrets.kimi.KIMI_LOGIN = normalizeKimiLogin(providerSecrets.kimi.KIMI_LOGIN);
     }
   }
   return Settings.parse(next);
@@ -320,12 +328,14 @@ export function toPublicSettings(
       pi: { PI_AUTH_JSON: piAuthJson(settings) !== "", PI_API_KEYS: piApiKeys(settings) !== "" },
       opencode: { OPENCODE_AUTH_JSON: opencodeAuthJson(settings) !== "" },
       fx: { FX_LOGIN: fxLogin(settings) !== "" },
+      kimi: { KIMI_LOGIN: kimiLogin(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
     cursorLogin: describeCursorLogin(cursorLogin(settings)),
     piLogin: describePiLogin(piAuthJson(settings), piApiKeys(settings)),
     opencodeLogin: describeOpenCodeLogin(opencodeAuthJson(settings)),
     fxLogin: describeFxLogin(fxLogin(settings)),
+    kimiLogin: describeKimiLogin(kimiLogin(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -860,6 +870,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return opencodeAuthJson(settings) !== "";
     case "fx":
       return fxLogin(settings) !== "";
+    case "kimi":
+      return kimiLogin(settings) !== "";
   }
 }
 
@@ -890,28 +902,12 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "pi":
     case "opencode":
     case "fx":
+    case "kimi":
       return {};
   }
 }
 
-export function providerSetupHint(provider: Provider): string {
-  switch (provider) {
-    case "claude-code":
-      return "No Claude Code token configured. Run `claude setup-token` on your machine and paste it in Global settings → Providers.";
-    case "devin":
-      return "No Devin token configured. Run `devin auth login`, then paste the token from ~/.local/share/devin/credentials.toml in Global settings → Providers.";
-    case "codex":
-      return "No Codex login configured. Run `codex login` (ChatGPT account) and paste ~/.codex/auth.json in Global settings → Providers.";
-    case "cursor":
-      return "No Cursor login configured. Paste a Cursor API key, or run `agent login` and paste Cursor's auth.json, in Global settings → Providers.";
-    case "pi":
-      return "No pi login configured. Paste a model provider's API key (ANTHROPIC_API_KEY=..., OPENAI_API_KEY=...), or run `pi`, `/login`, and paste ~/.pi/agent/auth.json, in Global settings → Providers.";
-    case "opencode":
-      return "No OpenCode login configured. Run `opencode auth login` on your machine and paste ~/.local/share/opencode/auth.json, or an OpenCode Zen API key, in Global settings → Providers.";
-    case "fx":
-      return "No fx login configured. Paste an AI Gateway API key, or run `fx login` and paste ~/.fx/auth.json, in Global settings → Providers.";
-  }
-}
+export { providerSetupHint } from "./provider-setup-hint.js";
 
 // ---------------------------------------------------------------------------
 // MCP registry

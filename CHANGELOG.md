@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add Kimi CLI 1.52.0 as a Provider with Kimi Code OAuth paste/import and browser device sign-in, tmpfs token refresh sync, MCP tools and its ACP model picker; API-key-only ACP and QEMU · macOS are unavailable. ([ADR-0084](docs/adr/0084-kimi-cli-as-a-provider-on-a-kimi-login-or-api-key.md))
+
 The Sandbox image changed: `npm run build:image`, then Stop → Resume existing sessions.
 
 - Automations react to **MCP Events**: a new trigger, *When an MCP server reports an event*, subscribes the Control Plane to an event of a registry MCP server that speaks the experimental `events/*` extension (push `events/stream` or poll `events/poll`; the form asks the servers what they offer), so a prompt, a new Session or a notification follows an email, a ticket or an incident with no Session running; duplicates are dropped, the cursor is kept across restarts, the payload reaches the prompt as `{event.data…}` or as a fenced block of data. `GET /api/mcp-events/catalog`, `automation_create` with `mcp_event`, `scripts/mock-events-mcp-server.mjs` to try it. Webhook delivery is not offered. (ADR-0081)

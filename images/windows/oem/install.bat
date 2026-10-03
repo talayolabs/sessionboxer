@@ -23,6 +23,7 @@ set "CURSOR_CLI_VERSION=2026.09.23-86fc751"
 set "PI_VERSION=0.99.2"
 set "PI_ACP_VERSION=0.0.34"
 set "OPENCODE_VERSION=1.18.32"
+set "KIMI_VERSION=1.52.0"
 set "LOG=C:\sessionboxer-install.log"
 set "DL=%TEMP%\sessionboxer-install"
 mkdir "%DL%" 2>nul
@@ -94,6 +95,15 @@ call npm install -g --no-fund --no-audit ^
   @earendil-works/pi-coding-agent@%PI_VERSION% ^
   pi-acp@%PI_ACP_VERSION% >> "%LOG%" 2>&1
 call npm cache clean --force >> "%LOG%" 2>&1
+
+rem Kimi CLI: the pinned ACP registry Windows x86_64 archive, verified before extraction.
+echo [%time%] kimi %KIMI_VERSION%>> "%LOG%"
+curl.exe -fsSL --retry 5 --retry-all-errors -o "%DL%\kimi.zip" "https://github.com/MoonshotAI/kimi-cli/releases/download/%KIMI_VERSION%/kimi-%KIMI_VERSION%-x86_64-pc-windows-msvc.zip" >> "%LOG%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "if ((Get-FileHash '%DL%\kimi.zip' -Algorithm SHA256).Hash -ne '2c269e15e152b9f28ac1556795280f90a2c9860ff44c60c628c3fce4dd4c58a7') { exit 1 };" ^
+  "Expand-Archive -Path '%DL%\kimi.zip' -DestinationPath '%USERPROFILE%\.local\bin' -Force;" ^
+  "[Environment]::SetEnvironmentVariable('KIMI_CLI_NO_AUTO_UPDATE', '1', 'User')" >> "%LOG%" 2>&1
+if errorlevel 1 exit /b 1
 
 rem Devin CLI (`devin acp`): the pinned bundle its installer would fetch, checked against the
 rem manifest's sha256, put where the installer puts it; the installer itself is not run as it ends

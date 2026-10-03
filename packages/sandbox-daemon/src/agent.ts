@@ -13,7 +13,6 @@ import {
   type NewSessionRequest,
   type NewSessionResponse,
   type PromptCapabilities,
-  type PromptResponse,
   type SessionConfigOption,
   type SessionModeState,
 } from "@agentclientprotocol/sdk";
@@ -35,6 +34,7 @@ import type {
 import { fingerprint } from "@sessionboxer/protocol/node-telemetry";
 import { caEnv } from "./ca-env.js";
 import { acpMcpServers, type BuiltinMcp, type McpTee } from "./mcp-config.js";
+import { modelOption, otherOptions, sessionOptions, toModelOptions, turnUsage } from "./agent-options.js";
 import { promptBlocks } from "./prompt-blocks.js";
 
 /**
@@ -54,6 +54,8 @@ export interface AgentTransport {
 
 export interface AgentConfig {
   command: string;
+  /** Older ACP agents (Kimi) expose models and session/set_model, not configOptions. */
+  legacyModels?: boolean;
   args: string[];
   /** The Agent's working directory, where it runs (a Windows path with a transport). */
   cwd: string;
@@ -129,38 +131,8 @@ interface PersistedState {
   sessionId?: string;
   /** ACP sessions created here that have not had a prompt yet (`first-prompt` instructions go with it). */
   freshSessionIds?: string[];
-}
-
-/**
- * The prompt response's `usage` as the event carries it, dropping ACP's `_meta`. Agents leave out
- * what they do not know (fx sends only the counts it has, under `cacheReadTokens`/`cacheWriteTokens`/
- * `reasoningTokens`, and no total), so missing counts read as 0 and the total is summed when absent.
- */
-function turnUsage(usage: PromptResponse["usage"]): TurnUsage | undefined {
-  if (!usage) return undefined;
-  const raw = usage as Record<string, unknown>;
-  const count = (...keys: string[]): number | null => {
-    for (const key of keys) {
-      const v = raw[key];
-      if (typeof v === "number" && Number.isFinite(v)) return v;
-    }
-    return null;
-  };
-  const inputTokens = count("inputTokens");
-  const outputTokens = count("outputTokens");
-  const thoughtTokens = count("thoughtTokens", "reasoningTokens");
-  const cachedReadTokens = count("cachedReadTokens", "cacheReadTokens");
-  const cachedWriteTokens = count("cachedWriteTokens", "cacheWriteTokens");
-  const totalTokens = count("totalTokens");
-  if (inputTokens === null && outputTokens === null && totalTokens === null) return undefined;
-  return {
-    totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0) + (thoughtTokens ?? 0),
-    inputTokens: inputTokens ?? 0,
-    outputTokens: outputTokens ?? 0,
-    thoughtTokens,
-    cachedReadTokens,
-    cachedWriteTokens,
-  };
+  /** Kimi session/load returns no catalog; retain its advertised choices across daemon restarts. */
+  legacyModelOptions?: ModelOption[];
 }
 
 /** Wraps the instructions for the `first-prompt` delivery, ahead of the user's text. */
@@ -180,44 +152,6 @@ const BYPASS_MODE_IDS = ["bypassPermissions", "bypass", "agent-full-access"];
 /** session/new can fail on transient upstream fetches (Devin's team settings); retry before giving up. */
 const NEW_SESSION_ATTEMPTS = 3;
 const NEW_SESSION_RETRY_MS = 3000;
-
-/** The ACP config option that selects the model (claude-agent-acp and devin acp both use id `model`, category `model`). */
-function modelOption(options: SessionConfigOption[] | null | undefined): (SessionConfigOption & { type: "select" }) | null {
-  if (!options) return null;
-  // fx lists both `provider` and `model` under the `model` category; the one named `model` is the picker.
-  const found =
-    options.find((o) => o.type === "select" && o.id === "model") ?? options.find((o) => o.type === "select" && o.category === "model");
-  return found?.type === "select" ? found : null;
-}
-
-function toModelOptions(option: SessionConfigOption & { type: "select" }): ModelOption[] {
-  return option.options.flatMap((entry): ModelOption[] =>
-    "group" in entry
-      ? entry.options.map((v) => ({ value: v.value, name: v.name, description: v.description ?? null, group: entry.name }))
-      : [{ value: entry.value, name: entry.name, description: entry.description ?? null, group: null }],
-  );
-}
-
-/** The other `select` options: everything but the model and the permission mode (which the Daemon owns). */
-function otherOptions(options: SessionConfigOption[]): AgentOption[] {
-  return options.flatMap((o): AgentOption[] =>
-    o.type !== "select" || o.category === "model" || o.id === "model" || o.category === "mode" || o.id === "mode"
-      ? []
-      : [
-          {
-            id: o.id,
-            name: o.name,
-            description: o.description ?? null,
-            category: o.category ?? null,
-            choices: o.options.flatMap((entry): OptionChoice[] =>
-              "group" in entry
-                ? entry.options.map((v) => ({ value: v.value, name: v.name, description: v.description ?? null }))
-                : [{ value: entry.value, name: entry.name, description: entry.description ?? null }],
-            ),
-          },
-        ],
-  );
-}
 
 /**
  * Owns the Agent child process and its ACP connection. Creates a new ACP
@@ -472,8 +406,13 @@ export class AgentManager {
       throw new DaemonError("invalid_params", `the Agent does not offer model "${model}"`);
     }
     const previous = this.currentModel;
-    const result = await conn.agent.request("session/set_config_option", { sessionId, configId: this.modelConfigId, value: model });
-    this.captureConfigOptions(result.configOptions);
+    if (this.cfg.legacyModels) {
+      await conn.agent.request("session/set_model", { sessionId, modelId: model });
+      this.currentModel = model;
+    } else {
+      const result = await conn.agent.request("session/set_config_option", { sessionId, configId: this.modelConfigId, value: model });
+      this.captureConfigOptions(result.configOptions);
+    }
     if (this.currentModel === null) this.currentModel = model;
     this.cfg.log(`model ${previous ?? "?"} -> ${this.currentModel}`);
     if (announce && previous !== null && previous !== this.currentModel) {
@@ -504,6 +443,8 @@ export class AgentManager {
     this.modelConfigId = option.id;
     this.modelOptions = toModelOptions(option);
     this.currentModel = option.currentValue;
+    const state = this.cfg.legacyModels ? this.readState() : null;
+    if (state) this.writeState({ ...state, legacyModelOptions: this.modelOptions });
     return true;
   }
 
@@ -618,6 +559,10 @@ export class AgentManager {
       this.acpSessionId = null;
     } else {
       this.acpSessionId = state?.acpSessionId ?? null;
+      if (cfg.legacyModels && Array.isArray(state?.legacyModelOptions)) {
+        this.modelOptions = state.legacyModelOptions;
+        this.modelConfigId = "model";
+      }
       if (state && state.sessionId !== cfg.sessionId) this.writeState(state);
     }
   }
@@ -739,7 +684,8 @@ export class AgentManager {
           });
           loaded = true;
           this.cfg.log(`loaded ACP session ${this.acpSessionId}`);
-          this.captureConfigOptions(result?.configOptions);
+          if (this.cfg.legacyModels) this.currentModel = null;
+          this.captureConfigOptions(sessionOptions(result));
           await this.ensureBypassMode(conn, this.acpSessionId, result?.modes);
         } catch (e) {
           this.cfg.log(`session/load failed, creating a new session: ${String(e)}`);
@@ -753,7 +699,7 @@ export class AgentManager {
         this.acpSessionId = created.sessionId;
         this.writeState({ acpSessionId: created.sessionId, freshSessionIds: [...this.freshSessionIds(), created.sessionId] });
         this.cfg.log(`created ACP session ${created.sessionId}`);
-        this.captureConfigOptions(created.configOptions);
+        this.captureConfigOptions(sessionOptions(created));
         await this.ensureBypassMode(conn, created.sessionId, created.modes);
       }
       if (this.acpSessionId) {
@@ -834,10 +780,11 @@ export class AgentManager {
         instructionsDelivery: this.cfg.instructionsDelivery,
         mcpServers: this.cfg.builtinMcps().map((server) => server.name).concat(this.mcpServerNames ?? []),
       });
+      const promptText = this.firstPromptText(built.text);
       this.markPrompted(this.acpSessionId);
       const result = await this.conn.agent.request("session/prompt", {
         sessionId: this.acpSessionId,
-        prompt: [{ type: "text", text: this.firstPromptText(built.text) }, ...built.blocks],
+        prompt: [{ type: "text", text: promptText }, ...built.blocks],
       });
       await this.reportUsage();
       this.events.onTurnEnded(result.stopReason, turnUsage(result.usage));
@@ -991,7 +938,7 @@ export class AgentManager {
               mcpServers,
               ...this.systemPromptMeta(),
             });
-            await this.adoptSession(conn, forked.sessionId, loaded?.modes ?? forked.modes, loaded?.configOptions ?? forked.configOptions);
+            await this.adoptSession(conn, forked.sessionId, loaded?.modes ?? forked.modes, sessionOptions(loaded) ?? sessionOptions(forked));
             this.cfg.log(`forked ACP session ${from} -> ${forked.sessionId}${params.messageId ? ` at ${params.messageId}` : ""}`);
             return { acpSessionId: forked.sessionId, method: "fork" };
           } catch (e) {
@@ -1001,7 +948,7 @@ export class AgentManager {
         }
         if (!params.replay) throw new Error("this Agent cannot fork its session");
         const created = await this.newSessionWithRetry(conn, { cwd: this.cfg.cwd, mcpServers, ...this.systemPromptMeta() });
-        await this.adoptSession(conn, created.sessionId, created.modes, created.configOptions);
+        await this.adoptSession(conn, created.sessionId, created.modes, sessionOptions(created));
         const replay = this.cfg.instructionsDelivery === "first-prompt" && this.instructions() !== ""
           ? withInstructions(this.instructions(), params.replay)
           : params.replay;

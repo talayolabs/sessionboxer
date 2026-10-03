@@ -28,8 +28,8 @@ const settings = applySettingsUpdate(base, {
   },
 });
 
-test("the synced Agents are Codex, Cursor, pi, OpenCode and fx; Claude Code and Devin are not", () => {
-  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx"]);
+test("the synced Agents are Codex, Cursor, pi, OpenCode, fx and Kimi; Claude Code and Devin are not", () => {
+  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx", "kimi"]);
   assert.equal(isSyncedAuthProvider("claude-code"), false);
   assert.equal(isSyncedAuthProvider("devin"), false);
   assert.equal(isSyncedAuthProvider("pi"), true);

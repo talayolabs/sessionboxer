@@ -13,13 +13,14 @@ import {
   piAuthJson,
   piAuthNewer,
 } from "./config.js";
+import { kimiAuthNewer, kimiLogin } from "./kimi-login.js";
 
 /**
  * The Agents whose login the Control Plane hands to the Sandbox Daemon and takes back when the CLI
  * refreshes its tokens (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075, OpenCode ADR-0076, fx
  * ADR-0077). Claude Code and Devin get their credentials as environment at container start instead.
  */
-export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx"] as const;
+export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi"] as const;
 export type SyncedAuthProvider = (typeof SYNCED_AUTH_PROVIDERS)[number];
 
 /** How one Agent's login travels between the stored Settings and its Sandbox. */
@@ -43,6 +44,16 @@ export interface ProviderAuthSync {
 }
 
 export const PROVIDER_AUTH: Record<SyncedAuthProvider, ProviderAuthSync> = {
+  kimi: {
+    setMethod: DAEMON_METHODS.kimiAuthSet,
+    changedMethod: DAEMON_METHODS.kimiAuthChanged,
+    params: (settings) => ({ login: kimiLogin(settings) }),
+    stored: kimiLogin,
+    newer: kimiAuthNewer,
+    storeUpdate: (authJson) => ({ providerSecrets: { kimi: { KIMI_LOGIN: authJson } } }),
+    changedBy: (update) => update.providerSecrets?.kimi?.KIMI_LOGIN !== undefined,
+    tolerateMissingMethod: false,
+  },
   codex: {
     setMethod: DAEMON_METHODS.codexAuthSet,
     changedMethod: DAEMON_METHODS.codexAuthChanged,

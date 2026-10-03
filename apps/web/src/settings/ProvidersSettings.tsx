@@ -1,34 +1,11 @@
 import { useRef } from "react";
-import { ANTHROPIC_DEFAULT_BASE_URL, type CodexLogin, type CursorLogin, type OpenCodeLogin, type FxLogin, type PublicSettings } from "@sessionboxer/protocol";
+import { ANTHROPIC_DEFAULT_BASE_URL, type PublicSettings } from "@sessionboxer/protocol";
+import { KimiProviderSettings } from "./KimiProviderSettings";
+import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin } from "./provider-login-labels";
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
 import { Caption } from "../ui";
 import { useSectionState, type Setter } from "./shared";
-
-/** One line about the stored Codex login, from the metadata the Control Plane exposes (never the tokens). */
-function describeCodexLogin(login: CodexLogin): string {
-  const parts = [login.email ?? (login.apiKey ? "API key" : "ChatGPT account")];
-  if (login.plan) parts.push(`${login.plan} plan`);
-  if (login.lastRefresh) parts.push(`refreshed ${new Date(login.lastRefresh).toLocaleString()}`);
-  return parts.join(", ");
-}
-
-/** One line about the stored OpenCode login (ADR-0076): which model providers its auth.json covers. */
-function describeOpenCodeLogin(login: OpenCodeLogin): string {
-  return login.providers.map((p) => `${p.id} (${p.kind === "oauth" ? "login" : p.kind === "api" ? "API key" : "token"})`).join(", ");
-}
-
-/** One line about the stored Cursor login (ADR-0054), from its metadata only. */
-function describeCursorLogin(login: CursorLogin): string {
-  if (login.kind === "api-key") return "API key";
-  return login.expiresAt ? `auth.json, token valid until ${new Date(login.expiresAt).toLocaleString()}` : "auth.json";
-}
-
-/** One line about the stored fx login (ADR-0077), from its metadata only. */
-function describeFxLogin(login: FxLogin): string {
-  const what = login.kind === "api-key" ? "AI Gateway API key" : login.kind === "vercel" ? "Vercel login" : login.kind === "codex" ? "ChatGPT login" : "Grok login";
-  return login.expiresAt && login.kind !== "api-key" ? `${what}, token valid until ${new Date(login.expiresAt).toLocaleString()}` : what;
-}
 
 /** Global settings → Providers: the stored Provider logins and the Claude API base URL / proxy credentials. */
 /** Form state of the Providers section; `SettingsView` spreads `values` and `set` into `<ProvidersSettings>`. */
@@ -46,6 +23,8 @@ export function useProvidersSettings(settings: PublicSettings) {
     forgetPiApiKeys: false,
     opencodeAuth: "",
     forgetOpenCodeAuth: false,
+    kimiLogin: "",
+    forgetKimiLogin: false,
     fxLogin: "",
     forgetFxLogin: false,
     claudeBaseUrl: settings.claudeApi.baseUrl,
@@ -84,6 +63,7 @@ export function ProvidersSettings({
   setOpencodeAuth,
   forgetOpenCodeAuth,
   setForgetOpenCodeAuth,
+  kimiLogin, setKimiLogin, forgetKimiLogin, setForgetKimiLogin,
   fxLogin,
   setFxLogin,
   forgetFxLogin,
@@ -128,6 +108,10 @@ export function ProvidersSettings({
   setOpencodeAuth: Setter<string>;
   forgetOpenCodeAuth: boolean;
   setForgetOpenCodeAuth: Setter<boolean>;
+  kimiLogin: string;
+  setKimiLogin: Setter<string>;
+  forgetKimiLogin: boolean;
+  setForgetKimiLogin: Setter<boolean>;
   fxLogin: string;
   setFxLogin: Setter<string>;
   forgetFxLogin: boolean;
@@ -220,9 +204,10 @@ export function ProvidersSettings({
         <button type="button" className="primary" onClick={() => setGuided(true)}>
           Connect a Provider…
         </button>
-        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi or fx</span>
+        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx or Kimi CLI</span>
       </div>
       {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
+      <KimiProviderSettings settings={settings} value={kimiLogin} setValue={setKimiLogin} forget={forgetKimiLogin} setForget={setForgetKimiLogin} />
       <label>
         <Caption
           help={

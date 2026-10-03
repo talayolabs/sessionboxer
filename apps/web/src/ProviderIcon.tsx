@@ -124,6 +124,13 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
           <rect {...OPENCODE_BLOCK} fill="currentColor" opacity={0.45} />
         </svg>
       );
+    case "kimi":
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <path d="M5 4v16m13-16L8 13m3-3 8 10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
     case "fx":
       // fx's wordmark: a lowercase "f" with its crossbar and a lowercase "x", as on fx.sh.
       return (

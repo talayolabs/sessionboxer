@@ -35,7 +35,7 @@ const display = displayFromEnv();
 const hand = (): Hand => (currentRecording() ? { pace: RECORDED_PACE, trace: recordingTrace } : { pace: FAST_PACE });
 
 const coordinate = z
-  .tuple([z.number().int(), z.number().int()])
+  .array(z.number().int()).length(2)
   .describe(`[x, y] pixel coordinate on the ${display.width}x${display.height} screen, origin top-left`);
 
 const server = new McpServer({ name: "computer-use", version: "0.0.0" });
@@ -62,7 +62,7 @@ registerTool(
   {
     description: 'Capture a rectangular region of the screen and scale it up to full screen size, to read small text or inspect details. Pass `region`: [x0, y0, x1, y1], the top-left and bottom-right screen corners, not x/y/width/height. Example: {"region":[100,120,500,420]}. Do not use `coordinate` or separate `x`, `y`, `width`, `height` arguments. Coordinates you see in the zoomed image are NOT screen coordinates; map them back through the region.',
     inputSchema: {
-      region: z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()]).describe("Required [x0, y0, x1, y1] screen corners, not a position and size; x1 > x0 and y1 > y0"),
+      region: z.array(z.number().int()).length(4).describe("Required [x0, y0, x1, y1] screen corners, not a position and size; x1 > x0 and y1 > y0"),
     },
   },
   async ({ region }) => image(await zoomPng(display, region as Region)),

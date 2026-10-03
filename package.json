@@ -19,7 +19,7 @@
     "test:attachments": "tsc -b && node --test scripts/attachment-paths.test.mjs",
     "test:auth": "tsc -b && node --test scripts/auth-origin.test.mjs",
     "test:desktop-tools": "tsc -b && node --test scripts/desktop-tool-descriptions.test.mjs",
-    "test:provider-auth": "tsc -b && node --test scripts/provider-auth.test.mjs",
+    "test:provider-auth": "tsc -b && node --test scripts/provider-auth.test.mjs scripts/kimi-provider.test.mjs",
     "test:schema": "tsc -b && node --test scripts/schema-and-settings.test.mjs",
     "test:daemon-errors": "tsc -b && node --test scripts/daemon-errors.test.mjs",
     "test:session-manager": "tsc -b && node --test scripts/session-manager.test.mjs",

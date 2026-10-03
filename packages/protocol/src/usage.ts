@@ -172,7 +172,7 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx", message: string, now: Date = new Date()): UsageLimitHit | null {
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi", message: string, now: Date = new Date()): UsageLimitHit | null {
   const patterns =
     provider === "claude-code"
       ? CLAUDE_LIMIT
@@ -182,7 +182,7 @@ export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" |
           ? CURSOR_LIMIT
           : provider === "pi"
             ? PI_LIMIT
-            : provider === "opencode"
+            : provider === "opencode" || provider === "kimi"
               ? OPENCODE_LIMIT
               : provider === "fx"
                 ? FX_LIMIT

@@ -1,0 +1,17 @@
+import type { Provider } from "@sessionboxer/protocol";
+
+/** ACP adapter per Provider; `SESSIONBOXER_ACP_COMMAND` overrides (space-separated) for experiments. */
+export const ACP_COMMANDS: Record<Provider, string[]> = {
+  "claude-code": ["claude-agent-acp"],
+  devin: ["devin", "acp"],
+  codex: ["codex-acp"],
+  // Auto-update off (the image pins the version); --force runs commands without asking and
+  // --approve-mcps/--trust skip the MCP and workspace prompts nobody would answer (ADR-0054).
+  cursor: ["cursor-agent", "--disable-auto-update", "--force", "--approve-mcps", "--trust", "acp"],
+  // pi has no ACP mode of its own: pi-acp bridges `pi --mode rpc` to ACP (ADR-0075).
+  pi: ["pi-acp"],
+  opencode: ["opencode", "acp"],
+  // fx's ACP server is built in (ADR-0077); permission mode and auto-upgrade are set in its environment (`FX_AGENT_ENV`).
+  fx: ["fx", "acp"],
+  kimi: ["kimi", "acp"],
+};

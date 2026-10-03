@@ -64,6 +64,15 @@ export class AuthFile {
     this.start();
   }
 
+  close(): void {
+    for (const watcher of this.watchers) watcher.close();
+    this.watchers = [];
+    if (this.settle) clearTimeout(this.settle);
+    if (this.sweep) clearInterval(this.sweep);
+    this.settle = null;
+    this.sweep = null;
+  }
+
   private start(): void {
     if (this.watchers.length > 0) return;
     const tmpfsName = basename(this.file);
@@ -95,7 +104,7 @@ export class AuthFile {
       this.relink();
       const onDisk = this.read();
       if (onDisk === "" || onDisk === this.current) return;
-      JSON.parse(onDisk);
+      try { JSON.parse(onDisk); } catch { return; }
       this.current = onDisk;
       this.log(`${this.label} refreshed its login; reporting the new ${this.name}`);
       this.onChanged(onDisk);

@@ -228,6 +228,26 @@ RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; ar
     && HOME=/tmp OPENCODE_DISABLE_AUTOUPDATE=1 opencode --version | grep -qx "${OPENCODE_VERSION}" \
     && rm -rf /tmp/.local /tmp/.cache /tmp/.config
 
+# Kimi CLI standalone release from the ACP registry; root-owned, checksummed and no self-update.
+ARG KIMI_VERSION=1.52.0
+ENV KIMI_CLI_NO_AUTO_UPDATE=1
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+         amd64) arch=x86_64; sha=a676204f7804ed5dae87652a9d66f578e0718d5026c9cb1bfa32b9a5eace4208 ;; \
+         arm64) arch=aarch64; sha=9e06eea96273600aed485b1f0bedda95b7084db4f22cf28614fe20138933507a ;; \
+         *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL --retry 5 --retry-all-errors -o /tmp/kimi.tar.gz \
+         "https://github.com/MoonshotAI/kimi-cli/releases/download/${KIMI_VERSION}/kimi-${KIMI_VERSION}-${arch}-unknown-linux-gnu.tar.gz" \
+    && echo "$sha  /tmp/kimi.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt/kimi \
+    && tar -xzf /tmp/kimi.tar.gz -C /opt/kimi \
+    && rm /tmp/kimi.tar.gz \
+    && chmod 0755 /opt/kimi/kimi \
+    && ln -s /opt/kimi/kimi /usr/local/bin/kimi \
+    && HOME=/tmp kimi --version | grep -qx "kimi, version ${KIMI_VERSION}" \
+    && rm -rf /tmp/.kimi
+
 # fx (`fx acp` is spawned by the Sandbox Daemon; `fx` in the terminal, ADR-0077): Vercel Labs'
 # single static binary, the release archive its installer (fx.sh/setup.sh) would download, fetched
 # directly for the pinned version and checked against the sha256 observed at pin time (the release

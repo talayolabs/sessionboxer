@@ -8,7 +8,7 @@ import { UtilityDef, UtilityEnvironment, DEFAULT_UTILITY_ENVIRONMENTS, Procedure
 import { DEFAULT_CLAUDE_MODELS, INSTRUCTIONS_MAX_CHARS, DEFAULT_INSTRUCTIONS, DEFAULT_HTML_APP_CDNS } from "./models.js";
 import { SpeechSettings } from "./speech.js";
 import { TunnelSettings, PublicTunnelSettings, RemoteAccess, TunnelSettingsUpdate } from "./auth.js";
-import { EnvironmentAvailability, CodexLogin, CursorLogin, PiLogin, OpenCodeLogin, FxLogin, DockerMode } from "./common.js";
+import { EnvironmentAvailability, CodexLogin, CursorLogin, PiLogin, OpenCodeLogin, FxLogin, KimiLogin, DockerMode } from "./common.js";
 import { GitIdentity } from "./branches.js";
 
 /**
@@ -202,6 +202,7 @@ export const Settings = z.object({
       opencode: z.object({ OPENCODE_AUTH_JSON: z.string().default("") }).default({}),
       /** An AI Gateway API key, or the whole login file an `fx login` wrote (`auth.json`, `chatgpt-auth.json`, `grok-auth.json`; ADR-0077). */
       fx: z.object({ FX_LOGIN: z.string().default("") }).default({}),
+      kimi: z.object({ KIMI_LOGIN: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -251,6 +252,7 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     pi: z.object({ PI_AUTH_JSON: z.boolean(), PI_API_KEYS: z.boolean() }),
     opencode: z.object({ OPENCODE_AUTH_JSON: z.boolean() }),
     fx: z.object({ FX_LOGIN: z.boolean() }),
+    kimi: z.object({ KIMI_LOGIN: z.boolean() }),
   }),
   /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
   codexLogin: CodexLogin.nullable(),
@@ -262,6 +264,7 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   opencodeLogin: OpenCodeLogin.nullable(),
   /** What the stored fx login is; `null` when none is stored. */
   fxLogin: FxLogin.nullable(),
+  kimiLogin: KimiLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -299,6 +302,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, utilities
       pi: z.object({ PI_AUTH_JSON: z.string(), PI_API_KEYS: z.string() }).partial(),
       opencode: z.object({ OPENCODE_AUTH_JSON: z.string() }).partial(),
       fx: z.object({ FX_LOGIN: z.string() }).partial(),
+      kimi: z.object({ KIMI_LOGIN: z.string() }).partial(),
     })
     .partial()
     .optional(),

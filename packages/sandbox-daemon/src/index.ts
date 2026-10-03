@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { ACP_COMMANDS } from "./provider-commands.js";
+import { KimiAuth, KIMI_AGENT_ENV } from "./kimi-auth.js";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -26,6 +28,7 @@ import {
   DaemonPiAuthParams,
   DaemonOpenCodeAuthParams,
   DaemonFxAuthParams,
+  DaemonKimiAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -149,20 +152,6 @@ function emit(body: DaemonEvent["body"]): void {
   for (const ws of clients) send(ws, { jsonrpc: "2.0", method: DAEMON_METHODS.event, params: event });
 }
 
-/** ACP adapter per Provider; `SESSIONBOXER_ACP_COMMAND` overrides (space-separated) for experiments. */
-const ACP_COMMANDS: Record<Provider, string[]> = {
-  "claude-code": ["claude-agent-acp"],
-  devin: ["devin", "acp"],
-  codex: ["codex-acp"],
-  // Auto-update off (the image pins the version); --force runs commands without asking and
-  // --approve-mcps/--trust skip the MCP and workspace prompts nobody would answer (ADR-0054).
-  cursor: ["cursor-agent", "--disable-auto-update", "--force", "--approve-mcps", "--trust", "acp"],
-  // pi has no ACP mode of its own: pi-acp bridges `pi --mode rpc` to ACP (ADR-0075).
-  pi: ["pi-acp"],
-  opencode: ["opencode", "acp"],
-  // fx's ACP server is built in (ADR-0077); permission mode and auto-upgrade are set in its environment (`FX_AGENT_ENV`).
-  fx: ["fx", "acp"],
-};
 const provider = Provider.catch("claude-code").parse(env.SESSIONBOXER_PROVIDER);
 const [acpCommand = "claude-agent-acp", ...acpArgs] =
   env.SESSIONBOXER_ACP_COMMAND?.split(" ") ?? ACP_COMMANDS[provider];
@@ -256,6 +245,7 @@ const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, l
 const bbCredentials = new BbCredentials(env.BB_CONFIG_DIR ?? `${tmpfsDir}/bb`, log);
 /** Claude's model allowlist lives in its settings file; the Control Plane sends the list before the Agent starts. */
 const claudeSettings = provider === "claude-code" ? new ClaudeSettings(`${home}/.claude/settings.json`, log) : null;
+const kimiAuth = provider === "kimi" ? new KimiAuth(home, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.kimiAuthChanged, { authJson })) : null;
 /** Codex's ChatGPT login: `~/.codex/auth.json` on tmpfs, refreshed tokens reported back (ADR-0046). */
 const codexHome = env.CODEX_HOME ?? `${home}/.codex`;
 const codexAuth =
@@ -355,6 +345,11 @@ const guestProviderFiles: GuestProviderFile[] = (
       { local: `${piAgentDir}/mcp.json`, guest: ".pi/agent/mcp.json" },
       { local: guestBriefingFile, guest: ".pi/agent/AGENTS.md" },
       { local: `${piAgentDir}/auth.json`, guest: ".pi/agent/auth.json", pullBack: true },
+    ],
+    kimi: [
+      { local: `${home}/.kimi/config.toml`, guest: ".kimi/config.toml" },
+      { local: guestBriefingFile, guest: "C:\\AGENTS.md" },
+      { local: `${home}/.kimi/credentials/kimi-code.json`, guest: ".kimi/credentials/kimi-code.json", pullBack: true, mode: 0o600 },
     ],
     fx: [
       { local: guestBriefingFile, guest: ".fx/AGENTS.md" },
@@ -638,6 +633,7 @@ const mcpTeeHub = new McpTeeHub(() => mcpServers, {
 const agent = new AgentManager(
   {
     command: acpCommand,
+    legacyModels: provider === "kimi",
     args: acpArgs,
     cwd: agentWorkspace,
     localWorkspace: workspace,
@@ -647,6 +643,7 @@ const agent = new AgentManager(
     ...(provider === "pi" ? { env: PI_AGENT_ENV } : {}),
     ...(provider === "opencode" && !guest ? { env: OPENCODE_AGENT_ENV } : {}),
     ...(provider === "fx" ? { env: FX_AGENT_ENV } : {}),
+    ...(provider === "kimi" ? { env: KIMI_AGENT_ENV } : {}),
     builtinMcps,
     ...(mcpTee ? { mcpTee } : {}),
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
@@ -806,6 +803,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.opencodeAuthSet:
       return { applied: setOpenCodeLogin(DaemonOpenCodeAuthParams.parse(params).authJson) };
+    case DAEMON_METHODS.kimiAuthSet: {
+      if (!kimiAuth) throw new DaemonError("invalid_params", "this Sandbox does not run Kimi CLI");
+      return { applied: agent.setAgentEnv(kimiAuth.set(DaemonKimiAuthParams.parse(params).login)) };
+    }
     case DAEMON_METHODS.fxAuthSet:
       return { applied: setFxLogin(DaemonFxAuthParams.parse(params).login) };
     case DAEMON_METHODS.mcpSet: {
@@ -1019,6 +1020,7 @@ if (!guest) {
 const shutdown = (): void => {
   log("shutting down");
   agent.kill();
+  kimiAuth?.set("");
   // fx's login files are regular files in its volume (ADR-0077); the Control Plane puts them back on the next connection.
   if (fxAuth) for (const f of Object.values(fxAuth)) f.set("");
   terminals.closeAll();

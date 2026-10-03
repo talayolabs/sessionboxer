@@ -40,6 +40,7 @@ const PROVIDER_BLURB: Record<Provider, string> = {
   devin: "Cognition's Agent; runs on your Devin account",
   pi: "earendil-works' open-source Agent; runs on your own model API keys or logins",
   opencode: "The open-source Agent; runs on the model subscriptions and API keys of its providers",
+  kimi: "Moonshot AI’s coding agent, using your Kimi Code account",
   fx: "Vercel Labs' Agent; runs on Vercel's AI Gateway, or your ChatGPT or Grok subscription",
 };
 
@@ -182,6 +183,12 @@ function steps(provider: Provider, os: Os): Step[] {
           commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.local\\share\\opencode\\auth.json" : "cat ~/.local/share/opencode/auth.json"],
         },
       ];
+    case "kimi":
+      return [
+        { title: "Install Kimi CLI (skip if already installed)", body: "Requires uv; macOS standalone builds are Apple Silicon only.", commands: ["uv tool install kimi-cli==1.52.0"] },
+        { title: "Sign in with your Kimi account", body: "Opens a browser device sign-in. You can also use Sign in with Kimi CLI here.", commands: ["kimi login"] },
+        { title: "Paste or import the whole OAuth file below", body: "API-key-only use is unsupported until Kimi’s ACP server honours it. Refreshed tokens flow back to Settings.", commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.kimi\\credentials\\kimi-code.json" : "cat ~/.kimi/credentials/kimi-code.json"] },
+      ];
     case "fx":
       return [
         {
@@ -308,6 +315,8 @@ function credentialField(provider: Provider): {
         file: true,
         placeholder: '{ "anthropic": { "type": "oauth", … } } or sk-…',
       };
+    case "kimi":
+      return { label: "Kimi CLI login (kimi-code.json)", multiline: true, file: true, placeholder: '{ "access_token": …, "refresh_token": … }' };
     case "fx":
       return {
         label: "fx login (contents of ~/.fx/auth.json, or an AI Gateway API key)",
@@ -332,6 +341,8 @@ function secretUpdate(provider: Provider, value: string) {
       return value.startsWith("{") ? { pi: { PI_AUTH_JSON: value } } : { pi: { PI_API_KEYS: value } };
     case "opencode":
       return { opencode: { OPENCODE_AUTH_JSON: value } };
+    case "kimi":
+      return { kimi: { KIMI_LOGIN: value } };
     case "fx":
       return { fx: { FX_LOGIN: value } };
   }

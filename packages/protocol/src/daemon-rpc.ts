@@ -40,6 +40,8 @@ export const DAEMON_METHODS = {
   opencodeAuthChanged: "_sessionboxer/opencode/auth/changed",
   fxAuthSet: "_sessionboxer/fx/auth/set",
   fxAuthChanged: "_sessionboxer/fx/auth/changed",
+  kimiAuthSet: "_sessionboxer/kimi/auth/set",
+  kimiAuthChanged: "_sessionboxer/kimi/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -322,6 +324,11 @@ export const DaemonFxAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonFxAuthChangedParams = z.infer<typeof DaemonFxAuthChangedParams>;
+
+export const DaemonKimiAuthParams = z.object({ login: z.string() });
+export type DaemonKimiAuthParams = z.infer<typeof DaemonKimiAuthParams>;
+export const DaemonKimiAuthChangedParams = z.object({ authJson: z.string() });
+export type DaemonKimiAuthChangedParams = z.infer<typeof DaemonKimiAuthChangedParams>;
 
 /** Every `*AuthChanged` notification carries the rewritten login file the same way. */
 export const DaemonAuthChangedParams = z.object({

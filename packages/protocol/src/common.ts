@@ -4,7 +4,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -16,6 +16,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   pi: "pi",
   opencode: "OpenCode",
   fx: "fx",
+  kimi: "Kimi CLI",
 };
 
 /**
@@ -23,6 +24,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
  * (ADR-0077), so a `qemu-windows` Session cannot run it; the UI disables the choice with this text.
  */
 export function providerUnavailableIn(provider: Provider, environment: Environment): string | null {
+  if (provider === "kimi" && environment === "qemu-macos") return "Kimi CLI has no macOS x86_64 build for the QEMU · macOS guest; use Linux or Windows.";
   if (provider === "fx" && environment === "qemu-windows") return "fx has no Windows build; it runs on Linux and macOS.";
   return null;
 }
@@ -42,7 +44,15 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   opencode: [],
   // fx's login (ADR-0077) travels over RPC too: a login file goes on tmpfs, an API key into the Agent process alone.
   fx: [],
+  kimi: [],
 };
+
+/** Metadata of ~/.kimi/credentials/kimi-code.json (ADR-0084); never the tokens. */
+export const KimiLogin = z.object({
+  kind: z.literal("oauth"),
+  expiresAt: z.string().nullable(),
+});
+export type KimiLogin = z.infer<typeof KimiLogin>;
 
 /**
  * What the stored fx login (ADR-0077) is: an AI Gateway API key, or the file an `fx login` wrote —

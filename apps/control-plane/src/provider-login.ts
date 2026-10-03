@@ -6,6 +6,7 @@ import * as pty from "node-pty";
 import type { Provider, ProviderHostLogin, ProviderLoginFlow, Settings, UpdateSettingsRequest } from "@sessionboxer/protocol";
 import { applySettingsUpdate, codexLogin, describeCursorLogin, describeFxLogin, describeOpenCodeLogin, describePiLogin, normalizeCodexAuthJson, normalizeCursorLogin, normalizeFxLogin, normalizeOpenCodeAuthJson, normalizePiAuthJson } from "./config.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
+import { kimiLoginRecipe } from "./kimi-login-recipe.js";
 import { HttpError } from "./http-error.js";
 
 /**
@@ -65,6 +66,7 @@ const BROWSER_OPENERS = ["xdg-open", "open", "sensible-browser", "x-www-browser"
  * key typed into an interactive prompt (ADR-0076); the user pastes its `auth.json` instead.
  */
 export const RECIPES: Partial<Record<Provider, Recipe>> = {
+  kimi: kimiLoginRecipe(noBrowser),
   "claude-code": {
     bin: ["claude"],
     args: ["setup-token"],
@@ -404,7 +406,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {
@@ -678,6 +680,8 @@ export function readHostLogin(provider: Provider, home = homedir()): { account: 
       if (!login || !what) return null;
       return { account: what.kind === "api-key" ? "an API key" : "signed in with `fx login`", login };
     }
+    case "kimi":
+      return RECIPES.kimi?.result("", readFirst([join(home, ".kimi/credentials/kimi-code.json")])) ?? null;
   }
 }
 

@@ -86,7 +86,7 @@ all untested. Test points and seams that already exist:
 |---|---|---|
 | provider auth push & refresh | `SessionManager` ctor takes `db`, `docker`, `settings()`, `log`, `push` — a constructor seam. `daemonCall` is one method to stub. | For each provider: stored secret → `push<P>Auth` calls `daemonCall` with the method/params observed today. `<P>AuthRefreshed` with older/newer JSON → settings saved or ignored, as today (pin `*AuthNewer` quirks). |
 | `applySettingsUpdate` / `config.ts` | pure functions, no seam needed | Golden master: current defaults + a few updates → exact JSON. Pins the "preserve explicit `sessionboxerMcp.policy`" rule. |
-| `db.ts` migrations | `better-sqlite3` in-memory (already used by `auth-origin.test.mjs`) | Open empty DB, run migrations, assert the 18 table names and key columns. Pins schema. |
+| `db.ts` migrations | `better-sqlite3` in-memory (already used by `auth-origin.test.mjs`) | Open empty DB, run migrations, assert the 24 table names and key columns. Pins schema. |
 | `protocol/index.ts` split | types only | `tsc -b` is the test; plus one test that `PROVIDERS` is the only provider list (grep-style, in `scripts/`). |
 | `App.tsx` component moves | none (no React test runner) | `npm run build` + the existing UI testing skill; moving a component to its own file is a Move-only refactor with import changes verified by `tsc`. |
 

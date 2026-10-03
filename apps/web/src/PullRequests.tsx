@@ -2,11 +2,12 @@ import { MERGE_METHODS, PR_PROVIDER_LABEL, type MergeMethod, type PrAction, type
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { ConnectorIcon } from "./ConnectorIcon";
-import { FileLink } from "./FileLink";
-import { Markdown } from "./Markdown";
+import { PrChecks, PrThreads, ago, checksSummary, usePrSelection } from "./PrThreads";
 import { cx, Menu, MenuItem, Popover, Tip } from "./ui";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
+
+export { ago };
 
 const STATE_LABEL: Record<PullRequest["state"], string> = { open: "Open", draft: "Draft", closed: "Closed", merged: "Merged" };
 const DECISION_LABEL: Record<NonNullable<PullRequest["reviewDecision"]>, string> = {
@@ -14,22 +15,10 @@ const DECISION_LABEL: Record<NonNullable<PullRequest["reviewDecision"]>, string>
   changes_requested: "changes requested",
   review_required: "review required",
 };
-export const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "comment", review_comment: "inline comment", review: "review" };
-const ADDRESS_LABEL: Record<PrItem["address"], string> = { none: "", in_prompt: "in prompt", addressing: "addressing…", addressed: "addressed" };
 const ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Address", address_reply: "Address & reply" };
 /** The same actions on a failed check: there is nobody to reply to, the push makes the checks run again. */
 const CHECK_ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Fix", address_reply: "Fix & push" };
-export const CHECK_STATE_LABEL: Record<PrCheckItem["state"], string> = { pending: "running", passed: "passed", failed: "failed" };
 const METHOD_LABEL: Record<MergeMethod, string> = { merge: "merge commit", squash: "squash", rebase: "rebase" };
-
-export function ago(iso: string | null): string {
-  if (!iso) return "never";
-  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86_400)}d ago`;
-}
 
 /** One line on why the watcher is not delivering, for the sync column / header. */
 export function syncNote(pr: PullRequest): { text: string; level: "ok" | "warn" | "error" } {
@@ -102,17 +91,6 @@ function actionTitle(action: PrAction, pr: PullRequest, n: number): string {
   }
 }
 
-/** Tooltip of a check's result: what the provider literally said, and when it ran. */
-export function checkResultTitle(c: PrCheckItem): string {
-  const lines = [
-    c.conclusion ? `conclusion: ${c.conclusion}` : `status: ${CHECK_STATE_LABEL[c.state]}`,
-    c.required ? (c.kind === "build" ? "a required build" : "required by branch protection") : "not required",
-  ];
-  if (c.startedAt) lines.push(`started ${new Date(c.startedAt).toLocaleString()}`);
-  if (c.completedAt) lines.push(`finished ${new Date(c.completedAt).toLocaleString()}`);
-  return lines.join("\n");
-}
-
 function checkActionTitle(action: PrAction, pr: PullRequest, n: number): string {
   const what = n === 1 ? "this failed check" : `these ${n} failed checks`;
   switch (action) {
@@ -125,21 +103,10 @@ function checkActionTitle(action: PrAction, pr: PullRequest, n: number): string 
   }
 }
 
-/** "2 failed · 1 running · 5 passed" for the overview; null when the head has no checks. */
-function checksSummary(pr: PullRequest): Array<{ text: string; level: "error" | "warn" | "ok" }> {
-  const out: Array<{ text: string; level: "error" | "warn" | "ok" }> = [];
-  if (pr.checksFailed > 0) out.push({ text: `${pr.checksFailed} failed`, level: "error" });
-  if (pr.checksPending > 0) out.push({ text: `${pr.checksPending} running`, level: "warn" });
-  if (pr.checksPassed > 0) out.push({ text: `${pr.checksPassed} passed`, level: "ok" });
-  return out;
-}
-
 // --- Shared bits ---------------------------------------------------------------------------
 
 const ACTIONS = ["prompt", "address", "address_reply"] as const;
 export const DECISION_GLYPH: Record<NonNullable<PullRequest["reviewDecision"]>, string> = { approved: "\u2713", changes_requested: "\u2717", review_required: "\u25CC" };
-export const CHECK_GLYPH: Record<PrCheckItem["state"], string> = { failed: "\u2717", pending: "\u25CF", passed: "\u2713" };
-export const LEVEL_OF_CHECK: Record<PrCheckItem["state"], "error" | "warn" | "ok"> = { failed: "error", pending: "warn", passed: "ok" };
 
 function prRef(pr: PullRequest): string {
   return `${pr.owner}/${pr.repo}#${pr.number}`;
@@ -164,14 +131,6 @@ export function StateChip({ pr }: { pr: Pick<PullRequest, "state" | "reviewDecis
         {d && <span aria-hidden="true">{DECISION_GLYPH[d]} </span>}
         {STATE_LABEL[pr.state]}
       </span>
-    </Tip>
-  );
-}
-
-export function Ellipsis({ text, className }: { text: string; className?: string }) {
-  return (
-    <Tip text={text}>
-      <span className={cx("pr-ellipsis", className)}>{text}</span>
     </Tip>
   );
 }
@@ -391,39 +350,6 @@ function PrRowMenu({ session, pr, run, onOpen }: { session: Session; pr: PullReq
 
 // --- One PR ---------------------------------------------------------------------------------
 
-export type Thread = { key: string; path: string | null; line: number | null; outdated: boolean; resolved: boolean; items: PrItem[]; latest: number };
-
-/** Inline comments grouped by review thread (or `path:line` when the provider has no thread id); everything else is the conversation. */
-export function groupThreads(items: PrItem[]): Thread[] {
-  const map = new Map<string, Thread>();
-  for (const it of items) {
-    const key = it.path ? `t:${it.threadId ?? `${it.path}:${it.line ?? ""}`}` : "conversation";
-    let t = map.get(key);
-    if (!t) {
-      t = { key, path: it.path, line: it.line, outdated: false, resolved: true, items: [], latest: 0 };
-      map.set(key, t);
-    }
-    t.items.push(it);
-    t.outdated ||= it.outdated;
-    t.resolved &&= it.resolved;
-    t.latest = Math.max(t.latest, Date.parse(it.createdAt));
-  }
-  const out = [...map.values()];
-  for (const t of out) t.items.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-  return out.sort((a, b) => b.latest - a.latest);
-}
-
-export function kindGlyph(it: PrItem): { glyph: string; label: string; className: string } {
-  if (it.kind === "review") {
-    const st = (it.reviewState ?? "").toUpperCase();
-    if (st === "APPROVED") return { glyph: "\u2713", label: "approved", className: "ok" };
-    if (st === "CHANGES_REQUESTED") return { glyph: "\u2717", label: "changes requested", className: "error" };
-    return { glyph: "\u25CE", label: st ? `review: ${st.toLowerCase().replace(/_/g, " ")}` : "review", className: "" };
-  }
-  if (it.kind === "review_comment") return { glyph: "\u2039/\u203A", label: it.inReplyTo !== null ? "reply on the code" : "comment on the code", className: "" };
-  return { glyph: "\u275D", label: "conversation comment", className: "" };
-}
-
 export function PrPane({
   session,
   pr,
@@ -445,33 +371,15 @@ export function PrPane({
   /** Back to the list of attached PRs (breadcrumb, and after Detach). */
   onBack: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const selection = usePrSelection(items, checks);
+  const { selected, setSelected, visible, failedChecks } = selection;
   const [busy, setBusy] = useState<PrAction | null>(null);
-  const [showResolved, setShowResolved] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  // The Checks list opens by itself when something fails or runs and stays as the user left it otherwise.
-  const [checksOpen, setChecksOpen] = useState(pr.checksFailed > 0 || pr.checksPending > 0);
-  useEffect(() => {
-    if (pr.checksFailed > 0 || pr.checksPending > 0) setChecksOpen(true);
-  }, [pr.checksFailed, pr.checksPending]);
 
   // Looking at the tab reads the items and the failed checks.
   useEffect(() => {
     if (pr.unread > 0 && items && checks) void api.prSeen(session.id, pr.id).catch(() => undefined);
   }, [session.id, pr.id, pr.unread, items, checks]);
 
-  const visible = useMemo(() => {
-    const all = items ?? [];
-    return showResolved ? all : all.filter((i) => !i.resolved);
-  }, [items, showResolved]);
-  const threads = useMemo(() => groupThreads(visible), [visible]);
-  const hidden = (items?.length ?? 0) - visible.length;
-  // Failed first, then running, then passed; a failed check can be picked, the others only read.
-  const sortedChecks = useMemo(() => {
-    const rank: Record<PrCheckItem["state"], number> = { failed: 0, pending: 1, passed: 2 };
-    return [...(checks ?? [])].sort((a, b) => rank[a.state] - rank[b.state] || a.name.localeCompare(b.name));
-  }, [checks]);
-  const failedChecks = useMemo(() => sortedChecks.filter((c) => c.state === "failed"), [sortedChecks]);
   const checkIds = useMemo(() => new Set((checks ?? []).map((c) => c.id)), [checks]);
   useEffect(() => {
     if (!items || !checks) return;
@@ -495,7 +403,6 @@ export function PrPane({
     }).finally(() => setBusy(null));
   };
   const toggleAll = (on: boolean) => setSelected(on ? new Set(visible.map((i) => i.id)) : new Set());
-  const allSelected = visible.length > 0 && visible.every((i) => selected.has(i.id));
   const toggleAllChecks = (on: boolean) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -505,13 +412,6 @@ export function PrPane({
       return next;
     });
   const allChecksSelected = failedChecks.length > 0 && failedChecks.every((c) => selected.has(c.id));
-  const toggle = (id: string, on: boolean) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
   const nChecks = [...selected].filter((id) => checkIds.has(id)).length;
   const onlyChecks = nChecks > 0 && nChecks === selected.size;
   const note = syncNote(pr);
@@ -523,8 +423,6 @@ export function PrPane({
     if (on && !confirmAutoMerge(pr)) return;
     void run(() => api.updatePr(session.id, pr.id, { autoMerge: on }));
   };
-  const summary = checksSummary(pr);
-  const allGreen = checks !== null && checks.length > 0 && pr.checksFailed === 0 && pr.checksPending === 0;
 
   return (
     <div className={cx("pane prs-pane pr-detail", n > 0 && "pr-picking")}>
@@ -638,177 +536,51 @@ export function PrPane({
         </div>
       </header>
 
-      {checks !== null && checks.length > 0 && !done && (
-        <details className="pr-section pr-checks" open={checksOpen} onToggle={(e) => setChecksOpen(e.currentTarget.open)}>
-          <summary>
-            <span className={cx("pr-check-glyph", allGreen ? "ok" : pr.checksFailed > 0 ? "error" : "warn")} aria-hidden="true">
-              {allGreen ? CHECK_GLYPH.passed : pr.checksFailed > 0 ? CHECK_GLYPH.failed : CHECK_GLYPH.pending}
-            </span>
-            <span className="pr-section-title">
-              {allGreen
-                ? `${checks.length} ${checks.length === 1 ? "check" : "checks"} passed`
-                : summary.map((c, i) => (
-                    <span key={c.level}>
-                      {i > 0 && <span className="muted"> {"\u00b7"} </span>}
-                      <span className={c.level}>{c.text}</span>
-                    </span>
-                  ))}
-            </span>
-            <span className="spacer" />
-            {failedChecks.length > 0 && (
+      {!done && (
+        <PrChecks
+          pr={pr}
+          selection={selection}
+          summaryActions={
+            failedChecks.length > 0 && (
               <label className="check small-text muted" onClick={(e) => e.stopPropagation()}>
                 <input type="checkbox" checked={allChecksSelected} onChange={(e) => toggleAllChecks(e.target.checked)} />
                 all failed
               </label>
-            )}
-          </summary>
-          <ul className="pr-check-list">
-            {sortedChecks.map((c) => {
-              const failed = c.state === "failed";
-              const result = failed && c.conclusion && c.conclusion !== "failure" && c.conclusion !== "failed" ? c.conclusion.replace(/_/g, " ") : CHECK_STATE_LABEL[c.state];
-              return (
-                <li key={c.id} className={cx("pr-check", `pr-check-${c.state}`, !c.seen && failed && "unread", selected.has(c.id) && "picked")}>
-                  {failed ? (
-                    <input type="checkbox" className="pr-pick" checked={selected.has(c.id)} onChange={(e) => toggle(c.id, e.target.checked)} aria-label={`Select ${c.name}`} />
-                  ) : (
-                    <span className="pr-pick" aria-hidden="true" />
-                  )}
-                  <span className={cx("pr-check-glyph", LEVEL_OF_CHECK[c.state])} aria-hidden="true">
-                    {CHECK_GLYPH[c.state]}
-                  </span>
-                  <span className="pr-check-main">
-                    <Ellipsis className="pr-check-name" text={c.name} />
-                    <span className="muted small-text pr-check-src">
-                      {c.source ?? (c.kind === "status" ? "commit status" : c.kind === "build" ? "build status" : "check")}
-                      {c.required && " \u00b7 required"}
-                    </span>
-                  </span>
-                  <span className="pr-check-status small-text" title={checkResultTitle(c)}>
-                    {!c.seen && failed && <span className="count">new</span>}
-                    {c.address !== "none" && <span className={c.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[c.address]}</span>}
-                    <span className={cx("pr-check-result", LEVEL_OF_CHECK[c.state])}>{result}</span>
-                    <span className="muted">{c.completedAt ? ago(c.completedAt) : c.startedAt ? `since ${ago(c.startedAt)}` : ""}</span>
-                  </span>
-                  {c.url && (
-                    <a href={c.url} target="_blank" rel="noreferrer" className="pr-ext" title="Open the log / details">
-                      {"\u2197"}
-                    </a>
-                  )}
-                  {failed ? (
-                    <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for ${c.name}`)}>
-                      {ACTIONS.map((a) => (
-                        <MenuItem key={a} disabled={busy !== null || (a !== "prompt" && !pr.local)} title={checkActionTitle(a, pr, 1)} onSelect={() => act(a, [c.id])}>
-                          {CHECK_ACTION_LABEL[a]}
-                        </MenuItem>
-                      ))}
-                    </Menu>
-                  ) : (
-                    <span className="pr-more" aria-hidden="true" />
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </details>
+            )
+          }
+          menu={(c) =>
+            c.state === "failed" ? (
+              <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for ${c.name}`)}>
+                {ACTIONS.map((a) => (
+                  <MenuItem key={a} disabled={busy !== null || (a !== "prompt" && !pr.local)} title={checkActionTitle(a, pr, 1)} onSelect={() => act(a, [c.id])}>
+                    {CHECK_ACTION_LABEL[a]}
+                  </MenuItem>
+                ))}
+              </Menu>
+            ) : (
+              <span className="pr-more" aria-hidden="true" />
+            )
+          }
+        />
       )}
 
-      <section className="pr-section pr-threads" aria-label="Comments and reviews">
-        <div className="pr-section-head">
-          <label className="check" title={visible.length === 0 ? undefined : allSelected ? "Unselect all" : "Select every comment shown"}>
-            <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} disabled={visible.length === 0} />
-            <span className="pr-section-title">Comments &amp; reviews{items && items.length > 0 && <span className="muted"> ({visible.length})</span>}</span>
-          </label>
-          <span className="spacer" />
-          {hidden > 0 && (
-            <label className="check muted small-text">
-              <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
-              show {hidden} resolved
-            </label>
-          )}
-        </div>
-        {items === null ? (
-          <p className="muted prs-empty">{"Loading\u2026"}</p>
-        ) : visible.length === 0 ? (
-          <p className="muted prs-empty">{items.length === 0 ? "No comments or reviews yet." : "All threads resolved."}</p>
-        ) : (
-          threads.map((t) => (
-            <div key={t.key} className={cx("pr-thread", t.resolved && "resolved")}>
-              <div className="pr-thread-head small-text">
-                {t.path ? (
-                  <FileLink fileRef={t.line !== null ? { path: t.path, line: t.line } : { path: t.path }} className="pr-thread-path">
-                    <code title={t.path}>
-                      {t.path}
-                      {t.line !== null ? `:${t.line}` : ""}
-                    </code>
-                  </FileLink>
-                ) : (
-                  <span className="pr-thread-path muted">Conversation</span>
-                )}
-                {t.outdated && <span className="muted">outdated</span>}
-                {t.resolved && <span className="muted">resolved</span>}
-                {t.items.length > 1 && <span className="muted">{t.items.length}</span>}
-              </div>
-              {t.items.map((it) => {
-                const open = expanded.has(it.id);
-                const long = it.body.length > 300 || it.body.split("\n").length > 4;
-                const k = kindGlyph(it);
-                return (
-                  <article key={it.id} className={cx("pr-comment", !it.seen && "unread", it.resolved && "resolved", selected.has(it.id) && "picked")}>
-                    <input type="checkbox" className="pr-pick" checked={selected.has(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} aria-label={`Select the comment by ${it.author}`} />
-                    <span className="pr-avatar" aria-hidden="true">
-                      {(it.author[0] ?? "?").toUpperCase()}
-                    </span>
-                    <div className="pr-comment-body">
-                      <div className="pr-comment-meta small-text">
-                        <span className="pr-comment-author" title={it.self ? "written with the login this PR is watched with" : undefined}>
-                          @{it.author}
-                          {it.self && <span className="muted"> (you)</span>}
-                        </span>
-                        <Tip text={k.label}>
-                          <span className={cx("pr-kind", k.className)}>{k.glyph}</span>
-                        </Tip>
-                        <span className="muted" title={new Date(it.createdAt).toLocaleString()}>
-                          {ago(it.createdAt)}
-                        </span>
-                        {!it.seen && <span className="count">new</span>}
-                        {it.address !== "none" && <span className={it.address === "addressed" ? "ok" : "warn"}>{ADDRESS_LABEL[it.address]}</span>}
-                        <span className="spacer" />
-                        <a href={it.htmlUrl} target="_blank" rel="noreferrer" className="pr-ext" title={`Open this ${KIND_LABEL[it.kind]} on ${label}`}>
-                          {"\u2197"}
-                        </a>
-                        <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for the comment by ${it.author}`)}>
-                          {ACTIONS.map((a) => (
-                            <MenuItem key={a} disabled={busy !== null || (a !== "prompt" && !pr.local)} title={actionTitle(a, pr, 1)} onSelect={() => act(a, [it.id])}>
-                              {ACTION_LABEL[a]}
-                            </MenuItem>
-                          ))}
-                        </Menu>
-                      </div>
-                      <div className={cx("pr-text", long && !open && "clamped")}>
-                        <Markdown text={it.body || "*(no text)*"} html />
-                      </div>
-                      {long && (
-                        <button
-                          className="link small-text"
-                          onClick={() =>
-                            setExpanded((prev) => {
-                              const next = new Set(prev);
-                              if (!next.delete(it.id)) next.add(it.id);
-                              return next;
-                            })
-                          }
-                        >
-                          {open ? "less" : "more"}
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          ))
+      <PrThreads
+        pr={pr}
+        items={items}
+        selection={selection}
+        onToggleAll={toggleAll}
+        selectAllTitle={(allSelected) => (allSelected ? "Unselect all" : "Select every comment shown")}
+        selfTitle="written with the login this PR is watched with"
+        menu={(it) => (
+          <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for the comment by ${it.author}`)}>
+            {ACTIONS.map((a) => (
+              <MenuItem key={a} disabled={busy !== null || (a !== "prompt" && !pr.local)} title={actionTitle(a, pr, 1)} onSelect={() => act(a, [it.id])}>
+                {ACTION_LABEL[a]}
+              </MenuItem>
+            ))}
+          </Menu>
         )}
-      </section>
+      />
 
       {n > 0 && (
         <div className="pr-bulk" role="toolbar" aria-label="Selected items">

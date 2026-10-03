@@ -21,9 +21,8 @@ import { RUN_LABEL, RunHistory, badgeClass } from "./Automations";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { accountKey, useFollowAccounts } from "./FollowRepo";
 import { RepoDatalist, followSuggestions, useKnownRepos } from "./RepoSuggest";
-import { FileLink } from "./FileLink";
-import { Markdown } from "./Markdown";
-import { CHECK_GLYPH, CHECK_STATE_LABEL, Ellipsis, KIND_LABEL, LEVEL_OF_CHECK, StateChip, ago, checkResultTitle, groupThreads, kindGlyph, moreButton } from "./PullRequests";
+import { CHECK_STATE_LABEL, KIND_LABEL, PrChecks, PrThreads, ago, usePrSelection } from "./PrThreads";
+import { StateChip, moreButton } from "./PullRequests";
 import { cx, Menu, MenuItem, Modal, Popover, Tip } from "./ui";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
@@ -518,18 +517,13 @@ function FollowedPrDetail({
   run: Runner;
   onBack: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [showResolved, setShowResolved] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const [checksOpen, setChecksOpen] = useState(pr.checksFailed > 0 || pr.checksPending > 0);
+  const selection = usePrSelection(items, checks);
+  const { selected, setSelected, visible, failedChecks } = selection;
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => loadDetail(pr.id), [pr.id, loadDetail]);
-  useEffect(() => {
-    if (pr.checksFailed > 0 || pr.checksPending > 0) setChecksOpen(true);
-  }, [pr.checksFailed, pr.checksPending]);
   useEffect(() => {
     if (pr.unread > 0 && items && checks) void api.followedPrSeen(pr.id).catch(() => undefined);
   }, [pr.id, pr.unread, items, checks]);
@@ -539,21 +533,6 @@ function FollowedPrDetail({
     return () => clearTimeout(t);
   }, [copied]);
 
-  const visible = useMemo(() => (showResolved ? (items ?? []) : (items ?? []).filter((i) => !i.resolved)), [items, showResolved]);
-  const threads = useMemo(() => groupThreads(visible), [visible]);
-  const hidden = (items?.length ?? 0) - visible.length;
-  const sortedChecks = useMemo(() => {
-    const rank: Record<PrCheckItem["state"], number> = { failed: 0, pending: 1, passed: 2 };
-    return [...(checks ?? [])].sort((a, b) => rank[a.state] - rank[b.state] || a.name.localeCompare(b.name));
-  }, [checks]);
-  const failedChecks = sortedChecks.filter((c) => c.state === "failed");
-  const toggle = (id: string, on: boolean) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
   const copyText = (what: string, text: string) => {
     void copy(text).then(
       () => setCopied(what),
@@ -570,7 +549,6 @@ function FollowedPrDetail({
   const sync = syncText(pr);
   const done = finished(pr);
   const label = PR_PROVIDER_LABEL[pr.provider];
-  const allGreen = checks !== null && checks.length > 0 && pr.checksFailed === 0 && pr.checksPending === 0;
   const attachable = sessions.filter((s) => s.status !== "error" && !pr.attached.some((a) => a.sessionId === s.id));
   const n = selected.size;
 
@@ -710,167 +688,32 @@ function FollowedPrDetail({
         </div>
       </header>
 
-      {checks !== null && checks.length > 0 && (
-        <details className="pr-section pr-checks" open={checksOpen} onToggle={(e) => setChecksOpen(e.currentTarget.open)}>
-          <summary>
-            <span className={cx("pr-check-glyph", allGreen ? "ok" : pr.checksFailed > 0 ? "error" : "warn")} aria-hidden="true">
-              {allGreen ? CHECK_GLYPH.passed : pr.checksFailed > 0 ? CHECK_GLYPH.failed : CHECK_GLYPH.pending}
-            </span>
-            <span className="pr-section-title">
-              {allGreen
-                ? `${checks.length} ${checks.length === 1 ? "check" : "checks"} passed`
-                : [pr.checksFailed > 0 && <span key="f" className="error">{pr.checksFailed} failed</span>, pr.checksPending > 0 && <span key="p" className="warn">{pr.checksPending} running</span>, pr.checksPassed > 0 && <span key="ok" className="ok">{pr.checksPassed} passed</span>]
-                    .filter(Boolean)
-                    .map((el, i) => (
-                      <span key={i}>
-                        {i > 0 && <span className="muted"> {"\u00b7"} </span>}
-                        {el}
-                      </span>
-                    ))}
-            </span>
-            <span className="spacer" />
-          </summary>
-          <ul className="pr-check-list">
-            {sortedChecks.map((c) => {
-              const failed = c.state === "failed";
-              const result = failed && c.conclusion && c.conclusion !== "failure" && c.conclusion !== "failed" ? c.conclusion.replace(/_/g, " ") : CHECK_STATE_LABEL[c.state];
-              return (
-                <li key={c.id} className={cx("pr-check", `pr-check-${c.state}`, !c.seen && failed && "unread", selected.has(c.id) && "picked")}>
-                  {failed ? (
-                    <input type="checkbox" className="pr-pick" checked={selected.has(c.id)} onChange={(e) => toggle(c.id, e.target.checked)} aria-label={`Select ${c.name}`} />
-                  ) : (
-                    <span className="pr-pick" aria-hidden="true" />
-                  )}
-                  <span className={cx("pr-check-glyph", LEVEL_OF_CHECK[c.state])} aria-hidden="true">
-                    {CHECK_GLYPH[c.state]}
-                  </span>
-                  <span className="pr-check-main">
-                    <Ellipsis className="pr-check-name" text={c.name} />
-                    <span className="muted small-text pr-check-src">
-                      {c.source ?? (c.kind === "status" ? "commit status" : c.kind === "build" ? "build status" : "check")}
-                      {c.required && " \u00b7 required"}
-                      {failed && c.summary && <> {"\u00b7"} {c.summary.split("\n")[0]}</>}
-                    </span>
-                  </span>
-                  <span className="pr-check-status small-text" title={checkResultTitle(c)}>
-                    {!c.seen && failed && <span className="count">new</span>}
-                    <span className={cx("pr-check-result", LEVEL_OF_CHECK[c.state])}>{result}</span>
-                    <span className="muted">{c.completedAt ? ago(c.completedAt) : c.startedAt ? `since ${ago(c.startedAt)}` : ""}</span>
-                  </span>
-                  {c.url && (
-                    <a href={c.url} target="_blank" rel="noreferrer" className="pr-ext" title="Open the log / details">
-                      {"\u2197"}
-                    </a>
-                  )}
-                  <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for ${c.name}`)}>
-                    <MenuItem onSelect={() => copyText(c.id, checkText(c))}>Copy</MenuItem>
-                    {c.url && <MenuItem onSelect={() => copyText(c.id, c.url!)}>Copy link</MenuItem>}
-                  </Menu>
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      )}
-
-      <section className="pr-section pr-threads" aria-label="Comments and reviews">
-        <div className="pr-section-head">
-          <label className="check" title={visible.length === 0 ? undefined : "Select every comment shown"}>
-            <input
-              type="checkbox"
-              checked={visible.length > 0 && visible.every((i) => selected.has(i.id))}
-              onChange={(e) => setSelected(e.target.checked ? new Set([...selected, ...visible.map((i) => i.id)]) : new Set([...selected].filter((id) => !visible.some((i) => i.id === id))))}
-              disabled={visible.length === 0}
-            />
-            <span className="pr-section-title">Comments &amp; reviews{items && items.length > 0 && <span className="muted"> ({visible.length})</span>}</span>
-          </label>
-          <span className="spacer" />
-          {hidden > 0 && (
-            <label className="check muted small-text">
-              <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
-              show {hidden} resolved
-            </label>
-          )}
-        </div>
-        {items === null ? (
-          <p className="muted prs-empty">{"Loading\u2026"}</p>
-        ) : visible.length === 0 ? (
-          <p className="muted prs-empty">{items.length === 0 ? "No comments or reviews yet." : "All threads resolved."}</p>
-        ) : (
-          threads.map((t) => (
-            <div key={t.key} className={cx("pr-thread", t.resolved && "resolved")}>
-              <div className="pr-thread-head small-text">
-                {t.path ? (
-                  <FileLink fileRef={t.line !== null ? { path: t.path, line: t.line } : { path: t.path }} className="pr-thread-path">
-                    <code title={t.path}>
-                      {t.path}
-                      {t.line !== null ? `:${t.line}` : ""}
-                    </code>
-                  </FileLink>
-                ) : (
-                  <span className="pr-thread-path muted">Conversation</span>
-                )}
-                {t.outdated && <span className="muted">outdated</span>}
-                {t.resolved && <span className="muted">resolved</span>}
-                {t.items.length > 1 && <span className="muted">{t.items.length}</span>}
-              </div>
-              {t.items.map((it) => {
-                const open = expanded.has(it.id);
-                const long = it.body.length > 300 || it.body.split("\n").length > 4;
-                const k = kindGlyph(it);
-                return (
-                  <article key={it.id} className={cx("pr-comment", !it.seen && "unread", it.resolved && "resolved", selected.has(it.id) && "picked")}>
-                    <input type="checkbox" className="pr-pick" checked={selected.has(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} aria-label={`Select the comment by ${it.author}`} />
-                    <span className="pr-avatar" aria-hidden="true">
-                      {(it.author[0] ?? "?").toUpperCase()}
-                    </span>
-                    <div className="pr-comment-body">
-                      <div className="pr-comment-meta small-text">
-                        <span className="pr-comment-author" title={it.self ? "written with the login this PR is followed with" : undefined}>
-                          @{it.author}
-                          {it.self && <span className="muted"> (you)</span>}
-                        </span>
-                        <Tip text={k.label}>
-                          <span className={cx("pr-kind", k.className)}>{k.glyph}</span>
-                        </Tip>
-                        <span className="muted" title={new Date(it.createdAt).toLocaleString()}>
-                          {ago(it.createdAt)}
-                        </span>
-                        {!it.seen && <span className="count">new</span>}
-                        <span className="spacer" />
-                        <a href={it.htmlUrl} target="_blank" rel="noreferrer" className="pr-ext" title={`Open this ${KIND_LABEL[it.kind]} on ${label}`}>
-                          {"\u2197"}
-                        </a>
-                        <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for the comment by ${it.author}`)}>
-                          <MenuItem onSelect={() => copyText(it.id, itemText(it))}>Copy</MenuItem>
-                          <MenuItem onSelect={() => copyText(it.id, it.htmlUrl)}>Copy link</MenuItem>
-                        </Menu>
-                      </div>
-                      <div className={cx("pr-text", long && !open && "clamped")}>
-                        <Markdown text={it.body || "*(no text)*"} html />
-                      </div>
-                      {long && (
-                        <button
-                          className="link small-text"
-                          onClick={() =>
-                            setExpanded((prev) => {
-                              const next = new Set(prev);
-                              if (!next.delete(it.id)) next.add(it.id);
-                              return next;
-                            })
-                          }
-                        >
-                          {open ? "less" : "more"}
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          ))
+      <PrChecks
+        pr={pr}
+        selection={selection}
+        summaryLine
+        menu={(c) => (
+          <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for ${c.name}`)}>
+            <MenuItem onSelect={() => copyText(c.id, checkText(c))}>Copy</MenuItem>
+            {c.url && <MenuItem onSelect={() => copyText(c.id, c.url!)}>Copy link</MenuItem>}
+          </Menu>
         )}
-      </section>
+      />
+
+      <PrThreads
+        pr={pr}
+        items={items}
+        selection={selection}
+        onToggleAll={(on) => setSelected(on ? new Set([...selected, ...visible.map((i) => i.id)]) : new Set([...selected].filter((id) => !visible.some((i) => i.id === id))))}
+        selectAllTitle={() => "Select every comment shown"}
+        selfTitle="written with the login this PR is followed with"
+        menu={(it) => (
+          <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for the comment by ${it.author}`)}>
+            <MenuItem onSelect={() => copyText(it.id, itemText(it))}>Copy</MenuItem>
+            <MenuItem onSelect={() => copyText(it.id, it.htmlUrl)}>Copy link</MenuItem>
+          </Menu>
+        )}
+      />
 
       <section className="pr-section" aria-label="Events">
         <div className="pr-section-head">

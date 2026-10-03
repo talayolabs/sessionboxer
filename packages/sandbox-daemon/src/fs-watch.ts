@@ -1,7 +1,7 @@
 import { promises as fs, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";
 import { FS_WATCH_MAX, type FsChangedParams } from "@sessionboxer/protocol";
-import { FsError } from "./workspace-fs.js";
+import { DaemonError } from "./daemon-error.js";
 
 const SETTLE_MS = 150;
 
@@ -28,7 +28,7 @@ export class FsWatches {
 
   async watch(rel: string): Promise<void> {
     const abs = resolve(this.root, rel);
-    if (abs === this.root || !abs.startsWith(this.root + sep)) throw new FsError(-32602, `path escapes the workspace: ${rel}`);
+    if (abs === this.root || !abs.startsWith(this.root + sep)) throw new DaemonError("invalid_params", `path escapes the workspace: ${rel}`);
     const existing = this.watches.get(rel);
     if (existing) {
       // Most recently asked for: moves to the end of the eviction order.
@@ -38,10 +38,10 @@ export class FsWatches {
     }
     const dir = dirname(abs);
     try {
-      if (!(await fs.stat(dir)).isDirectory()) throw new FsError(-32602, `${rel} is not in a directory`);
+      if (!(await fs.stat(dir)).isDirectory()) throw new DaemonError("invalid_params", `${rel} is not in a directory`);
     } catch (e) {
-      if (e instanceof FsError) throw e;
-      throw new FsError(-32001, `not found: ${rel}`);
+      if (e instanceof DaemonError) throw e;
+      throw new DaemonError("not_found", `not found: ${rel}`);
     }
     const name = basename(abs);
     const watcher = watch(dir, { persistent: false }, (_eventType, changed) => {

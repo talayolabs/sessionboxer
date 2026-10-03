@@ -1,14 +1,6 @@
 import { promises as fs } from "node:fs";
 import { resolve, sep } from "node:path";
-
-export class FsError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+import { DaemonError } from "./daemon-error.js";
 
 /** Path-contained lookups of Workspace files for streaming them as-is (`GET /fs/raw`). */
 export class WorkspaceFs {
@@ -26,7 +18,7 @@ export class WorkspaceFs {
   private absolute(rel: string): string {
     const abs = resolve(this.root, rel);
     if (abs !== this.root && !abs.startsWith(this.root + sep)) {
-      throw new FsError(-32602, `path escapes the workspace: ${rel}`);
+      throw new DaemonError("invalid_params", `path escapes the workspace: ${rel}`);
     }
     return abs;
   }
@@ -42,7 +34,7 @@ export class WorkspaceFs {
     }
     const realRoot = await fs.realpath(this.root);
     if (real !== realRoot && !real.startsWith(realRoot + sep)) {
-      throw new FsError(-32002, `${rel} resolves outside the workspace`);
+      throw new DaemonError("forbidden", `${rel} resolves outside the workspace`);
     }
     return abs;
   }
@@ -57,16 +49,16 @@ export class WorkspaceFs {
     } catch (e) {
       throw mapError(e, rel);
     }
-    if (!st.isFile()) throw new FsError(-32602, `${rel} is not a file`);
+    if (!st.isFile()) throw new DaemonError("invalid_params", `${rel} is not a file`);
     return { abs, size: st.size, mtime: st.mtime };
   }
 }
 
 function mapError(e: unknown, rel: string): Error {
   const code = (e as { code?: string }).code;
-  if (code === "ENOENT") return new FsError(-32001, `not found: ${rel}`);
-  if (code === "EACCES" || code === "EPERM") return new FsError(-32002, `permission denied: ${rel}`);
-  if (code === "EISDIR") return new FsError(-32602, `${rel} is a directory`);
-  if (code === "ENOTDIR") return new FsError(-32602, `${rel} is not a directory`);
+  if (code === "ENOENT") return new DaemonError("not_found", `not found: ${rel}`);
+  if (code === "EACCES" || code === "EPERM") return new DaemonError("forbidden", `permission denied: ${rel}`);
+  if (code === "EISDIR") return new DaemonError("invalid_params", `${rel} is a directory`);
+  if (code === "ENOTDIR") return new DaemonError("invalid_params", `${rel} is not a directory`);
   return e instanceof Error ? e : new Error(String(e));
 }

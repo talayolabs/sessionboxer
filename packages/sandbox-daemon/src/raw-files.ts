@@ -1,7 +1,8 @@
 import { createReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { DEFAULT_HTML_APP_CDNS, FS_APP_PATH, FS_RAW_PATH, HTML_APP_MAX_BYTES, contentTypeFor, htmlAppCsp, mediaKind } from "@sessionboxer/protocol";
-import { FsError, type WorkspaceFs } from "./workspace-fs.js";
+import { DEFAULT_HTML_APP_CDNS, FS_APP_PATH, FS_RAW_PATH, HTML_APP_MAX_BYTES, contentTypeFor, htmlAppCsp, httpStatusForDaemonError, mediaKind } from "@sessionboxer/protocol";
+import { DaemonError } from "./daemon-error.js";
+import type { WorkspaceFs } from "./workspace-fs.js";
 
 const MAX_AGE_HEADERS = { "Cache-Control": "no-cache", "Accept-Ranges": "bytes" };
 
@@ -29,7 +30,7 @@ export async function serveRawFile(workspaceFs: WorkspaceFs, req: IncomingMessag
   try {
     file = await workspaceFs.raw(rel);
   } catch (e) {
-    const status = e instanceof FsError ? (e.code === -32001 ? 404 : e.code === -32002 ? 403 : 400) : 500;
+    const status = e instanceof DaemonError ? httpStatusForDaemonError(e.code) : 500;
     res.writeHead(status, { "Content-Type": "text/plain" }).end(e instanceof Error ? e.message : String(e));
     return;
   }

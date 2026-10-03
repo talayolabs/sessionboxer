@@ -9,6 +9,7 @@ import {
   type CompactionDetailsRequest,
   type ContextBreakdown,
   type E2eRun,
+  DAEMON_ERROR_CODES,
   DAEMON_METHODS,
   DaemonCompactionDetailsResult,
   DaemonContextReportResult,
@@ -132,6 +133,7 @@ import {
   USAGE_CONTINUE_TEXT,
   type UsageLimit,
   classifyUsageLimit,
+  httpStatusForDaemonError,
   mergeUsageWindows,
 } from "@sessionboxer/protocol";
 import { AgentTools, type AgentAutomations, type AgentFollowedPrs, type AgentPrReviews } from "./agent-tools.js";
@@ -401,7 +403,7 @@ export class SessionManager {
     try {
       await client.request(DAEMON_METHODS.sessionInfoSet, this.sessionInfoOf(s));
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) return;
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) return;
       this.log(`session info push ${id} failed: ${String(e)}`);
     }
   }
@@ -544,12 +546,10 @@ export class SessionManager {
       return await client.request(method, params, timeoutMs);
     } catch (e) {
       if (e instanceof DaemonRpcError) {
-        if (e.code === -32601) {
+        if (e.code === DAEMON_ERROR_CODES.method_not_found) {
           throw new HttpError(502, `${e.message}: the Sandbox runs an older Daemon; Stop and Resume the session to refresh it.`);
         }
-        const status =
-          e.code === -32001 ? 404 : e.code === -32002 ? 403 : e.code === -32003 ? 409 : e.code === -32602 ? 400 : 502;
-        throw new HttpError(status, e.message);
+        throw new HttpError(httpStatusForDaemonError(e.code), e.message);
       }
       throw e;
     }
@@ -2487,7 +2487,7 @@ export class SessionManager {
       const result = DaemonLlmInspectSetResult.parse(await client.request(DAEMON_METHODS.llmInspectSet, params));
       this.update(id, { inspectLlmPending: !result.applied });
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
         if (s.settings.inspectLlm) throw new HttpError(502, "The Sandbox runs an older Daemon without the LLM inspector; Stop and Resume the session to refresh it.");
         return;
       }
@@ -2513,7 +2513,7 @@ export class SessionManager {
     try {
       return DaemonLlmCallsResult.parse(await client.request(DAEMON_METHODS.llmCalls, {})).withBodies;
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) return [];
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) return [];
       throw e;
     }
   }
@@ -2529,7 +2529,7 @@ export class SessionManager {
       const body = DaemonLlmCallBodyResult.parse(await this.daemonCall(id, DAEMON_METHODS.llmCallBody, params, DAEMON_WAIT_MS));
       return { ...body, call: known };
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) return { call: known, request: null, response: null };
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) return { call: known, request: null, response: null };
       throw e;
     }
   }
@@ -2547,7 +2547,7 @@ export class SessionManager {
       const result = DaemonModelSetResult.parse(await client.request(DAEMON_METHODS.modelSet, { model: s.settings.model }));
       return this.update(id, { modelPending: !result.applied });
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
         throw new HttpError(502, "The Sandbox runs an older Daemon without model selection; Stop and Resume the session to refresh it.");
       }
       throw e;
@@ -2569,7 +2569,7 @@ export class SessionManager {
       const result = DaemonOptionSetResult.parse(await client.request(DAEMON_METHODS.optionSet, params));
       return this.update(id, { optionsPending: !result.applied });
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
         throw new HttpError(502, "The Sandbox runs an older Daemon without option selection; Stop and Resume the session to refresh it.");
       }
       throw e;
@@ -2587,7 +2587,7 @@ export class SessionManager {
     try {
       DaemonClaudeModelsSetResult.parse(await client.request(DAEMON_METHODS.claudeModelsSet, { models: this.settings().claudeModels }));
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
         this.log(`daemon ${id} predates the Claude model allowlist; Stop and Resume the session to refresh it`);
         return;
       }
@@ -2617,7 +2617,7 @@ export class SessionManager {
     try {
       await client.request(sync.setMethod, sync.params(this.settings()));
     } catch (e) {
-      if (sync.tolerateMissingMethod && e instanceof DaemonRpcError && e.code === -32601) {
+      if (sync.tolerateMissingMethod && e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
         this.log(`daemon ${id} predates ${providerAuthLabel(s.provider)}; Stop and Resume the session to refresh it`);
         return;
       }
@@ -2646,7 +2646,7 @@ export class SessionManager {
       const params: DaemonRecordingPrefsSetParams = { narration: this.settings().recordingNarration };
       DaemonRecordingPrefsSetResult.parse(await client.request(DAEMON_METHODS.recordingPrefsSet, params));
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
         this.log(`daemon ${id} predates recording preferences; Stop and Resume the session to refresh it`);
         return;
       }
@@ -2690,7 +2690,7 @@ export class SessionManager {
       const result = DaemonMcpSetResult.parse(await client.request(DAEMON_METHODS.mcpSet, { servers, credentials, sessionboxerTools } satisfies DaemonMcpSetParams));
       return this.update(id, { mcpPending: !result.applied });
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
         throw new HttpError(502, "The Sandbox runs an older Daemon without MCP support; Stop and Resume the session to refresh it.");
       }
       throw e;
@@ -2728,7 +2728,7 @@ export class SessionManager {
     try {
       await client.request(DAEMON_METHODS.utilitiesSet, params satisfies DaemonUtilitiesSetParams);
     } catch (e) {
-      if (e instanceof DaemonRpcError && e.code === -32601) return;
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) return;
       throw e;
     }
   }

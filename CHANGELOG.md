@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+The Sandbox image changed: `npm run build:image`, then Stop → Resume existing sessions.
+
+- Daemon errors carry a code (`DaemonError`, `DAEMON_ERROR_CODES`): a prompt while a turn is active, a Provider this Sandbox does not run, an Agent with no session yet answer 409/400/404 instead of 502. (ADR-0080)
+
 ## 1.5.0 — 2026-10-01
 
 Install: `npx sessionboxer@1.5.0 serve`, the installers on the release, `docker compose up`, or

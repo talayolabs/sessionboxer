@@ -34,3 +34,4 @@ export * from "./mcp-apps.js";
 export * from "./common.js";
 export * from "./themes.js";
 export * from "./usage.js";
+export * from "./daemon-errors.js";

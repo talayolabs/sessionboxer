@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as pty from "node-pty";
 import { PTY_SCROLLBACK_BYTES, type PtyAttachResult, type PtyInfo, type PtyReadResult } from "@sessionboxer/protocol";
 import { caEnv } from "./ca-env.js";
+import { DaemonError } from "./daemon-error.js";
 
 const EXITED_RETENTION_MS = 5 * 60_000;
 const SHELL = process.env.SHELL && process.env.SHELL !== "" ? process.env.SHELL : "/bin/bash";
@@ -24,15 +25,6 @@ export interface TerminalShell {
   command: string;
   args: string[];
   env: Record<string, string>;
-}
-
-export class TerminalError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-  }
 }
 
 /** Terminal output without its control sequences (CSI/OSC/charset escapes, carriage returns, bells). */
@@ -112,7 +104,7 @@ export class Terminals {
 
   input(id: string, data: string): void {
     const term = this.get(id);
-    if (!term.proc) throw new TerminalError(-32003, `terminal ${id} has exited`);
+    if (!term.proc) throw new DaemonError("conflict", `terminal ${id} has exited`);
     term.proc.write(Buffer.from(data, "base64").toString("utf8"));
   }
 
@@ -141,7 +133,7 @@ export class Terminals {
 
   private get(id: string): Terminal {
     const term = this.terminals.get(id);
-    if (!term) throw new TerminalError(-32001, `terminal ${id} not found`);
+    if (!term) throw new DaemonError("not_found", `terminal ${id} not found`);
     return term;
   }
 

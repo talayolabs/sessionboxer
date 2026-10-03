@@ -19,6 +19,7 @@
     "test:desktop-tools": "tsc -b && node --test scripts/desktop-tool-descriptions.test.mjs",
     "test:provider-auth": "tsc -b && node --test scripts/provider-auth.test.mjs",
     "test:schema": "tsc -b && node --test scripts/schema-and-settings.test.mjs",
+    "test:daemon-errors": "tsc -b && node --test scripts/daemon-errors.test.mjs",
     "audit:tools": "python3 scripts/audit_tools.py",
     "clean": "tsc -b --clean",
     "build:image": "node scripts/build-image.mjs",

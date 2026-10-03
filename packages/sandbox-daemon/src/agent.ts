@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Readable, Writable } from "node:stream";
+import { DaemonError } from "./daemon-error.js";
 import {
   client,
   ndJsonStream,
@@ -373,7 +374,7 @@ export class AgentManager {
       this.events.onStateChange();
       return;
     }
-    if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+    if (!this.conn || !this.acpSessionId) throw new DaemonError("not_found", "agent not ready");
     await this.applyRequestedOptions(this.conn, this.acpSessionId, Object.keys(values), strict);
   }
 
@@ -392,7 +393,7 @@ export class AgentManager {
   ): Promise<void> {
     const defs = this.otherOptionDefs;
     if (!defs) {
-      if (strict) throw new Error("the Agent advertises no options");
+      if (strict) throw new DaemonError("invalid_params", "the Agent advertises no options");
       return;
     }
     for (const id of ids ?? Object.keys(this.optionValuesRequested)) {
@@ -400,11 +401,11 @@ export class AgentManager {
       if (value === undefined) continue;
       const def = defs.find((o) => o.id === id);
       if (!def) {
-        if (strict) throw new Error(`the Agent does not offer an option "${id}" with the current model`);
+        if (strict) throw new DaemonError("invalid_params", `the Agent does not offer an option "${id}" with the current model`);
         continue;
       }
       if (!def.choices.some((c) => c.value === value)) {
-        if (strict) throw new Error(`the Agent does not offer "${value}" for ${def.name}`);
+        if (strict) throw new DaemonError("invalid_params", `the Agent does not offer "${value}" for ${def.name}`);
         this.cfg.log(`option ${id}=${value} not offered with the current model; skipped`);
         continue;
       }
@@ -456,7 +457,7 @@ export class AgentManager {
       this.events.onStateChange();
       return;
     }
-    if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+    if (!this.conn || !this.acpSessionId) throw new DaemonError("not_found", "agent not ready");
     await this.applyRequestedModel(this.conn, this.acpSessionId);
   }
 
@@ -468,7 +469,7 @@ export class AgentManager {
     const model = this.model;
     if (!model || !this.modelConfigId || model === this.currentModel) return;
     if (this.modelOptions && !this.modelOptions.some((o) => o.value === model)) {
-      throw new Error(`the Agent does not offer model "${model}"`);
+      throw new DaemonError("invalid_params", `the Agent does not offer model "${model}"`);
     }
     const previous = this.currentModel;
     const result = await conn.agent.request("session/set_config_option", { sessionId, configId: this.modelConfigId, value: model });
@@ -807,9 +808,9 @@ export class AgentManager {
   }
 
   async prompt(text: string, attachments: PromptAttachment[] = []): Promise<void> {
-    if (this.turnActive) throw new Error("a turn is already active");
-    if (this.reportSink) throw new Error("the Agent is reporting its context usage; retry in a moment");
-    if (this.branching) throw new Error("the conversation is being branched; retry in a moment");
+    if (this.turnActive) throw new DaemonError("conflict", "a turn is already active");
+    if (this.reportSink) throw new DaemonError("conflict", "the Agent is reporting its context usage; retry in a moment");
+    if (this.branching) throw new DaemonError("conflict", "the conversation is being branched; retry in a moment");
     this.turnActive = true;
     this.events.onStateChange();
     try {
@@ -820,7 +821,7 @@ export class AgentManager {
         await Promise.race([this.mcpFirstSetArrived, new Promise<void>((r) => setTimeout(r, 15_000).unref())]);
       }
       await this.ensureStarted();
-      if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+      if (!this.conn || !this.acpSessionId) throw new DaemonError("not_found", "agent not ready");
       const built = await promptBlocks(text, attachments, this.cfg.localWorkspace ?? this.cfg.cwd, this.promptCaps, this.cfg.log, this.cfg.transport?.attachmentPath);
       if (attachments.length > 0) {
         this.cfg.log(`prompt carries ${attachments.length} attachment(s): ${built.blocks.map((b) => b.type).join(", ") || "none"} sent inline`);
@@ -862,7 +863,7 @@ export class AgentManager {
   async ask(text: string): Promise<string> {
     await this.ensureStarted();
     const conn = this.conn;
-    if (!conn) throw new Error("agent not ready");
+    if (!conn) throw new DaemonError("not_found", "agent not ready");
     this.creatingOneShots++;
     let sessionId: string;
     let modes: NewSessionResponse["modes"];
@@ -895,9 +896,9 @@ export class AgentManager {
    * Plane, but prompts are refused meanwhile.
    */
   async contextReport(): Promise<string> {
-    if (this.turnActive) throw new Error("a turn is already active");
-    if (this.reportSink) throw new Error("a context report is already running");
-    if (this.branching) throw new Error("the conversation is being branched; retry in a moment");
+    if (this.turnActive) throw new DaemonError("conflict", "a turn is already active");
+    if (this.reportSink) throw new DaemonError("conflict", "a context report is already running");
+    if (this.branching) throw new DaemonError("conflict", "the conversation is being branched; retry in a moment");
     const text = await this.localCommand("/context");
     // claude-agent-acp delivers the report twice (as command output and as the result).
     const half = text.slice(0, Math.floor(text.length / 2)).trim();
@@ -907,7 +908,7 @@ export class AgentManager {
   /** A slash command the adapter answers by itself, its reply captured instead of emitted. */
   private async localCommand(command: string): Promise<string> {
     await this.ensureStarted();
-    if (!this.conn || !this.acpSessionId) throw new Error("agent not ready");
+    if (!this.conn || !this.acpSessionId) throw new DaemonError("not_found", "agent not ready");
     const chunks: string[] = [];
     this.reportSink = (update) => {
       if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") chunks.push(update.content.text);
@@ -962,8 +963,8 @@ export class AgentManager {
    * fresh session primed with `replay`. Prompts are refused meanwhile.
    */
   async forkSession(params: DaemonSessionForkParams): Promise<DaemonSessionForkResult> {
-    if (this.turnActive) throw new Error("a turn is already active");
-    if (this.branching) throw new Error("another branch operation is in progress");
+    if (this.turnActive) throw new DaemonError("conflict", "a turn is already active");
+    if (this.branching) throw new DaemonError("conflict", "another branch operation is in progress");
     this.branching = true;
     try {
       await this.mcpApplyChain.catch(() => undefined);
@@ -971,7 +972,7 @@ export class AgentManager {
       await this.ensureStarted();
       const conn = this.conn;
       const from = this.acpSessionId;
-      if (!conn || !from) throw new Error("agent not ready");
+      if (!conn || !from) throw new DaemonError("not_found", "agent not ready");
       const mcpServers = this.acpMcpServers(this.mcpServers ?? []);
       this.replaying = true;
       try {
@@ -1024,19 +1025,19 @@ export class AgentManager {
    * Resolves with the session actually running (a new one if the load failed).
    */
   async switchSession(acpSessionId: string): Promise<string> {
-    if (this.turnActive) throw new Error("a turn is already active");
-    if (this.branching) throw new Error("another branch operation is in progress");
+    if (this.turnActive) throw new DaemonError("conflict", "a turn is already active");
+    if (this.branching) throw new DaemonError("conflict", "another branch operation is in progress");
     if (acpSessionId === this.acpSessionId && this.ready) return acpSessionId;
     this.branching = true;
     try {
       await this.mcpApplyChain.catch(() => undefined);
       if (this.starting) await this.starting.catch(() => undefined);
-      if (this.turnActive) throw new Error("a turn is already active");
+      if (this.turnActive) throw new DaemonError("conflict", "a turn is already active");
       this.acpSessionId = acpSessionId;
       this.writeState({ acpSessionId, freshSessionIds: this.freshSessionIds() });
       this.kill();
       await this.ensureStarted();
-      if (!this.acpSessionId) throw new Error("agent not ready");
+      if (!this.acpSessionId) throw new DaemonError("not_found", "agent not ready");
       return this.acpSessionId;
     } finally {
       this.branching = false;

@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import {
   DAEMON_METHODS,
   DaemonAuthChangedParams,
+  DAEMON_ERROR_CODES,
   FsChangedParams,
   DaemonStatus,
   PtyExitParams,
@@ -121,7 +122,7 @@ export class DaemonClient {
       this.handlers
         .onRequest(msg.method, msg.params)
         .then((result) => this.ws?.send(JSON.stringify({ jsonrpc: "2.0", id, result: result ?? null })))
-        .catch((e: unknown) => this.ws?.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: e instanceof Error ? e.message : String(e) } })));
+        .catch((e: unknown) => this.ws?.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code: DAEMON_ERROR_CODES.internal, message: e instanceof Error ? e.message : String(e) } })));
       return;
     }
     if ("method" in msg) {

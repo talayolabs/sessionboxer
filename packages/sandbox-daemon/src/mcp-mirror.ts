@@ -18,6 +18,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
+  DAEMON_ERROR_CODES,
   type DaemonEvent,
   type DaemonMcpAppsCallToolParams,
   type DaemonMcpAppsReadResourceParams,
@@ -36,6 +37,7 @@ import {
   type SessionUpdate,
 } from "@sessionboxer/protocol";
 import { classifyToolError, fingerprint } from "@sessionboxer/protocol/node-telemetry";
+import { DaemonError } from "./daemon-error.js";
 
 type Json = Record<string, unknown>;
 
@@ -209,7 +211,7 @@ export class McpTeeHub {
           clearTimeout(w.timer);
           if (msg.error !== undefined) {
             const e = object(msg.error);
-            w.reject(Object.assign(new Error(str(e.message) ?? "MCP error"), { code: typeof e.code === "number" ? e.code : -32000, data: e.data }));
+            w.reject(Object.assign(new Error(str(e.message) ?? "MCP error"), { code: typeof e.code === "number" ? e.code : DAEMON_ERROR_CODES.internal, data: e.data }));
           } else w.resolve(msg.result);
           break;
         }
@@ -224,7 +226,7 @@ export class McpTeeHub {
       m.toolsPromise = null;
       for (const w of m.waiting.values()) {
         clearTimeout(w.timer);
-        w.reject(Object.assign(new Error(`the ${name} MCP server went away`), { code: -32003 }));
+        w.reject(new DaemonError("conflict", `the ${name} MCP server went away`));
       }
       m.waiting.clear();
       this.events.log(`mcp-tee: ${name} disconnected`);
@@ -506,13 +508,13 @@ export class McpTeeHub {
   private request(m: ServerMirror, method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
     const ws = m.ws;
     if (!ws || ws.readyState !== ws.OPEN) {
-      return Promise.reject(Object.assign(new Error(`the ${m.name} MCP server is not connected (is it enabled for this Session, and did the Agent start it?)`), { code: -32003 }));
+      return Promise.reject(new DaemonError("conflict", `the ${m.name} MCP server is not connected (is it enabled for this Session, and did the Agent start it?)`));
     }
     const id = String(m.nextId++);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         m.waiting.delete(id);
-        reject(Object.assign(new Error(`${m.name}: ${method} timed out`), { code: -32002 }));
+        reject(new DaemonError("forbidden", `${m.name}: ${method} timed out`));
       }, timeoutMs);
       m.waiting.set(id, { resolve, reject, timer });
       ws.send(JSON.stringify({ type: "request", id, method, params } satisfies McpTeeFromDaemon));
@@ -537,7 +539,7 @@ export class McpTeeHub {
 
   private known(server: string): ServerMirror {
     const m = this.servers.get(server);
-    if (!m) throw Object.assign(new Error(`no MCP server named ${server} has connected through the tee`), { code: -32001 });
+    if (!m) throw new DaemonError("not_found", `no MCP server named ${server} has connected through the tee`);
     return m;
   }
 
@@ -545,11 +547,11 @@ export class McpTeeHub {
     for (const m of this.servers.values()) {
       const rec = m.calls.find((r) => r.toolCallId === toolCallId);
       if (rec) {
-        if (rec.server !== server) throw Object.assign(new Error(`tool call ${toolCallId} belongs to ${rec.server}, not ${server}: views only reach their own server`), { code: -32602 });
+        if (rec.server !== server) throw new DaemonError("invalid_params", `tool call ${toolCallId} belongs to ${rec.server}, not ${server}: views only reach their own server`);
         return rec;
       }
     }
-    throw Object.assign(new Error(`no MCP tool call ${toolCallId} was seen through the tee`), { code: -32001 });
+    throw new DaemonError("not_found", `no MCP tool call ${toolCallId} was seen through the tee`);
   }
 
   /** A `ui://` resource, from the cache or read through the tee. */
@@ -559,7 +561,7 @@ export class McpTeeHub {
     if (cached) return cached;
     const result = object(await this.request(m, "resources/read", { uri }));
     const res = this.cacheResource(m, uri, result);
-    if (!res) throw Object.assign(new Error(`${server} returned no text for ${uri}`), { code: -32001 });
+    if (!res) throw new DaemonError("not_found", `${server} returned no text for ${uri}`);
     return res;
   }
 
@@ -574,7 +576,7 @@ export class McpTeeHub {
         break;
       }
     }
-    if (!rec || !m) throw Object.assign(new Error(`no MCP tool call ${toolCallId} was seen through the tee`), { code: -32001 });
+    if (!rec || !m) throw new DaemonError("not_found", `no MCP tool call ${toolCallId} was seen through the tee`);
     if (!rec.result) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, RESULT_WAIT_MS);
@@ -604,17 +606,17 @@ export class McpTeeHub {
     this.bound(p.toolCallId, p.server);
     const tools = await this.toolList(m);
     const tool = tools.find((t) => t.name === p.name);
-    if (!tool) throw Object.assign(new Error(`${p.server} has no tool named ${p.name}`), { code: -32602 });
+    if (!tool) throw new DaemonError("invalid_params", `${p.server} has no tool named ${p.name}`);
     const ui = McpToolUiMeta.safeParse(object(object(tool._meta).ui)).data;
     if (ui?.visibility && !ui.visibility.includes("app")) {
-      throw Object.assign(new Error(`${p.server}'s ${p.name} is not callable from a view (visibility ${ui.visibility.join(", ")})`), { code: -32602 });
+      throw new DaemonError("invalid_params", `${p.server}'s ${p.name} is not callable from a view (visibility ${ui.visibility.join(", ")})`);
     }
     const started = Date.now();
     let result: McpToolResult;
     try {
       result = McpToolResult.safeParse(await this.request(m, "tools/call", { name: p.name, arguments: p.arguments })).data ?? { content: [] };
     } catch (e) {
-      if (e instanceof Error && "code" in e && (e as { code: unknown }).code === -32003) throw e;
+      if (e instanceof Error && "code" in e && (e as { code: unknown }).code === DAEMON_ERROR_CODES.conflict) throw e;
       result = { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true };
     }
     const rec: CallRecord = { seq: ++this.seq, server: m.name, tool: p.name, arguments: p.arguments, requestedAt: started, result, completedAt: Date.now(), toolCallId: null, appEmitted: true };

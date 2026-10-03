@@ -87,6 +87,7 @@ import { AuthFile } from "./auth-file.js";
 import { registerCursorExtensions } from "./cursor-ext.js";
 import { readCompactionDetails } from "./compactions.js";
 import { ControlPlaneBridge } from "./control-plane-bridge.js";
+import { DaemonError, jsonRpcError } from "./daemon-error.js";
 import { Docs } from "./docs.js";
 import { GhApi } from "./gh-api.js";
 import { BbCredentials } from "./bb-credentials.js";
@@ -392,7 +393,7 @@ const transport = guest
 if (guest) registerBridgeServices(guest, [{ name: BRIDGE_SERVICE_DESKTOP, command: mcpCommand }, { name: BRIDGE_SERVICE_SESSIONBOXER, command: agentMcpCommand }], log);
 
 function setCursorLogin(login: string): boolean {
-  if (!cursorAuth) throw new Error("this Sandbox does not run Cursor");
+  if (!cursorAuth) throw new DaemonError("invalid_params", "this Sandbox does not run Cursor");
   if (login.trimStart().startsWith("{")) {
     cursorAuth.set(login);
     return agent.setAgentEnv({ SESSIONBOXER_CURSOR_LOGIN: "auth-json" });
@@ -404,7 +405,7 @@ function setCursorLogin(login: string): boolean {
 }
 
 function setPiLogin(authJson: string, apiKeys: Record<string, string>): boolean {
-  if (!piAuth) throw new Error("this Sandbox does not run pi");
+  if (!piAuth) throw new DaemonError("invalid_params", "this Sandbox does not run pi");
   piAuth.set(authJson);
   const names = Object.keys(apiKeys);
   if (names.length > 0) log(`pi API keys handed to the Agent process as ${names.join(", ")}`);
@@ -414,7 +415,7 @@ function setPiLogin(authJson: string, apiKeys: Record<string, string>): boolean 
 
 /** Puts the OpenCode `auth.json` on tmpfs (or removes it) and restarts the Agent so its server sees the providers. */
 function setOpenCodeLogin(authJson: string): boolean {
-  if (!opencodeAuth) throw new Error("this Sandbox does not run OpenCode");
+  if (!opencodeAuth) throw new DaemonError("invalid_params", "this Sandbox does not run OpenCode");
   opencodeAuth.set(authJson);
   return agent.setAgentEnv(authJson === "" ? {} : { SESSIONBOXER_OPENCODE_LOGIN: "auth-json" });
 }
@@ -456,7 +457,7 @@ function onPath(command: string): string {
 
 /** Puts an fx login in place: one login file on tmpfs (the other two removed) or the API key in the Agent's environment (on top of `FX_AGENT_ENV`). */
 function setFxLogin(login: string): boolean {
-  if (!fxAuth) throw new Error("this Sandbox does not run fx");
+  if (!fxAuth) throw new DaemonError("invalid_params", "this Sandbox does not run fx");
   const kind = login.trimStart().startsWith("{") ? fxLoginKind(login) : null;
   for (const k of Object.keys(fxAuth) as FxLoginKind[]) fxAuth[k].set(k === kind ? login : "");
   if (kind === "codex" || kind === "grok") {
@@ -767,8 +768,8 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       return status();
     case DAEMON_METHODS.prompt: {
       const p = DaemonPromptParams.parse(params);
-      if (agent.turnActive) throw new Error("a turn is already active");
-      if (agent.reporting) throw new Error("the Agent is reporting its context usage; retry in a moment");
+      if (agent.turnActive) throw new DaemonError("conflict", "a turn is already active");
+      if (agent.reporting) throw new DaemonError("conflict", "the Agent is reporting its context usage; retry in a moment");
       activeTurnId = randomUUID();
       toolTelemetry.begin(activeTurnId);
       emit({
@@ -788,12 +789,12 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       return { text: await agent.contextReport() };
     case DAEMON_METHODS.compactionDetails: {
       const p = DaemonCompactionDetailsParams.parse(params);
-      if (!agent.acpSessionId) throw new Error("the Agent has no session yet");
+      if (!agent.acpSessionId) throw new DaemonError("not_found", "the Agent has no session yet");
       const result: DaemonCompactionDetailsResult = readCompactionDetails({ provider, home, cwd: workspace }, agent.acpSessionId, p);
       return result;
     }
     case DAEMON_METHODS.codexAuthSet: {
-      if (!codexAuth) throw new Error("this Sandbox does not run Codex");
+      if (!codexAuth) throw new DaemonError("invalid_params", "this Sandbox does not run Codex");
       codexAuth.set(DaemonCodexAuthParams.parse(params).authJson);
       return {};
     }
@@ -946,7 +947,7 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.ghLogins:
       return ghApi.logins();
     default:
-      throw Object.assign(new Error(`method not found: ${method}`), { code: -32601 });
+      throw new DaemonError("method_not_found", `method not found: ${method}`);
   }
 }
 
@@ -990,10 +991,7 @@ wss.on("connection", (ws) => {
       id = msg.id;
       handle(ws, msg.method, msg.params)
         .then((result) => send(ws, { jsonrpc: "2.0", id, result }))
-        .catch((e: unknown) => {
-          const code = typeof (e as { code?: unknown }).code === "number" ? (e as { code: number }).code : -32000;
-          send(ws, { jsonrpc: "2.0", id, error: { code, message: e instanceof Error ? e.message : String(e) } });
-        });
+        .catch((e: unknown) => send(ws, { jsonrpc: "2.0", id, error: jsonRpcError(e) }));
     } catch (e) {
       send(ws, { jsonrpc: "2.0", id, error: { code: -32700, message: String(e) } });
     }

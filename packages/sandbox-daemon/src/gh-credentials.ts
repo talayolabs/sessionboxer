@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BoxCredential } from "@sessionboxer/protocol";
+import { unquote, yamlKey, yamlString } from "./yaml-lite.js";
 
 /**
  * GitHub logins for the Sandbox itself: `gh` reads `$GH_CONFIG_DIR/hosts.yml` on every
@@ -94,24 +95,4 @@ function readHosts(file: string): HostsFile {
     }
   }
   return out;
-}
-
-function unquote(s: string): string {
-  const t = s.trim();
-  if (t.startsWith('"')) {
-    try {
-      return String(JSON.parse(t));
-    } catch {
-      return t;
-    }
-  }
-  return t.replace(/^'(.*)'$/, "$1");
-}
-
-function yamlKey(s: string): string {
-  return /^[A-Za-z0-9_.-]+$/.test(s) ? s : yamlString(s);
-}
-
-function yamlString(s: string): string {
-  return JSON.stringify(s);
 }

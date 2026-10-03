@@ -3,7 +3,6 @@ import {
   connectorHasMcp,
   MCP_TRANSPORTS,
   type ConnectorKind,
-  type PublicMcpKeyValue,
   type PublicMcpServerDef,
   type PublicSettings,
 } from "@sessionboxer/protocol";
@@ -11,6 +10,7 @@ import { api } from "./api";
 import { ConnectorDialog } from "./ConnectorDialog";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { TRANSPORT_LABELS, importMcpJson, joinArgs, newMcpServer, splitArgs, summarize } from "./mcp";
+import { KeyValueList } from "./KeyValueList";
 import { Modal } from "./ui";
 
 /**
@@ -256,56 +256,6 @@ function McpServerForm({
         <span className="spacer" />
         <button type="button" onClick={onDone}>
           Done
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function KeyValueList({
-  label,
-  items,
-  namePlaceholder,
-  onChange,
-}: {
-  label: string;
-  items: PublicMcpKeyValue[];
-  namePlaceholder: string;
-  onChange: (items: PublicMcpKeyValue[]) => void;
-}) {
-  const set = (i: number, patch: Partial<PublicMcpKeyValue>) => onChange(items.map((kv, j) => (j === i ? { ...kv, ...patch } : kv)));
-  return (
-    <div className="kv">
-      <span className="muted">{label}</span>
-      {items.map((kv, i) => {
-        const stored = kv.secret && kv.value === null;
-        return (
-          <div key={i} className="kv-row">
-            <input value={kv.name} placeholder={namePlaceholder} onChange={(e) => set(i, { name: e.target.value })} />
-            <input
-              type={kv.secret ? "password" : "text"}
-              autoComplete="off"
-              value={kv.value ?? ""}
-              placeholder={stored ? "(set; leave empty to keep)" : "value"}
-              onChange={(e) => set(i, { value: e.target.value === "" && kv.secret && stored ? null : e.target.value })}
-            />
-            <label className="check" title="Secret: stored in config.json, never shown again here, kept out of snapshots">
-              <input
-                type="checkbox"
-                checked={kv.secret}
-                onChange={(e) => set(i, { secret: e.target.checked, ...(e.target.checked ? {} : { value: kv.value ?? "" }) })}
-              />
-              secret
-            </label>
-            <button type="button" className="small danger" onClick={() => onChange(items.filter((_, j) => j !== i))} title="Remove">
-              ×
-            </button>
-          </div>
-        );
-      })}
-      <div>
-        <button type="button" className="small" onClick={() => onChange([...items, { name: "", value: "", secret: false }])}>
-          Add {label.toLowerCase().replace(/s$/, "")}
         </button>
       </div>
     </div>

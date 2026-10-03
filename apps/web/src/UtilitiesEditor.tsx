@@ -19,6 +19,7 @@ import {
   type UtilityGroup,
   type UtilityWebLogin,
 } from "@sessionboxer/protocol";
+import { KeyValueList } from "./KeyValueList";
 import { joinArgs, splitArgs } from "./mcp";
 import { Modal } from "./ui";
 
@@ -29,6 +30,13 @@ import { Modal } from "./ui";
  * (skills) that say how to use them. Secrets are write-only, like the MCP editor's. Saved with the
  * Settings form.
  */
+/** Utility values may be `${cred:<credential>}` placeholders, so the row editor words its hints differently. */
+const UTILITY_KV = {
+  valuePlaceholder: "value or ${cred:token}",
+  secretTitle: "Secret: write-only here (a ${cred:…} placeholder is not a secret itself)",
+  addLabel: "Add",
+};
+
 export function UtilitiesEditor({
   utilities,
   environments,
@@ -498,7 +506,7 @@ function UtilityForm({
               Base URL
               <input value={u.http.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => onChange({ http: { ...u.http!, baseUrl: e.target.value } })} />
             </label>
-            <KeyValueList label="Headers (value may use ${cred:<credential>})" items={u.http.headers} namePlaceholder="Authorization" onChange={(headers) => onChange({ http: { ...u.http!, headers } })} />
+            <KeyValueList {...UTILITY_KV} label="Headers (value may use ${cred:<credential>})" items={u.http.headers} namePlaceholder="Authorization" onChange={(headers) => onChange({ http: { ...u.http!, headers } })} />
           </>
         )}
       </Facet>
@@ -547,7 +555,7 @@ function UtilityForm({
               How to install it in the Sandbox (for the Agent)
               <input value={u.cli.install} placeholder="pip install --user rabbitmqadmin" onChange={(e) => onChange({ cli: { ...u.cli!, install: e.target.value } })} />
             </label>
-            <KeyValueList label="Environment variables (value may use ${cred:<credential>})" items={u.cli.env} namePlaceholder="MONGODB_URI" onChange={(env) => onChange({ cli: { ...u.cli!, env } })} />
+            <KeyValueList {...UTILITY_KV} label="Environment variables (value may use ${cred:<credential>})" items={u.cli.env} namePlaceholder="MONGODB_URI" onChange={(env) => onChange({ cli: { ...u.cli!, env } })} />
           </>
         )}
       </Facet>
@@ -587,7 +595,7 @@ function UtilityForm({
                     }}
                   />
                 </label>
-                <KeyValueList label="Environment variables" items={mcp.env} namePlaceholder="MDB_MCP_CONNECTION_STRING" onChange={(env) => onChange({ mcp: { ...mcp, env } })} />
+                <KeyValueList {...UTILITY_KV} label="Environment variables" items={mcp.env} namePlaceholder="MDB_MCP_CONNECTION_STRING" onChange={(env) => onChange({ mcp: { ...mcp, env } })} />
               </>
             ) : (
               <>
@@ -595,7 +603,7 @@ function UtilityForm({
                   URL
                   <input value={mcp.url} placeholder="https://mcp.example.com/mcp" onChange={(e) => onChange({ mcp: { ...mcp, url: e.target.value } })} />
                 </label>
-                <KeyValueList label="Headers" items={mcp.headers} namePlaceholder="Authorization" onChange={(headers) => onChange({ mcp: { ...mcp, headers } })} />
+                <KeyValueList {...UTILITY_KV} label="Headers" items={mcp.headers} namePlaceholder="Authorization" onChange={(headers) => onChange({ mcp: { ...mcp, headers } })} />
               </>
             )}
           </>
@@ -678,42 +686,6 @@ function CredentialList({ items, onChange }: { items: PublicMcpKeyValue[]; onCha
       <div>
         <button type="button" className="small" onClick={() => onChange([...items, { name: "", value: "", secret: true }])}>
           Add credential
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function KeyValueList({ label, items, namePlaceholder, onChange }: { label: string; items: PublicMcpKeyValue[]; namePlaceholder: string; onChange: (items: PublicMcpKeyValue[]) => void }) {
-  const set = (i: number, patch: Partial<PublicMcpKeyValue>) => onChange(items.map((kv, j) => (j === i ? { ...kv, ...patch } : kv)));
-  return (
-    <div className="kv">
-      <span className="muted">{label}</span>
-      {items.map((kv, i) => {
-        const stored = kv.secret && kv.value === null;
-        return (
-          <div key={i} className="kv-row">
-            <input value={kv.name} placeholder={namePlaceholder} onChange={(e) => set(i, { name: e.target.value })} />
-            <input
-              type={kv.secret ? "password" : "text"}
-              autoComplete="off"
-              value={kv.value ?? ""}
-              placeholder={stored ? "(set; leave empty to keep)" : "value or ${cred:token}"}
-              onChange={(e) => set(i, { value: e.target.value === "" && kv.secret && stored ? null : e.target.value })}
-            />
-            <label className="check" title="Secret: write-only here (a ${cred:…} placeholder is not a secret itself)">
-              <input type="checkbox" checked={kv.secret} onChange={(e) => set(i, { secret: e.target.checked, ...(e.target.checked ? {} : { value: kv.value ?? "" }) })} />
-              secret
-            </label>
-            <button type="button" className="small danger" onClick={() => onChange(items.filter((_, j) => j !== i))} title="Remove">
-              ×
-            </button>
-          </div>
-        );
-      })}
-      <div>
-        <button type="button" className="small" onClick={() => onChange([...items, { name: "", value: "", secret: false }])}>
-          Add
         </button>
       </div>
     </div>

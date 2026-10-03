@@ -1,5 +1,6 @@
-import WebSocket, { type RawData } from "ws";
+import WebSocket from "ws";
 import { CODE_PATH } from "@sessionboxer/protocol";
+import { bridgeSockets } from "./ws-bridge.js";
 
 /** Hop-by-hop and framing headers that must not be copied between the two legs of the proxy. */
 const HOP_HEADERS = new Set([
@@ -73,36 +74,12 @@ export function bridgeCodeSocket(
   const wsUrl = new URL(target);
   wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
   const upstream = new WebSocket(wsUrl, protocols ? protocols.split(",").map((p) => p.trim()) : [], { headers: forwarded });
-  const pending: Array<{ data: RawData; binary: boolean }> = [];
-
-  const forward = (to: WebSocket, data: RawData, binary: boolean): void => {
-    if (to.readyState === WebSocket.OPEN) to.send(data, { binary });
-  };
-
-  client.on("message", (data, binary) => {
-    if (upstream.readyState === WebSocket.OPEN) forward(upstream, data, binary);
-    else if (upstream.readyState === WebSocket.CONNECTING) pending.push({ data, binary });
-  });
-  upstream.on("open", () => {
-    for (const m of pending) forward(upstream, m.data, m.binary);
-    pending.length = 0;
-  });
-  upstream.on("message", (data, binary) => forward(client, data, binary));
-
-  const closeBoth = (code = 1000, reason = ""): void => {
-    if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) client.close(code, reason);
-    if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) upstream.close(1000);
-  };
-  client.on("close", () => closeBoth());
   // 1004–1006 and 1015 are reserved and cannot be sent in a close frame.
   const sendable = (code: number): boolean => (code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1014);
-  upstream.on("close", (code, reason) => closeBoth(sendable(code) ? code : 1011, reason.toString()));
-  client.on("error", (e) => {
-    log(`code ws client error: ${e.message}`);
-    closeBoth();
-  });
-  upstream.on("error", (e) => {
-    log(`code ws upstream error: ${e.message}`);
-    closeBoth(1011, "VS Code unreachable");
-  });
+  bridgeSockets(
+    client,
+    upstream,
+    { name: "code ws", unreachable: "VS Code unreachable", upstreamClosed: (code, reason) => ({ code: sendable(code) ? code : 1011, reason: reason.toString() }) },
+    log,
+  );
 }

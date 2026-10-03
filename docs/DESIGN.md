@@ -66,6 +66,21 @@ packages/protocol       shared zod types + JSON-RPC framing
 images/sandbox          Dockerfile (desktop stack + claude-code + claude-agent-acp + devin CLI + daemon + MCP)
 ```
 
+## How the Control Plane is put together
+
+`apps/control-plane/src` has three layers; keep new code in the one it belongs to.
+
+- **Composition root — `index.ts`.** Reads the config, constructs every service once (`Db`, `SandboxDocker`, `WindowsVms`/`MacosVms`, `SessionManager`, `Automations`, `FollowedPrs`, `Tunnels`, `Auth`, `Connectors`, `ProviderLogins`, `Speech`, `PushNotifier`, …), wires the middleware and the WebSocket upgrade, and calls `register*Routes(api, deps)` for each `routes/*.ts` in a fixed order. Hono resolves overlapping patterns by registration order, so `scripts/route-table.txt` pins the full `METHOD /path` table (`npm run test:routes`). Nothing else constructs a service.
+- **Routes — `routes/<domain>.ts`.** Thin handlers: validate the body with the `@sessionboxer/protocol` zod schema, call one domain-class method, return its result as JSON. They close over `RouteDeps` (`routes/deps.ts`): instances, never factories; Settings go through `deps.settings.get()`/`set()` because `index.ts` replaces the Settings object on every update.
+- **Domain classes — one file per concern.** `SessionManager` (`sessions.ts`, with `SessionQueue` and `SnapshotPolicy` beside it), `Automations`, `FollowedPrs`, `PullRequests`, `QemuVms` → `WindowsVms`/`MacosVms`, `Tunnels`, `Connectors`, `ProviderLogins`. Each takes its collaborators through a `*Deps` object or constructor arguments, with the outside world — Docker, the VM host, the GitHub/Bitbucket transport, the clock, Settings — behind that seam, so a test can replace it. SQL lives in the `*-store.ts` classes over `Db`; the schema and its migrations are in `db.ts`.
+
+Conventions the three layers share:
+
+- Errors are `throw new HttpError(status, message)` (`http-error.ts`); `app.onError` in `index.ts` turns them into `{ "error": message }` with that status. Daemon RPC failures arrive as `DaemonError` kinds and map through `httpStatusForDaemonError` (ADR-0080). Error messages are user-facing and searched for in the docs; keep them byte-identical when you move code.
+- Provider differences live in tables, not branches: `PROVIDER_AUTH` in `provider-auth.ts` is where a new synced-login Provider goes.
+- Every class with a timer or an external dependency has a `node:test` harness under `scripts/*.test.mjs`, driven through its seam against `dist/` after `tsc -b`: `npm run test:session-manager`, `test:automations`, `test:pr-sync`, `test:guest-vms`, `test:schema`, `test:provider-auth`, `test:daemon-errors`, `test:routes`. Expected values are hand-written or observed, never recomputed from the implementation. Add a pin before you change behaviour the harness does not cover.
+- `npm run size-budget` fails when a source file grows past its line budget (`scripts/size-budget.mjs`; 600 lines for a file not listed there) and `npm run dup` fails when jscpd finds more than 0.5% duplicated lines. Both run in CI. `docs/TECH-DEBT.md` is the review log: what was split, why, and what is still open.
+
 ## Running it
 
 Requires Docker (Linux, or macOS via OrbStack or Docker Desktop), Node 22, optionally [Sysbox](https://github.com/nestybox/sysbox) for unprivileged Docker inside Sandboxes, and a Provider token: `claude setup-token` for Claude Code, and/or a Devin token (`devin auth login` on your machine, then the token from `~/.local/share/devin/credentials.toml`; it is passed to the Sandbox as `WINDSURF_API_KEY`).

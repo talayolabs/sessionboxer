@@ -20,6 +20,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run size-budget
+      - run: npm run dup
       - run: npm run test:telemetry
       - run: npm run test:audit
       - run: npm run test:attachments

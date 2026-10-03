@@ -1,0 +1,10 @@
+{
+  "path": ["apps", "packages"],
+  "format": ["typescript", "tsx"],
+  "ignore": ["**/node_modules/**", "**/dist/**"],
+  "minLines": 10,
+  "minTokens": 70,
+  "threshold": 0.5,
+  "reporters": ["consoleFull"],
+  "gitignore": true
+}

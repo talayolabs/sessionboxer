@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
@@ -8,7 +7,8 @@ import { DATA_DIR, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
 import { LABEL_SESSION, type SandboxDocker } from "./docker.js";
 import { HttpError } from "./http-error.js";
 import { log } from "./log.js";
-import { type GuestVms, VM_LOG_LINES, VmHost, demux, isStatus } from "./vm-host.js";
+import { type QemuPlatform, QemuVms } from "./qemu-vms.js";
+import { VM_LOG_LINES, VmHost, demux, isStatus } from "./vm-host.js";
 
 /**
  * macOS VMs for `qemu-macos` Sessions (ADR-0059). The shape is the Windows one (ADR-0057): a
@@ -101,34 +101,30 @@ export function macosVolumeName(sessionId: string): string {
   return `sbx-mac-${sessionId}`;
 }
 
-export class MacosVms implements GuestVms {
+const MACOS: QemuPlatform = {
+  name: "macOS",
+  label: LABEL_MACOS,
+  baseVolume: BASE_VOLUME,
+  installContainer: INSTALL_CONTAINER,
+  baseFile: BASE_FILE,
+  vmName: macosVmName,
+  volumeName: macosVolumeName,
+};
+
+export class MacosVms extends QemuVms<BaseRecord, MacosBaseStatus> {
   readonly guestLabel = "macOS VM";
-  readonly agentInGuest = true;
-  private readonly docker: Docker;
-  private readonly host: VmHost;
-  private base: BaseRecord | null = null;
-  private installing: Install | null = null;
-  private lastError: string | null = null;
-  private errorLog: string[] = [];
+  protected installing: Install | null = null;
 
   constructor(
     private readonly sandboxDocker: SandboxDocker,
-    private readonly settings: () => Settings,
-    private readonly saveSettings: (next: Settings) => void,
-    private readonly countSessions: () => number,
-    private readonly onStatus: (status: MacosBaseStatus) => void,
+    settings: () => Settings,
+    saveSettings: (next: Settings) => void,
+    countSessions: () => number,
+    onStatus: (status: MacosBaseStatus) => void,
     /** The Docker side of the VMs; the seam `scripts/guest-vms.test.mjs` puts a fake through. */
-    host?: VmHost,
+    host = new VmHost(sandboxDocker.docker, "mac", MACOS_IMAGE, LABEL_MACOS, "macOS VMs"),
   ) {
-    this.docker = sandboxDocker.docker;
-    this.host = host ?? new VmHost(this.docker, "mac", MACOS_IMAGE, LABEL_MACOS, "macOS VMs");
-    if (existsSync(BASE_FILE)) {
-      try {
-        this.base = JSON.parse(readFileSync(BASE_FILE, "utf8")) as BaseRecord;
-      } catch {
-        this.base = null;
-      }
-    }
+    super(sandboxDocker.docker, MACOS, settings, saveSettings, countSessions, onStatus, host);
   }
 
   /** Re-attaches to an install left running by a previous Control Plane; drops a base record whose volume is gone. */
@@ -172,17 +168,13 @@ export class MacosVms implements GuestVms {
     }
   }
 
-  vmName(sessionId: string): string {
-    return macosVmName(sessionId);
-  }
-
   repoPath(name: string): string {
     return `${MACOS_GUEST_WORKSPACE}/${name}`;
   }
 
   /** KVM, plus the AVX2 the macOS guest needs (dockur refuses to boot without it). */
-  async kvmUnavailable(refresh = false): Promise<string | null> {
-    const kvm = await this.host.kvmUnavailable(refresh);
+  override async kvmUnavailable(refresh = false): Promise<string | null> {
+    const kvm = await super.kvmUnavailable(refresh);
     if (kvm) return kvm;
     return this.avx2Unavailable();
   }
@@ -264,8 +256,7 @@ export class MacosVms implements GuestVms {
    */
   async install(): Promise<MacosBaseStatus> {
     if (this.installing) throw new HttpError(409, "The macOS base disk is already installing.");
-    const sessions = this.countSessions();
-    if (sessions > 0) throw new HttpError(409, `${sessions} macOS Session${sessions === 1 ? " still uses" : "s still use"} the base disk; delete ${sessions === 1 ? "it" : "them"} before reinstalling it.`);
+    this.assertBaseUnused("before reinstalling it");
     const kvm = await this.kvmUnavailable(true);
     if (kvm) throw new HttpError(409, kvm);
     const settings = this.settings();
@@ -296,8 +287,7 @@ export class MacosVms implements GuestVms {
   async reprovision(): Promise<MacosBaseStatus> {
     if (this.installing) throw new HttpError(409, "The macOS base disk is already installing.");
     if (!this.base?.installedAt) throw new HttpError(409, "There is no installed macOS base disk to reprovision.");
-    const sessions = this.countSessions();
-    if (sessions > 0) throw new HttpError(409, `${sessions} macOS Session${sessions === 1 ? " still uses" : "s still use"} the base disk; delete ${sessions === 1 ? "it" : "them"} before reprovisioning it.`);
+    this.assertBaseUnused("before reprovisioning it");
     const kvm = await this.kvmUnavailable(true);
     if (kvm) throw new HttpError(409, kvm);
     const { ramGb, cpus } = this.settings().macos;
@@ -354,19 +344,6 @@ export class MacosVms implements GuestVms {
       this.lastError = "The install was cancelled.";
     }
     this.errorLog = [];
-    this.onStatus(this.status());
-    return this.status();
-  }
-
-  /** Deletes the base disk (no Session may build on it). */
-  async removeBase(): Promise<MacosBaseStatus> {
-    if (this.installing) throw new HttpError(409, "The macOS base disk is installing; cancel that first.");
-    const sessions = this.countSessions();
-    if (sessions > 0) throw new HttpError(409, `${sessions} macOS Session${sessions === 1 ? " still uses" : "s still use"} the base disk; delete ${sessions === 1 ? "it" : "them"} first.`);
-    await this.host.removeContainer(INSTALL_CONTAINER);
-    await this.host.removeVolume(BASE_VOLUME);
-    this.setBase(null);
-    this.lastError = null;
     this.onStatus(this.status());
     return this.status();
   }
@@ -627,11 +604,7 @@ export class MacosVms implements GuestVms {
     if (!this.base?.installedAt) throw new HttpError(409, "The macOS base disk is not installed (Global settings → Environment → macOS VMs).");
     const { ramGb, cpus } = this.settings().macos;
     const { version, diskGb } = this.base;
-    const volume = macosVolumeName(sessionId);
-    await this.host.removeContainer(macosVmName(sessionId));
-    await this.host.removeVolume(volume).catch(() => undefined);
-    await this.docker.createVolume({ Name: volume, Labels: { [LABEL_MACOS]: sessionId } });
-    try {
+    return this.createOnVolume(sessionId, async (volume) => {
       // The release folder is only used while there is no disk; a Session's files sit at the volume's root.
       await this.host.helper(
         [
@@ -642,7 +615,7 @@ export class MacosVms implements GuestVms {
         ].join("\n"),
         [`${BASE_VOLUME}:${BASE_MOUNT}:ro`, `${volume}:/storage`],
       );
-      const container = await this.docker.createContainer({
+      return this.docker.createContainer({
         name: macosVmName(sessionId),
         Image: MACOS_IMAGE,
         Hostname: `mac-${sessionId.slice(0, 12)}`,
@@ -651,38 +624,7 @@ export class MacosVms implements GuestVms {
         Labels: { [LABEL_MACOS]: "vm", [LABEL_SESSION]: sessionId },
         HostConfig: this.host.vmHostConfig([`${volume}:/storage`, `${BASE_VOLUME}:${BASE_MOUNT}:ro`], ramGb),
       });
-      return container.id;
-    } catch (e) {
-      await this.host.removeVolume(volume).catch(() => undefined);
-      throw e;
-    }
-  }
-
-  start(vmId: string): Promise<void> {
-    return this.host.start(vmId);
-  }
-
-  stop(vmId: string): Promise<void> {
-    return this.host.stop(vmId);
-  }
-
-  state(vmId: string): Promise<"running" | "stopped" | "missing"> {
-    return this.host.state(vmId);
-  }
-
-  /** Removes the VM container and the Session's disk. */
-  async remove(sessionId: string): Promise<void> {
-    await this.host.removeContainer(macosVmName(sessionId));
-    await this.host.removeVolume(macosVolumeName(sessionId));
-  }
-
-  /** Bytes the Session's overlay disk takes (what the VM wrote on top of the base). */
-  async diskUsage(sessionId: string): Promise<number | null> {
-    try {
-      return await this.host.volumeSize(macosVolumeName(sessionId));
-    } catch {
-      return null;
-    }
+    });
   }
 
   /** What the Sandbox's entrypoint needs to draw and drive the guest. */
@@ -696,12 +638,6 @@ export class MacosVms implements GuestVms {
       // The Daemon writes it to tmpfs for `ssh -i` and drops it from its environment (ADR-0061).
       ...(this.settings().macos.sshKey ? { SESSIONBOXER_MACOS_SSH_KEY: this.settings().macos.sshKey } : {}),
     };
-  }
-
-  private setBase(base: BaseRecord | null): void {
-    this.base = base;
-    if (base) writeFileSync(BASE_FILE, JSON.stringify(base, null, 2) + "\n");
-    else rmSync(BASE_FILE, { force: true });
   }
 }
 

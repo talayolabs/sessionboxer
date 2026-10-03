@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
@@ -8,7 +8,8 @@ import { DATA_DIR, ROOT_DIR } from "./config.js";
 import { LABEL_SESSION } from "./docker.js";
 import { HttpError } from "./http-error.js";
 import { log } from "./log.js";
-import { type GuestVms, VM_LOG_LINES, VmHost, demux, isStatus } from "./vm-host.js";
+import { type QemuPlatform, QemuVms } from "./qemu-vms.js";
+import { VM_LOG_LINES, VmHost, demux, isStatus } from "./vm-host.js";
 
 /**
  * Windows VMs for `qemu-windows` Sessions (ADR-0057). Each such Session gets, next to its Linux
@@ -46,38 +47,34 @@ export function windowsVolumeName(sessionId: string): string {
   return `sbx-win-${sessionId}`;
 }
 
-export class WindowsVms implements GuestVms {
+const WINDOWS: QemuPlatform = {
+  name: "Windows",
+  label: LABEL_WINDOWS,
+  baseVolume: BASE_VOLUME,
+  installContainer: INSTALL_CONTAINER,
+  baseFile: BASE_FILE,
+  vmName: windowsVmName,
+  volumeName: windowsVolumeName,
+};
+
+export class WindowsVms extends QemuVms<BaseRecord, WindowsBaseStatus> {
   readonly guestLabel = "Windows VM";
-  readonly agentInGuest = true;
 
   repoPath(name: string): string {
     return `${WINDOWS_GUEST_WORKSPACE}\\${name}`;
   }
-  private readonly docker: Docker;
-  private readonly host: VmHost;
-  private base: BaseRecord | null = null;
-  private installing: { startedAt: string; version: string; diskGb: number; log: string[]; container: Docker.Container } | null = null;
-  private lastError: string | null = null;
-  private errorLog: string[] = [];
+  protected installing: { startedAt: string; version: string; diskGb: number; log: string[]; container: Docker.Container } | null = null;
 
   constructor(
     docker: Docker,
-    private readonly settings: () => Settings,
-    private readonly saveSettings: (next: Settings) => void,
-    private readonly countSessions: () => number,
-    private readonly onStatus: (status: WindowsBaseStatus) => void,
+    settings: () => Settings,
+    saveSettings: (next: Settings) => void,
+    countSessions: () => number,
+    onStatus: (status: WindowsBaseStatus) => void,
     /** The Docker side of the VMs; the seam `scripts/guest-vms.test.mjs` puts a fake through. */
-    host?: VmHost,
+    host = new VmHost(docker, "win", WINDOWS_IMAGE, LABEL_WINDOWS, "Windows VMs"),
   ) {
-    this.docker = docker;
-    this.host = host ?? new VmHost(docker, "win", WINDOWS_IMAGE, LABEL_WINDOWS, "Windows VMs");
-    if (existsSync(BASE_FILE)) {
-      try {
-        this.base = JSON.parse(readFileSync(BASE_FILE, "utf8")) as BaseRecord;
-      } catch {
-        this.base = null;
-      }
-    }
+    super(docker, WINDOWS, settings, saveSettings, countSessions, onStatus, host);
   }
 
   /** Re-attaches to an install left running by a previous Control Plane; drops a base record whose volume is gone. */
@@ -103,14 +100,6 @@ export class WindowsVms implements GuestVms {
     } else {
       await this.finishInstall(this.docker.getContainer(container.Id), version, diskGb, container.State.ExitCode);
     }
-  }
-
-  vmName(sessionId: string): string {
-    return windowsVmName(sessionId);
-  }
-
-  kvmUnavailable(refresh = false): Promise<string | null> {
-    return this.host.kvmUnavailable(refresh);
   }
 
   /** Whether a `qemu-windows` Session can be created now, for `PublicSettings.environments`. */
@@ -154,8 +143,7 @@ export class WindowsVms implements GuestVms {
    */
   async install(): Promise<WindowsBaseStatus> {
     if (this.installing) throw new HttpError(409, "The Windows base disk is already installing.");
-    const sessions = this.countSessions();
-    if (sessions > 0) throw new HttpError(409, `${sessions} Windows Session${sessions === 1 ? " still uses" : "s still use"} the base disk; delete ${sessions === 1 ? "it" : "them"} before reinstalling it.`);
+    this.assertBaseUnused("before reinstalling it");
     const kvm = await this.kvmUnavailable(true);
     if (kvm) throw new HttpError(409, kvm);
     const settings = this.settings();
@@ -198,19 +186,6 @@ export class WindowsVms implements GuestVms {
     await this.host.removeVolume(BASE_VOLUME).catch(() => undefined);
     this.lastError = "The install was cancelled.";
     this.errorLog = [];
-    this.onStatus(this.status());
-    return this.status();
-  }
-
-  /** Deletes the base disk (no Session may build on it). */
-  async removeBase(): Promise<WindowsBaseStatus> {
-    if (this.installing) throw new HttpError(409, "The Windows base disk is installing; cancel that first.");
-    const sessions = this.countSessions();
-    if (sessions > 0) throw new HttpError(409, `${sessions} Windows Session${sessions === 1 ? " still uses" : "s still use"} the base disk; delete ${sessions === 1 ? "it" : "them"} first.`);
-    await this.host.removeContainer(INSTALL_CONTAINER);
-    await this.host.removeVolume(BASE_VOLUME);
-    this.setBase(null);
-    this.lastError = null;
     this.onStatus(this.status());
     return this.status();
   }
@@ -285,11 +260,8 @@ export class WindowsVms implements GuestVms {
   async create(sessionId: string): Promise<string> {
     if (!this.base) throw new HttpError(409, "The Windows base disk is not installed (Global settings → Environment → Windows VMs).");
     const { ramGb, cpus } = this.settings().windows;
-    const volume = windowsVolumeName(sessionId);
-    await this.host.removeContainer(windowsVmName(sessionId));
-    await this.host.removeVolume(volume).catch(() => undefined);
-    await this.docker.createVolume({ Name: volume, Labels: { [LABEL_WINDOWS]: sessionId } });
-    try {
+    const base = this.base;
+    return this.createOnVolume(sessionId, async (volume) => {
       await this.host.helper(
         [
           "set -e",
@@ -299,14 +271,14 @@ export class WindowsVms implements GuestVms {
         ].join("\n"),
         [`${BASE_VOLUME}:${BASE_MOUNT}:ro`, `${volume}:/storage`],
       );
-      const container = await this.docker.createContainer({
+      return this.docker.createContainer({
         name: windowsVmName(sessionId),
         Image: WINDOWS_IMAGE,
         Hostname: `win-${sessionId.slice(0, 12)}`,
         Env: [
-          `VERSION=${this.base.version}`,
+          `VERSION=${base.version}`,
           `DISK_FMT=qcow2`,
-          `DISK_SIZE=${this.base.diskGb}G`,
+          `DISK_SIZE=${base.diskGb}G`,
           `RAM_SIZE=${ramGb}G`,
           `RAM_CHECK=N`,
           `CPU_CORES=${cpus}`,
@@ -317,38 +289,7 @@ export class WindowsVms implements GuestVms {
         Labels: { [LABEL_WINDOWS]: "vm", [LABEL_SESSION]: sessionId },
         HostConfig: this.host.vmHostConfig([`${volume}:/storage`, `${BASE_VOLUME}:${BASE_MOUNT}:ro`], ramGb),
       });
-      return container.id;
-    } catch (e) {
-      await this.host.removeVolume(volume).catch(() => undefined);
-      throw e;
-    }
-  }
-
-  start(vmId: string): Promise<void> {
-    return this.host.start(vmId);
-  }
-
-  stop(vmId: string): Promise<void> {
-    return this.host.stop(vmId);
-  }
-
-  state(vmId: string): Promise<"running" | "stopped" | "missing"> {
-    return this.host.state(vmId);
-  }
-
-  /** Removes the VM container and the Session's disk. */
-  async remove(sessionId: string): Promise<void> {
-    await this.host.removeContainer(windowsVmName(sessionId));
-    await this.host.removeVolume(windowsVolumeName(sessionId));
-  }
-
-  /** Bytes the Session's overlay disk takes (what the VM wrote on top of the base). */
-  async diskUsage(sessionId: string): Promise<number | null> {
-    try {
-      return await this.host.volumeSize(windowsVolumeName(sessionId));
-    } catch {
-      return null;
-    }
+    });
   }
 
   /** What the Sandbox's entrypoint needs to draw and drive the guest. */
@@ -360,11 +301,5 @@ export class WindowsVms implements GuestVms {
       SESSIONBOXER_WINDOWS_USER: WINDOWS_GUEST_USER,
       SESSIONBOXER_WINDOWS_PASSWORD: this.password(),
     };
-  }
-
-  private setBase(base: BaseRecord | null): void {
-    this.base = base;
-    if (base) writeFileSync(BASE_FILE, JSON.stringify(base, null, 2) + "\n");
-    else rmSync(BASE_FILE, { force: true });
   }
 }

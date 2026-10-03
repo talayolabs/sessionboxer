@@ -3,7 +3,7 @@ import { PROVIDER_LABELS, type Provider } from "@sessionboxer/protocol";
 // Hand-drawn approximations of the Providers' marks: Claude's orange starburst,
 // Devin's three linked hexagons, Codex's (OpenAI's) hexagonal knot, pi's π in
 // a rounded square, OpenCode's pixel terminal, fx's lowercase "fx" wordmark
-// (fx.sh) and GitHub Copilot's goggled face, drawn in the current text colour.
+// (fx.sh), GitHub Copilot's goggled face and Mistral's blocky "M", drawn in the current text colour.
 
 const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [0, 9.5],
@@ -18,6 +18,26 @@ const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [270, 9.5],
   [298, 7.5],
   [330, 9],
+];
+
+/** Mistral's "M" as [column, row, lighter] squares on a 5×5 grid: full-height outer columns, the diagonals meeting in the middle. */
+const MISTRAL_BLOCKS: ReadonlyArray<[col: number, row: number, light: boolean]> = [
+  [0, 0, false],
+  [4, 0, false],
+  [0, 1, false],
+  [1, 1, true],
+  [3, 1, true],
+  [4, 1, false],
+  [0, 2, false],
+  [1, 2, true],
+  [2, 2, true],
+  [3, 2, true],
+  [4, 2, false],
+  [0, 3, false],
+  [2, 3, true],
+  [4, 3, false],
+  [0, 4, false],
+  [4, 4, false],
 ];
 
 /** Flat-topped hexagon (vertices left and right) as SVG polygon points. */
@@ -158,6 +178,18 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
           />
           <rect x="6.4" y="10.6" width="4.2" height="4.6" rx="1.6" fill="currentColor" />
           <rect x="13.4" y="10.6" width="4.2" height="4.6" rx="1.6" fill="currentColor" />
+        </svg>
+      );
+    case "vibe":
+      // Mistral's mark: an "M" built of squares on a 5×5 grid, the inner diagonals lighter.
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <g fill="currentColor">
+            {MISTRAL_BLOCKS.map(([col, row, light]) => (
+              <rect key={`${col}-${row}`} x={2 + col * 4} y={2 + row * 4} width={4} height={4} opacity={light ? 0.55 : 1} />
+            ))}
+          </g>
         </svg>
       );
   }

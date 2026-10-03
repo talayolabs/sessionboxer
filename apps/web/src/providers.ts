@@ -21,6 +21,8 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.fx.FX_LOGIN;
     case "copilot":
       return settings.providerSecretsSet.copilot.COPILOT_LOGIN;
+    case "vibe":
+      return settings.providerSecretsSet.vibe.VIBE_LOGIN;
   }
 }
 

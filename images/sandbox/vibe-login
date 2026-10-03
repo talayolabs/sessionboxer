@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+"use strict";
+// Sign in with Mistral Vibe from Sessionboxer's Settings (ADR-0085, ADR-0058). Vibe has no login
+// command for a terminal without a browser: its sign-in is an ACP `authenticate` with a delegated
+// browser method. This drives `vibe-acp` over stdio: asks it to start an attempt, prints the
+// console.mistral.ai URL for the user to open ("Open https://…", what the sign-in flow looks for),
+// then asks Vibe to complete the attempt, which blocks while Vibe polls Mistral. When the page is
+// done Vibe stores the API key it was given — in ~/.vibe/.env, as there is no keyring here — and
+// this exits 0; the Control Plane reads that file. Anything else prints "Error: …" and exits 1.
+const { spawn } = require("node:child_process");
+
+const METHOD = "browser-auth-delegated";
+const child = spawn("vibe-acp", [], { stdio: ["pipe", "pipe", "pipe"] });
+let stderr = "";
+child.stderr.on("data", (chunk) => {
+  stderr = (stderr + String(chunk)).slice(-20000);
+});
+
+const pending = new Map();
+let nextId = 1;
+function request(method, params) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+  });
+}
+
+let buffer = "";
+child.stdout.on("data", (chunk) => {
+  buffer += String(chunk);
+  let nl;
+  while ((nl = buffer.indexOf("\n")) >= 0) {
+    const line = buffer.slice(0, nl);
+    buffer = buffer.slice(nl + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (msg.id !== undefined && msg.method) {
+      // A request from Vibe; none is expected while signing in.
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "not available during sign-in" } })}\n`);
+    } else if (msg.id !== undefined && pending.has(msg.id)) {
+      const p = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+      else p.resolve(msg.result);
+    }
+  }
+});
+child.on("exit", (code) => {
+  const last = stderr.trim().split("\n").pop();
+  for (const p of pending.values()) p.reject(new Error(`vibe-acp exited (${code})${last ? `: ${last}` : ""}`));
+  pending.clear();
+});
+
+(async () => {
+  const init = await request("initialize", {
+    protocolVersion: 1,
+    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, _meta: { [METHOD]: true } },
+    clientInfo: { name: "sessionboxer", version: "sign-in" },
+  });
+  if (!(init.authMethods ?? []).some((m) => m.id === METHOD)) throw new Error("this vibe-acp offers no browser sign-in");
+  const started = await request("authenticate", { methodId: METHOD, _meta: { action: "start" } });
+  const attempt = started?._meta?.[METHOD];
+  if (!attempt?.signInUrl || !attempt.attemptId) throw new Error("vibe-acp returned no sign-in URL");
+  console.log(`Open ${attempt.signInUrl}`);
+  console.log(`Waiting for the sign-in at console.mistral.ai (until ${attempt.expiresAt})…`);
+  await request("authenticate", { methodId: METHOD, _meta: { action: "complete", attemptId: attempt.attemptId } });
+  console.log("Signed in: Mistral Vibe stored the API key.");
+  child.kill();
+  process.exit(0);
+})().catch((e) => {
+  console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+  child.kill();
+  process.exit(1);
+});

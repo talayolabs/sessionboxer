@@ -174,6 +174,17 @@ const COPILOT_LIMIT = [
   /exceeded your (?:current )?quota/i,
   /too many requests/i,
 ];
+/** Mistral Vibe relays the Mistral API's refusal: its rate limits, service-tier capacity and credit/quota wordings (ADR-0085). */
+const VIBE_LIMIT = [
+  /rate[_ ]limit(?:ed)?(?: exceeded| reached)?/i,
+  /quota[_ ]exceeded/i,
+  /insufficient[_ ](?:quota|credits?|balance)/i,
+  /out of credits/i,
+  /capacity exceeded/i,
+  /usage[_ ]limit/i,
+  /exceeded your (?:current )?(?:usage|quota|budget)/i,
+  /\b429\b/,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -181,7 +192,7 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi" | "copilot", message: string, now: Date = new Date()): UsageLimitHit | null {
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi" | "copilot" | "vibe", message: string, now: Date = new Date()): UsageLimitHit | null {
   const patterns =
     provider === "claude-code"
       ? CLAUDE_LIMIT
@@ -197,7 +208,9 @@ export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" |
                 ? FX_LIMIT
                 : provider === "copilot"
                   ? COPILOT_LIMIT
-                  : DEVIN_LIMIT;
+                  : provider === "vibe"
+                    ? VIBE_LIMIT
+                    : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

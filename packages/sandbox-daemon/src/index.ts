@@ -30,6 +30,7 @@ import {
   DaemonFxAuthParams,
   DaemonKimiAuthParams,
   DaemonCopilotAuthParams,
+  DaemonVibeAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -88,6 +89,7 @@ import { AgentManager } from "./agent.js";
 import { ClaudeSettings } from "./claude-settings.js";
 import { CodeServer } from "./code-server.js";
 import { AuthFile } from "./auth-file.js";
+import { fxLoginKind, type FxLoginKind } from "./provider-files.js";
 import { registerCursorExtensions } from "./cursor-ext.js";
 import { readCompactionDetails } from "./compactions.js";
 import { ControlPlaneBridge } from "./control-plane-bridge.js";
@@ -99,6 +101,7 @@ import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
 import { CopilotMcpConfig, DevinMcpConfig, PiMcpConfig, onPath, type BuiltinMcp, type McpTee } from "./mcp-config.js";
 import { COPILOT_AGENT_ENV, CopilotLogin } from "./copilot.js";
+import { VIBE_AGENT_ENV, VibeLogin } from "./vibe.js";
 import { McpTeeHub } from "./mcp-mirror.js";
 import { FsWatches } from "./fs-watch.js";
 import { serveRawFile } from "./raw-files.js";
@@ -212,6 +215,10 @@ function guestIdentityFile(key: string, dir: string): string | undefined {
 }
 /** Where the Agent's working directory is: in the VM for a Windows or macOS Session. */
 const agentWorkspace = guest ? guest.workspace : workspace;
+
+/** Mistral Vibe's login (ADR-0085): `~/.vibe/.env` on tmpfs behind that path, see `vibe.ts`. */
+const vibeHome = `${home}/.vibe`;
+const vibeLogin = provider === "vibe" ? new VibeLogin(vibeHome, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.vibeAuthChanged, { authJson }), agentWorkspace) : null;
 /**
  * The user's MCP servers are reached through the tee (ADR-0079), which mirrors the exchange to this
  * Daemon for MCP Apps. In a Windows/macOS VM the Agent starts the servers itself, as before.
@@ -318,8 +325,7 @@ const OPENCODE_AGENT_ENV = { OPENCODE_DISABLE_AUTOUPDATE: "1" };
  * `session/load` finds the conversation after Stop/Resume.
  */
 const fxHome = `${home}/.fx`;
-const fxAuthPaths = { vercel: `${fxHome}/auth.json`, codex: `${fxHome}/chatgpt-auth.json`, grok: `${fxHome}/grok-auth.json` } as const;
-type FxLoginKind = keyof typeof fxAuthPaths;
+const fxAuthPaths: Record<FxLoginKind, string> = { vercel: `${fxHome}/auth.json`, codex: `${fxHome}/chatgpt-auth.json`, grok: `${fxHome}/grok-auth.json` } as const;
 const fxAuth: Record<FxLoginKind, AuthFile> | null =
   provider === "fx"
     ? Object.fromEntries(
@@ -377,6 +383,11 @@ const guestProviderFiles: GuestProviderFile[] = (
       { local: fxAuthPaths.vercel, guest: ".fx/auth.json", pullBack: true, mode: 0o600 },
       { local: fxAuthPaths.codex, guest: ".fx/chatgpt-auth.json", pullBack: true, mode: 0o600 },
       { local: fxAuthPaths.grok, guest: ".fx/grok-auth.json", pullBack: true, mode: 0o600 },
+    ],
+    vibe: [
+      { local: guestBriefingFile, guest: ".vibe/AGENTS.md" },
+      { local: `${vibeHome}/trusted_folders.toml`, guest: ".vibe/trusted_folders.toml" },
+      { local: `${vibeHome}/.env`, guest: ".vibe/.env", pullBack: true, mode: 0o600 },
     ],
     devin: [
       { local: `${home}/.config/devin/config.json`, guest: ".config/devin/config.json" },
@@ -440,25 +451,6 @@ function setOpenCodeLogin(authJson: string): boolean {
   if (!opencodeAuth) throw new DaemonError("invalid_params", "this Sandbox does not run OpenCode");
   opencodeAuth.set(authJson);
   return agent.setAgentEnv(authJson === "" ? {} : { SESSIONBOXER_OPENCODE_LOGIN: "auth-json" });
-}
-
-/**
- * Which of fx's three login files a pasted login is: `fx login` (Vercel) writes an OAuth session
- * with a `token_type`; `fx login codex` and `fx login grok` write `{ version, access_token,
- * refresh_token, expires_at_ms, account_id }`, told apart by the access token's issuer (ChatGPT's
- * is a JWT issued by auth.openai.com). The Control Plane validated the JSON already.
- */
-function fxLoginKind(login: string): FxLoginKind {
-  const parsed = JSON.parse(login) as Record<string, unknown>;
-  if (typeof parsed.token_type === "string" || !("account_id" in parsed)) return "vercel";
-  const token = typeof parsed.access_token === "string" ? parsed.access_token : "";
-  const payload = token.split(".")[1];
-  try {
-    const claims = payload ? (JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>) : null;
-    return typeof claims?.iss === "string" && /openai\.com/i.test(claims.iss) ? "codex" : "grok";
-  } catch {
-    return "grok";
-  }
 }
 
 /** Puts an fx login in place: one login file on tmpfs (the other two removed) or the API key in the Agent's environment (on top of `FX_AGENT_ENV`). */
@@ -626,6 +618,8 @@ const agent = new AgentManager(
     ...(provider === "fx" ? { env: FX_AGENT_ENV } : {}),
     ...(provider === "kimi" ? { env: KIMI_AGENT_ENV } : {}),
     ...(provider === "copilot" ? { env: COPILOT_AGENT_ENV } : {}),
+    // Vibe's "Auto Approve" mode runs every tool without asking (ADR-0085); permission requests are still answered.
+    ...(provider === "vibe" ? { env: VIBE_AGENT_ENV, fullAccessModeIds: ["auto-approve"] } : {}),
     builtinMcps,
     ...(mcpTee ? { mcpTee } : {}),
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
@@ -802,6 +796,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.copilotAuthSet: {
       if (!copilotLogin) throw new DaemonError("invalid_params", "this Sandbox does not run GitHub Copilot");
       return { applied: agent.setAgentEnv(copilotLogin.apply(DaemonCopilotAuthParams.parse(params).login)) };
+    }
+    case DAEMON_METHODS.vibeAuthSet: {
+      if (!vibeLogin) throw new DaemonError("invalid_params", "this Sandbox does not run Mistral Vibe");
+      return { applied: agent.setAgentEnv(vibeLogin.apply(DaemonVibeAuthParams.parse(params).login)) };
     }
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);

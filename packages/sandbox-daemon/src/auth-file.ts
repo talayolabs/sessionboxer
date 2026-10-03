@@ -7,7 +7,7 @@ const SWEEP_MS = 60_000;
 /**
  * A Provider's login file kept on tmpfs: Codex's `$CODEX_HOME/auth.json` (ADR-0046), Cursor's
  * `~/.config/cursor/auth.json` (ADR-0054) and OpenCode's `~/.local/share/opencode/auth.json`
- * (ADR-0076), GitHub Copilot CLI's `~/.copilot/config.json` (ADR-0082). Only that file lives on tmpfs: the rest of the Provider's directory (config, the
+ * (ADR-0076), GitHub Copilot CLI's `~/.copilot/config.json` (ADR-0082) and Mistral Vibe's `~/.vibe/.env` (ADR-0085, dotenv rather than JSON). Only that file lives on tmpfs: the rest of the Provider's directory (config, the
  * chat history `session/load` needs) stays on the container disk so Stop/Resume keeps the
  * conversation, while `docker commit` (Snapshots) never sees tokens.
  * These Providers refresh their OAuth tokens in place and rewrite the file; the watcher reports the
@@ -39,6 +39,8 @@ export class AuthFile {
      * is not a regular file with mode 0600 (ADR-0077); its `~/.fx` is a volume the Snapshot never sees.
      */
     private readonly direct = false,
+    /** Rejects a half-written or foreign file before it is reported: JSON unless the Provider's file is something else. */
+    private readonly validate: (text: string) => void = (text) => void JSON.parse(text),
   ) {
     this.dir = dirname(link);
     this.name = basename(link);
@@ -109,7 +111,7 @@ export class AuthFile {
       this.relink();
       const onDisk = this.read();
       if (onDisk === "" || onDisk === this.current) return;
-      try { JSON.parse(withoutCommentLines(onDisk)); } catch { return; }
+      try { this.validate(withoutCommentLines(onDisk)); } catch { return; }
       this.current = onDisk;
       this.log(`${this.label} refreshed its login; reporting the new ${this.name}`);
       this.onChanged(onDisk);

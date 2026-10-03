@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { describeCopilotLogin, type Provider } from "@sessionboxer/protocol";
 import { describeKimiLogin, normalizeKimiLogin } from "./kimi-login.js";
+import { describeVibeLogin, normalizeVibeLogin } from "./vibe-login.js";
 import {
   codexLogin,
   describeCursorLogin,
@@ -97,6 +98,18 @@ export function readHostLogin(provider: Provider, home = homedir()): { account: 
       const what = describeFxLogin(login);
       if (!login || !what) return null;
       return { account: what.kind === "api-key" ? "an API key" : "signed in with `fx login`", login };
+    }
+    case "vibe": {
+      // Vibe keeps the key in the OS keyring when there is one; `~/.vibe/.env` is where it lands otherwise.
+      const text = readFirst([join(home, ".vibe/.env")]);
+      if (text === null) return null;
+      let login: string;
+      try {
+        login = normalizeVibeLogin(text);
+      } catch {
+        return null;
+      }
+      return login && describeVibeLogin(login) ? { account: "a Mistral API key from ~/.vibe/.env", login } : null;
     }
     case "copilot": {
       // Only a `config.json` holding the token (storeTokenPlaintext): a login kept in the OS keychain cannot be copied.

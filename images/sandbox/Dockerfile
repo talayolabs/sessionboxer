@@ -1,6 +1,6 @@
 # Sessionboxer Sandbox image: one container per Session, with an X11 Desktop
 # (Xvfb + xfce4 + x11vnc + noVNC), the Provider ACP adapters (Claude Code,
-# Devin, Codex, Cursor, fx, GitHub Copilot), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
+# Devin, Codex, Cursor, fx, GitHub Copilot, Mistral Vibe), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
 #   npm run build:image        (scripts/build-image.mjs)
 # which is `docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .` plus the
 # `extra-ca` build secret: the CA certificates this machine trusts beyond the public ones
@@ -307,6 +307,29 @@ RUN arch="$(dpkg --print-architecture)" \
     && HOME=/tmp COPILOT_CLI_DIST_DIR=/opt/copilot/dist copilot --no-auto-update --version | grep -q "${COPILOT_VERSION}" \
     && rm -rf /tmp/.copilot /tmp/.cache
 
+# Mistral Vibe (`vibe-acp` is spawned by the Sandbox Daemon, ADR-0085): the standalone ACP build of
+# Mistral's agent from its GitHub release (a PyInstaller bundle: the binary and its `_internal`
+# runtime, about 260 MB unpacked), the archive the ACP registry pins for the architecture, checked
+# against the sha256 the registry publishes. Root-owned under /opt/vibe; the Daemon runs it with
+# VIBE_ENABLE_AUTO_UPDATE=false, so a Sandbox runs the version the image was built with.
+ARG VIBE_VERSION=2.25.8
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+         amd64) arch=x86_64; sha=dbe693ee66f29fdfcf9029dcbf3b2d4da138554b193e432b089840148ecf08b3 ;; \
+         arm64) arch=aarch64; sha=09913291476fd2f8fc5c2b330602d6afded3ae6c016e197d9dcf805922bf82e8 ;; \
+         *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+       esac \
+    && mkdir -p /opt/vibe \
+    && for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/vibe-acp.tar.gz \
+           "https://github.com/mistralai/mistral-vibe/releases/download/v${VIBE_VERSION}/vibe-acp-linux-${arch}-${VIBE_VERSION}.tar.gz" && break; \
+         [ "$i" = 5 ] && exit 1; sleep 5; \
+       done \
+    && echo "$sha  /tmp/vibe-acp.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/vibe-acp.tar.gz --no-same-owner -C /opt/vibe && rm /tmp/vibe-acp.tar.gz \
+    && ln -s /opt/vibe/vibe-acp /usr/local/bin/vibe-acp \
+    && HOME=/tmp vibe-acp --version && rm -rf /tmp/.vibe
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -373,6 +396,8 @@ RUN git config --system credential.https://github.com.helper '!gh auth git-crede
 # `sessionboxer.githubAccount = <login>`: git asks this helper for that login's token and the gh
 # in front of /usr/bin/gh acts as it whenever the working directory is that repository.
 COPY --chmod=0755 images/sandbox/git-credential-sessionboxer /usr/local/bin/git-credential-sessionboxer
+# Sign in with Mistral Vibe from Settings (ADR-0085): drives `vibe-acp` through its browser sign-in on a pty.
+COPY --chmod=0755 images/sandbox/vibe-login /usr/local/bin/sessionboxer-vibe-login
 COPY --chmod=0755 images/sandbox/gh-as-repo-account /usr/local/bin/gh
 
 # Firefox: no first-run wizard, no update nags, no default-browser prompt.
@@ -409,6 +434,7 @@ COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.confi
 # a Session mounts a volume over ~/.fx, populated from these files (ADR-0077).
 # Copilot reads its user-level instructions from ~/.copilot/copilot-instructions.md; its settings allow
 # plaintext token storage, so a `copilot login` in the terminal lands in the config.json the Daemon keeps on tmpfs (ADR-0082).
+# Mistral Vibe reads its user-level AGENTS.md from ~/.vibe (ADR-0085); the Daemon writes its trusted_folders.toml there.
 COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
 COPY --chown=agent:agent images/sandbox/pi-settings.json /home/agent/.pi/agent/settings.json
 COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.cursor/cli-config.json
@@ -433,6 +459,7 @@ COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.pi/agen
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.config/opencode/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.fx/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.copilot/copilot-instructions.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.vibe/AGENTS.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md

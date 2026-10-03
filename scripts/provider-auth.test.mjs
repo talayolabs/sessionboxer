@@ -6,7 +6,7 @@ import { PROVIDER_AUTH, SYNCED_AUTH_PROVIDERS, isSyncedAuthProvider, providerOfA
 
 // Characterization tests: these pin what each Agent's login looked like on the wire before the
 // per-provider methods were folded into PROVIDER_AUTH (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075,
-// OpenCode ADR-0076, fx ADR-0077, GitHub Copilot ADR-0082). Values are the observed ones, not recomputed from the code.
+// OpenCode ADR-0076, fx ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085). Values are the observed ones, not recomputed from the code.
 
 for (const key of ["CURSOR_API_KEY", "AI_GATEWAY_API_KEY", "COPILOT_GITHUB_TOKEN"]) delete process.env[key];
 
@@ -27,11 +27,12 @@ const settings = applySettingsUpdate(base, {
     opencode: { OPENCODE_AUTH_JSON: opencodeFile(1_800_000_000_000) },
     fx: { FX_LOGIN: fxFile(1_800_000_000_000) },
     copilot: { COPILOT_LOGIN: copilotFile("ghu_a") },
+    vibe: { VIBE_LOGIN: "MISTRAL_API_KEY='key_vibe_1'" },
   },
 });
 
-test("the synced Agents are Codex, Cursor, pi, OpenCode, fx and Kimi; Claude Code and Devin are not", () => {
-  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot"]);
+test("the synced Agents are Codex, Cursor, pi, OpenCode, fx, Kimi, GitHub Copilot and Mistral Vibe; Claude Code and Devin are not", () => {
+  assert.deepEqual([...SYNCED_AUTH_PROVIDERS], ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe"]);
   assert.equal(isSyncedAuthProvider("claude-code"), false);
   assert.equal(isSyncedAuthProvider("devin"), false);
   assert.equal(isSyncedAuthProvider("pi"), true);
@@ -55,6 +56,8 @@ test("each Agent's login goes to the Daemon method and params it always did", ()
   assert.equal(PROVIDER_AUTH.copilot.setMethod, "_sessionboxer/copilot/auth/set");
   assert.deepEqual(PROVIDER_AUTH.copilot.params(settings), { login: stored.copilot.COPILOT_LOGIN });
   assert.equal(stored.copilot.COPILOT_LOGIN, copilotFile("ghu_a"));
+  assert.equal(PROVIDER_AUTH.vibe.setMethod, "_sessionboxer/vibe/auth/set");
+  assert.deepEqual(PROVIDER_AUTH.vibe.params(settings), { login: stored.vibe.VIBE_LOGIN });
 });
 
 test("only Codex tolerates a Daemon that predates its auth method", () => {
@@ -64,14 +67,16 @@ test("only Codex tolerates a Daemon that predates its auth method", () => {
   );
 });
 
-test("an environment API key overrides the stored Cursor, fx and GitHub Copilot logins, as before", () => {
+test("an environment API key overrides the stored Cursor, fx, GitHub Copilot and Mistral Vibe logins, as before", () => {
   process.env.CURSOR_API_KEY = " key_cursor ";
   process.env.AI_GATEWAY_API_KEY = "key_fx";
   process.env.COPILOT_GITHUB_TOKEN = " github_pat_x ";
+  process.env.MISTRAL_API_KEY = "key_vibe_env";
   try {
     assert.deepEqual(PROVIDER_AUTH.cursor.params(settings), { login: "key_cursor" });
     assert.deepEqual(PROVIDER_AUTH.fx.params(settings), { login: "key_fx" });
     assert.deepEqual(PROVIDER_AUTH.copilot.params(settings), { login: "github_pat_x" });
+    assert.deepEqual(PROVIDER_AUTH.vibe.params(settings), { login: "key_vibe_env" });
     assert.deepEqual(PROVIDER_AUTH.codex.params(settings), { authJson: settings.providerSecrets.codex.CODEX_AUTH_JSON });
   } finally {
     delete process.env.CURSOR_API_KEY;
@@ -88,6 +93,7 @@ test("a Settings update pushes exactly the logins it touches", () => {
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { pi: { PI_AUTH_JSON: "{}" } } }), ["pi"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { opencode: { OPENCODE_AUTH_JSON: "{}" } } }), ["opencode"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { fx: { FX_LOGIN: "k" } } }), ["fx"]);
+  assert.deepEqual(providersAuthChangedBy({ providerSecrets: { vibe: { VIBE_LOGIN: "k" } } }), ["vibe"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { codex: { CODEX_AUTH_JSON: "" }, fx: { FX_LOGIN: "" } } }), ["codex", "fx"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { copilot: { COPILOT_LOGIN: "github_pat_x" } } }), ["copilot"]);
   assert.deepEqual(providersAuthChangedBy({ providerSecrets: { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: "t" } } }), []);
@@ -101,6 +107,7 @@ test("each *AuthChanged notification maps back to its Agent", () => {
   assert.equal(providerOfAuthChanged("_sessionboxer/opencode/auth/changed"), "opencode");
   assert.equal(providerOfAuthChanged("_sessionboxer/fx/auth/changed"), "fx");
   assert.equal(providerOfAuthChanged("_sessionboxer/copilot/auth/changed"), "copilot");
+  assert.equal(providerOfAuthChanged("_sessionboxer/vibe/auth/changed"), "vibe");
   assert.equal(providerOfAuthChanged(DAEMON_METHODS.codexAuthSet), null);
   assert.equal(providerOfAuthChanged("event"), null);
 });
@@ -112,6 +119,7 @@ test("a refreshed file is stored under the Agent's own secret key", () => {
   assert.deepEqual(PROVIDER_AUTH.opencode.storeUpdate("{}"), { providerSecrets: { opencode: { OPENCODE_AUTH_JSON: "{}" } } });
   assert.deepEqual(PROVIDER_AUTH.fx.storeUpdate("{}"), { providerSecrets: { fx: { FX_LOGIN: "{}" } } });
   assert.deepEqual(PROVIDER_AUTH.copilot.storeUpdate("{}"), { providerSecrets: { copilot: { COPILOT_LOGIN: "{}" } } });
+  assert.deepEqual(PROVIDER_AUTH.vibe.storeUpdate("MISTRAL_API_KEY=k"), { providerSecrets: { vibe: { VIBE_LOGIN: "MISTRAL_API_KEY=k" } } });
 });
 
 test("a refreshed file replaces the stored one only when it is newer, per Agent", () => {
@@ -144,4 +152,11 @@ test("a refreshed file replaces the stored one only when it is newer, per Agent"
   assert.equal(PROVIDER_AUTH.copilot.newer("github_pat_y", copilotFile("ghu_a")), false);
   assert.equal(PROVIDER_AUTH.copilot.newer(JSON.stringify({ lastLoggedInUser: { login: "octocat" } }), copilotFile("ghu_a")), false);
   assert.equal(PROVIDER_AUTH.copilot.newer(copilotFile("ghu_b"), ""), true);
+  // Mistral Vibe: a rewritten .env replaces the stored login when it holds another key (quotes do not count); one without a key never does.
+  assert.equal(PROVIDER_AUTH.vibe.newer("MISTRAL_API_KEY='key_vibe_2'", "MISTRAL_API_KEY='key_vibe_1'"), true);
+  assert.equal(PROVIDER_AUTH.vibe.newer("MISTRAL_API_KEY=key_vibe_1", "MISTRAL_API_KEY='key_vibe_1'"), false);
+  assert.equal(PROVIDER_AUTH.vibe.newer("MISTRAL_API_KEY='key_vibe_2'", "key_vibe_2"), false);
+  assert.equal(PROVIDER_AUTH.vibe.newer("MISTRAL_API_KEY='key_vibe_2'", "key_vibe_1"), true);
+  assert.equal(PROVIDER_AUTH.vibe.newer("OTHER=x", "key_vibe_1"), false);
+  assert.equal(PROVIDER_AUTH.vibe.newer("", "key_vibe_1"), false);
 });

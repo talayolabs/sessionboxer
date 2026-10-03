@@ -16,14 +16,15 @@ import {
   piAuthNewer,
 } from "./config.js";
 import { kimiAuthNewer, kimiLogin } from "./kimi-login.js";
+import { vibeAuthNewer, vibeLogin } from "./vibe-login.js";
 
 /**
  * The Agents whose login the Control Plane hands to the Sandbox Daemon and takes back when the CLI
  * refreshes its tokens (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075, OpenCode ADR-0076, fx
- * ADR-0077, GitHub Copilot ADR-0082). Claude Code and Devin get their credentials as environment at
+ * ADR-0077, GitHub Copilot ADR-0082, Mistral Vibe ADR-0085). Claude Code and Devin get their credentials as environment at
  * container start instead.
  */
-export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot"] as const;
+export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe"] as const;
 export type SyncedAuthProvider = (typeof SYNCED_AUTH_PROVIDERS)[number];
 
 /** How one Agent's login travels between the stored Settings and its Sandbox. */
@@ -115,6 +116,16 @@ export const PROVIDER_AUTH: Record<SyncedAuthProvider, ProviderAuthSync> = {
     newer: copilotAuthNewer,
     storeUpdate: (authJson) => ({ providerSecrets: { copilot: { COPILOT_LOGIN: authJson } } }),
     changedBy: (update) => update.providerSecrets?.copilot?.COPILOT_LOGIN !== undefined,
+    tolerateMissingMethod: false,
+  },
+  vibe: {
+    setMethod: DAEMON_METHODS.vibeAuthSet,
+    changedMethod: DAEMON_METHODS.vibeAuthChanged,
+    params: (settings) => ({ login: vibeLogin(settings) }),
+    stored: vibeLogin,
+    newer: vibeAuthNewer,
+    storeUpdate: (authJson) => ({ providerSecrets: { vibe: { VIBE_LOGIN: authJson } } }),
+    changedBy: (update) => update.providerSecrets?.vibe?.VIBE_LOGIN !== undefined,
     tolerateMissingMethod: false,
   },
 };

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describeKimiLogin, kimiLogin, normalizeKimiLogin } from "./kimi-login.js";
 import {
+  PROVIDERS,
   ANTHROPIC_DEFAULT_BASE_URL,
   type BoxCredential,
   type CodexLogin,
@@ -43,6 +44,7 @@ import { copilotLogin, normalizeCopilotLogin } from "./copilot-login.js";
 
 export { piApiKeyEnv, piApiKeys, piAuthJson, piAuthNewer, normalizePiApiKeys, normalizePiAuthJson, describePiLogin } from "./pi-login.js";
 export { copilotLogin, copilotAuthNewer, normalizeCopilotLogin } from "./copilot-login.js";
+import { describeVibeLogin, normalizeVibeLogin, vibeLogin } from "./vibe-login.js";
 import { generateVapidKeys } from "./web-push.js";
 import { mergeProcedures, mergeUtilities, mergeUtilityEnvironments, toPublicUtility } from "./utilities.js";
 
@@ -238,44 +240,10 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     next.connectors.github.clientSecret = next.connectors.github.clientSecret.trim();
   }
   if (providerSecrets) {
-    next.providerSecrets = {
-      "claude-code": {
-        ...current.providerSecrets["claude-code"],
-        ...stripUndefined(providerSecrets["claude-code"] ?? {}),
-      },
-      devin: {
-        ...current.providerSecrets.devin,
-        ...stripUndefined(providerSecrets.devin ?? {}),
-      },
-      codex: {
-        ...current.providerSecrets.codex,
-        ...stripUndefined(providerSecrets.codex ?? {}),
-      },
-      cursor: {
-        ...current.providerSecrets.cursor,
-        ...stripUndefined(providerSecrets.cursor ?? {}),
-      },
-      pi: {
-        ...current.providerSecrets.pi,
-        ...stripUndefined(providerSecrets.pi ?? {}),
-      },
-      opencode: {
-        ...current.providerSecrets.opencode,
-        ...stripUndefined(providerSecrets.opencode ?? {}),
-      },
-      fx: {
-        ...current.providerSecrets.fx,
-        ...stripUndefined(providerSecrets.fx ?? {}),
-      },
-      kimi: {
-        ...current.providerSecrets.kimi,
-        ...stripUndefined(providerSecrets.kimi ?? {}),
-      },
-      copilot: {
-        ...current.providerSecrets.copilot,
-        ...stripUndefined(providerSecrets.copilot ?? {}),
-      },
-    };
+    // Per Provider, the stored keys with the update's set ones on top (an explicit `""` forgets one).
+    next.providerSecrets = Object.fromEntries(
+      PROVIDERS.map((p) => [p, { ...current.providerSecrets[p], ...stripUndefined(providerSecrets[p] ?? {}) }]),
+    ) as Settings["providerSecrets"];
     if (providerSecrets.codex?.CODEX_AUTH_JSON !== undefined) {
       next.providerSecrets.codex.CODEX_AUTH_JSON = normalizeCodexAuthJson(providerSecrets.codex.CODEX_AUTH_JSON);
     }
@@ -299,6 +267,9 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     }
     if (providerSecrets.copilot?.COPILOT_LOGIN !== undefined) {
       next.providerSecrets.copilot.COPILOT_LOGIN = normalizeCopilotLogin(providerSecrets.copilot.COPILOT_LOGIN);
+    }
+    if (providerSecrets.vibe?.VIBE_LOGIN !== undefined) {
+      next.providerSecrets.vibe.VIBE_LOGIN = normalizeVibeLogin(providerSecrets.vibe.VIBE_LOGIN);
     }
   }
   return Settings.parse(next);
@@ -342,6 +313,7 @@ export function toPublicSettings(
       fx: { FX_LOGIN: fxLogin(settings) !== "" },
       kimi: { KIMI_LOGIN: kimiLogin(settings) !== "" },
       copilot: { COPILOT_LOGIN: copilotLogin(settings) !== "" },
+      vibe: { VIBE_LOGIN: vibeLogin(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
     cursorLogin: describeCursorLogin(cursorLogin(settings)),
@@ -350,6 +322,7 @@ export function toPublicSettings(
     fxLogin: describeFxLogin(fxLogin(settings)),
     kimiLogin: describeKimiLogin(kimiLogin(settings)),
     copilotLogin: describeCopilotLogin(copilotLogin(settings)),
+    vibeLogin: describeVibeLogin(vibeLogin(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -774,6 +747,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return kimiLogin(settings) !== "";
     case "copilot":
       return copilotLogin(settings) !== "";
+    case "vibe":
+      return vibeLogin(settings) !== "";
   }
 }
 
@@ -806,6 +781,7 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "fx":
     case "kimi":
     case "copilot":
+    case "vibe":
       return {};
   }
 }

@@ -1,15 +1,21 @@
 import { useRef } from "react";
-import { type PublicSettings } from "@sessionboxer/protocol";
+import { type PublicSettings, type VibeLogin } from "@sessionboxer/protocol";
 import { KimiProviderSettings } from "./KimiProviderSettings";
 import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin } from "./provider-login-labels";
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
+import { LoginFileField } from "./LoginFileField";
 import { Caption } from "../ui";
 import { ClaudeApiSettings } from "./ClaudeApiSettings";
 import { CopilotLoginCard } from "./CopilotSettings";
 import { useSectionState, type Setter } from "./shared";
 
 /** Global settings → Providers: the stored Provider logins and the Claude API base URL / proxy credentials. */
+/** One line about the stored Mistral Vibe login (ADR-0085): an API key as such, or inside a `.env` Vibe wrote. */
+function describeVibeLogin(login: VibeLogin): string {
+  return login.kind === "api-key" ? "API key" : ".env with MISTRAL_API_KEY";
+}
+
 /** Form state of the Providers section; `SettingsView` spreads `values` and `set` into `<ProvidersSettings>`. */
 export function useProvidersSettings(settings: PublicSettings) {
   return useSectionState({
@@ -31,6 +37,8 @@ export function useProvidersSettings(settings: PublicSettings) {
     forgetFxLogin: false,
     copilotLogin: "",
     forgetCopilotLogin: false,
+    vibeLogin: "",
+    forgetVibeLogin: false,
     claudeBaseUrl: settings.claudeApi.baseUrl,
     claudeAuthToken: "",
     claudeApiKey: "",
@@ -76,6 +84,10 @@ export function ProvidersSettings({
   setCopilotLogin,
   forgetCopilotLogin,
   setForgetCopilotLogin,
+  vibeLogin,
+  setVibeLogin,
+  forgetVibeLogin,
+  setForgetVibeLogin,
   claudeBaseUrl,
   setClaudeBaseUrl,
   claudeAuthToken,
@@ -128,6 +140,10 @@ export function ProvidersSettings({
   setCopilotLogin: Setter<string>;
   forgetCopilotLogin: boolean;
   setForgetCopilotLogin: Setter<boolean>;
+  vibeLogin: string;
+  setVibeLogin: Setter<string>;
+  forgetVibeLogin: boolean;
+  setForgetVibeLogin: Setter<boolean>;
   claudeBaseUrl: string;
   setClaudeBaseUrl: Setter<string>;
   claudeAuthToken: string;
@@ -148,13 +164,11 @@ export function ProvidersSettings({
   const piAuthSet = settings.providerSecretsSet.pi.PI_AUTH_JSON && !forgetPiAuth;
   const piApiKeysSet = settings.providerSecretsSet.pi.PI_API_KEYS && !forgetPiApiKeys;
   const opencodeAuthSet = settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && !forgetOpenCodeAuth;
-  const fxLoginSet = settings.providerSecretsSet.fx.FX_LOGIN && !forgetFxLogin;
 
   const codexFileRef = useRef<HTMLInputElement>(null);
   const cursorFileRef = useRef<HTMLInputElement>(null);
   const piFileRef = useRef<HTMLInputElement>(null);
   const opencodeFileRef = useRef<HTMLInputElement>(null);
-  const fxFileRef = useRef<HTMLInputElement>(null);
 
   const importCursorAuth = (file: File | undefined) => {
     if (!file) return;
@@ -177,14 +191,6 @@ export function ProvidersSettings({
     void file.text().then((text) => {
       setOpencodeAuth(text);
       setForgetOpenCodeAuth(false);
-    });
-  };
-
-  const importFxAuth = (file: File | undefined) => {
-    if (!file) return;
-    void file.text().then((text) => {
-      setFxLogin(text);
-      setForgetFxLogin(false);
     });
   };
 
@@ -214,7 +220,7 @@ export function ProvidersSettings({
         <button type="button" className="primary" onClick={() => setGuided(true)}>
           Connect a Provider…
         </button>
-        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI or GitHub Copilot</span>
+        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot or Mistral Vibe</span>
       </div>
       {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
       <KimiProviderSettings settings={settings} value={kimiLogin} setValue={setKimiLogin} forget={forgetKimiLogin} setForget={setForgetKimiLogin} />
@@ -548,69 +554,55 @@ export function ProvidersSettings({
           </label>
         )}
       </div>
-      <label>
-        <Caption
-          help={
-            <>
-              <p>
-                fx (Vercel Labs) runs on Vercel&apos;s AI Gateway, or on your ChatGPT or Grok subscription. Log in with fx on your own machine and
-                paste or import the file it writes: <code>~/.fx/auth.json</code> after <code>fx login</code>, <code>~/.fx/chatgpt-auth.json</code>{" "}
-                after <code>fx login codex</code>, <code>~/.fx/grok-auth.json</code> after <code>fx login grok</code> (the Sandbox keeps it in
-                memory only; refreshed tokens flow back here). Or paste an AI Gateway API key from vercel.com &rarr; AI Gateway &rarr; API keys.
-                fx runs in Linux and macOS Sandboxes; it has no Windows build.
-              </p>
-              <CopyCommand command="fx login" />
-              <CopyCommand command="cat ~/.fx/auth.json" />
-            </>
-          }
-        >
-          fx: login (auth.json or AI Gateway API key){" "}
-          {fxLoginSet ? (
-            <span className="ok">(set{settings.fxLogin && !forgetFxLogin ? `: ${describeFxLogin(settings.fxLogin)}` : ""})</span>
-          ) : (
-            <span className="warn">(not set)</span>
-          )}
-        </Caption>
-        <textarea
-          rows={3}
-          spellCheck={false}
-          autoComplete="off"
-          value={fxLogin}
-          onChange={(e) => {
-            setFxLogin(e.target.value);
-            if (e.target.value.trim()) setForgetFxLogin(false);
-          }}
-          placeholder={fxLoginSet ? "Leave empty to keep the current login" : "Paste the contents of ~/.fx/auth.json, or an AI Gateway API key"}
-        />
-      </label>
-      <div className="field-hint">
-        <input
-          ref={fxFileRef}
-          type="file"
-          accept=".json,application/json"
-          hidden
-          onChange={(e) => {
-            importFxAuth(e.target.files?.[0]);
-            e.target.value = "";
-          }}
-        />
-        <button type="button" onClick={() => fxFileRef.current?.click()}>
-          Import auth.json…
-        </button>
-        {settings.providerSecretsSet.fx.FX_LOGIN && (
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={forgetFxLogin}
-              onChange={(e) => {
-                setForgetFxLogin(e.target.checked);
-                if (e.target.checked) setFxLogin("");
-              }}
-            />{" "}
-            Forget the stored login
-          </label>
-        )}
-      </div>
+      <LoginFileField
+        caption="fx: login (auth.json or AI Gateway API key)"
+        help={
+          <>
+            <p>
+              fx (Vercel Labs) runs on Vercel&apos;s AI Gateway, or on your ChatGPT or Grok subscription. Log in with fx on your own machine and
+              paste or import the file it writes: <code>~/.fx/auth.json</code> after <code>fx login</code>, <code>~/.fx/chatgpt-auth.json</code>{" "}
+              after <code>fx login codex</code>, <code>~/.fx/grok-auth.json</code> after <code>fx login grok</code> (the Sandbox keeps it in
+              memory only; refreshed tokens flow back here). Or paste an AI Gateway API key from vercel.com &rarr; AI Gateway &rarr; API keys.
+              fx runs in Linux and macOS Sandboxes; it has no Windows build.
+            </p>
+            <CopyCommand command="fx login" />
+            <CopyCommand command="cat ~/.fx/auth.json" />
+          </>
+        }
+        stored={settings.providerSecretsSet.fx.FX_LOGIN}
+        metadata={settings.fxLogin ? describeFxLogin(settings.fxLogin) : null}
+        value={fxLogin}
+        setValue={setFxLogin}
+        forget={forgetFxLogin}
+        setForget={setForgetFxLogin}
+        placeholder="Paste the contents of ~/.fx/auth.json, or an AI Gateway API key"
+        accept=".json,application/json"
+        importLabel="Import auth.json…"
+      />
+      <LoginFileField
+        caption="Mistral Vibe: login (Mistral API key or .env)"
+        help={
+          <>
+            <p>
+              Mistral Vibe runs on your Mistral account. <strong>Sign in with Mistral Vibe</strong> (Connect a Provider above) opens
+              console.mistral.ai and stores the API key Mistral hands out; or paste a key from console.mistral.ai &rarr; API Keys; or, if you use
+              Vibe on your own machine without an OS keyring, paste or import the <code>~/.vibe/.env</code> it wrote (
+              <code>MISTRAL_API_KEY=…</code>). The Sandbox keeps the key in memory only, as Vibe&apos;s <code>.env</code>; a sign-in from inside
+              the Agent flows back here. Vibe runs in Linux, macOS and Windows Sandboxes.
+            </p>
+            <CopyCommand command="cat ~/.vibe/.env" />
+          </>
+        }
+        stored={settings.providerSecretsSet.vibe.VIBE_LOGIN}
+        metadata={settings.vibeLogin ? describeVibeLogin(settings.vibeLogin) : null}
+        value={vibeLogin}
+        setValue={setVibeLogin}
+        forget={forgetVibeLogin}
+        setForget={setForgetVibeLogin}
+        placeholder="Paste a Mistral API key, or the contents of ~/.vibe/.env"
+        accept=".env,text/plain"
+        importLabel="Import .env…"
+      />
 
       <CopilotLoginCard settings={settings} login={copilotLogin} setLogin={setCopilotLogin} forget={forgetCopilotLogin} setForget={setForgetCopilotLogin} />
       <ClaudeApiSettings

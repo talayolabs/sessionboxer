@@ -4,7 +4,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -18,6 +18,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   fx: "fx",
   kimi: "Kimi CLI",
   copilot: "GitHub Copilot",
+  vibe: "Mistral Vibe",
 };
 
 /**
@@ -48,6 +49,7 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   kimi: [],
   // Copilot's login (ADR-0082) too: the token goes into the Agent process alone, a config.json on tmpfs.
   copilot: [],
+  vibe: [],
 };
 
 /** Metadata of ~/.kimi/credentials/kimi-code.json (ADR-0084); never the tokens. */
@@ -79,6 +81,16 @@ export const CopilotLogin = z.object({
   login: z.string().nullable(),
 });
 export type CopilotLogin = z.infer<typeof CopilotLogin>;
+
+/**
+ * What the stored Mistral Vibe login (ADR-0085) is: a Mistral API key pasted as is (`api-key`), or
+ * the `~/.vibe/.env` file Vibe writes after its own sign-in (`env-file`, dotenv lines holding
+ * `MISTRAL_API_KEY`). Mistral API keys carry no expiry or account that could be read here.
+ */
+export const VibeLogin = z.object({
+  kind: z.enum(["api-key", "env-file"]),
+});
+export type VibeLogin = z.infer<typeof VibeLogin>;
 
 /**
  * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT

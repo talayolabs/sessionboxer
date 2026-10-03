@@ -8,7 +8,7 @@ import { UtilityDef, UtilityEnvironment, DEFAULT_UTILITY_ENVIRONMENTS, Procedure
 import { DEFAULT_CLAUDE_MODELS, INSTRUCTIONS_MAX_CHARS, DEFAULT_INSTRUCTIONS, DEFAULT_HTML_APP_CDNS } from "./models.js";
 import { SpeechSettings } from "./speech.js";
 import { TunnelSettings, PublicTunnelSettings, RemoteAccess, TunnelSettingsUpdate } from "./auth.js";
-import { EnvironmentAvailability, CodexLogin, CursorLogin, PiLogin, OpenCodeLogin, FxLogin, KimiLogin, CopilotLogin, DockerMode } from "./common.js";
+import { EnvironmentAvailability, CodexLogin, CursorLogin, PiLogin, OpenCodeLogin, FxLogin, KimiLogin, CopilotLogin, VibeLogin, DockerMode } from "./common.js";
 import { GitIdentity } from "./branches.js";
 
 /**
@@ -204,6 +204,8 @@ export const Settings = z.object({
       fx: z.object({ FX_LOGIN: z.string().default("") }).default({}),
       kimi: z.object({ KIMI_LOGIN: z.string().default("") }).default({}),
     copilot: z.object({ COPILOT_LOGIN: z.string().default("") }).default({}),
+      /** A Mistral API key, or the `~/.vibe/.env` file Mistral Vibe wrote at sign-in (ADR-0085). */
+      vibe: z.object({ VIBE_LOGIN: z.string().default("") }).default({}),
     })
     .default({}),
   /** OAuth App used by each Connector's login; empty `clientId` means the built-in one. */
@@ -255,6 +257,7 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     fx: z.object({ FX_LOGIN: z.boolean() }),
     kimi: z.object({ KIMI_LOGIN: z.boolean() }),
     copilot: z.object({ COPILOT_LOGIN: z.boolean() }),
+    vibe: z.object({ VIBE_LOGIN: z.boolean() }),
   }),
   /** The account behind the stored Codex `auth.json`; `null` when none is stored. */
   codexLogin: CodexLogin.nullable(),
@@ -268,6 +271,8 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
   fxLogin: FxLogin.nullable(),
   kimiLogin: KimiLogin.nullable(),
   copilotLogin: CopilotLogin.nullable(),
+  /** What the stored Mistral Vibe login is; `null` when none is stored. */
+  vibeLogin: VibeLogin.nullable(),
   connectors: z.object({
     github: z.object({ clientId: z.string(), clientSecretSet: z.boolean() }),
   }),
@@ -307,6 +312,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, utilities
       fx: z.object({ FX_LOGIN: z.string() }).partial(),
       kimi: z.object({ KIMI_LOGIN: z.string() }).partial(),
       copilot: z.object({ COPILOT_LOGIN: z.string() }).partial(),
+      vibe: z.object({ VIBE_LOGIN: z.string() }).partial(),
     })
     .partial()
     .optional(),

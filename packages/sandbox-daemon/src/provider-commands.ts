@@ -17,4 +17,6 @@ export const ACP_COMMANDS: Record<Provider, string[]> = {
   // Copilot's ACP server is built in (ADR-0082); every permission is granted on the command line and the
   // pinned version runs (`--no-auto-update`); `--no-ask-user` keeps it from waiting on a question no client answers.
   copilot: ["copilot", "--acp", "--allow-all", "--no-auto-update", "--no-ask-user"],
+  // Mistral Vibe ships `vibe-acp`, its ACP server, as a standalone binary (ADR-0085).
+  vibe: ["vibe-acp"],
 };

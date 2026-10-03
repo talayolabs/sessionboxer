@@ -39,6 +39,7 @@ export const PROVIDER_BLURB: Record<Provider, string> = {
   kimi: "Moonshot AI’s coding agent, using your Kimi Code account",
   fx: "Vercel Labs' Agent; runs on Vercel's AI Gateway, or your ChatGPT or Grok subscription",
   copilot: "GitHub's Agent; runs on your GitHub Copilot subscription",
+  vibe: "Mistral's open-source Agent; runs on your Mistral account or a Mistral API key",
 };
 
 interface Step {
@@ -188,6 +189,19 @@ function steps(provider: Provider, os: Os): Step[] {
           commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.copilot\\config.json" : "cat ~/.copilot/config.json"],
         },
       ];
+    case "vibe":
+      return [
+        {
+          title: "Get a Mistral API key",
+          body: "Sign in with Mistral Vibe above (the browser opens console.mistral.ai), or create a key at console.mistral.ai → API Keys and paste it below.",
+          commands: [],
+        },
+        {
+          title: "Or copy the login Vibe made on your machine",
+          body: `If you use Mistral Vibe (${os === "windows" ? "`uv tool install mistral-vibe`" : "`uv tool install mistral-vibe` or its installer"}) and signed in there, it keeps the key in your OS keyring, or in this file when there is none:`,
+          commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.vibe\\.env" : "cat ~/.vibe/.env"],
+        },
+      ];
     case "devin":
       return [
         {
@@ -312,6 +326,8 @@ function credentialField(provider: Provider): {
         file: true,
         placeholder: "{ … } or github_pat_…",
       };
+    case "vibe":
+      return { label: "Mistral Vibe login (a Mistral API key, or the contents of ~/.vibe/.env)", multiline: true, file: true, placeholder: "The API key, or MISTRAL_API_KEY='…'" };
   }
 }
 
@@ -335,6 +351,8 @@ function secretUpdate(provider: Provider, value: string) {
       return { fx: { FX_LOGIN: value } };
     case "copilot":
       return { copilot: { COPILOT_LOGIN: value } };
+    case "vibe":
+      return { vibe: { VIBE_LOGIN: value } };
   }
 }
 

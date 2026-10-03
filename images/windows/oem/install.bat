@@ -25,6 +25,8 @@ set "PI_ACP_VERSION=0.0.34"
 set "OPENCODE_VERSION=1.18.32"
 set "KIMI_VERSION=1.52.0"
 set "COPILOT_VERSION=1.0.91"
+set "VIBE_VERSION=2.25.8"
+set "VIBE_SHA256=4eb3099bd06b034f62582f7b5ed701febbce3cf013ef95490aca9c79e82c4bd1"
 set "LOG=C:\sessionboxer-install.log"
 set "DL=%TEMP%\sessionboxer-install"
 mkdir "%DL%" 2>nul
@@ -153,10 +155,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Copy-Item -LiteralPath (Join-Path \"$dest.tmp\" 'package\bin\opencode.exe') -Destination (Join-Path $dest 'opencode.exe') -Force;" ^
   "Remove-Item -LiteralPath \"$dest.tmp\" -Recurse -Force -ErrorAction SilentlyContinue" >> "%LOG%" 2>&1
 
+rem Mistral Vibe (`vibe-acp`, ADR-0085): the checksummed release archive (the binary and its _internal\ runtime), where the launcher looks for it.
+echo [%time%] vibe %VIBE_VERSION%>> "%LOG%"
+curl.exe -fsSL --retry 5 --retry-all-errors -o "%DL%\vibe.zip" "https://github.com/mistralai/mistral-vibe/releases/download/v%VIBE_VERSION%/vibe-acp-windows-x86_64-%VIBE_VERSION%.zip" >> "%LOG%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$hash = (Get-FileHash -LiteralPath '%DL%\vibe.zip' -Algorithm SHA256).Hash.ToLowerInvariant();" ^
+  "if ($hash -ne '%VIBE_SHA256%') { throw \"vibe archive checksum mismatch: $hash\" };" ^
+  "$dest = Join-Path $env:LOCALAPPDATA 'Programs\vibe';" ^
+  "New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null;" ^
+  "Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue;" ^
+  "Expand-Archive -LiteralPath '%DL%\vibe.zip' -DestinationPath $dest -Force" >> "%LOG%" 2>&1
+
 rem The account's PATH for interactive shells (the Terminal pane, `win ...`): what the installers
 rem put in place. The Agent's launcher adds the same directories itself.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$dirs = @('C:\Program Files\nodejs', \"$env:APPDATA\npm\", 'C:\Program Files\Git\cmd', \"$env:USERPROFILE\.local\bin\", \"$env:LOCALAPPDATA\devin\cli\bin\", \"$env:LOCALAPPDATA\Programs\cursor-agent\", \"$env:LOCALAPPDATA\Programs\opencode\");" ^
+  "$dirs = @('C:\Program Files\nodejs', \"$env:APPDATA\npm\", 'C:\Program Files\Git\cmd', \"$env:USERPROFILE\.local\bin\", \"$env:LOCALAPPDATA\devin\cli\bin\", \"$env:LOCALAPPDATA\Programs\cursor-agent\", \"$env:LOCALAPPDATA\Programs\opencode\", \"$env:LOCALAPPDATA\Programs\vibe\");" ^
   "$user = [Environment]::GetEnvironmentVariable('Path', 'User');" ^
   "$parts = @(); if ($user) { $parts = $user -split ';' | Where-Object { $_ -ne '' } };" ^
   "foreach ($d in $dirs) { if ($parts -notcontains $d) { $parts += $d } };" ^
@@ -176,6 +189,8 @@ call "%LOCALAPPDATA%\Programs\cursor-agent\cursor-agent.cmd" --version >> "%LOG%
 set "OPENCODE_DISABLE_AUTOUPDATE=1"
 call "%LOCALAPPDATA%\Programs\opencode\opencode.exe" --version >> "%LOG%" 2>&1
 call copilot --no-auto-update --version >> "%LOG%" 2>&1
+set "VIBE_ENABLE_AUTO_UPDATE=false"
+call "%LOCALAPPDATA%\Programs\vibe\vibe-acp.exe" --version >> "%LOG%" 2>&1
 
 rmdir /s /q "%DL%" 2>nul
 echo [%time%] done>> "%LOG%"

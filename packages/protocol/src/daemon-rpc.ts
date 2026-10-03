@@ -44,6 +44,8 @@ export const DAEMON_METHODS = {
   kimiAuthChanged: "_sessionboxer/kimi/auth/changed",
   copilotAuthSet: "_sessionboxer/copilot/auth/set",
   copilotAuthChanged: "_sessionboxer/copilot/auth/changed",
+  vibeAuthSet: "_sessionboxer/vibe/auth/set",
+  vibeAuthChanged: "_sessionboxer/vibe/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -343,6 +345,23 @@ export const DaemonCopilotAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonCopilotAuthChangedParams = z.infer<typeof DaemonCopilotAuthChangedParams>;
+
+/**
+ * The Mistral Vibe login for the Sandbox (ADR-0085): the `~/.vibe/.env` file Vibe reads its API key
+ * from, on tmpfs behind that path — written from a pasted API key or taken as the file Vibe's own
+ * sign-in wrote. Sent on connect and whenever the stored login changes; `""` removes it. When Vibe
+ * rewrites the file (a sign-in or sign-out from inside the Agent), it comes back as `vibeAuthChanged`.
+ */
+export const DaemonVibeAuthParams = z.object({
+  login: z.string(),
+});
+export type DaemonVibeAuthParams = z.infer<typeof DaemonVibeAuthParams>;
+
+export const DaemonVibeAuthChangedParams = z.object({
+  /** The dotenv text of `~/.vibe/.env` (the field name is shared with the other Providers' notifications). */
+  authJson: z.string(),
+});
+export type DaemonVibeAuthChangedParams = z.infer<typeof DaemonVibeAuthChangedParams>;
 
 /** Every `*AuthChanged` notification carries the rewritten login file the same way. */
 export const DaemonAuthChangedParams = z.object({

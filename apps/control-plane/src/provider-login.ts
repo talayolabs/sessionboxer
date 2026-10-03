@@ -8,6 +8,7 @@ import { applySettingsUpdate, codexLogin, describeCursorLogin, describeFxLogin, 
 import { parseDevinCredentials, readFirst, readHostLogin } from "./host-logins.js";
 
 export { claudeHostAccount, parseDevinCredentials, readHostLogin } from "./host-logins.js";
+import { describeVibeLogin, normalizeVibeLogin } from "./vibe-login.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
 import { kimiLoginRecipe } from "./kimi-login-recipe.js";
 import { HttpError } from "./http-error.js";
@@ -218,6 +219,31 @@ export const RECIPES: Partial<Record<Provider, Recipe>> = {
       }
     },
     secret: (login) => ({ copilot: { COPILOT_LOGIN: login } }),
+  },
+  // Mistral Vibe has no login command for a terminal (ADR-0085): its sign-in is an ACP `authenticate` with a
+  // delegated browser method that hands out the console.mistral.ai URL and completes when the page did.
+  // `sessionboxer-vibe-login` (in the Sandbox image) drives `vibe-acp` through it, printing
+  // "Open https://console.mistral.ai/…"; Vibe then writes the API key it got to `~/.vibe/.env` (no keyring).
+  vibe: {
+    bin: ["sessionboxer-vibe-login"],
+    args: [],
+    env: { ...noBrowser, VIBE_ENABLE_AUTO_UPDATE: "false", VIBE_TEST_DISABLE_KEYRING: "1" },
+    isLoginUrl: (u) => /(^|\.)mistral\.ai$/.test(u.hostname) && /authenticate/i.test(u.pathname),
+    code: "none",
+    prompt: null,
+    userCode: () => null,
+    rejected: (text) => /^Error:\s*([^\n]*)/m.exec(text)?.[1]?.trim() ?? null,
+    files: [".vibe/.env"],
+    result: (_output, file) => {
+      if (!file) return null;
+      try {
+        const login = normalizeVibeLogin(file);
+        return login && describeVibeLogin(login) ? { login, account: null } : null;
+      } catch {
+        return null;
+      }
+    },
+    secret: (login) => ({ vibe: { VIBE_LOGIN: login } }),
   },
 };
 
@@ -437,7 +463,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot", vibe: "Mistral Vibe" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {

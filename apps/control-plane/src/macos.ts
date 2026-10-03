@@ -1,3 +1,4 @@
+import { archiveToolLines } from "./macos-tools.js";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -60,10 +61,6 @@ const DEVIN_CLI_VERSION = "3000.10.27";
 const CURSOR_CLI_VERSION = "2026.09.23-86fc751";
 const PI_VERSION = "0.99.2";
 const PI_ACP_VERSION = "0.0.34";
-/** OpenCode, pinned with the Sandbox image (ADR-0076): the binary of its npm platform package. */
-const OPENCODE_VERSION = "1.18.32";
-/** fx (ADR-0077): the release archive for macOS; same pin as the Sandbox image. */
-const FX_VERSION = "v0.0.11";
 const COPILOT_VERSION = "1.0.91"; // GitHub Copilot CLI (ADR-0082), the npm package; same pin as the Sandbox image.
 
 interface BaseRecord {
@@ -679,7 +676,8 @@ function setupSteps(version: string): string[] {
  * - uv: Astral's pinned installer into `~/.local/bin`. Devin: its pinned `setup.sh` (checksummed
  *   bundle under `~/.local/share/devin`, `~/.local/bin/devin`). Cursor: the pinned macOS package
  *   under `~/.local/share/cursor-agent`, `~/.local/bin/{cursor-agent,agent}`. fx: the pinned release
- *   archive under `~/.local/share/fx/<version>`, `~/.local/bin/fx`.
+ *   archive under `~/.local/share/fx/<version>`, `~/.local/bin/fx`. Mistral Vibe: the pinned, checksummed
+ *   `vibe-acp` archive under `~/.local/share/vibe/<version>`, `~/.local/bin/vibe-acp`.
  */
 /** Encodes stdin as `/etc/kcpassword`: XOR with Apple's key, NUL-terminated and padded to 12 bytes. */
 const KCPASSWORD_PERL =
@@ -795,33 +793,8 @@ function provisionScript(): string {
     `  rm -rf "$CURSOR_DIR" && mv "$CURSOR_DIR.tmp" "$CURSOR_DIR"`,
     "fi",
     `ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/cursor-agent" && ln -sfn "$CURSOR_DIR/cursor-agent" "$HOME/.local/bin/agent"`,
-    // OpenCode (`opencode acp`), kept apart from ~/.local/share/opencode, which is OpenCode's own data directory.
-    `OPENCODE_DIR="$HOME/.local/share/opencode-cli/versions/${OPENCODE_VERSION}"`,
-    `if [ -x "$OPENCODE_DIR/opencode" ]; then`,
-    `  say "opencode ${OPENCODE_VERSION} present"`,
-    "else",
-    `  say "installing OpenCode ${OPENCODE_VERSION} ($NODE_ARCH)"`,
-    `  rm -rf "$OPENCODE_DIR.tmp" && mkdir -p "$OPENCODE_DIR.tmp"`,
-    `  curl -fsSL --retry 5 --retry-all-errors "https://registry.npmjs.org/opencode-darwin-$NODE_ARCH/-/opencode-darwin-$NODE_ARCH-${OPENCODE_VERSION}.tgz" | tar -xzf - -C "$OPENCODE_DIR.tmp" --strip-components=2 package/bin/opencode || fail "downloading OpenCode"`,
-    `  [ -x "$OPENCODE_DIR.tmp/opencode" ] || fail "the OpenCode package has no opencode binary"`,
-    `  rm -rf "$OPENCODE_DIR" && mv "$OPENCODE_DIR.tmp" "$OPENCODE_DIR"`,
-    "fi",
-    `ln -sfn "$OPENCODE_DIR/opencode" "$HOME/.local/bin/opencode"`,
-    `say "opencode $(OPENCODE_DISABLE_AUTOUPDATE=1 "$HOME/.local/bin/opencode" --version 2>/dev/null | head -1)"`,
-    // fx (ADR-0077): the release archive (fx, LICENSE, THIRD_PARTY_NOTICES.md) for the Mac's architecture.
-    `FX_DIR="$HOME/.local/share/fx/${FX_VERSION}"`,
-    `if [ -x "$FX_DIR/fx" ]; then`,
-    `  say "fx ${FX_VERSION} present"`,
-    "else",
-    `  say "installing fx ${FX_VERSION} ($FX_ARCH)"`,
-    `  rm -rf "$FX_DIR.tmp" && mkdir -p "$FX_DIR.tmp"`,
-    `  curl -fsSL --retry 5 --retry-all-errors "https://releases.fx.sh/${FX_VERSION}/fx-macos-$FX_ARCH.tar.gz" | tar -xzf - -C "$FX_DIR.tmp" || fail "downloading fx"`,
-    `  [ -x "$FX_DIR.tmp/fx" ] || fail "the fx archive has no fx binary"`,
-    `  rm -rf "$FX_DIR" && mv "$FX_DIR.tmp" "$FX_DIR"`,
-    "fi",
-    `ln -sfn "$FX_DIR/fx" "$HOME/.local/bin/fx"`,
-    `say "fx $("$HOME/.local/bin/fx" --version 2>/dev/null | head -1)"`,
-    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx copilot in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
+    ...archiveToolLines(),
+    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx copilot vibe-acp in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
     "echo SBX_PROVISIONED",
     // Detached, after this SSH session has returned: `nohup` could not run the `sudo` function above.
     `(sleep 3; printf '%s\\n' "$SBX_PW" | command sudo -S -p '' shutdown -h now) </dev/null >/dev/null 2>&1 &`,

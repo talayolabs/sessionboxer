@@ -163,6 +163,7 @@ import { fxStateVolumeName, MissingImageContentError, SNAPSHOT_REPO, type Sandbo
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
+import { SessionQueue } from "./session-queue.js";
 import { daemonUtilitiesParams, defaultUtilitiesEnabled, knownUtilityIds, resolveUtilities } from "./utilities.js";
 import { PullRequests } from "./pull-requests.js";
 import { StagedUploads, type StagedFile } from "./staged-uploads.js";
@@ -214,8 +215,8 @@ export class SessionManager {
   readonly staged: StagedUploads;
   /** Origin the next `user_prompt` event of a Session is recorded with (set by `prompt` for a hidden prompt). */
   private readonly promptOrigins = new Map<string, PromptOrigin>();
-  /** Saved messages another Session's Agent queued (`session_message`), by message id: sent with that origin. */
-  private readonly queuedOrigins = new Map<string, { targetId: string; origin: AgentPromptOrigin }>();
+  /** The saved-messages queue of each Session (`saved_messages`, `queueRunning`). */
+  private readonly queue: SessionQueue;
   /** Senders with an Agent-to-Agent prompt in flight, by target Session (one per target per sender, ADR-0062). */
   private readonly agentInflight = new Map<string, Set<string>>();
   /** Who can create and schedule Sessions on the Agent's behalf; wired by the server. */
@@ -299,6 +300,15 @@ export class SessionManager {
       log,
     });
     this.e2e.closeStale();
+    this.queue = new SessionQueue({
+      db,
+      get: (id) => this.get(id),
+      update: (id, patch) => this.update(id, patch),
+      prompt: (id, text, origin) => this.prompt(id, { text }, origin),
+      isConnected: (id) => this.clients.get(id)?.connected === true,
+      broadcast: (msg) => this.broadcast(msg),
+      log: (msg) => this.log(msg),
+    });
     this.agentTools = new AgentTools({
       db,
       getSession: (id) => db.getSession(id),
@@ -1543,7 +1553,7 @@ export class SessionManager {
         if (staged?.length) this.setStatus(id, "error", e instanceof Error ? e.message : String(e));
       });
     } else {
-      void this.pumpQueue(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
+      void this.queue.pump(id).catch((e: unknown) => this.log(`queue ${id} failed after connect: ${String(e)}`));
     }
   }
 
@@ -1936,89 +1946,27 @@ export class SessionManager {
   // --- The queue ---------------------------------------------------------------
 
   savedMessages(id: string): SavedMessage[] {
-    this.get(id);
-    return this.db.listSavedMessages(id);
+    return this.queue.list(id);
   }
 
-  /**
-   * Appends a message to the Session's queue and lets the queue play: the message goes out
-   * as soon as the Agent is idle (now, after the current turn, or when a stopped Sandbox is
-   * resumed). A queue the user paused with messages still in it stays paused, the new message
-   * waits behind them, unless `resumePaused` (scheduled tasks, PR actions) asks otherwise.
-   */
-  async enqueueMessage(id: string, text: string, opts: { resumePaused?: boolean; origin?: AgentPromptOrigin } = {}): Promise<SavedMessage> {
-    const s = this.get(id);
-    const paused = !s.queueRunning && this.db.listSavedMessages(id).length > 0;
-    const saved = this.db.insertSavedMessage(id, text);
-    if (opts.origin) this.queuedOrigins.set(saved.id, { targetId: id, origin: opts.origin });
-    this.broadcastSaved(id);
-    if (!s.queueRunning && (!paused || opts.resumePaused) && s.status !== "error") {
-      this.update(id, { queueRunning: true });
-      await this.pumpQueue(id);
-    }
-    return saved;
+  enqueueMessage(id: string, text: string, opts: { resumePaused?: boolean; origin?: AgentPromptOrigin } = {}): Promise<SavedMessage> {
+    return this.queue.enqueue(id, text, opts);
   }
 
   updateSavedMessage(id: string, messageId: string, patch: { text?: string; position?: number }): SavedMessage {
-    this.get(id);
-    const saved = this.db.updateSavedMessage(id, messageId, patch);
-    if (!saved) throw new HttpError(404, `saved message ${messageId} not found`);
-    this.broadcastSaved(id);
-    return saved;
+    return this.queue.updateMessage(id, messageId, patch);
   }
 
   deleteSavedMessage(id: string, messageId: string): void {
-    this.get(id);
-    if (!this.db.deleteSavedMessage(id, messageId)) throw new HttpError(404, `saved message ${messageId} not found`);
-    this.broadcastSaved(id);
+    this.queue.deleteMessage(id, messageId);
   }
 
-  /** Sends a saved message now and drops it from the list. */
-  async sendSavedMessage(id: string, messageId: string): Promise<void> {
-    this.get(id);
-    const saved = this.db.getSavedMessage(id, messageId);
-    if (!saved) throw new HttpError(404, `saved message ${messageId} not found`);
-    await this.prompt(id, { text: saved.text });
-    this.db.deleteSavedMessage(id, messageId);
-    this.broadcastSaved(id);
+  sendSavedMessage(id: string, messageId: string): Promise<void> {
+    return this.queue.send(id, messageId);
   }
 
-  /**
-   * Play/pause the queue. While playing, the first queued message is sent as soon as
-   * the Agent is idle and again after every `turn_ended`, until the list is empty; a stopped
-   * Sandbox plays it when resumed. Pausing lets the current turn finish.
-   */
-  async setQueueRunning(id: string, running: boolean): Promise<Session> {
-    const s = this.get(id);
-    if (running && this.db.listSavedMessages(id).length === 0) throw new HttpError(409, "The queue is empty.");
-    if (running && s.status === "error") throw new HttpError(409, `Session is in error state: ${s.error ?? "unknown"}`);
-    if (s.queueRunning !== running) this.update(id, { queueRunning: running });
-    if (running) await this.pumpQueue(id);
-    return this.get(id);
-  }
-
-  /** Sends the next queued message if the queue is playing and the Agent is idle and reachable. */
-  private async pumpQueue(id: string): Promise<void> {
-    const s = this.db.getSession(id);
-    if (!s?.queueRunning || s.status !== "idle" || s.usage.limit) return;
-    const next = this.db.listSavedMessages(id)[0];
-    if (!next) {
-      this.update(id, { queueRunning: false });
-      return;
-    }
-    // Between a resume and the Daemon's connection the Session is idle but unreachable;
-    // `onDaemonConnected` pumps then.
-    if (!this.clients.get(id)?.connected) return;
-    try {
-      await this.prompt(id, { text: next.text }, this.queuedOrigins.get(next.id)?.origin);
-    } catch (e) {
-      this.log(`queue ${id} paused: ${e instanceof Error ? e.message : String(e)}`);
-      this.update(id, { queueRunning: false });
-      return;
-    }
-    this.queuedOrigins.delete(next.id);
-    this.db.deleteSavedMessage(id, next.id);
-    this.broadcastSaved(id);
+  setQueueRunning(id: string, running: boolean): Promise<Session> {
+    return this.queue.setRunning(id, running);
   }
 
   // --- Sessions the Agent creates and messages (ADR-0062) -----------------------
@@ -2064,8 +2012,7 @@ export class SessionManager {
     if (hops > AGENT_MESSAGE_MAX_HOPS) {
       throw new HttpError(409, `This message would be hop ${hops} of a chain of Agents prompting Agents; the limit is ${AGENT_MESSAGE_MAX_HOPS}. Report to the user instead.`);
     }
-    const queued = [...this.queuedOrigins.values()].some((q) => q.targetId === target.id && q.origin.fromSessionId === from.id);
-    if (queued || this.agentInflight.get(target.id)?.has(from.id)) {
+    if (this.queue.hasQueuedFrom(target.id, from.id) || this.agentInflight.get(target.id)?.has(from.id)) {
       throw new HttpError(409, `Your previous message to “${target.title}” is still in flight (one at a time per Session); session_wait for its reply first.`);
     }
     const origin: AgentPromptOrigin = { type: "agent", fromSessionId: from.id, fromTitle: from.title, hops };
@@ -2101,10 +2048,6 @@ export class SessionManager {
     }
     const now = this.get(id);
     return { stillRunning: busy(now), status: now.status, lastReply: this.lastReply(id) };
-  }
-
-  private broadcastSaved(id: string): void {
-    this.broadcast({ type: "saved_messages", sessionId: id, messages: this.db.listSavedMessages(id) });
   }
 
   // --- Snapshots -------------------------------------------------------------
@@ -2409,7 +2352,7 @@ export class SessionManager {
     this.pendingPrompts.delete(id);
     this.promptOrigins.delete(id);
     this.agentInflight.delete(id);
-    for (const [messageId, q] of this.queuedOrigins) if (q.targetId === id) this.queuedOrigins.delete(messageId);
+    this.queue.forget(id);
     try {
       if (s.containerId) await this.docker.remove(s.containerId);
       if (s.provider === "fx") await this.docker.removeVolume(fxStateVolumeName(id)).catch((e: unknown) => this.log(`delete ${id}: could not remove the fx volume: ${String(e)}`));
@@ -2920,7 +2863,7 @@ export class SessionManager {
   private async afterTurn(id: string, eventSeq: number, turn: SessionEvent[]): Promise<void> {
     await this.autoSnapshot(id, eventSeq);
     if (turn.length > 0 && (await this.e2e.afterUserTurn(id, eventSeq, turn))) return;
-    await this.pumpQueue(id);
+    await this.queue.pump(id);
     if (this.db.getSession(id)?.status === "idle") this.settled(id, "end_turn");
   }
 

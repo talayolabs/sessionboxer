@@ -27,7 +27,7 @@ import {
   type UpdatePrRequest,
 } from "@sessionboxer/protocol";
 import { parseBitbucketRemote } from "./bitbucket.js";
-import { bitbucketTokenTransport, fetchBbActivities, fetchBbBuilds, fetchBbPr, type BbPrInfo } from "./bitbucket-pr.js";
+import { bitbucketTokenTransport, fetchBbActivities, fetchBbBuilds, fetchBbPr, type BbPrInfo, type BbTransport } from "./bitbucket-pr.js";
 import type { Db } from "./db.js";
 import {
   fetchIssueComments,
@@ -61,6 +61,14 @@ const UNWATCH_CLOSED_AFTER_MS = 24 * 60 * 60_000;
 const GH_API_TIMEOUT_MS = 60_000;
 /** Longest quoted body in a prompt (the rest is elided; the link has the whole comment). */
 const QUOTE_MAX_CHARS = 4000;
+
+/** Connector token → provider transport; `scripts/pr-sync.test.mjs` puts fakes through. */
+export interface PrTransports {
+  github: (token: string) => GhTransport;
+  bitbucket: (host: string, token: string) => BbTransport;
+}
+
+export const DEFAULT_PR_TRANSPORTS: PrTransports = { github: tokenTransport, bitbucket: bitbucketTokenTransport };
 
 export interface PullRequestDeps {
   db: Db;
@@ -102,7 +110,10 @@ export class PullRequests {
   /** Told when a poll found checks changed: the followed-PR poller reads them from here instead of on its own timer (ADR-0067). */
   onChecksChanged: ((ref: PrRef) => void) | null = null;
 
-  constructor(private readonly deps: PullRequestDeps) {}
+  constructor(
+    private readonly deps: PullRequestDeps,
+    private readonly transports: PrTransports = DEFAULT_PR_TRANSPORTS,
+  ) {}
 
   start(): void {
     if (this.timer) return;
@@ -493,7 +504,7 @@ export class PullRequests {
           : "the Sandbox is stopped; resume it (or enable a GitHub Connector) to merge",
       };
     }
-    return { transport: tokenTransport(cred.token), account: cred.account };
+    return { transport: this.transports.github(cred.token), account: cred.account };
   }
 
   private forgetMerge(prId: string): void {
@@ -567,7 +578,7 @@ export class PullRequests {
         return;
       }
       const byAccount = new Map(usable.map((c) => [c.account, c.token]));
-      transport = { request: (p) => tokenTransport(byAccount.get(p.account ?? usable[0]!.account) ?? usable[0]!.token).request(p) };
+      transport = { request: (p) => this.transports.github(byAccount.get(p.account ?? usable[0]!.account) ?? usable[0]!.token).request(p) };
       candidates = usable.map((c) => c.account);
     }
 
@@ -670,7 +681,7 @@ export class PullRequests {
     let cred = ordered[0]!;
     let info: GhOutcome<BbPrInfo> | null = null;
     for (const c of ordered) {
-      const r = await fetchBbPr(bitbucketTokenTransport(pr.host, c.token), ref);
+      const r = await fetchBbPr(this.transports.bitbucket(pr.host, c.token), ref);
       cred = c;
       info = r;
       if (r.status === "error" && (r.kind === "unauthorized" || r.kind === "not_found") && c !== ordered[ordered.length - 1]) continue;
@@ -681,7 +692,7 @@ export class PullRequests {
       this.finish(pr, s, { etags: {}, error: info.kind, detail: info.detail, retryAt: info.retryAt });
       return;
     }
-    const t = bitbucketTokenTransport(pr.host, cred.token);
+    const t = this.transports.bitbucket(pr.host, cred.token);
     const v = info.value;
     store.updateMeta(pr.id, { ...v.meta, reviewDecision: v.reviewDecision, viaAccount: cred.account });
 

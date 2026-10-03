@@ -26,7 +26,7 @@ import {
 } from "@sessionboxer/protocol";
 import type { Automations, PrRunContext } from "./automations.js";
 import { bitbucketHttpsCloneUrl, parseBitbucketRemote } from "./bitbucket.js";
-import { bitbucketTokenTransport, fetchBbActivities, fetchBbBuilds, fetchBbDashboardPrs, fetchBbOpenPrs, fetchBbPr } from "./bitbucket-pr.js";
+import { fetchBbActivities, fetchBbBuilds, fetchBbDashboardPrs, fetchBbOpenPrs, fetchBbPr } from "./bitbucket-pr.js";
 import type { Db } from "./db.js";
 import type { FollowKey, StoredFollow, StoredFollowedPr, FollowedPrPatch } from "./followed-pr-store.js";
 import {
@@ -38,7 +38,6 @@ import {
   fetchReviews,
   fetchThreads,
   searchOpenPrs,
-  tokenTransport,
   type GhOutcome,
   type PrListItem,
   type PrMeta,
@@ -47,6 +46,7 @@ import { PUBLIC_URL } from "./config.js";
 import { HttpError } from "./http-error.js";
 import { bitbucketHookHint, githubHookHint, verifyHookSignature, type HookHint } from "./pr-hooks.js";
 import { itemId, type PrEtags, type PrItemInput } from "./pr-store.js";
+import { DEFAULT_PR_TRANSPORTS, type PrTransports } from "./pull-requests.js";
 
 export interface FollowedPrDeps {
   db: Db;
@@ -114,7 +114,10 @@ export class FollowedPrs {
   private readonly deferred: Deferred[] = [];
   private lastPurge = 0;
 
-  constructor(private readonly deps: FollowedPrDeps) {
+  constructor(
+    private readonly deps: FollowedPrDeps,
+    private readonly transports: PrTransports = DEFAULT_PR_TRANSPORTS,
+  ) {
     const { automations } = deps;
     automations.followExists = (id) => this.deps.db.followedPrs.getFollow(id) !== null;
     automations.prHeadRepo = async (repo, number, followedPrId) => this.headRepo(repo, number, followedPrId);
@@ -368,7 +371,7 @@ export class FollowedPrs {
     if (f.provider === "github" && f.kind === "repo" && f.owner && f.repo) {
       const cred = this.credential(f);
       if (!cred) throw new HttpError(400, `No connected login can register a webhook on ${f.owner}/${f.repo} (Settings → Connectors).`);
-      const res = await tokenTransport(cred.token).request({
+      const res = await this.transports.github(cred.token).request({
         method: "POST",
         path: `repos/${f.owner}/${f.repo}/hooks`,
         headers: {},
@@ -406,7 +409,7 @@ export class FollowedPrs {
     if (!f.webhookId || f.provider !== "github" || !f.owner || !f.repo) return;
     const cred = this.credential(f);
     if (!cred) throw new Error("no connected login for the repository");
-    const res = await tokenTransport(cred.token).request({ method: "DELETE", path: `repos/${f.owner}/${f.repo}/hooks/${f.webhookId}`, headers: {}, account: cred.account, body: null });
+    const res = await this.transports.github(cred.token).request({ method: "DELETE", path: `repos/${f.owner}/${f.repo}/hooks/${f.webhookId}`, headers: {}, account: cred.account, body: null });
     if (res.status !== 204 && res.status !== 404) throw new Error(`HTTP ${res.status} deleting hook ${f.webhookId}`);
   }
 
@@ -543,11 +546,11 @@ export class FollowedPrs {
     }
     let r: GhOutcome<PrListItem[]>;
     if (f.provider === "github") {
-      const t = tokenTransport(cred.token);
+      const t = this.transports.github(cred.token);
       if (f.kind === "repo") r = await fetchOpenPrs(t, f.owner!, f.repo!, f.etags.list, cred.account);
       else r = await searchOpenPrs(t, f.kind === "mine" ? "author:@me" : "review-requested:@me", cred.account);
     } else {
-      const t = bitbucketTokenTransport(f.host, cred.token);
+      const t = this.transports.bitbucket(f.host, cred.token);
       if (f.kind === "repo") r = await fetchBbOpenPrs(t, f.host, f.owner!, f.repo!);
       else r = await fetchBbDashboardPrs(t, f.host, f.kind === "mine" ? "AUTHOR" : "REVIEWER");
     }
@@ -652,8 +655,8 @@ export class FollowedPrs {
   }
 
   private async readMeta(f: Pick<StoredFollow, "provider" | "host">, cred: BoxCredential, pr: StoredFollowedPr): Promise<GhOutcome<PrMeta>> {
-    if (f.provider === "github") return fetchPrMeta(tokenTransport(cred.token), pr, undefined, cred.account);
-    const r = await fetchBbPr(bitbucketTokenTransport(f.host, cred.token), pr);
+    if (f.provider === "github") return fetchPrMeta(this.transports.github(cred.token), pr, undefined, cred.account);
+    const r = await fetchBbPr(this.transports.bitbucket(f.host, cred.token), pr);
     return r.status === "ok" ? { ...r, value: r.value.meta } : r;
   }
 
@@ -704,7 +707,7 @@ export class FollowedPrs {
     };
 
     if (pr.provider === "github") {
-      const t = tokenTransport(cred.token);
+      const t = this.transports.github(cred.token);
       const account = cred.account;
       const meta = await fetchPrMeta(t, pr, etags.pr, account);
       if (meta.status === "error") {
@@ -742,7 +745,7 @@ export class FollowedPrs {
         applyChecks(checks.value.headSha, checks.value.checks);
       } else if (checks.status === "error") failure ??= { kind: checks.kind, detail: checks.detail, retryAt: checks.retryAt };
     } else {
-      const t = bitbucketTokenTransport(pr.host, cred.token);
+      const t = this.transports.bitbucket(pr.host, cred.token);
       const info = await fetchBbPr(t, pr);
       if (info.status !== "ok") {
         if (info.status === "error") store.setPrSync(id, { etags, error: info.kind, detail: info.detail, retryAt: info.retryAt ?? backoff(info.kind) });

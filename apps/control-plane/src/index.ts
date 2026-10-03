@@ -132,7 +132,7 @@ const macos = new MacosVms(
   (status) => sessions.notify({ type: "macos_base", status }),
 );
 const sessions = new SessionManager(db, docker, windows, macos, () => settings, log, (msg) => push.send(msg));
-// Codex, Cursor, pi, OpenCode and fx rotate their tokens inside the Sandbox; the rewritten login file
+// Codex, Cursor, pi, OpenCode, fx and GitHub Copilot rotate their tokens inside the Sandbox; the rewritten login file
 // replaces the stored one (unless it is older than what another Sandbox already sent, or the stored
 // login is an API key) and reaches the other Sessions of that Agent.
 sessions.providerAuthRefreshed = (provider, sessionId, authJson) => {

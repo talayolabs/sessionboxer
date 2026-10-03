@@ -2,8 +2,8 @@ import { PROVIDER_LABELS, type Provider } from "@sessionboxer/protocol";
 
 // Hand-drawn approximations of the Providers' marks: Claude's orange starburst,
 // Devin's three linked hexagons, Codex's (OpenAI's) hexagonal knot, pi's π in
-// a rounded square, OpenCode's pixel terminal and fx's lowercase "fx" wordmark
-// (fx.sh), drawn in the current text colour.
+// a rounded square, OpenCode's pixel terminal, fx's lowercase "fx" wordmark
+// (fx.sh) and GitHub Copilot's goggled face, drawn in the current text colour.
 
 const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [0, 9.5],
@@ -142,6 +142,22 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
             <path d="M13.5 11.5 20.2 20" />
             <path d="M20.2 11.5 13.5 20" />
           </g>
+        </svg>
+      );
+    case "copilot":
+      // Copilot's mark: a rounded helmet with two goggle lenses.
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <path
+            d="M12 3.6c-4.5 0-7.4 2.3-7.4 6v1.3C3.7 11.2 3 12 3 13v2.5c0 1 .6 1.8 1.5 2.1 1.2 2 4.1 3 7.5 3s6.3-1 7.5-3c.9-.3 1.5-1.1 1.5-2.1V13c0-1-.7-1.8-1.6-2.1V9.6c0-3.7-2.9-6-7.4-6z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinejoin="round"
+          />
+          <rect x="6.4" y="10.6" width="4.2" height="4.6" rx="1.6" fill="currentColor" />
+          <rect x="13.4" y="10.6" width="4.2" height="4.6" rx="1.6" fill="currentColor" />
         </svg>
       );
   }

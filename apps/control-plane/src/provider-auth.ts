@@ -2,6 +2,8 @@ import { DAEMON_METHODS, PROVIDER_LABELS, type Provider, type Settings, type Upd
 import {
   codexAuthJson,
   codexAuthNewer,
+  copilotAuthNewer,
+  copilotLogin,
   cursorAuthNewer,
   cursorLogin,
   fxAuthNewer,
@@ -18,9 +20,10 @@ import { kimiAuthNewer, kimiLogin } from "./kimi-login.js";
 /**
  * The Agents whose login the Control Plane hands to the Sandbox Daemon and takes back when the CLI
  * refreshes its tokens (Codex ADR-0046, Cursor ADR-0054, pi ADR-0075, OpenCode ADR-0076, fx
- * ADR-0077). Claude Code and Devin get their credentials as environment at container start instead.
+ * ADR-0077, GitHub Copilot ADR-0082). Claude Code and Devin get their credentials as environment at
+ * container start instead.
  */
-export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi"] as const;
+export const SYNCED_AUTH_PROVIDERS = ["codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot"] as const;
 export type SyncedAuthProvider = (typeof SYNCED_AUTH_PROVIDERS)[number];
 
 /** How one Agent's login travels between the stored Settings and its Sandbox. */
@@ -102,6 +105,16 @@ export const PROVIDER_AUTH: Record<SyncedAuthProvider, ProviderAuthSync> = {
     newer: fxAuthNewer,
     storeUpdate: (authJson) => ({ providerSecrets: { fx: { FX_LOGIN: authJson } } }),
     changedBy: (update) => update.providerSecrets?.fx?.FX_LOGIN !== undefined,
+    tolerateMissingMethod: false,
+  },
+  copilot: {
+    setMethod: DAEMON_METHODS.copilotAuthSet,
+    changedMethod: DAEMON_METHODS.copilotAuthChanged,
+    params: (settings) => ({ login: copilotLogin(settings) }),
+    stored: copilotLogin,
+    newer: copilotAuthNewer,
+    storeUpdate: (authJson) => ({ providerSecrets: { copilot: { COPILOT_LOGIN: authJson } } }),
+    changedBy: (update) => update.providerSecrets?.copilot?.COPILOT_LOGIN !== undefined,
     tolerateMissingMethod: false,
   },
 };

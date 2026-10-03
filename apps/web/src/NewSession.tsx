@@ -19,7 +19,7 @@ import { AttachButton, AttachList, CameraButton, DictationLine, MicButton, Sketc
 import { formatMb } from "./format";
 import { ModelSelect } from "./ModelSelect";
 import { ProviderIcon } from "./ProviderIcon";
-import { ProviderLogos } from "./ProviderConnect";
+import { ProviderLogos } from "./ProviderLogos";
 import { AdvancedSettingsDialog } from "./AdvancedSettingsDialog";
 import { providerTokenSet } from "./providers";
 import { EnvironmentIcon } from "./EnvironmentIcon";

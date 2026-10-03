@@ -1,13 +1,9 @@
 import { useRef, useState, type ReactNode } from "react";
-import {
-  PROVIDERS,
-  PROVIDER_LABELS,
-  type Provider,
-  type PublicSettings,
-} from "@sessionboxer/protocol";
+import { PROVIDER_LABELS, type Provider, type PublicSettings } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { CopyCommand } from "./CopyCommand";
 import { ProviderIcon } from "./ProviderIcon";
+import { ProviderLogos } from "./ProviderLogos";
 import { ProviderSignIn } from "./ProviderSignIn";
 import { providerTokenSet } from "./providers";
 import { Modal, Tab, TabList, TabPanel, Tabs } from "./ui";
@@ -33,7 +29,7 @@ export function detectOs(settings: PublicSettings): Os {
       : "linux";
 }
 
-const PROVIDER_BLURB: Record<Provider, string> = {
+export const PROVIDER_BLURB: Record<Provider, string> = {
   "claude-code": "Anthropic's Agent; runs on your Claude subscription",
   codex: "OpenAI's Agent; runs on your ChatGPT subscription",
   cursor: "Cursor's Agent; runs on your Cursor subscription",
@@ -42,41 +38,8 @@ const PROVIDER_BLURB: Record<Provider, string> = {
   opencode: "The open-source Agent; runs on the model subscriptions and API keys of its providers",
   kimi: "Moonshot AI’s coding agent, using your Kimi Code account",
   fx: "Vercel Labs' Agent; runs on Vercel's AI Gateway, or your ChatGPT or Grok subscription",
+  copilot: "GitHub's Agent; runs on your GitHub Copilot subscription",
 };
-
-/** Four big buttons, one per Provider, marked when a login is already stored. */
-export function ProviderLogos({
-  settings,
-  onPick,
-  size = 40,
-}: {
-  settings: PublicSettings;
-  onPick: (provider: Provider) => void;
-  size?: number;
-}) {
-  return (
-    <div className="provider-logos">
-      {PROVIDERS.map((p) => {
-        const set = providerTokenSet(settings, p);
-        return (
-          <button
-            key={p}
-            type="button"
-            className={`provider-logo${set ? " connected" : ""}`}
-            onClick={() => onPick(p)}
-            title={PROVIDER_BLURB[p]}
-          >
-            <ProviderIcon provider={p} size={size} />
-            <span className="provider-logo-name">{PROVIDER_LABELS[p]}</span>
-            <span className={`provider-logo-state ${set ? "ok" : "muted"}`}>
-              {set ? "connected" : "not connected"}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 interface Step {
   title: string;
@@ -207,6 +170,24 @@ function steps(provider: Provider, os: Os): Step[] {
           commands: ["cat ~/.fx/auth.json"],
         },
       ];
+    case "copilot":
+      return [
+        {
+          title: "Install GitHub Copilot CLI (skip if you already use it)",
+          body: `In ${shell} (needs Node.js 22; a Copilot subscription with the CLI enabled):`,
+          commands: ["npm install -g @github/copilot"],
+        },
+        {
+          title: "Log in",
+          body: "Opens github.com with a one-time code. Put { \"storeTokenPlaintext\": true } in ~/.copilot/settings.json first so the token lands in a file rather than the OS keychain.",
+          commands: ["copilot login"],
+        },
+        {
+          title: "Copy the login file it wrote and paste it below",
+          body: "The whole file, or use Import below. A fine-grained GitHub token with the Copilot Requests permission (github.com → Settings → Developer settings) works too.",
+          commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.copilot\\config.json" : "cat ~/.copilot/config.json"],
+        },
+      ];
     case "devin":
       return [
         {
@@ -324,6 +305,13 @@ function credentialField(provider: Provider): {
         file: true,
         placeholder: "{ … } or vck_…",
       };
+    case "copilot":
+      return {
+        label: "GitHub Copilot login (contents of ~/.copilot/config.json, or a GitHub token)",
+        multiline: true,
+        file: true,
+        placeholder: "{ … } or github_pat_…",
+      };
   }
 }
 
@@ -345,6 +333,8 @@ function secretUpdate(provider: Provider, value: string) {
       return { kimi: { KIMI_LOGIN: value } };
     case "fx":
       return { fx: { FX_LOGIN: value } };
+    case "copilot":
+      return { copilot: { COPILOT_LOGIN: value } };
   }
 }
 

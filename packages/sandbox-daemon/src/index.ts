@@ -2,7 +2,7 @@
 import { ACP_COMMANDS } from "./provider-commands.js";
 import { KimiAuth, KIMI_AGENT_ENV } from "./kimi-auth.js";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants as fsConstants, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
@@ -29,6 +29,7 @@ import {
   DaemonOpenCodeAuthParams,
   DaemonFxAuthParams,
   DaemonKimiAuthParams,
+  DaemonCopilotAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -96,7 +97,8 @@ import { GhApi } from "./gh-api.js";
 import { BbCredentials } from "./bb-credentials.js";
 import { GhCredentials } from "./gh-credentials.js";
 import { LlmInspector } from "./llm-inspector.js";
-import { DevinMcpConfig, PiMcpConfig, type BuiltinMcp, type McpTee } from "./mcp-config.js";
+import { CopilotMcpConfig, DevinMcpConfig, PiMcpConfig, onPath, type BuiltinMcp, type McpTee } from "./mcp-config.js";
+import { COPILOT_AGENT_ENV, CopilotLogin } from "./copilot.js";
 import { McpTeeHub } from "./mcp-mirror.js";
 import { FsWatches } from "./fs-watch.js";
 import { serveRawFile } from "./raw-files.js";
@@ -119,6 +121,7 @@ import {
   type Guest,
   type GuestProviderFile,
 } from "./guest.js";
+import { windowsBriefing, macosBriefing } from "./vm-briefings.js";
 import { WorkspaceFs } from "./workspace-fs.js";
 import { serveTar, workspaceDir, workspaceManifest } from "./workspace-sync.js";
 
@@ -239,6 +242,21 @@ const piMcpConfig =
         mcpTee,
       )
     : null;
+/**
+ * Copilot refuses stdio MCP servers from the ACP client ("Rejecting non-http/sse MCP server") and reads
+ * its own `~/.copilot/mcp-config.json` instead (ADR-0082); kept on tmpfs like Devin's and pi's.
+ */
+const copilotHome = env.COPILOT_HOME ?? `${home}/.copilot`;
+const copilotMcpConfig =
+  provider === "copilot"
+    ? new CopilotMcpConfig(
+        `${copilotHome}/mcp-config.json`,
+        tmpfsDir,
+        () => (guest ? builtinMcps().map((b) => ({ name: b.name, ...guest.bridgeMcp(b.name) })) : builtinMcps()),
+        log,
+        mcpTee,
+      )
+    : null;
 /** `gh`/git logins for the Sandbox; the image points `GH_CONFIG_DIR` at this tmpfs dir. */
 const ghCredentials = new GhCredentials(env.GH_CONFIG_DIR ?? `${tmpfsDir}/gh`, log);
 /** `bb`/git logins for Bitbucket hosts; the image points `BB_CONFIG_DIR` at this tmpfs dir. */
@@ -317,6 +335,9 @@ const fxAuth: Record<FxLoginKind, AuthFile> | null =
  */
 const FX_AGENT_ENV = { FX_PERMISSION_MODE: "full-access", FX_AUTO_UPGRADE: "0", FX_NO_OPEN_BROWSER: "1" };
 
+/** Copilot's login (ADR-0082): the token into the Agent's environment, a pasted `config.json` on tmpfs as well. */
+const copilotLogin = provider === "copilot" ? new CopilotLogin(copilotHome, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.copilotAuthChanged, { authJson })) : null;
+
 /**
  * The Provider's files that travel into the VM before each Agent start (the ones the image and this
  * Daemon keep here), at the paths the Provider reads on Windows or macOS; logins come back after
@@ -375,6 +396,12 @@ const guestProviderFiles: GuestProviderFile[] = (
       { local: guestBriefingFile, guest: ".config/opencode/AGENTS.md" },
       { local: opencodeAuthPath, guest: ".local/share/opencode/auth.json", pullBack: true },
     ],
+    copilot: [
+      { local: `${copilotHome}/settings.json`, guest: ".copilot/settings.json" },
+      { local: `${copilotHome}/mcp-config.json`, guest: ".copilot/mcp-config.json" },
+      { local: guestBriefingFile, guest: ".copilot/copilot-instructions.md" },
+      { local: `${copilotHome}/config.json`, guest: ".copilot/config.json", pullBack: true },
+    ],
   } satisfies Record<Provider, GuestProviderFile[]>
 )[provider];
 /** The Provider's environment the Control Plane set on this Sandbox, for the Agent in the VM. */
@@ -432,22 +459,6 @@ function fxLoginKind(login: string): FxLoginKind {
   } catch {
     return "grok";
   }
-}
-
-/** fx refuses an MCP server whose command is not an absolute path: a bare name is looked up on this PATH (left as is when not found, so fx reports it). */
-function onPath(command: string): string {
-  if (command.includes("/")) return command;
-  for (const dir of (process.env.PATH ?? "").split(":")) {
-    if (!dir) continue;
-    const candidate = `${dir}/${command}`;
-    try {
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // next
-    }
-  }
-  return command;
 }
 
 /** Puts an fx login in place: one login file on tmpfs (the other two removed) or the API key in the Agent's environment (on top of `FX_AGENT_ENV`). */
@@ -590,36 +601,6 @@ const utilities = new UtilitiesFiles(
     : undefined,
 );
 
-/** A `qemu-windows` Session (ADR-0057): the Agent runs inside the Windows VM; its desktop is what the screenshot and input tools act on. */
-const windowsBriefing = (): string => {
-  if (guest?.os !== "windows") return "";
-  return [
-    `This is a Windows Session: you are running inside a Windows VM as its user \`${guest.cfg.user}\`, an administrator. Your shell is`,
-    `Windows (cmd/PowerShell; run PowerShell cmdlets through \`powershell -Command\`), your Workspace is \`${guest.workspace}\` and the`,
-    "repositories below are in it; git, node/npm/npx, uv/uvx and the MCP servers configured for this Session all run in Windows.",
-    "Use Windows paths. `gh` is not installed in the VM; git push/pull work with the connected GitHub accounts.",
-    "",
-    "The screenshot, mouse and keyboard tools show and drive this Windows desktop (rendered over RDP; a few key combinations",
-    "the RDP client keeps, such as Win-key shortcuts, may not arrive). Recordings are made of that desktop too.",
-  ].join("\n");
-};
-
-/** A `qemu-macos` Session (ADR-0059, ADR-0061): the Agent runs inside the macOS VM; its desktop is what the screenshot and input tools act on. */
-const macosBriefing = (): string => {
-  if (guest?.os !== "macos") return "";
-  return [
-    `This is a macOS Session: you are running inside a macOS VM as its user \`${guest.cfg.user}\`, an administrator (sudo asks for a`,
-    `password you do not have; stay in your home). Your shell is zsh, your Workspace is \`${guest.workspace}\` and the repositories`,
-    "below are in it; git (Apple's Command Line Tools), node/npm/npx, uv/uvx and the MCP servers configured for this Session all run in",
-    "macOS. Use POSIX paths. `gh` is not installed in the VM; git push/pull work with the connected GitHub accounts. `open <file>`,",
-    "`open -a <App>` and `osascript` act on the logged-in desktop, which is the one the screenshot tool shows.",
-    "",
-    "The screenshot, mouse and keyboard tools show and drive this macOS desktop (rendered over VNC; Command is the `super` key",
-    "there, so `super+c` copies; key combinations the VNC viewer keeps, such as `ctrl+alt+shift` and F8/Scroll Lock, may not",
-    "arrive). Recordings are made of that desktop too.",
-  ].join("\n");
-};
-
 const toolTelemetry = new ToolTelemetry();
 let activeTurnId: string | undefined;
 /** The Session's user MCP servers as last set, which the tees ask for when they start. */
@@ -644,6 +625,7 @@ const agent = new AgentManager(
     ...(provider === "opencode" && !guest ? { env: OPENCODE_AGENT_ENV } : {}),
     ...(provider === "fx" ? { env: FX_AGENT_ENV } : {}),
     ...(provider === "kimi" ? { env: KIMI_AGENT_ENV } : {}),
+    ...(provider === "copilot" ? { env: COPILOT_AGENT_ENV } : {}),
     builtinMcps,
     ...(mcpTee ? { mcpTee } : {}),
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
@@ -651,8 +633,14 @@ const agent = new AgentManager(
     newConversation: env.SESSIONBOXER_NEW_CONVERSATION === "1",
     instructions,
     instructionsDelivery: instructionsDelivery(provider),
-    workspaceBriefing: () => [sessionInfo.briefing(), repos.briefing(), utilities.briefing(), windowsBriefing(), macosBriefing()].filter((s) => s !== "").join("\n\n"),
-    writeMcpConfig: devinMcpConfig ? (servers) => devinMcpConfig.write(servers) : piMcpConfig ? (servers) => piMcpConfig.write(servers) : undefined,
+    workspaceBriefing: () => [sessionInfo.briefing(), repos.briefing(), utilities.briefing(), windowsBriefing(guest), macosBriefing(guest)].filter((s) => s !== "").join("\n\n"),
+    writeMcpConfig: devinMcpConfig
+      ? (servers) => devinMcpConfig.write(servers)
+      : piMcpConfig
+        ? (servers) => piMcpConfig.write(servers)
+        : copilotMcpConfig
+          ? (servers) => copilotMcpConfig.write(servers)
+          : undefined,
     writeModelAllowlist: claudeSettings ? (models) => claudeSettings.setAvailableModels(models) : undefined,
     ...(provider === "codex" ? { usageCommand: "/status" } : {}),
     ...(provider === "cursor" ? { extensions: (app) => registerCursorExtensions(app, log), fullAccessModeIds: ["agent"] } : {}),
@@ -661,6 +649,8 @@ const agent = new AgentManager(
     ...(provider === "fx"
       ? { fullAccessModeIds: [], systemPromptMeta: (text: string) => ({ fx: { systemPrompt: [{ type: "text", text }] } }), mcpCommandPath: guest ? undefined : onPath }
       : {}),
+    // Copilot's ACP modes are its own `mode` config option (agent/plan/autopilot), none of them a permission mode: `--allow-all` opens the Sandbox up.
+    ...(provider === "copilot" ? { fullAccessModeIds: [], mcpCommandPath: guest ? undefined : onPath } : {}),
     log,
   },
   {
@@ -809,6 +799,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     }
     case DAEMON_METHODS.fxAuthSet:
       return { applied: setFxLogin(DaemonFxAuthParams.parse(params).login) };
+    case DAEMON_METHODS.copilotAuthSet: {
+      if (!copilotLogin) throw new DaemonError("invalid_params", "this Sandbox does not run GitHub Copilot");
+      return { applied: agent.setAgentEnv(copilotLogin.apply(DaemonCopilotAuthParams.parse(params).login)) };
+    }
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

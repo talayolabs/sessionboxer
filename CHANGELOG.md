@@ -8,6 +8,7 @@ The Sandbox image changed: `npm run build:image`, then Stop → Resume existing 
 
 - Automations react to **MCP Events**: a new trigger, *When an MCP server reports an event*, subscribes the Control Plane to an event of a registry MCP server that speaks the experimental `events/*` extension (push `events/stream` or poll `events/poll`; the form asks the servers what they offer), so a prompt, a new Session or a notification follows an email, a ticket or an incident with no Session running; duplicates are dropped, the cursor is kept across restarts, the payload reaches the prompt as `{event.data…}` or as a fenced block of data. `GET /api/mcp-events/catalog`, `automation_create` with `mcp_event`, `scripts/mock-events-mcp-server.mjs` to try it. Webhook delivery is not offered. (ADR-0081)
 - Daemon errors carry a code (`DaemonError`, `DAEMON_ERROR_CODES`): a prompt while a turn is active, a Provider this Sandbox does not run, an Agent with no session yet answer 409/400/404 instead of 502. (ADR-0080)
+- GitHub Copilot CLI is a Provider: sign in with GitHub Copilot from Settings (the device flow), or paste a GitHub token with the Copilot Requests permission or `~/.copilot/config.json`; the token reaches the Agent as `COPILOT_GITHUB_TOKEN`, the MCP servers through its own `mcp-config.json`; Linux, macOS and Windows. ([ADR-0082](docs/adr/0082-github-copilot-cli-as-a-provider-on-a-copilot-login.md))
 
 ## 1.5.0 — 2026-10-01
 

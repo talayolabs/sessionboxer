@@ -23,6 +23,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   opencode: "OpenCode reports tokens per turn but no usage windows; see your model provider's dashboard (opencode.ai/zen for OpenCode Zen).",
   kimi: "Kimi CLI does not report usage windows over ACP; see your Kimi Code account for limits and remaining usage.",
   fx: "fx does not report its usage windows to Sessionboxer; see vercel.com → AI Gateway for the Gateway balance, or run `fx credits`.",
+  copilot: "GitHub Copilot counts premium requests on GitHub's side and reports no usage windows; see github.com → Settings → Copilot → Usage.",
 };
 
 /** The current time, ticking every second while `live`. */

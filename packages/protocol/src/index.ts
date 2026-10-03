@@ -37,4 +37,5 @@ export * from "./mcp-events.js";
 export * from "./common.js";
 export * from "./themes.js";
 export * from "./usage.js";
+export * from "./copilot.js";
 export * from "./daemon-errors.js";

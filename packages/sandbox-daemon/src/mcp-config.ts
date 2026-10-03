@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { MCP_TEE_PORT_ENV, type McpServerSpec } from "@sessionboxer/protocol";
@@ -125,6 +125,68 @@ export class PiMcpConfig {
       symlinkSync(target, this.configPath);
     }
   }
+}
+
+/**
+ * GitHub Copilot CLI reads its MCP servers from `~/.copilot/mcp-config.json` (ADR-0082): it takes HTTP and
+ * SSE servers from the ACP client but rejects stdio ones ("Rejecting non-http/sse MCP server … from
+ * client"), so the whole set — the built-ins are stdio — is written there before `copilot --acp`
+ * starts, on tmpfs behind a symlink like Devin's. Each entry exposes every tool (`tools: ["*"]`); a
+ * stdio server is `type: "local"`.
+ */
+export class CopilotMcpConfig {
+  constructor(
+    private readonly configPath: string,
+    private readonly tmpfsDir: string,
+    private readonly builtins: () => BuiltinMcp[],
+    private readonly log: (msg: string) => void,
+    private readonly tee?: McpTee,
+  ) {}
+
+  write(servers: McpServerSpec[]): void {
+    const mcpServers: Record<string, unknown> = {};
+    for (const b of this.builtins()) {
+      mcpServers[b.name] = { type: "local", command: b.command, args: b.args ?? [], tools: ["*"] };
+    }
+    for (const s of servers) {
+      if (this.tee) {
+        mcpServers[s.name] = { type: "local", ...teeEntry(this.tee, s), tools: ["*"] };
+      } else if (s.transport === "stdio") {
+        mcpServers[s.name] = { type: "local", command: s.command, args: s.args, env: toRecord(s.env), tools: ["*"] };
+      } else {
+        mcpServers[s.name] = { type: s.transport, url: s.url, headers: toRecord(s.headers), tools: ["*"] };
+      }
+    }
+    mkdirSync(this.tmpfsDir, { recursive: true, mode: 0o700 });
+    const target = join(this.tmpfsDir, "copilot-mcp-config.json");
+    writeFileSync(target, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
+    mkdirSync(dirname(this.configPath), { recursive: true });
+    if (!isSymlinkTo(this.configPath, target)) {
+      rmSync(this.configPath, { force: true });
+      symlinkSync(target, this.configPath);
+    }
+    this.log(`copilot mcp-config.json: ${Object.keys(mcpServers).join(", ") || "no servers"}`);
+  }
+}
+
+/**
+ * fx and Copilot want an MCP server's command as an absolute path (fx refuses a bare name: "MCP server
+ * command must be an absolute executable path"): a bare name is looked up on this PATH, left as is when
+ * not found so the Agent reports it.
+ */
+export function onPath(command: string): string {
+  if (command.includes("/")) return command;
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    const candidate = `${dir}/${command}`;
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // next
+    }
+  }
+  return command;
 }
 
 function toRecord(entries: { name: string; value: string }[]): Record<string, string> {

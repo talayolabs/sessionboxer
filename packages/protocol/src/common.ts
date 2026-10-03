@@ -4,7 +4,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -17,6 +17,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   opencode: "OpenCode",
   fx: "fx",
   kimi: "Kimi CLI",
+  copilot: "GitHub Copilot",
 };
 
 /**
@@ -45,6 +46,8 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   // fx's login (ADR-0077) travels over RPC too: a login file goes on tmpfs, an API key into the Agent process alone.
   fx: [],
   kimi: [],
+  // Copilot's login (ADR-0082) too: the token goes into the Agent process alone, a config.json on tmpfs.
+  copilot: [],
 };
 
 /** Metadata of ~/.kimi/credentials/kimi-code.json (ADR-0084); never the tokens. */
@@ -64,6 +67,18 @@ export const FxLogin = z.object({
   expiresAt: z.string().nullable(),
 });
 export type FxLogin = z.infer<typeof FxLogin>;
+
+/**
+ * What the stored GitHub Copilot login is (ADR-0082): a GitHub token pasted as is, or the
+ * `~/.copilot/config.json` that `copilot login` writes; the kind of token (a fine-grained PAT or an
+ * OAuth token of the Copilot or GitHub CLI app) and the GitHub login the file names. Never the token.
+ */
+export const CopilotLogin = z.object({
+  kind: z.enum(["token", "config"]),
+  tokenKind: z.enum(["pat", "oauth", "other"]),
+  login: z.string().nullable(),
+});
+export type CopilotLogin = z.infer<typeof CopilotLogin>;
 
 /**
  * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT

@@ -42,6 +42,8 @@ export const DAEMON_METHODS = {
   fxAuthChanged: "_sessionboxer/fx/auth/changed",
   kimiAuthSet: "_sessionboxer/kimi/auth/set",
   kimiAuthChanged: "_sessionboxer/kimi/auth/changed",
+  copilotAuthSet: "_sessionboxer/copilot/auth/set",
+  copilotAuthChanged: "_sessionboxer/copilot/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -329,6 +331,18 @@ export const DaemonKimiAuthParams = z.object({ login: z.string() });
 export type DaemonKimiAuthParams = z.infer<typeof DaemonKimiAuthParams>;
 export const DaemonKimiAuthChangedParams = z.object({ authJson: z.string() });
 export type DaemonKimiAuthChangedParams = z.infer<typeof DaemonKimiAuthChangedParams>;
+
+/** `copilotAuthSet`: the stored GitHub Copilot login (ADR-0082): a GitHub token, or the JSON of `~/.copilot/config.json`; `""` removes it. */
+export const DaemonCopilotAuthParams = z.object({
+  login: z.string(),
+});
+export type DaemonCopilotAuthParams = z.infer<typeof DaemonCopilotAuthParams>;
+
+/** `copilotAuthChanged`: Copilot rewrote `~/.copilot/config.json` in the Sandbox; the file's content. */
+export const DaemonCopilotAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonCopilotAuthChangedParams = z.infer<typeof DaemonCopilotAuthChangedParams>;
 
 /** Every `*AuthChanged` notification carries the rewritten login file the same way. */
 export const DaemonAuthChangedParams = z.object({

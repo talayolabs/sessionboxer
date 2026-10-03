@@ -7,13 +7,18 @@ const SWEEP_MS = 60_000;
 /**
  * A Provider's login file kept on tmpfs: Codex's `$CODEX_HOME/auth.json` (ADR-0046), Cursor's
  * `~/.config/cursor/auth.json` (ADR-0054) and OpenCode's `~/.local/share/opencode/auth.json`
- * (ADR-0076). Only that file lives on tmpfs: the rest of the Provider's directory (config, the
+ * (ADR-0076), GitHub Copilot CLI's `~/.copilot/config.json` (ADR-0082). Only that file lives on tmpfs: the rest of the Provider's directory (config, the
  * chat history `session/load` needs) stays on the container disk so Stop/Resume keeps the
  * conversation, while `docker commit` (Snapshots) never sees tokens.
  * These Providers refresh their OAuth tokens in place and rewrite the file; the watcher reports the
  * new contents so the Control Plane can store them. Should a version replace the path with a
  * regular file instead (write to temp + rename), the sweep moves it back onto tmpfs.
  */
+/** Copilot's `config.json` is JSONC: `//` comment lines above the object (ADR-0082); the others are plain JSON. */
+function withoutCommentLines(text: string): string {
+  return text.replace(/^\s*\/\/.*$/gm, "");
+}
+
 export class AuthFile {
   private current = "";
   private watchers: FSWatcher[] = [];
@@ -104,7 +109,7 @@ export class AuthFile {
       this.relink();
       const onDisk = this.read();
       if (onDisk === "" || onDisk === this.current) return;
-      try { JSON.parse(onDisk); } catch { return; }
+      try { JSON.parse(withoutCommentLines(onDisk)); } catch { return; }
       this.current = onDisk;
       this.log(`${this.label} refreshed its login; reporting the new ${this.name}`);
       this.onChanged(onDisk);

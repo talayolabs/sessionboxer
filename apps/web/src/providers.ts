@@ -19,6 +19,8 @@ export function providerTokenSet(settings: PublicSettings, provider: Provider): 
       return settings.providerSecretsSet.kimi.KIMI_LOGIN;
     case "fx":
       return settings.providerSecretsSet.fx.FX_LOGIN;
+    case "copilot":
+      return settings.providerSecretsSet.copilot.COPILOT_LOGIN;
   }
 }
 

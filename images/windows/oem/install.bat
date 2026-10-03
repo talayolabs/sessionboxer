@@ -24,6 +24,7 @@ set "PI_VERSION=0.99.2"
 set "PI_ACP_VERSION=0.0.34"
 set "OPENCODE_VERSION=1.18.32"
 set "KIMI_VERSION=1.52.0"
+set "COPILOT_VERSION=1.0.91"
 set "LOG=C:\sessionboxer-install.log"
 set "DL=%TEMP%\sessionboxer-install"
 mkdir "%DL%" 2>nul
@@ -105,6 +106,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "[Environment]::SetEnvironmentVariable('KIMI_CLI_NO_AUTO_UPDATE', '1', 'User')" >> "%LOG%" 2>&1
 if errorlevel 1 exit /b 1
 
+rem GitHub Copilot CLI (`copilot --acp`, ADR-0082): the same pin as the Sandbox image; its first start
+rem unpacks the application files into %LOCALAPPDATA%\copilot, done here once.
+echo [%time%] copilot %COPILOT_VERSION%>> "%LOG%"
+call npm install -g --no-fund --no-audit @github/copilot@%COPILOT_VERSION% >> "%LOG%" 2>&1
+call npm cache clean --force >> "%LOG%" 2>&1
+set "COPILOT_AUTO_UPDATE=false"
+call copilot --no-auto-update --version >> "%LOG%" 2>&1
+
 rem Devin CLI (`devin acp`): the pinned bundle its installer would fetch, checked against the
 rem manifest's sha256, put where the installer puts it; the installer itself is not run as it ends
 rem in an interactive `devin setup` that would wait for a login here.
@@ -166,6 +175,7 @@ call "%LOCALAPPDATA%\devin\cli\bin\devin.exe" --version >> "%LOG%" 2>&1
 call "%LOCALAPPDATA%\Programs\cursor-agent\cursor-agent.cmd" --version >> "%LOG%" 2>&1
 set "OPENCODE_DISABLE_AUTOUPDATE=1"
 call "%LOCALAPPDATA%\Programs\opencode\opencode.exe" --version >> "%LOG%" 2>&1
+call copilot --no-auto-update --version >> "%LOG%" 2>&1
 
 rmdir /s /q "%DL%" 2>nul
 echo [%time%] done>> "%LOG%"

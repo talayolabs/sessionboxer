@@ -2489,7 +2489,7 @@ export class SessionManager {
   }
 
   /**
-   * Hands the stored login of a synced Agent (`PROVIDER_AUTH`: Codex, Cursor, pi, OpenCode, fx) to
+   * Hands the stored login of a synced Agent (`PROVIDER_AUTH`: Codex, Cursor, pi, OpenCode, fx, GitHub Copilot) to
    * its Session's Daemon: an `auth.json` goes on tmpfs where the CLI reads it, API keys into the
    * Agent's environment. Before the MCP set at connect time so the Agent finds it at start; again
    * whenever the stored login changes. Other Agents: nothing to do.

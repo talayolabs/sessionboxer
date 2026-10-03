@@ -1,10 +1,12 @@
 import { useRef } from "react";
-import { ANTHROPIC_DEFAULT_BASE_URL, type PublicSettings } from "@sessionboxer/protocol";
+import { type PublicSettings } from "@sessionboxer/protocol";
 import { KimiProviderSettings } from "./KimiProviderSettings";
 import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin } from "./provider-login-labels";
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
 import { Caption } from "../ui";
+import { ClaudeApiSettings } from "./ClaudeApiSettings";
+import { CopilotLoginCard } from "./CopilotSettings";
 import { useSectionState, type Setter } from "./shared";
 
 /** Global settings → Providers: the stored Provider logins and the Claude API base URL / proxy credentials. */
@@ -27,6 +29,8 @@ export function useProvidersSettings(settings: PublicSettings) {
     forgetKimiLogin: false,
     fxLogin: "",
     forgetFxLogin: false,
+    copilotLogin: "",
+    forgetCopilotLogin: false,
     claudeBaseUrl: settings.claudeApi.baseUrl,
     claudeAuthToken: "",
     claudeApiKey: "",
@@ -68,6 +72,10 @@ export function ProvidersSettings({
   setFxLogin,
   forgetFxLogin,
   setForgetFxLogin,
+  copilotLogin,
+  setCopilotLogin,
+  forgetCopilotLogin,
+  setForgetCopilotLogin,
   claudeBaseUrl,
   setClaudeBaseUrl,
   claudeAuthToken,
@@ -116,6 +124,10 @@ export function ProvidersSettings({
   setFxLogin: Setter<string>;
   forgetFxLogin: boolean;
   setForgetFxLogin: Setter<boolean>;
+  copilotLogin: string;
+  setCopilotLogin: Setter<string>;
+  forgetCopilotLogin: boolean;
+  setForgetCopilotLogin: Setter<boolean>;
   claudeBaseUrl: string;
   setClaudeBaseUrl: Setter<string>;
   claudeAuthToken: string;
@@ -137,8 +149,6 @@ export function ProvidersSettings({
   const piApiKeysSet = settings.providerSecretsSet.pi.PI_API_KEYS && !forgetPiApiKeys;
   const opencodeAuthSet = settings.providerSecretsSet.opencode.OPENCODE_AUTH_JSON && !forgetOpenCodeAuth;
   const fxLoginSet = settings.providerSecretsSet.fx.FX_LOGIN && !forgetFxLogin;
-  const claudeAuthTokenSet = settings.claudeApi.authTokenSet && !forgetClaudeAuthToken;
-  const claudeApiKeySet = settings.claudeApi.apiKeySet && !forgetClaudeApiKey;
 
   const codexFileRef = useRef<HTMLInputElement>(null);
   const cursorFileRef = useRef<HTMLInputElement>(null);
@@ -204,7 +214,7 @@ export function ProvidersSettings({
         <button type="button" className="primary" onClick={() => setGuided(true)}>
           Connect a Provider…
         </button>
-        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx or Kimi CLI</span>
+        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI or GitHub Copilot</span>
       </div>
       {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
       <KimiProviderSettings settings={settings} value={kimiLogin} setValue={setKimiLogin} forget={forgetKimiLogin} setForget={setForgetKimiLogin} />
@@ -602,84 +612,20 @@ export function ProvidersSettings({
         )}
       </div>
 
-      <h4 className="ss-sub" id="settings-claude-api">
-        <Caption
-          help={
-            <p>
-              Where Claude Code in each Sandbox sends its model API calls: a company Claude proxy, for instance. Empty takes{" "}
-              <code>ANTHROPIC_BASE_URL</code> from the Control Plane&apos;s environment, else Anthropic. Applies to Sandboxes created
-              afterwards. A Session with <em>Inspect LLM</em> on puts its own loopback proxy in front of this URL; the Sandbox trusts the
-              extra CA certificates of Environment → TLS certificates for it.
-            </p>
-          }
-        >
-          Claude API
-        </Caption>
-      </h4>
-      <label>
-        <span className="label-row">
-          Base URL (ANTHROPIC_BASE_URL)
-          <span className="muted">
-            current: <code>{settings.claudeApi.effectiveBaseUrl}</code>{" "}
-            {settings.claudeApi.effectiveBaseUrlSource === "settings"
-              ? "(set here)"
-              : settings.claudeApi.effectiveBaseUrlSource === "env"
-                ? "(from the Control Plane's environment)"
-                : "(Anthropic's default)"}
-          </span>
-        </span>
-        <input
-          value={claudeBaseUrl}
-          onChange={(e) => setClaudeBaseUrl(e.target.value)}
-          placeholder={settings.claudeApi.effectiveBaseUrlSource === "env" ? settings.claudeApi.effectiveBaseUrl : ANTHROPIC_DEFAULT_BASE_URL}
-          spellCheck={false}
-        />
-      </label>
-      <div className="row">
-        <label>
-          <span className="label-row">
-            <Caption
-              help={
-                <p>
-                  Optional credentials for that URL, given to Claude Code alongside (or instead of) the OAuth token; never shown again, stripped
-                  from snapshots.
-                </p>
-              }
-            >
-              Proxy auth token (ANTHROPIC_AUTH_TOKEN) {claudeAuthTokenSet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
-            </Caption>
-            {claudeAuthTokenSet && (
-              <button type="button" className="link" onClick={() => setForgetClaudeAuthToken(true)}>
-                Forget
-              </button>
-            )}
-          </span>
-          <input
-            type="password"
-            autoComplete="off"
-            value={claudeAuthToken}
-            onChange={(e) => setClaudeAuthToken(e.target.value)}
-            placeholder={claudeAuthTokenSet ? "Leave empty to keep the current token" : "Only if the proxy wants its own bearer token"}
-          />
-        </label>
-        <label>
-          <span className="label-row">
-            Proxy API key (ANTHROPIC_API_KEY) {claudeApiKeySet ? <span className="ok">(set)</span> : <span className="muted">(not set)</span>}
-            {claudeApiKeySet && (
-              <button type="button" className="link" onClick={() => setForgetClaudeApiKey(true)}>
-                Forget
-              </button>
-            )}
-          </span>
-          <input
-            type="password"
-            autoComplete="off"
-            value={claudeApiKey}
-            onChange={(e) => setClaudeApiKey(e.target.value)}
-            placeholder={claudeApiKeySet ? "Leave empty to keep the current key" : "Only if the proxy wants an x-api-key"}
-          />
-        </label>
-      </div>
+      <CopilotLoginCard settings={settings} login={copilotLogin} setLogin={setCopilotLogin} forget={forgetCopilotLogin} setForget={setForgetCopilotLogin} />
+      <ClaudeApiSettings
+        settings={settings}
+        claudeBaseUrl={claudeBaseUrl}
+        setClaudeBaseUrl={setClaudeBaseUrl}
+        claudeAuthToken={claudeAuthToken}
+        setClaudeAuthToken={setClaudeAuthToken}
+        claudeApiKey={claudeApiKey}
+        setClaudeApiKey={setClaudeApiKey}
+        forgetClaudeAuthToken={forgetClaudeAuthToken}
+        setForgetClaudeAuthToken={setForgetClaudeAuthToken}
+        forgetClaudeApiKey={forgetClaudeApiKey}
+        setForgetClaudeApiKey={setForgetClaudeApiKey}
+      />
     </section>
   );
 }

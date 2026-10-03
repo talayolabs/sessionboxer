@@ -50,7 +50,7 @@ const PROVISION_TIMEOUT_S = 60 * 60;
  * and the Sandbox image. Bump `TOOLCHAIN` when they change: bases with an older number show
  * "Reprovision" and cannot start Sessions until it ran.
  */
-const TOOLCHAIN = 2;
+const TOOLCHAIN = 3;
 const NODE_VERSION = "22.23.3";
 const UV_VERSION = "0.12.13";
 const CLAUDE_CODE_VERSION = "2.1.272";
@@ -64,6 +64,7 @@ const PI_ACP_VERSION = "0.0.34";
 const OPENCODE_VERSION = "1.18.32";
 /** fx (ADR-0077): the release archive for macOS; same pin as the Sandbox image. */
 const FX_VERSION = "v0.0.11";
+const COPILOT_VERSION = "1.0.91"; // GitHub Copilot CLI (ADR-0082), the npm package; same pin as the Sandbox image.
 
 interface BaseRecord {
   version: string;
@@ -759,6 +760,9 @@ function provisionScript(): string {
     `say "installing @earendil-works/pi-coding-agent@${PI_VERSION}, pi-acp@${PI_ACP_VERSION}"`,
     `npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent@${PI_VERSION} pi-acp@${PI_ACP_VERSION} 2>&1 | tail -3 || fail "npm install -g pi"`,
     `command -v pi >/dev/null && command -v pi-acp >/dev/null || fail "pi is not on PATH after the install"`,
+    // GitHub Copilot CLI (ADR-0082); its first start unpacks the application files into ~/Library/Caches/copilot, done here once.
+    `npm install -g --no-fund --no-audit @github/copilot@${COPILOT_VERSION} 2>&1 | tail -3 || fail "npm install -g @github/copilot"`,
+    `command -v copilot >/dev/null && say "copilot $(COPILOT_AUTO_UPDATE=false copilot --no-auto-update --version 2>/dev/null | head -1)" || fail "copilot is not on PATH after the install"`,
     // uv.
     `if [ "$("$HOME/.local/bin/uv" --version 2>/dev/null | awk '{ print $2 }')" = "${UV_VERSION}" ]; then`,
     `  say "uv ${UV_VERSION} present"`,
@@ -817,7 +821,7 @@ function provisionScript(): string {
     "fi",
     `ln -sfn "$FX_DIR/fx" "$HOME/.local/bin/fx"`,
     `say "fx $("$HOME/.local/bin/fx" --version 2>/dev/null | head -1)"`,
-    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
+    `say "tools: $(node -v) npm $(npm -v) $(git --version) uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') claude-agent-acp codex-acp pi-acp devin cursor-agent fx copilot in $(dirname "$(command -v claude-agent-acp)") and $HOME/.local/bin"`,
     "echo SBX_PROVISIONED",
     // Detached, after this SSH session has returned: `nohup` could not run the `sudo` function above.
     `(sleep 3; printf '%s\\n' "$SBX_PW" | command sudo -S -p '' shutdown -h now) </dev/null >/dev/null 2>&1 &`,

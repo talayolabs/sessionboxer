@@ -178,6 +178,11 @@ export function SettingsView({
           ...(providers.values.opencodeAuth.trim() ? { opencode: { OPENCODE_AUTH_JSON: providers.values.opencodeAuth.trim() } } : providers.values.forgetOpenCodeAuth ? { opencode: { OPENCODE_AUTH_JSON: "" } } : {}),
           ...(providers.values.kimiLogin.trim() ? { kimi: { KIMI_LOGIN: providers.values.kimiLogin.trim() } } : providers.values.forgetKimiLogin ? { kimi: { KIMI_LOGIN: "" } } : {}),
           ...(providers.values.fxLogin.trim() ? { fx: { FX_LOGIN: providers.values.fxLogin.trim() } } : providers.values.forgetFxLogin ? { fx: { FX_LOGIN: "" } } : {}),
+          ...(providers.values.copilotLogin.trim()
+            ? { copilot: { COPILOT_LOGIN: providers.values.copilotLogin.trim() } }
+            : providers.values.forgetCopilotLogin
+              ? { copilot: { COPILOT_LOGIN: "" } }
+              : {}),
         },
         claudeApi: {
           baseUrl: providers.values.claudeBaseUrl.trim(),

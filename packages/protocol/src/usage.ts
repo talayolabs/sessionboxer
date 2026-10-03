@@ -165,6 +165,15 @@ const FX_LIMIT = [
   /insufficient[_ ]quota/i,
   /exceeded your (?:current )?quota/i,
 ];
+/** GitHub Copilot's premium-request budget and rate limits, as the CLI relays them (ADR-0082; wording not observed on a real account). */
+const COPILOT_LIMIT = [
+  /premium request(?:s)? (?:limit|quota|budget)/i,
+  /(?:monthly|usage) (?:limit|quota) (?:reached|exceeded)/i,
+  /rate limit(?:ed| exceeded| reached)/i,
+  /quota[_ ]exceeded/i,
+  /exceeded your (?:current )?quota/i,
+  /too many requests/i,
+];
 const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource[_ ]exhausted/i, /acu limit/i, /out of acus/i, /no acus? (?:left|remaining)/i];
 
 /**
@@ -172,7 +181,7 @@ const DEVIN_LIMIT = [/quota exhausted/i, /usage[_ ]limit[_ ]reached/i, /resource
  * can be sent again once the window resets), as opposed to any other failure. Wrapped messages
  * ("… — Claude Code failed: You've hit your session limit · resets 2pm (UTC).") count too.
  */
-export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi", message: string, now: Date = new Date()): UsageLimitHit | null {
+export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" | "cursor" | "pi" | "opencode" | "fx" | "kimi" | "copilot", message: string, now: Date = new Date()): UsageLimitHit | null {
   const patterns =
     provider === "claude-code"
       ? CLAUDE_LIMIT
@@ -186,7 +195,9 @@ export function classifyUsageLimit(provider: "claude-code" | "devin" | "codex" |
               ? OPENCODE_LIMIT
               : provider === "fx"
                 ? FX_LIMIT
-                : DEVIN_LIMIT;
+                : provider === "copilot"
+                  ? COPILOT_LIMIT
+                  : DEVIN_LIMIT;
   if (!patterns.some((p) => p.test(message))) return null;
   return { resetsAt: parseResetMention(message, now) };
 }

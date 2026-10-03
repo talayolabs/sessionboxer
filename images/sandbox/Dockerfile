@@ -1,6 +1,6 @@
 # Sessionboxer Sandbox image: one container per Session, with an X11 Desktop
 # (Xvfb + xfce4 + x11vnc + noVNC), the Provider ACP adapters (Claude Code,
-# Devin, Codex, Cursor, fx), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
+# Devin, Codex, Cursor, fx, GitHub Copilot), the computer-use MCP server and the Sandbox Daemon. Build from the repo root:
 #   npm run build:image        (scripts/build-image.mjs)
 # which is `docker build -f images/sandbox/Dockerfile -t sessionboxer/sandbox:dev .` plus the
 # `extra-ca` build secret: the CA certificates this machine trusts beyond the public ones
@@ -271,6 +271,42 @@ RUN arch="$(dpkg --print-architecture)" \
     && ln -s /opt/fx/fx /usr/local/bin/fx \
     && HOME=/tmp FX_AUTO_UPGRADE=0 fx --version && rm -rf /tmp/.fx
 
+# GitHub Copilot CLI (`copilot --acp` is spawned by the Sandbox Daemon; `copilot` in the terminal, ADR-0082):
+# the npm package `@github/copilot` is a launcher that execs the binary of its platform package
+# (`@github/copilot-linux-<arch>`, a Node single-executable application). Both tarballs are fetched from
+# the npm registry by exact version and checked against the sha256 observed at pin time, then installed
+# root-owned under /opt/copilot (the one runtime dependency, detect-libc, comes from the registry). On
+# first start the binary unpacks its application files (185 MB) into ~/.cache/copilot; that is done once
+# here, into /opt/copilot/dist, and COPILOT_CLI_DIST_DIR (below) points every launch at it, so a Sandbox
+# neither unpacks nor downloads anything. Auto-update is off per process (the Daemon passes
+# --no-auto-update and sets COPILOT_AUTO_UPDATE=false), so a Sandbox runs the version the image was built with.
+ARG COPILOT_VERSION=1.0.91
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+         amd64) arch=x64; sha=11d1dcd5a30d59b270b201e6eeea78fc8b89a59fa2f7da31fd62b35bdd708104 ;; \
+         arm64) arch=arm64; sha=fbc585b4653505e0af63a2ca95a6d6e370b404b46c92f277bba8d66bc01f4829 ;; \
+         *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+       esac \
+    && mkdir -p /opt/copilot \
+    && for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/copilot.tgz \
+           "https://registry.npmjs.org/@github/copilot/-/copilot-${COPILOT_VERSION}.tgz" \
+         && curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/copilot-platform.tgz \
+           "https://registry.npmjs.org/@github/copilot-linux-${arch}/-/copilot-linux-${arch}-${COPILOT_VERSION}.tgz" && break; \
+         [ "$i" = 5 ] && exit 1; sleep 5; \
+       done \
+    && echo "4f305d718a1e6cb994e926d0f570883eb63bfb79ef091d00d5ff9c67d9d83781  /tmp/copilot.tgz" | sha256sum -c - \
+    && echo "$sha  /tmp/copilot-platform.tgz" | sha256sum -c - \
+    && cd /opt/copilot \
+    && npm install --no-fund --no-audit --omit=optional /tmp/copilot.tgz /tmp/copilot-platform.tgz \
+    && rm /tmp/copilot.tgz /tmp/copilot-platform.tgz && npm cache clean --force \
+    && ln -s /opt/copilot/node_modules/.bin/copilot /usr/local/bin/copilot \
+    && HOME=/tmp XDG_CACHE_HOME=/opt/copilot/cache copilot --no-auto-update --version \
+    && mv "/opt/copilot/cache/copilot/pkg/linux-${arch}/${COPILOT_VERSION}" /opt/copilot/dist \
+    && rm -rf /opt/copilot/cache /tmp/.copilot \
+    && HOME=/tmp COPILOT_CLI_DIST_DIR=/opt/copilot/dist copilot --no-auto-update --version | grep -q "${COPILOT_VERSION}" \
+    && rm -rf /tmp/.copilot /tmp/.cache
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -371,11 +407,14 @@ COPY --chown=agent:agent images/sandbox/devin-mcp-config.json /home/agent/.confi
 # pi reads ~/.pi/agent/AGENTS.md; its settings trust every project (the Sandbox is the isolation).
 # fx reads its user-level instructions from ~/.fx/AGENTS.md and its settings from ~/.fx/settings.json;
 # a Session mounts a volume over ~/.fx, populated from these files (ADR-0077).
+# Copilot reads its user-level instructions from ~/.copilot/copilot-instructions.md; its settings allow
+# plaintext token storage, so a `copilot login` in the terminal lands in the config.json the Daemon keeps on tmpfs (ADR-0082).
 COPY --chown=agent:agent images/sandbox/codex-config.toml /home/agent/.codex/config.toml
 COPY --chown=agent:agent images/sandbox/pi-settings.json /home/agent/.pi/agent/settings.json
 COPY --chown=agent:agent images/sandbox/cursor-cli-config.json /home/agent/.cursor/cli-config.json
 COPY --chown=agent:agent images/sandbox/opencode-config.json /home/agent/.config/opencode/opencode.json
 COPY --chown=agent:agent images/sandbox/fx-settings.json /home/agent/.fx/settings.json
+COPY --chown=agent:agent images/sandbox/copilot-settings.json /home/agent/.copilot/settings.json
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -393,6 +432,7 @@ COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.codex/A
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.pi/agent/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.config/opencode/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.fx/AGENTS.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.copilot/copilot-instructions.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md
@@ -414,6 +454,7 @@ ENV DISPLAY=:1 \
     GH_NO_UPDATE_NOTIFIER=1 \
     BB_CONFIG_DIR=/dev/shm/sessionboxer/bb \
     IS_SANDBOX=1 \
+    COPILOT_CLI_DIST_DIR=/opt/copilot/dist \
     PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 USER agent

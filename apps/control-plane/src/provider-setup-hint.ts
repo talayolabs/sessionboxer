@@ -18,5 +18,7 @@ export function providerSetupHint(provider: Provider): string {
       return "No fx login configured. Paste an AI Gateway API key, or run `fx login` and paste ~/.fx/auth.json, in Global settings → Providers.";
     case "kimi":
       return "No Kimi CLI login configured. Run `kimi login` and paste ~/.kimi/credentials/kimi-code.json in Global settings → Providers, or Sign in with Kimi CLI there.";
+    case "copilot":
+      return "No GitHub Copilot login configured. Sign in with GitHub Copilot, or paste a GitHub token with the Copilot Requests permission, in Global settings → Providers.";
   }
 }

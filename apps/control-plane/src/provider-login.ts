@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import * as pty from "node-pty";
-import type { Provider, ProviderHostLogin, ProviderLoginFlow, Settings, UpdateSettingsRequest } from "@sessionboxer/protocol";
-import { applySettingsUpdate, codexLogin, describeCursorLogin, describeFxLogin, describeOpenCodeLogin, describePiLogin, normalizeCodexAuthJson, normalizeCursorLogin, normalizeFxLogin, normalizeOpenCodeAuthJson, normalizePiAuthJson } from "./config.js";
+import { describeCopilotLogin, type Provider, type ProviderHostLogin, type ProviderLoginFlow, type Settings, type UpdateSettingsRequest } from "@sessionboxer/protocol";
+import { applySettingsUpdate, codexLogin, describeCursorLogin, describeFxLogin, normalizeCodexAuthJson, normalizeCopilotLogin, normalizeCursorLogin, normalizeFxLogin } from "./config.js";
+import { parseDevinCredentials, readFirst, readHostLogin } from "./host-logins.js";
+
+export { claudeHostAccount, parseDevinCredentials, readHostLogin } from "./host-logins.js";
 import type { SandboxDocker, TtyProcess } from "./docker.js";
 import { kimiLoginRecipe } from "./kimi-login-recipe.js";
 import { HttpError } from "./http-error.js";
@@ -52,6 +55,8 @@ export interface Recipe {
   rejected(text: string): string | null;
   /** Where the CLI writes its login, relative to its home (one per operating system); `[]` when it only prints it. */
   files: string[];
+  /** Files to put in the CLI's scratch home before it starts (relative path → contents): a setting its login needs. */
+  seed?: Record<string, string>;
   /** The login to store (and a non-secret account label) from the CLI's complete output and the file it wrote, after it exited 0. */
   result(output: string, file: string | null): { login: string; account: string | null } | null;
   secret(login: string): NonNullable<UpdateSettingsRequest["providerSecrets"]>;
@@ -187,6 +192,32 @@ export const RECIPES: Partial<Record<Provider, Recipe>> = {
       }
     },
     secret: (login) => ({ fx: { FX_LOGIN: login } }),
+  },
+  // `copilot login --device-code` is GitHub's device flow (ADR-0082): Copilot prints "To authenticate, visit
+  // https://github.com/login/device and enter code XXXX-XXXX", then polls. The token lands in
+  // ~/.copilot/config.json only when the scratch home's settings allow plaintext storage (else the OS keychain).
+  copilot: {
+    bin: ["copilot"],
+    args: ["login", "--device-code"],
+    env: { ...noBrowser, COPILOT_AUTO_UPDATE: "false" },
+    isLoginUrl: (u) => /(^|\.)github\.com$/.test(u.hostname) && /\/login\/device/.test(u.pathname),
+    code: "page",
+    prompt: null,
+    userCode: (text) => /enter code[:\s]+([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)/i.exec(text)?.[1] ?? null,
+    rejected: () => null,
+    files: [".copilot/config.json"],
+    seed: { ".copilot/settings.json": '{ "storeTokenPlaintext": true }\n' },
+    result: (_output, file) => {
+      if (!file) return null;
+      try {
+        const login = normalizeCopilotLogin(file);
+        const who = describeCopilotLogin(login);
+        return login && who ? { login, account: who.login } : null;
+      } catch {
+        return null;
+      }
+    },
+    secret: (login) => ({ copilot: { COPILOT_LOGIN: login } }),
   },
 };
 
@@ -406,7 +437,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {
@@ -443,6 +474,10 @@ export function spawnHost(bin: string, recipe: Recipe, id: string): LoginProcess
   };
   mkdirSync(home, { recursive: true, mode: 0o700 });
   for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const [path, text] of Object.entries(recipe.seed ?? {})) {
+    mkdirSync(dirname(join(home, path)), { recursive: true, mode: 0o700 });
+    writeFileSync(join(home, path), text, { mode: 0o600 });
+  }
   const env: Record<string, string> = {
     ...(Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)) as Record<string, string>),
     ...recipe.env,
@@ -501,8 +536,12 @@ export function spawnHost(bin: string, recipe: Recipe, id: string): LoginProcess
 
 /** Runs the CLI in a throwaway container; it prints the login file after a marker on the way out. */
 export async function spawnInSandbox(docker: SandboxDocker, recipe: Recipe, id: string): Promise<LoginProcess> {
-  const files = recipe.files.map((f) => `"$HOME/${f.replace(/(["$`\\])/g, "\\$1")}"`).join(" ");
-  const script = `"$@" || exit $?; printf '\\n%s\\n' "$MARK"; for f in ${files}; do if [ -f "$f" ]; then cat "$f"; break; fi; done; exit 0`;
+  const quote = (text: string): string => `"${text.replace(/(["$`\\])/g, "\\$1")}"`;
+  const files = recipe.files.map((f) => quote(`$HOME/${f}`)).join(" ");
+  const seeds = Object.entries(recipe.seed ?? {})
+    .map(([path, text]) => `mkdir -p "$(dirname ${quote(`$HOME/${path}`)})" && printf '%s' ${quote(text)} > ${quote(`$HOME/${path}`)}; `)
+    .join("");
+  const script = `${seeds}"$@" || exit $?; printf '\\n%s\\n' "$MARK"; for f in ${files}; do if [ -f "$f" ]; then cat "$f"; break; fi; done; exit 0`;
   const proc = await docker.runTty(["sh", "-c", script, "login", recipe.bin[0]!, ...recipe.args], `login-${id}`, { ...recipe.env, MARK: CREDENTIALS_MARK });
   let output = "";
   proc.onData((chunk) => {
@@ -526,18 +565,6 @@ export function findOnPath(bin: string): string | null {
   const names = platform() === "win32" ? [`${bin}.cmd`, `${bin}.exe`, bin] : [bin];
   const dirs = [...(process.env.PATH ?? "").split(delimiter), join(home, ".local", "bin"), join(home, ".claude", "local"), "/opt/homebrew/bin", "/usr/local/bin"].filter((d) => d !== "");
   for (const dir of dirs) for (const name of names) if (existsSync(join(dir, name))) return join(dir, name);
-  return null;
-}
-
-function readFirst(paths: string[]): string | null {
-  for (const path of paths) {
-    if (!existsSync(path)) continue;
-    try {
-      return readFileSync(path, "utf8");
-    } catch {
-      return null;
-    }
-  }
   return null;
 }
 
@@ -597,160 +624,4 @@ export function redact(text: string): string {
     .replace(/(key|token|secret)\s*=\s*["'][^"']*["']/gi, "$1 = […]")
     .replace(/("[^"]*(?:key|token|secret)[^"]*"\s*:\s*)"[^"]*"/gi, '$1"[…]"')
     .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, "[jwt]");
-}
-
-// --- the host's own logins -----------------------------------------------------------------
-
-/** What the Provider's CLI holds on this machine: a non-secret account label and, when copyable, the login itself. */
-export function readHostLogin(provider: Provider, home = homedir()): { account: string | null; login?: string } | null {
-  switch (provider) {
-    case "claude-code": {
-      const account = claudeHostAccount(home);
-      return account ? { account } : null;
-    }
-    case "devin": {
-      const text = readFirst(devinCredentialsPaths(home));
-      if (text === null) return null;
-      const creds = parseDevinCredentials(text);
-      return { account: creds.account ?? "signed in with `devin auth login`", ...(creds.token ? { login: creds.token } : {}) };
-    }
-    case "codex": {
-      const text = readFirst([join(process.env.CODEX_HOME?.trim() || join(home, ".codex"), "auth.json")]);
-      if (text === null) return null;
-      let login: string;
-      try {
-        login = normalizeCodexAuthJson(text);
-      } catch {
-        return null;
-      }
-      const who = codexLogin(login);
-      if (!login || !who) return null;
-      return { account: who.email ? (who.plan ? `${who.email} (${who.plan})` : who.email) : who.apiKey ? "an API key" : "signed in with `codex login`", login };
-    }
-    case "cursor": {
-      const text = readFirst(cursorAuthPaths(home));
-      if (text === null) return null;
-      let login: string;
-      try {
-        login = normalizeCursorLogin(text);
-      } catch {
-        return null;
-      }
-      const what = describeCursorLogin(login);
-      if (!login || !what) return null;
-      return { account: what.kind === "api-key" ? "an API key" : "signed in with `agent login`", login };
-    }
-    case "pi": {
-      const text = readFirst([join(process.env.PI_CODING_AGENT_DIR?.trim() || join(home, ".pi", "agent"), "auth.json")]);
-      if (text === null) return null;
-      let login: string;
-      try {
-        login = normalizePiAuthJson(text);
-      } catch {
-        return null;
-      }
-      const what = describePiLogin(login, "");
-      if (!login || !what) return null;
-      return { account: `signed in with pi's /login (${what.authProviders.map((p) => p.id).join(", ")})`, login };
-    }
-    case "opencode": {
-      const text = readFirst([opencodeAuthPath(home)]);
-      if (text === null) return null;
-      let login: string;
-      try {
-        login = normalizeOpenCodeAuthJson(text);
-      } catch {
-        return null;
-      }
-      const what = describeOpenCodeLogin(login);
-      if (!login || !what) return null;
-      return { account: `signed in with \`opencode auth login\` (${what.providers.map((p) => p.id).join(", ")})`, login };
-    }
-    case "fx": {
-      // The Vercel login only: `fx login codex`/`grok` write other files, pasted in Settings instead.
-      const text = readFirst([join(home, ".fx/auth.json")]);
-      if (text === null) return null;
-      let login: string;
-      try {
-        login = normalizeFxLogin(text);
-      } catch {
-        return null;
-      }
-      const what = describeFxLogin(login);
-      if (!login || !what) return null;
-      return { account: what.kind === "api-key" ? "an API key" : "signed in with `fx login`", login };
-    }
-    case "kimi":
-      return RECIPES.kimi?.result("", readFirst([join(home, ".kimi/credentials/kimi-code.json")])) ?? null;
-  }
-}
-
-/** Where `opencode auth login` writes on every OS (OpenCode uses XDG paths on Windows and macOS too). */
-function opencodeAuthPath(home: string): string {
-  const xdg = process.env.XDG_DATA_HOME?.trim();
-  return join(xdg || join(home, ".local", "share"), "opencode", "auth.json");
-}
-
-/** "e-mail (Plan)" from Claude Code's `~/.claude.json` `oauthAccount`, the CLI's non-secret account record. */
-export function claudeHostAccount(home = homedir()): string | null {
-  const dir = process.env.CLAUDE_CONFIG_DIR?.trim() || home;
-  const json = readJson(join(dir, ".claude.json"));
-  const account = json && typeof json === "object" && "oauthAccount" in json ? json.oauthAccount : null;
-  if (!account || typeof account !== "object") return null;
-  const str = (key: string): string | null => {
-    const v = (account as Record<string, unknown>)[key];
-    return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
-  };
-  const who = str("emailAddress") ?? str("displayName") ?? str("fullName");
-  if (!who) return null;
-  const plan = str("organizationType")?.replace(/^claude_/, "");
-  return plan ? `${who} (${plan[0]!.toUpperCase()}${plan.slice(1)})` : who;
-}
-
-function readJson(path: string): unknown {
-  try {
-    return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as unknown) : null;
-  } catch {
-    return null;
-  }
-}
-
-function devinCredentialsPaths(home: string): string[] {
-  const xdg = process.env.XDG_DATA_HOME?.trim();
-  return [
-    ...(xdg ? [join(xdg, "devin/credentials.toml")] : []),
-    join(home, ".local/share/devin/credentials.toml"),
-    join(home, "Library/Application Support/devin/credentials.toml"),
-    ...(process.env.APPDATA ? [join(process.env.APPDATA, "devin/credentials.toml")] : []),
-  ];
-}
-
-function cursorAuthPaths(home: string): string[] {
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  return [
-    ...(xdg ? [join(xdg, "cursor/auth.json")] : []),
-    join(home, ".config/cursor/auth.json"),
-    join(home, ".cursor/auth.json"),
-    ...(process.env.APPDATA ? [join(process.env.APPDATA, "Cursor/auth.json")] : []),
-  ];
-}
-
-/**
- * `credentials.toml` as `devin auth login` writes it: flat `key = "value"` lines. The token is the
- * value whose key names a key/token; the account any e-mail-looking value.
- */
-export function parseDevinCredentials(toml: string): { token: string | null; account: string | null } {
-  const pairs = new Map<string, string>();
-  for (const line of toml.split("\n")) {
-    const m = /^\s*([A-Za-z0-9_.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$/.exec(line);
-    if (m) pairs.set(m[1]!.toLowerCase(), m[2] ?? m[3] ?? "");
-  }
-  const find = (re: RegExp): string | null => {
-    for (const [key, value] of pairs) if (value !== "" && re.test(key)) return value;
-    return null;
-  };
-  // The CLI's own field is the API key (`api_key`/`windsurf_api_key`); a `session_token` is not what `devin acp` wants.
-  const token = find(/api[_-]?key/) ?? find(/(^|_)token$|secret/);
-  const account = find(/email|display_name|^(user|account|login)$/) ?? [...pairs.values()].find((v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) ?? null;
-  return { token, account };
 }

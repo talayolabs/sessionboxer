@@ -1,5 +1,5 @@
 import { PROVIDERS, PROVIDER_LABELS, type Provider, type PublicSettings } from "@sessionboxer/protocol";
-import { PROVIDER_BLURB } from "./ProviderConnect";
+import { PROVIDER_BLURB } from "./providers";
 import { ProviderIcon } from "./ProviderIcon";
 import { providerTokenSet } from "./providers";
 

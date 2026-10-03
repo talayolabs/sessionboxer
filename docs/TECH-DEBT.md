@@ -214,6 +214,15 @@ Ordered by risk-reduction per hour; each a behaviour-preserving commit with its 
 13. **`QemuVms` base class** for `WindowsVms`/`MacosVms`, with the fake-`VmHost` pins first.
 14. **`PR_HOST` display table**; `RepoSync` out of `SessionManager` (next cluster, same harness).
 
+**Status (2026-10-03):** 8–10 are on `main` — bc457dc (`apps/web/src/KeyValueList.tsx`,
+`packages/sandbox-daemon/src/yaml-lite.ts`, `apps/control-plane/src/ws-bridge.ts`; what differed between the copies
+travels as props/`BridgeOptions`), 7b6274c (`scripts/automations.test.mjs`: 28 characterization tests,
+`npm run test:automations` in CI; `scripts/fixtures.mjs` holds the Session row fixture both harnesses use),
+1890e14 (section headers), 4c5f36a (four `fork()` pins in the SessionManager harness) and 9fbdea2 (`fork()` → 15 lines
+over `assertForkable`, `forkDockerMode`, `forkedSession`/`forkSettings`, `recordFork`, `launchFork`; bodies moved
+verbatim). Gate on HEAD: lint, typecheck, build, 10 suites green. 11–14 are open; 11/12/13 touch disjoint files
+(web settings / web PR panes / control-plane VMs) and can run as parallel sessions.
+
 Deliberately not recommended: replacing `HttpError` in the domain classes with a domain error type
 and one HTTP mapping. It is the textbook fix for "error handling mixed with logic", but every
 message is already user-facing and status-correct, nothing switches on the strings, and the change

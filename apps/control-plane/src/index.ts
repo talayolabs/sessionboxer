@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { Readable } from "node:stream";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,70 +8,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono } from "hono";
 import { ZodError } from "zod";
-import {
-  AskRequest,
-  AgentApprovalAnswer,
-  AutoContinueRequest,
-  AttachPrRequest,
-  AddRepoRequest,
-  UpdateRepoRequest,
-  AuthLoginRequest,
-  AuthPairRedeemRequest,
-  PAIR_FRAGMENT_KEY,
-  PAIRING_TTL_MS,
-  CodeOpenParams,
-  CodeStartParams,
-  CodeThemeParams,
-  CompactionDetailsRequest,
-  DaemonMcpAppsCallToolParams,
-  DaemonMcpAppsReadResourceParams,
-  DaemonMcpAppsResourceParams,
-  McpAppApproveRequest,
-  PrActionRequest,
-  UpdatePrRequest,
-  ConnectorKind,
-  ConnectorStartRequest,
-  Provider,
-  ProviderLoginCodeRequest,
-  AttachFollowedPrRequest,
-  CreateAutomationRequest,
-  CreatePrFollowRequest,
-  RunPrAutomationRequest,
-  StartPrSessionRequest,
-  UpdatePrFollowRequest,
-  PrFollowHookRequest,
-  CreateScheduleRequest,
-  CreateFolderRequest,
-  CreateSessionRequest,
-  ForkSessionRequest,
-  SchedulePreviewRequest,
-  UpdateAutomationRequest,
-  UpdateScheduleRequest,
-  RevertRequest,
-  SwitchBranchRequest,
-  FS_APP_PATH,
-  FS_RAW_PATH,
-  FS_UPLOAD_PATH,
-  FsWatchParams,
-  htmlAppCsp,
-  PromptAttachment,
-  SyncRequest,
-  PromptRequest,
-  PtyOpenParams,
-  PushSubscribeRequest,
-  QueueRequest,
-  UiClientMessage,
-  SaveMessageRequest,
-  type SessionBroadcast,
-  SPEECH_CLIP_MAX_BYTES,
-  SPEECH_LANGUAGE_PATTERN,
-  SpeechModel,
-  UpdateSavedMessageRequest,
-  UpdateFolderRequest,
-  UpdateSessionRequest,
-  UsbConnectRequest,
-  UpdateSettingsRequest,
-} from "@sessionboxer/protocol";
+import { PAIR_FRAGMENT_KEY, PAIRING_TTL_MS, UpdateSettingsRequest } from "@sessionboxer/protocol";
 import {
   CONFIG_FILE,
   DB_FILE,
@@ -92,7 +28,6 @@ import {
   ensureTunnelSecret,
   ensureVapidKeys,
   loadSettings,
-  newAccessToken,
   remoteAccess,
   resolveBoxCredentials,
   saveSettings,
@@ -100,33 +35,41 @@ import {
 } from "./config.js";
 import { Auth, type AuthEnv } from "./auth.js";
 import { applyTrustedCas, trustedCaBundle } from "./ca-certs.js";
-import { bridgeCodeSocket, codePrefix, codeTarget, forwardedHeaders, proxyCodeRequest } from "./code-proxy.js";
 import { Connectors } from "./connectors.js";
 import { Db } from "./db.js";
 import { PROVIDER_AUTH, providersAuthChangedBy } from "./provider-auth.js";
-import { bridgeDesktop } from "./desktop-proxy.js";
 import { SandboxDocker } from "./docker.js";
 import { findDockerEngine, noDockerAdvice } from "./docker-engine.js";
-import { HostDirError, listHostDir } from "./host-dir.js";
 import { banner, log } from "./log.js";
 import { HostOrSandboxRunner, ProviderLogins } from "./provider-login.js";
 import { PushNotifier } from "./push.js";
-import { Automations, scheduleRunOf } from "./automations.js";
+import { Automations } from "./automations.js";
 import { FollowedPrs } from "./followed-prs.js";
 import { PrReviews } from "./pr-reviews.js";
-import { PrQa, qaVideoFile } from "./pr-qa.js";
+import { PrQa } from "./pr-qa.js";
 import { HttpError, SessionManager } from "./sessions.js";
 import { WindowsVms } from "./windows.js";
 import { MacosVms } from "./macos.js";
-import { deleteModel, Speech } from "./speech.js";
-import { bridgeTerminal } from "./terminal-bridge.js";
-import { checkTunnelName, tunnelName, tunnelServerInfo } from "./tunnel-frp.js";
+import { Speech } from "./speech.js";
 import { Tunnels } from "./tunnels.js";
+import { registerAuthRoutes } from "./routes/auth.js";
+import { registerAutomationRoutes } from "./routes/automations.js";
+import { registerConnectorRoutes } from "./routes/connectors.js";
+import { registerFolderRoutes } from "./routes/folders.js";
+import { registerPrHookRoute, registerPrRoutes } from "./routes/prs.js";
+import { registerProviderRoutes } from "./routes/providers.js";
+import { registerPushRoutes } from "./routes/push.js";
+import { registerRepositoryRoutes } from "./routes/repositories.js";
+import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerSettingsRoutes } from "./routes/settings.js";
+import { registerSpeechRoutes } from "./routes/speech.js";
+import { registerSystemRoutes } from "./routes/system.js";
+import { registerTunnelRoutes } from "./routes/tunnels.js";
+import { registerVmBaseRoutes } from "./routes/vm-bases.js";
+import { registerWsRoutes } from "./routes/ws.js";
+import { type RouteDeps } from "./routes/deps.js";
 
 const WS_PING_MS = 25_000;
-
-const escapeHtml = (s: string): string =>
-  s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
 let settings = ensureTunnelSecret(ensureVapidKeys(ensureAccessToken(loadSettings())));
 {
@@ -310,76 +253,6 @@ const api = new Hono<AuthEnv>();
 
 api.use("*", auth.middleware());
 
-api.get("/health", (c) => c.json({ ok: true }));
-
-// --- Access: who may talk to this Control Plane -----------------------------------------------
-
-api.get("/auth/me", (c) => c.json({ principal: c.get("principal") ?? null }));
-api.post("/auth/login", async (c) => {
-  const req = AuthLoginRequest.parse(await c.req.json());
-  const res = auth.login(req.token, req.name, auth.clientInfo(c));
-  c.header("set-cookie", res.cookie);
-  return c.json(res.device, 201);
-});
-api.post("/auth/pair", (c) => c.json(auth.createPairing(), 201));
-api.post("/auth/pair/redeem", async (c) => {
-  const req = AuthPairRedeemRequest.parse(await c.req.json());
-  const res = auth.redeemPairing(req.code, req.name, auth.clientInfo(c));
-  c.header("set-cookie", res.cookie);
-  return c.json(res.device, 201);
-});
-api.post("/auth/logout", (c) => {
-  const p = c.get("principal");
-  if (p.kind === "device") auth.revoke(p.device.id);
-  c.header("set-cookie", Auth.clearCookie(auth.clientInfo(c).secure));
-  return c.body(null, 204);
-});
-api.get("/auth/devices", (c) => {
-  const p = c.get("principal");
-  return c.json(auth.devices(p.kind === "device" ? p.device.id : null));
-});
-api.delete("/auth/devices/:id", (c) => {
-  auth.revoke(c.req.param("id"));
-  return c.body(null, 204);
-});
-// Web Push: one subscription per device (the browser's PushManager gives it), gone with the device.
-api.get("/push", (c) => {
-  const p = c.get("principal");
-  return c.json(push.status(p.kind === "device" ? p.device.id : null));
-});
-api.put("/push", async (c) => {
-  const p = c.get("principal");
-  if (p.kind !== "device") throw new HttpError(403, "Only a logged-in browser can subscribe to notifications.");
-  push.subscribe(p.device.id, PushSubscribeRequest.parse(await c.req.json()));
-  return c.json(push.status(p.device.id));
-});
-api.delete("/push", (c) => {
-  const p = c.get("principal");
-  if (p.kind !== "device") throw new HttpError(403, "Only a logged-in browser can unsubscribe.");
-  push.unsubscribe(p.device.id);
-  return c.json(push.status(p.device.id));
-});
-api.post("/push/test", (c) => {
-  const p = c.get("principal");
-  if (p.kind !== "device") throw new HttpError(403, "Only a logged-in browser can test its notifications.");
-  if (!push.status(p.device.id).subscribed) throw new HttpError(409, "This browser is not subscribed.");
-  push.send({ title: "Sessionboxer", body: "Notifications reach this device.", tag: "sessionboxer-test", url: "#/settings" }, p.device.id);
-  return c.body(null, 204);
-});
-api.get("/auth/token", (c) => c.json({ token: accessToken(settings) }));
-// A new token: every other browser has to log in again; the caller keeps its cookie and sees the token once.
-api.post("/auth/token/rotate", (c) => {
-  if (accessTokenSource() === "env") throw new HttpError(409, "The access token comes from SESSIONBOXER_ACCESS_TOKEN; change it there.");
-  const p = c.get("principal");
-  settings = { ...settings, accessToken: newAccessToken() };
-  saveSettings(settings);
-  const keep = p.kind === "device" ? p.device.id : null;
-  for (const d of auth.devices(keep)) if (!d.current) auth.revoke(d.id);
-  log("access token rotated");
-  return c.json({ token: settings.accessToken });
-});
-
-api.get("/settings", async (c) => c.json(await publicSettings()));
 /** Stores a Settings change and pushes what changed to the live Sessions; `PUT /settings` and the Agent's registry tools. */
 async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void> {
   const agentToolsBefore = settings.agentTools;
@@ -396,664 +269,53 @@ async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void
 }
 sessions.applySettings = applySettingsRequest;
 
-api.put("/settings", async (c) => {
-  await applySettingsRequest(UpdateSettingsRequest.parse(await c.req.json()));
-  return c.json(await publicSettings());
-});
-
-/** The shared Windows base disk (ADR-0057): its state, and installing / cancelling / deleting it. */
-api.get("/windows", (c) => c.json(windows.status()));
-api.post("/windows/install", async (c) => c.json(await windows.install()));
-api.post("/windows/cancel", async (c) => c.json(await windows.cancelInstall()));
-api.delete("/windows", async (c) => c.json(await windows.removeBase()));
-
-/** The shared macOS base disk (ADR-0059): its state, installing / cancelling / deleting it, and its screen while it installs. */
-api.get("/macos", (c) => c.json(macos.status()));
-api.post("/macos/install", async (c) => c.json(await macos.install()));
-api.post("/macos/cancel", async (c) => c.json(await macos.cancelInstall()));
-api.post("/macos/reprovision", async (c) => c.json(await macos.reprovision()));
-api.delete("/macos", async (c) => c.json(await macos.removeBase()));
-api.get(
-  "/macos/screen",
-  upgradeWebSocket(async () => {
-    const target = await macos.screenUrl();
-    return {
-      onOpen(_evt, ws) {
-        if (!ws.raw) return;
-        bridgeDesktop(ws.raw, target, log);
-      },
-      onError(err) {
-        log(`macos screen ws error: ${String(err)}`);
-      },
-    };
-  }),
-);
-
-api.get("/sandbox-image", (c) => c.json(docker.imageStatus()));
-// Retries a pull that failed (a network drop, a registry outage); a no-op while one runs or once the image is here.
-api.post("/sandbox-image/pull", (c) => {
-  void docker.ensureImage().catch((e: unknown) => log(e instanceof Error ? e.message : String(e)));
-  return c.json(docker.imageStatus());
-});
-
-/** Speech to text: the browser posts a 16 kHz mono WAV clip, whisper.cpp on this machine answers with the text. */
 const speech = new Speech(log);
 sessions.transcribeMedia = (wav, language) => speech.transcribeTimed(wav, settings.speech, language);
-api.get("/speech", async (c) => c.json(await speech.status(settings.speech)));
-api.post("/speech/prepare", async (c) => c.json(await speech.prepare(settings.speech)));
-api.post("/speech/transcribe", async (c) => {
-  const tooLarge = new HttpError(413, `The clip is larger than ${Math.round(SPEECH_CLIP_MAX_BYTES / 1024 / 1024)} MB.`);
-  if (Number(c.req.header("content-length") ?? 0) > SPEECH_CLIP_MAX_BYTES) throw tooLarge;
-  const wav = Buffer.from(await c.req.arrayBuffer());
-  if (wav.length > SPEECH_CLIP_MAX_BYTES) throw tooLarge;
-  const language = c.req.query("language")?.trim() ?? "";
-  if (language && !SPEECH_LANGUAGE_PATTERN.test(language)) throw new HttpError(400, "language must be a two-letter code or auto");
-  return c.json(await speech.transcribe(wav, settings.speech, language || null));
-});
-api.delete("/speech/models/:name", (c) => {
-  deleteModel(SpeechModel.parse(c.req.param("name")), settings.speech);
-  return c.body(null, 204);
-});
 
-/** What the configured (or given) Sessionboxer tunnel server says about itself, and the name this laptop would take there. */
-api.get("/tunnels/sessionboxer/server", async (c) => {
-  const server = c.req.query("server")?.trim() || settings.tunnels.sessionboxer.server;
-  const info = await tunnelServerInfo(server).catch((e: unknown) => {
-    throw new HttpError(502, e instanceof Error ? e.message : String(e));
-  });
-  return c.json({ server, info, name: tunnelName(settings.tunnels.sessionboxer) });
-});
-// Provider sign-in (ADR-0058): the CLI on this machine or in a throwaway container, the browser here, the code passed along.
-api.get("/providers/:provider/host-login", (c) => c.json(providerLogins.hostLogin(Provider.parse(c.req.param("provider")))));
-api.post("/providers/:provider/host-login/import", async (c) => {
-  providerLogins.importHostLogin(Provider.parse(c.req.param("provider")));
-  return c.json(await publicSettings());
-});
-api.post("/providers/:provider/login", (c) => c.json(providerLogins.start(Provider.parse(c.req.param("provider"))), 201));
-api.get("/providers/login/:id", (c) => c.json(providerLogins.get(c.req.param("id"))));
-api.post("/providers/login/:id/code", async (c) => {
-  const { code } = ProviderLoginCodeRequest.parse(await c.req.json());
-  return c.json(providerLogins.submit(c.req.param("id"), code));
-});
-api.delete("/providers/login/:id", (c) => {
-  providerLogins.cancel(c.req.param("id"));
-  return c.body(null, 204);
-});
-
-api.get("/tunnels/sessionboxer/names/:name", async (c) => {
-  const server = c.req.query("server")?.trim() || settings.tunnels.sessionboxer.server;
-  const check = await checkTunnelName(server, c.req.param("name").trim().toLowerCase()).catch((e: unknown) => {
-    throw new HttpError(502, e instanceof Error ? e.message : String(e));
-  });
-  return c.json(check);
-});
-
-api.get("/connectors/github/gh", async (c) => c.json(await connectors.ghStatus()));
-api.post("/connectors/:kind/start", async (c) => {
-  const kind = ConnectorKind.parse(c.req.param("kind"));
-  const req = ConnectorStartRequest.parse(await c.req.json());
-  return c.json(await connectors.start(kind, req), 201);
-});
-api.get("/connectors/flows/:id", (c) => c.json(connectors.get(c.req.param("id"))));
-api.post("/connectors/servers/:id/disconnect", async (c) => {
-  connectors.disconnect(c.req.param("id"));
-  return c.json(await publicSettings());
-});
-// Browser lands here after authorizing on the provider's site (redirect flow).
-api.get("/connectors/:kind/callback", async (c) => {
-  const kind = ConnectorKind.parse(c.req.param("kind"));
-  const result = await connectors.callback(kind, c.req.query());
-  return c.html(
-    `<!doctype html><meta charset="utf-8"><title>Sessionboxer</title>
-<body style="font:15px system-ui;margin:3em auto;max-width:32em;text-align:center">
-<h2>${result.ok ? "Connected" : "Login failed"}</h2><p>${escapeHtml(result.message)}</p>
-<p style="color:#666">You can close this tab and go back to Sessionboxer.</p>
-<script>setTimeout(function(){window.close()},1500)</script></body>`,
-    result.ok ? 200 : 400,
-  );
-});
-
-api.get("/host/dirs", async (c) => {
-  try {
-    return c.json(await listHostDir(c.req.query("path")));
-  } catch (e) {
-    if (e instanceof HostDirError) throw new HttpError(400, e.message);
-    if (e instanceof Error && "code" in e && e.code === "EACCES") throw new HttpError(403, `Permission denied: ${c.req.query("path")}`);
-    throw e;
-  }
-});
-
-api.get("/models", (c) => c.json(sessions.providerModels()));
-api.get("/options", (c) => c.json(sessions.providerOptions()));
-
-// Files attached on the New session screen, before a Sandbox exists to put them in (see StagedUploads).
-api.put("/uploads", async (c) => c.json(await sessions.staged.store(c.req.raw.body, c.req.query("name") ?? "", c.req.header("content-type"), c.req.header("content-length")), 201));
-api.delete("/uploads/:id", async (c) => {
-  await sessions.staged.remove(c.req.param("id"));
-  return c.body(null, 204);
-});
-
-// Sidebar folders the Sessions are filed under (ADR-0074).
-api.get("/folders", (c) => c.json(sessions.folders()));
-api.post("/folders", async (c) => c.json(sessions.createFolder(CreateFolderRequest.parse(await c.req.json())), 201));
-api.patch("/folders/:id", async (c) => c.json(sessions.renameFolder(c.req.param("id"), UpdateFolderRequest.parse(await c.req.json()))));
-api.delete("/folders/:id", (c) => {
-  sessions.deleteFolder(c.req.param("id"));
-  return c.body(null, 204);
-});
-
-api.get("/sessions", (c) => c.json(sessions.list()));
-api.post("/sessions", async (c) => {
-  const req = CreateSessionRequest.parse(await c.req.json());
-  return c.json(await sessions.create(req), 201);
-});
-api.get("/sessions/:id", (c) => c.json(sessions.get(c.req.param("id"))));
-api.patch("/sessions/:id", async (c) => {
-  const req = UpdateSessionRequest.parse(await c.req.json());
-  return c.json(await sessions.edit(c.req.param("id"), req));
-});
-api.delete("/sessions/:id", async (c) => {
-  await sessions.delete(c.req.param("id"));
-  return c.body(null, 204);
-});
-api.get("/sessions/:id/events", (c) => {
-  const after = Number(c.req.query("after") ?? 0);
-  return c.json(sessions.events(c.req.param("id"), Number.isFinite(after) ? after : 0));
-});
-api.post("/sessions/:id/prompt", async (c) => {
-  const req = PromptRequest.parse(await c.req.json());
-  await sessions.prompt(c.req.param("id"), req);
-  return c.json({ ok: true }, 202);
-});
-api.post("/sessions/:id/ask", async (c) => {
-  const req = AskRequest.parse(await c.req.json());
-  return c.json(await sessions.ask(c.req.param("id"), req.text));
-});
-api.post("/sessions/:id/context/report", async (c) => c.json(await sessions.contextReport(c.req.param("id"))));
-api.post("/sessions/:id/context/compaction", async (c) => {
-  const req = CompactionDetailsRequest.parse(await c.req.json());
-  return c.json(await sessions.compactionDetails(c.req.param("id"), req));
-});
-api.get("/sessions/:id/llm-calls", async (c) => {
-  const id = c.req.param("id");
-  const { calls } = sessions.llmCalls(id);
-  return c.json({ calls, withBodies: await sessions.llmCallsWithBodies(id) });
-});
-api.get("/sessions/:id/llm-calls/:callId", async (c) => c.json(await sessions.llmCallBody(c.req.param("id"), c.req.param("callId"))));
-// MCP Apps (ADR-0079): the views of the Session's MCP tool calls, from the Daemon's tee mirror.
-api.get("/sessions/:id/mcp-apps/resource", async (c) => {
-  const params = DaemonMcpAppsResourceParams.parse({ server: c.req.query("server"), uri: c.req.query("uri") });
-  return c.json(await sessions.mcpAppResource(c.req.param("id"), params));
-});
-api.get("/sessions/:id/mcp-apps/tool-results/:toolCallId", async (c) =>
-  c.json(await sessions.mcpAppToolResult(c.req.param("id"), { toolCallId: c.req.param("toolCallId") })),
-);
-api.post("/sessions/:id/mcp-apps/call-tool", async (c) => {
-  const params = DaemonMcpAppsCallToolParams.parse(await c.req.json());
-  return c.json(await sessions.mcpAppCallTool(c.req.param("id"), params));
-});
-api.post("/sessions/:id/mcp-apps/read-resource", async (c) => {
-  const params = DaemonMcpAppsReadResourceParams.parse(await c.req.json());
-  return c.json(await sessions.mcpAppReadResource(c.req.param("id"), params));
-});
-/** Approves, once per registry entry, the external domains a server's views may reach (kept on `McpServerDef.appDomains`). */
-api.post("/mcp-apps/approve", async (c) => {
-  const req = McpAppApproveRequest.parse(await c.req.json());
-  const current = (await publicSettings()).mcpServers;
-  if (!current.some((m) => m.name === req.server)) throw new HttpError(404, `No MCP server named "${req.server}" in the registry.`);
-  await applySettingsRequest({ mcpServers: current.map((m) => (m.name === req.server ? { ...m, appDomains: req.csp } : m)) });
-  return c.json(await publicSettings());
-});
-api.post("/sessions/:id/cancel", async (c) => {
-  await sessions.cancel(c.req.param("id"));
-  return c.json({ ok: true });
-});
-api.post("/sessions/:id/stop", async (c) => c.json(await sessions.stop(c.req.param("id"))));
-
-// Conversation branches: "revert to here" keeps what followed as a branch; switch between them.
-api.post("/sessions/:id/revert", async (c) => {
-  const req = RevertRequest.parse(await c.req.json());
-  return c.json(await sessions.revert(c.req.param("id"), req.seq));
-});
-api.post("/sessions/:id/branch", async (c) => {
-  const req = SwitchBranchRequest.parse(await c.req.json());
-  return c.json(await sessions.switchBranch(c.req.param("id"), req.branchId));
-});
-
-// The queue: enqueued messages, sent one turn at a time whenever the Agent is idle.
-api.get("/sessions/:id/saved", (c) => c.json(sessions.savedMessages(c.req.param("id"))));
-api.post("/sessions/:id/saved", async (c) => {
-  const req = SaveMessageRequest.parse(await c.req.json());
-  return c.json(await sessions.enqueueMessage(c.req.param("id"), req.text), 201);
-});
-api.patch("/sessions/:id/saved/:messageId", async (c) => {
-  const req = UpdateSavedMessageRequest.parse(await c.req.json());
-  return c.json(sessions.updateSavedMessage(c.req.param("id"), c.req.param("messageId"), req));
-});
-api.delete("/sessions/:id/saved/:messageId", (c) => {
-  sessions.deleteSavedMessage(c.req.param("id"), c.req.param("messageId"));
-  return c.body(null, 204);
-});
-api.post("/sessions/:id/saved/:messageId/send", async (c) => {
-  await sessions.sendSavedMessage(c.req.param("id"), c.req.param("messageId"));
-  return c.json({ ok: true }, 202);
-});
-api.post("/sessions/:id/queue", async (c) => {
-  const req = QueueRequest.parse(await c.req.json());
-  return c.json(await sessions.setQueueRunning(c.req.param("id"), req.running));
-});
-
-// Usage limits (ADR-0053): continue the turn the Provider refused; poll for it every 10 s.
-api.post("/sessions/:id/usage/continue", async (c) => c.json(await sessions.continueAfterLimit(c.req.param("id"))));
-api.post("/sessions/:id/usage/auto-continue", async (c) => {
-  const req = AutoContinueRequest.parse(await c.req.json());
-  return c.json(sessions.setAutoContinue(c.req.param("id"), req.enabled));
-});
-
-// The Agent asked for permission through the `sessionboxer` MCP (ADR-0062): the chat card's Allow / Deny.
-api.post("/sessions/:id/approvals/:approvalId", async (c) => {
-  const req = AgentApprovalAnswer.parse(await c.req.json());
-  return c.json(await sessions.agentTools.settleApproval(c.req.param("id"), c.req.param("approvalId"), req.allow));
-});
-
-// End-to-end verification runs of the Session (ADR-0044).
-api.get("/sessions/:id/e2e", (c) => c.json(sessions.e2e.list(c.req.param("id"))));
-api.post("/sessions/:id/e2e/run", async (c) => c.json(await sessions.e2eRunNow(c.req.param("id")), 201));
-api.get("/sessions/:id/e2e/:runId", (c) => c.json(sessions.e2e.get(c.req.param("id"), c.req.param("runId"))));
-
-// Scheduled tasks (ADR-0047).
-// Automations (ADR-0063); `/schedules*` is the pre-1.5 shape of the ones with a schedule trigger.
-api.get("/automations", (c) => c.json(automations.list()));
-api.post("/automations", async (c) => c.json(automations.create(CreateAutomationRequest.parse(await c.req.json())), 201));
-api.post("/automations/preview", async (c) => {
-  const req = SchedulePreviewRequest.parse(await c.req.json());
-  return c.json(automations.preview(req.cron, req.timezone));
-});
-api.get("/automations/:id", (c) => c.json(automations.get(c.req.param("id"))));
-api.patch("/automations/:id", async (c) => c.json(automations.update(c.req.param("id"), UpdateAutomationRequest.parse(await c.req.json()))));
-api.delete("/automations/:id", (c) => {
-  automations.delete(c.req.param("id"));
-  return c.body(null, 204);
-});
-api.post("/automations/:id/run", async (c) => c.json(await automations.runNow(c.req.param("id")), 202));
-api.get("/automations/:id/runs", (c) => c.json(automations.listRuns(c.req.param("id"))));
-// The video of an Auto QA run, kept on the Control Plane after the run's box is gone (ADR-0066).
-api.on(["GET", "HEAD"], "/automations/runs/:runId/video", (c) => {
-  const file = qaVideoFile(c.req.param("runId"));
-  if (!file) return c.json({ error: "no video was kept for this run" }, 404);
-  const size = statSync(file).size;
-  const headers: Record<string, string> = { "content-type": "video/mp4", "accept-ranges": "bytes", "cache-control": "private, max-age=86400" };
-  const range = /^bytes=(\d*)-(\d*)$/.exec(c.req.header("range") ?? "");
-  let start = 0;
-  let end = size - 1;
-  if (range && (range[1] !== "" || range[2] !== "")) {
-    start = range[1] === "" ? Math.max(0, size - Number(range[2])) : Number(range[1]);
-    end = range[1] !== "" && range[2] !== "" ? Math.min(Number(range[2]), size - 1) : end;
-    if (start > end || start >= size) return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
-    headers["content-range"] = `bytes ${start}-${end}/${size}`;
-  }
-  headers["content-length"] = String(end - start + 1);
-  if (c.req.method === "HEAD") return new Response(null, { status: range ? 206 : 200, headers });
-  return new Response(Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream, { status: range ? 206 : 200, headers });
-});
-
-// Repositories named anywhere, for the inputs' suggestions (ADR-0068).
-api.get("/repositories", (c) => c.json(db.repos.list()));
-api.delete("/repositories/:id", (c) => {
-  if (!db.repos.forget(c.req.param("id"))) return c.json({ error: "no such repository" }, 404);
-  return c.body(null, 204);
-});
-
-// Followed pull requests (ADR-0064): `/prs/follows*` before `/prs/:id`.
-api.get("/prs/accounts", (c) => c.json(followedPrs.accounts()));
-api.get("/prs/people", (c) => c.json(followedPrs.people()));
-api.get("/prs/follows", (c) => c.json(followedPrs.listFollows()));
-api.post("/prs/follows", async (c) => c.json(followedPrs.follow(CreatePrFollowRequest.parse(await c.req.json())), 201));
-api.patch("/prs/follows/:id", async (c) => c.json(followedPrs.setFollowEnabled(c.req.param("id"), UpdatePrFollowRequest.parse(await c.req.json()).enabled)));
-api.delete("/prs/follows/:id", (c) => {
-  followedPrs.unfollow(c.req.param("id"));
-  return c.body(null, 204);
-});
-api.post("/prs/follows/:id/poll", async (c) => {
-  await followedPrs.pollFollowNow(c.req.param("id"));
-  return c.json(followedPrs.listFollows());
-});
-api.get("/prs/follows/:id/hook", (c) => c.json(followedPrs.hookInfo(c.req.param("id"))));
-api.post("/prs/follows/:id/hook", async (c) => c.json(await followedPrs.enableHook(c.req.param("id"), PrFollowHookRequest.parse(await c.req.json().catch(() => ({}))).url), 201));
-api.delete("/prs/follows/:id/hook", async (c) => c.json(await followedPrs.disableHook(c.req.param("id"))));
-api.get("/prs", (c) => c.json(followedPrs.list({ state: c.req.query("state") === "open" ? "open" : "all", ...(c.req.query("repo") ? { repo: c.req.query("repo")! } : {}) })));
-api.get("/prs/:id", (c) => c.json(followedPrs.get(c.req.param("id"))));
-api.get("/prs/:id/items", (c) => c.json(followedPrs.items(c.req.param("id"))));
-api.get("/prs/:id/checks", (c) => c.json(followedPrs.checks(c.req.param("id"))));
-api.get("/prs/:id/events", (c) => c.json(followedPrs.events(c.req.param("id"))));
-api.get("/prs/:id/runs", (c) => c.json(followedPrs.runs(c.req.param("id"))));
-api.post("/prs/:id/refresh", async (c) => c.json(await followedPrs.refresh(c.req.param("id"))));
-api.post("/prs/:id/seen", (c) => c.json(followedPrs.markSeen(c.req.param("id"))));
-api.post("/prs/:id/attach", async (c) => c.json(await followedPrs.attachTo(c.req.param("id"), AttachFollowedPrRequest.parse(await c.req.json()).sessionId), 201));
-api.post("/prs/:id/session", async (c) => c.json(await followedPrs.startSession(c.req.param("id"), StartPrSessionRequest.parse(await c.req.json())), 201));
-api.post("/prs/:id/run", async (c) => c.json(await followedPrs.runAutomation(c.req.param("id"), RunPrAutomationRequest.parse(await c.req.json()).automationId), 202));
-
-api.get("/schedules", (c) => c.json(automations.listSchedules()));
-api.post("/schedules", async (c) => c.json(automations.createSchedule(CreateScheduleRequest.parse(await c.req.json())), 201));
-api.post("/schedules/preview", async (c) => {
-  const req = SchedulePreviewRequest.parse(await c.req.json());
-  return c.json(automations.preview(req.cron, req.timezone));
-});
-api.get("/schedules/:id", (c) => c.json(automations.getSchedule(c.req.param("id"))));
-api.patch("/schedules/:id", async (c) => c.json(automations.updateSchedule(c.req.param("id"), UpdateScheduleRequest.parse(await c.req.json()))));
-api.delete("/schedules/:id", (c) => {
-  automations.getSchedule(c.req.param("id"));
-  automations.delete(c.req.param("id"));
-  return c.body(null, 204);
-});
-api.post("/schedules/:id/run", async (c) => {
-  automations.getSchedule(c.req.param("id"));
-  return c.json(scheduleRunOf(await automations.runNow(c.req.param("id"))), 202);
-});
-api.get("/schedules/:id/runs", (c) => c.json(automations.listScheduleRuns(c.req.param("id"))));
-
-// Pull Requests attached to the Session (ADR-0027).
-api.get("/sessions/:id/prs", (c) => c.json(sessions.prs.list(c.req.param("id"))));
-api.post("/sessions/:id/prs", async (c) => {
-  const req = AttachPrRequest.parse(await c.req.json());
-  return c.json(await sessions.prs.attach(c.req.param("id"), req.ref, "manual"), 201);
-});
-api.get("/sessions/:id/prs/:prId/items", (c) => c.json(sessions.prs.items(c.req.param("id"), c.req.param("prId"))));
-api.get("/sessions/:id/prs/:prId/checks", (c) => c.json(sessions.prs.checks(c.req.param("id"), c.req.param("prId"))));
-api.patch("/sessions/:id/prs/:prId", async (c) => {
-  const req = UpdatePrRequest.parse(await c.req.json());
-  return c.json(sessions.prs.update(c.req.param("id"), c.req.param("prId"), req));
-});
-api.delete("/sessions/:id/prs/:prId", (c) => {
-  sessions.prs.detach(c.req.param("id"), c.req.param("prId"));
-  return c.body(null, 204);
-});
-api.post("/sessions/:id/prs/:prId/refresh", async (c) => c.json(await sessions.prs.refresh(c.req.param("id"), c.req.param("prId"))));
-api.post("/sessions/:id/prs/:prId/seen", (c) => {
-  sessions.prs.markSeen(c.req.param("id"), c.req.param("prId"));
-  return c.body(null, 204);
-});
-api.post("/sessions/:id/prs/actions", async (c) => {
-  const req = PrActionRequest.parse(await c.req.json());
-  return c.json(await sessions.prs.action(c.req.param("id"), req));
-});
-
-// The newest Snapshots of every Session, for the "start from a snapshot" pickers (ADR-0069).
-api.get("/snapshots/recent", (c) =>
-  c.json(
-    sessions.recentSnapshots(
-      (c.req.query("include") ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s !== ""),
-    ),
-  ),
-);
-
-// Snapshots (`docker commit` of the Sandbox) and forks started from them.
-api.get("/sessions/:id/snapshots", (c) => c.json(sessions.snapshots(c.req.param("id"))));
-api.post("/sessions/:id/snapshots", async (c) => c.json(await sessions.snapshot(c.req.param("id"), "manual"), 201));
-api.delete("/sessions/:id/snapshots", async (c) => c.json(await sessions.deleteAllSnapshots(c.req.param("id"))));
-api.delete("/sessions/:id/snapshots/:snapshotId", async (c) => {
-  await sessions.deleteSnapshot(c.req.param("id"), c.req.param("snapshotId"));
-  return c.body(null, 204);
-});
-// Moves the Session onto a new Sandbox built from a full image of the current one (long: minutes).
-api.post("/sessions/:id/rebuild", async (c) => c.json(await sessions.rebuild(c.req.param("id"))));
-api.post("/sessions/:id/fork", async (c) => {
-  const req = ForkSessionRequest.parse(await c.req.json());
-  return c.json(await sessions.fork(c.req.param("id"), req), 201);
-});
-
-// USB devices of the host (ADR-0055): one Session per device; connecting takes it from the Session that had it.
-api.get("/usb", async (c) => c.json(await sessions.usb.host()));
-api.post("/sessions/:id/usb", async (c) => {
-  const req = UsbConnectRequest.parse(await c.req.json());
-  return c.json(await sessions.usb.connect(c.req.param("id"), req.deviceId));
-});
-api.delete("/sessions/:id/usb", async (c) => c.json(await sessions.usb.disconnect(c.req.param("id"))));
-
-// Repositories of a running Session: add clones/copies into /workspace/<name> right away; remove
-// answers 409 with the Git state when the directory holds unpushed work (repeat with `force`).
-api.post("/sessions/:id/repos", async (c) => {
-  const req = AddRepoRequest.parse(await c.req.json());
-  return c.json(await sessions.addRepo(c.req.param("id"), req), 201);
-});
-api.patch("/sessions/:id/repos/:repoId", async (c) => {
-  const req = UpdateRepoRequest.parse(await c.req.json());
-  return c.json(await sessions.updateRepo(c.req.param("id"), c.req.param("repoId"), req));
-});
-api.delete("/sessions/:id/repos/:repoId", async (c) => {
-  const force = c.req.query("force") === "1" || c.req.query("force") === "true";
-  const result = await sessions.removeRepo(c.req.param("id"), c.req.param("repoId"), force);
-  if (!result.ok) return c.json(result.blocked, 409);
-  return c.body(null, 204);
-});
-
-// "Pull changes to my folder" for repositories copied from a host folder: GET is the dry run,
-// POST applies it (conflicting files only with `overwriteLocal`). `repoId` picks the folder
-// when the Session copied more than one.
-api.get("/sessions/:id/sync", async (c) => c.json(await sessions.syncPlan(c.req.param("id"), c.req.query("repoId"))));
-api.post("/sessions/:id/sync", async (c) => {
-  const req = SyncRequest.parse(await c.req.json());
-  return c.json(await sessions.syncPull(c.req.param("id"), req));
-});
-// Raw bytes of a Workspace file (videos, images, PDFs the Agent produced), streamed from the
-// Daemon with Range support so the browser's <video> can seek; `download=1` for an attachment.
-api.on(["GET", "HEAD"], "/sessions/:id/fs/raw", async (c) => {
-  const base = await sessions.daemonHttpUrl(c.req.param("id"));
-  const target = new URL(FS_RAW_PATH, base);
-  target.searchParams.set("path", c.req.query("path") ?? "");
-  if (c.req.query("download")) target.searchParams.set("download", "1");
-  const headers: Record<string, string> = {};
-  const range = c.req.header("range");
-  if (range) headers.range = range;
-  const upstream = await fetch(target, { method: c.req.method, headers });
-  const passed = new Headers();
-  for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition", "last-modified", "cache-control", "x-content-type-options"]) {
-    const v = upstream.headers.get(name);
-    if (v) passed.set(name, v);
-  }
-  return new Response(upstream.body, { status: upstream.status, headers: passed });
-});
-
-// A self-contained HTML file of the Workspace, run as a sandboxed Artifact (ADR-0078): same Daemon
-// access as /fs/raw, but the response carries the Artifact CSP (its `sandbox` directive makes the
-// document's origin opaque wherever it is opened, and its sources are the configured CDN allowlist)
-// and the Daemon refuses files over 16 MiB. Not a download: `.html` on /fs/raw is an attachment.
-api.on(["GET", "HEAD"], "/sessions/:id/fs/app", async (c) => {
-  const base = await sessions.daemonHttpUrl(c.req.param("id"));
-  const target = new URL(FS_APP_PATH, base);
-  target.searchParams.set("path", c.req.query("path") ?? "");
-  const upstream = await fetch(target, { method: c.req.method });
-  const passed = new Headers();
-  for (const name of ["content-type", "content-length", "last-modified", "cache-control"]) {
-    const v = upstream.headers.get(name);
-    if (v) passed.set(name, v);
-  }
-  if (upstream.ok) {
-    passed.set("content-security-policy", htmlAppCsp(settings.htmlAppCdns));
-    passed.set("x-content-type-options", "nosniff");
-    passed.set("referrer-policy", "no-referrer");
-  }
-  return new Response(upstream.body, { status: upstream.status, headers: passed });
-});
-// The App pane asks to be told when its Artifact changes; the Daemon answers with `fs_changed` broadcasts.
-api.post("/sessions/:id/fs/watch", async (c) => {
-  await sessions.fsWatch(c.req.param("id"), FsWatchParams.parse(await c.req.json()));
-  return c.json({ ok: true });
-});
-
-// A file for the next prompt: bytes in the body, stored by the Daemon under the Workspace's
-// uploads folder; answers with the `PromptAttachment` to put on `POST /sessions/:id/prompt`.
-api.put("/sessions/:id/uploads", async (c) => {
-  const base = await sessions.daemonHttpUrl(c.req.param("id"));
-  const target = new URL(FS_UPLOAD_PATH, base);
-  target.searchParams.set("name", c.req.query("name") ?? "");
-  const headers: Record<string, string> = {};
-  for (const name of ["content-type", "content-length"]) {
-    const v = c.req.header(name);
-    if (v) headers[name] = v;
-  }
-  const upstream = await fetch(target, { method: "PUT", headers, body: c.req.raw.body, ...{ duplex: "half" as const } }).catch(() => {
-    throw new HttpError(503, "The Sandbox is still starting; retry the upload in a moment.");
-  });
-  if (!upstream.ok) return c.json({ error: (await upstream.text()) || `upload failed (${upstream.status})` }, upstream.status === 413 || upstream.status === 400 ? upstream.status : 502);
-  return c.json(PromptAttachment.parse(await upstream.json()), 201);
-});
-
-// Terminals: shells in the Workspace, owned by the Daemon. The WebSocket carries
-// raw bytes as binary frames and JSON control messages as text frames.
-api.get("/sessions/:id/terminals", async (c) => c.json(await sessions.terminalList(c.req.param("id"))));
-api.post("/sessions/:id/terminals", async (c) => {
-  const req = PtyOpenParams.parse(await c.req.json());
-  return c.json(await sessions.terminalOpen(c.req.param("id"), req.cols, req.rows), 201);
-});
-api.delete("/sessions/:id/terminals/:ptyId", async (c) => {
-  await sessions.terminalClose(c.req.param("id"), c.req.param("ptyId"));
-  return c.body(null, 204);
-});
-api.get(
-  "/sessions/:id/terminals/:ptyId/ws",
-  upgradeWebSocket((c) => {
-    const id = c.req.param("id") ?? "";
-    const ptyId = c.req.param("ptyId") ?? "";
-    return {
-      onOpen(_evt, ws) {
-        if (!ws.raw) return;
-        void bridgeTerminal(ws.raw, sessions, id, ptyId, log);
-      },
-      onError(err) {
-        log(`terminal ws error: ${String(err)}`);
-      },
-    };
-  }),
-);
-
-// Code pane: VS Code (openvscode-server) inside the Sandbox. Lifecycle under /code-server;
-// the workbench itself, assets and its WebSocket are proxied under /code/* with the browser
-// prefix forwarded, which is what the pane's iframe loads.
-api.post("/sessions/:id/code-server", async (c) => {
-  const params = CodeStartParams.parse(await c.req.json().catch(() => ({})));
-  return c.json(await sessions.codeStart(c.req.param("id"), params));
-});
-api.get("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStatus(c.req.param("id"))));
-api.delete("/sessions/:id/code-server", async (c) => c.json(await sessions.codeStop(c.req.param("id"))));
-api.post("/sessions/:id/code-server/theme", async (c) => {
-  await sessions.codeTheme(c.req.param("id"), CodeThemeParams.parse(await c.req.json()));
-  return c.json({ ok: true });
-});
-api.post("/sessions/:id/code-server/open", async (c) => {
-  await sessions.codeOpen(c.req.param("id"), CodeOpenParams.parse(await c.req.json()));
-  return c.json({ ok: true });
-});
-const forwardedFor = (c: { req: { header: (name: string) => string | undefined } }, id: string): Record<string, string> =>
-  forwardedHeaders(codePrefix(id), c.req.header("x-forwarded-host") ?? c.req.header("host"), c.req.header("x-forwarded-proto") ?? "http");
-api.get(
-  "/sessions/:id/code/*",
-  upgradeWebSocket(async (c) => {
-    const id = c.req.param("id") ?? "";
-    const target = codeTarget(await sessions.daemonHttpUrl(id), codePrefix(id), new URL(c.req.url));
-    const forwarded = forwardedFor(c, id);
-    const protocols = c.req.header("sec-websocket-protocol");
-    return {
-      onOpen(_evt, ws) {
-        if (!ws.raw) return;
-        bridgeCodeSocket(ws.raw, target, forwarded, protocols, log);
-      },
-      onError(err) {
-        log(`code ws error: ${String(err)}`);
-      },
-    };
-  }),
-);
-api.all("/sessions/:id/code", async (c) => {
-  const id = c.req.param("id");
-  return proxyCodeRequest(c.req.raw, codeTarget(await sessions.daemonHttpUrl(id), codePrefix(id), new URL(c.req.url)), forwardedFor(c, id));
-});
-api.all("/sessions/:id/code/*", async (c) => {
-  const id = c.req.param("id");
-  return proxyCodeRequest(c.req.raw, codeTarget(await sessions.daemonHttpUrl(id), codePrefix(id), new URL(c.req.url)), forwardedFor(c, id));
-});
-
-api.post("/sessions/:id/resume", async (c) => c.json(await sessions.resume(c.req.param("id"))));
-
-// noVNC endpoint for the UI: a plain RFB-over-WebSocket stream, proxied to the Sandbox.
-api.get(
-  "/sessions/:id/desktop",
-  upgradeWebSocket(async (c) => {
-    const target = await sessions.desktopUrl(c.req.param("id") ?? "");
-    return {
-      onOpen(_evt, ws) {
-        if (!ws.raw) return;
-        bridgeDesktop(ws.raw, target, log);
-      },
-      onError(err) {
-        log(`desktop ws error: ${String(err)}`);
-      },
-    };
-  }),
-);
-
-api.get(
-  "/ws",
-  upgradeWebSocket((c) => {
-    const p = c.get("principal");
-    const deviceId = p.kind === "device" ? p.device.id : null;
-    let unsubscribe: (() => void) | null = null;
-    let visible = false;
-    const viewerKey = {};
-    const setVisible = (v: boolean): void => {
-      if (v === visible || deviceId === null) return;
-      visible = v;
-      if (v) push.pageShown(deviceId);
-      else push.pageHidden(deviceId);
-    };
-    return {
-      onOpen(_evt, ws) {
-        unsubscribe = sessions.subscribe((msg) => ws.send(JSON.stringify(msg)));
-      },
-      onMessage(evt, ws) {
-        let raw: unknown;
-        try {
-          raw = JSON.parse(String(evt.data));
-        } catch {
-          return;
-        }
-        const parsed = UiClientMessage.safeParse(raw);
-        if (!parsed.success) return;
-        if (parsed.data.type === "visibility") setVisible(parsed.data.visible);
-        else if (parsed.data.type === "viewing") sessions.setViewer(viewerKey, parsed.data.sessionId ? { sessionId: parsed.data.sessionId, pane: parsed.data.pane ?? "chat" } : null);
-        else if (parsed.data.type === "ping") ws.send(JSON.stringify({ type: "pong" } satisfies SessionBroadcast));
-      },
-      onClose() {
-        unsubscribe?.();
-        setVisible(false);
-        sessions.setViewer(viewerKey, null);
-      },
-      onError(err) {
-        log(`ui ws error: ${String(err)}`);
-      },
-    };
-  }),
-);
-
-// Webhook deliveries (ADR-0067): outside the access-token middleware, verified with the follow's secret;
-// the payload is only a hint of which PRs to poll now.
-app.post("/api/hooks/:provider/:followId", async (c) => {
-  const provider = c.req.param("provider");
-  if (provider !== "github" && provider !== "bitbucket") return c.json({ error: "unknown hook" }, 404);
-  const length = Number(c.req.header("content-length") ?? "0");
-  if (length > 1024 * 1024) return c.json({ error: "delivery too large" }, 413);
-  const raw = await c.req.text();
-  const r = followedPrs.onHook(
-    provider,
-    c.req.param("followId"),
-    { signature: c.req.header(provider === "github" ? "x-hub-signature-256" : "x-hub-signature"), event: c.req.header(provider === "github" ? "x-github-event" : "x-event-key"), length },
-    raw,
-  );
-  return c.json(r.body, r.status);
-});
+const deps: RouteDeps = {
+  db,
+  docker,
+  sessions,
+  automations,
+  followedPrs,
+  auth,
+  push,
+  windows,
+  macos,
+  speech,
+  tunnels,
+  connectors,
+  providerLogins,
+  settings: {
+    get: () => settings,
+    set: (next) => {
+      settings = next;
+      saveSettings(settings);
+    },
+  },
+  publicSettings,
+  applySettings: applySettingsRequest,
+  upgradeWebSocket,
+};
+// Hono matches in registration order. Every pair of patterns that can answer the same URL lives in
+// one file (scripts/route-table.txt lists them), so the order of these calls is free.
+registerSystemRoutes(api, deps);
+registerAuthRoutes(api, deps);
+registerPushRoutes(api, deps);
+registerSettingsRoutes(api, deps);
+registerVmBaseRoutes(api, deps);
+registerSpeechRoutes(api, deps);
+registerTunnelRoutes(api, deps);
+registerProviderRoutes(api, deps);
+registerConnectorRoutes(api, deps);
+registerFolderRoutes(api, deps);
+registerSessionRoutes(api, deps);
+registerAutomationRoutes(api, deps);
+registerRepositoryRoutes(api, deps);
+registerPrRoutes(api, deps);
+registerWsRoutes(api, deps);
+// Outside the access-token middleware: the code hosts' webhook deliveries.
+registerPrHookRoute(app, deps);
 
 app.route("/api", api);
 

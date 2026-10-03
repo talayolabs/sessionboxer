@@ -24,6 +24,7 @@
     "test:automations": "tsc -b && node --test scripts/automations.test.mjs",
     "test:guest-vms": "tsc -b && node --test scripts/guest-vms.test.mjs",
     "test:cross-package": "tsc -b && node --test scripts/cross-package.test.mjs",
+    "test:routes": "node --test scripts/routes.test.mjs",
     "audit:tools": "python3 scripts/audit_tools.py",
     "clean": "tsc -b --clean",
     "build:image": "node scripts/build-image.mjs",

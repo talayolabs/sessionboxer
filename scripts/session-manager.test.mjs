@@ -6,7 +6,7 @@
 // the ones observed today, not recomputed from the code. Run after `tsc -b`.
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { MACOS_NO_SNAPSHOT, ROOT_BRANCH_ID, Settings, WINDOWS_NO_SNAPSHOT } from "../packages/protocol/dist/index.js";
+import { ForkSessionRequest, MACOS_NO_SNAPSHOT, ROOT_BRANCH_ID, Settings, WINDOWS_NO_SNAPSHOT } from "../packages/protocol/dist/index.js";
 import { Db } from "../apps/control-plane/dist/db.js";
 import { MissingImageContentError } from "../apps/control-plane/dist/docker.js";
 import { HttpError } from "../apps/control-plane/dist/http-error.js";
@@ -43,6 +43,14 @@ function fakeDocker() {
       return docker.diskBytes;
     },
     containerState: "running",
+    /** Image refs Docker still has (what `fork` checks before reusing a Snapshot). */
+    images: new Set(),
+    async imageExists(ref) {
+      return docker.images.has(ref);
+    },
+    async hasSysbox() {
+      return false;
+    },
     async state() {
       return docker.containerState;
     },
@@ -618,3 +626,104 @@ test("autoSnapshot: a failed automatic Snapshot is logged and announced, and the
   assert.deepEqual(settled, [[id, "end_turn"]]);
   assert.deepEqual(h.manager.snapshots(id), []);
 });
+
+// --- fork() -------------------------------------------------------------------------------------
+// Pinned before the method is split (docs/TECH-DEBT.md, fix 10). Both Providers below are "ready"
+// through the Settings; `provision` runs after `fork` returns and fails against the fake Docker,
+// which is observed as the fork ending in error — the row as `fork` inserted it is what is pinned.
+
+const READY = { providerSecrets: { "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: "tok" }, codex: { CODEX_AUTH_JSON: "{}" } } };
+const forkReq = (req) => ForkSessionRequest.parse(req);
+/** Event bodies, without the `status: error` the failed provisioning appends right after `fork` returns. */
+const bodies = (events) => events.map((e) => e.body).filter((b) => b.type !== "status");
+
+test("fork: what is refused, and why", async () => {
+  const h = makeManager(READY);
+  const { id } = h.addSession();
+  const status = (code, message) => (e) => e instanceof HttpError && e.status === code && (message === undefined || e.message === message);
+  await assert.rejects(() => h.manager.fork(id, forkReq({ snapshotId: "nope" })), status(404, "snapshot nope not found"));
+  await assert.rejects(() => h.manager.fork(id, forkReq({ provider: "codex" })), status(400, "Codex cannot continue Claude Code's conversation; start a new one or hand off."));
+  await assert.rejects(() => h.manager.fork(id, forkReq({ provider: "devin", conversation: "new" })), status(400));
+  await assert.rejects(() => h.manager.fork(id, forkReq({ document: "doc" })), status(400, "A handoff document goes with conversation: handoff."));
+  await assert.rejects(() => h.manager.fork(id, forkReq({ conversation: "handoff" })), status(503, 'Claude Code in "Session s1" is not reachable yet; retry in a moment.'));
+  const windows = h.addSession({ sandbox: { environment: "qemu-windows" } });
+  await assert.rejects(() => h.manager.fork(windows.id, forkReq({})), (e) => e instanceof HttpError && e.message === WINDOWS_NO_SNAPSHOT);
+  const snapshot = await h.manager.snapshot(id, "manual");
+  await assert.rejects(() => h.manager.fork(id, forkReq({ snapshotId: snapshot.id })), status(409, "The image of snapshot 1 is gone from Docker; delete the snapshot."));
+  assert.equal(h.manager.list().length, 2, "no fork row was left behind");
+});
+
+test("fork: same Agent, continuing — takes a Snapshot now, copies the conversation, inherits the Settings and the folder", async () => {
+  const h = makeManager(READY);
+  const origin = h.addSession({ settings: { model: "opus", options: { effort: "high" }, instructions: "  keep it short  ", autoSnapshot: true, snapshotKeep: 3 } });
+  h.db.appendEvent(origin.id, { type: "user_prompt", text: "hi" });
+  h.db.appendEvent(origin.id, { type: "turn_ended", stopReason: "end_turn" });
+  h.broadcasts.length = 0;
+
+  const fork = await h.manager.fork(origin.id, forkReq({ savedMessages: ["first", "second"], prompt: "carry on" }));
+  const snapshot = h.manager.snapshots(origin.id)[0];
+  assert.equal(snapshot.reason, "manual");
+  assert.match(fork.id, /^[0-9a-f]{12}$/);
+  assert.equal(fork.title, "Session s1 (fork 1)");
+  assert.equal(fork.provider, "claude-code");
+  assert.equal(fork.status, "creating");
+  assert.deepEqual(fork.workspaceSource, { type: "fork", sessionId: origin.id, snapshotId: snapshot.id, label: "Session s1 @ snapshot 1" });
+  assert.deepEqual(fork.repos, []);
+  assert.equal(fork.settings.model, "opus");
+  assert.deepEqual(fork.settings.options, { effort: "high" });
+  assert.equal(fork.settings.inspectLlm, false, "the origin's choice, not the default for a fresh Claude Code Session");
+  assert.equal(fork.settings.instructions, "keep it short");
+  assert.deepEqual([fork.settings.autoSnapshot, fork.settings.snapshotKeep], [true, 3]);
+  assert.deepEqual(fork.settings.sandbox, { environment: "docker-linux", dockerMode: "none", cpus: null, memoryGb: null, gitIdentity: { name: "", email: "" } });
+  assert.equal(fork.containerId, null);
+  assert.equal(fork.queueRunning, true, "a fork with saved messages starts with its queue playing");
+  assert.deepEqual([fork.createdBy, fork.pinned, fork.folderId, fork.activeBranchId], [null, false, null, ROOT_BRANCH_ID]);
+  assert.deepEqual(h.db.listSavedMessages(fork.id).map((m) => m.text), ["first", "second"]);
+  assert.deepEqual(bodies(h.manager.events(fork.id)), [
+    { type: "user_prompt", text: "hi" },
+    { type: "turn_ended", stopReason: "end_turn" },
+    { type: "forked", fromSessionId: origin.id, fromTitle: "Session s1", snapshotId: snapshot.id, snapshotOrdinal: 1, conversation: "continue" },
+  ]);
+  const announced = h.broadcasts.findIndex((b) => b.type === "session" && b.session.id === fork.id);
+  assert.ok(announced > 0, "the fork is announced after the Snapshot's broadcasts");
+  assert.equal(h.broadcasts[announced + 1].event.body.type, "forked", "its marker event follows at once");
+  assert.deepEqual(h.manager.pendingPrompts.get(fork.id), { text: "carry on" });
+
+  await settle();
+  assert.equal(h.db.getSession(fork.id).status, "error", "provisioning ran after the return and failed against the fake Docker");
+});
+
+test("fork: another Agent, new conversation — its own defaults, the origin's Provider named in the marker, Settings from the request win", async () => {
+  const h = makeManager(READY);
+  const origin = h.addSession({ settings: { model: "opus", options: { effort: "high" } } });
+  h.db.appendEvent(origin.id, { type: "user_prompt", text: "hi" });
+  const fork = await h.manager.fork(origin.id, forkReq({ provider: "codex", conversation: "new", settings: { instructions: "be brief", sandbox: { docker: true, cpus: 2 } } }), origin.id);
+  assert.equal(fork.title, "Session s1 (Codex, fork 1)");
+  assert.equal(fork.provider, "codex");
+  assert.deepEqual([fork.settings.model, fork.settings.options, fork.settings.inspectLlm], [null, {}, false]);
+  assert.equal(fork.settings.instructions, "be brief");
+  assert.deepEqual([fork.settings.sandbox.dockerMode, fork.settings.sandbox.cpus, fork.settings.sandbox.memoryGb], ["privileged", 2, null]);
+  assert.equal(fork.queueRunning, false);
+  assert.deepEqual(fork.createdBy, { sessionId: origin.id });
+  assert.deepEqual(bodies(h.manager.events(fork.id)), [
+    { type: "forked", fromSessionId: origin.id, fromTitle: "Session s1", snapshotId: h.manager.snapshots(origin.id)[0].id, snapshotOrdinal: 1, conversation: "new", fromProvider: "claude-code" },
+  ]);
+  assert.equal(h.manager.pendingPrompts.has(fork.id), false);
+});
+
+test("fork: from an existing Snapshot with a written handoff — no new Snapshot, the document becomes the first prompt", async () => {
+  const h = makeManager(READY);
+  const origin = h.addSession();
+  const snapshot = await h.manager.snapshot(origin.id, "manual");
+  h.docker.images.add(snapshot.imageId);
+  const fork = await h.manager.fork(origin.id, forkReq({ snapshotId: snapshot.id, conversation: "handoff", document: "## State\nhalf done", prompt: "finish it", title: "Second half" }));
+  assert.equal(fork.title, "Second half");
+  assert.equal(h.manager.snapshots(origin.id).length, 1, "the given Snapshot is reused");
+  assert.deepEqual(bodies(h.manager.events(fork.id)).map((b) => [b.type, b.conversation]), [["forked", "handoff"]]);
+  const pending = h.manager.pendingPrompts.get(fork.id);
+  assert.equal(pending.origin, "handoff");
+  assert.match(pending.text, /^You are taking over the work of a previous Claude Code session on this machine \(Session "Session s1", forked at snapshot 1/);
+  assert.ok(pending.text.includes("## State\nhalf done"));
+  assert.ok(pending.text.includes("finish it"));
+});
+

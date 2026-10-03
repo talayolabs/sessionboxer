@@ -234,8 +234,13 @@ HEAD: lint, typecheck, build, 11 suites green. 11 is on `main` — f569174 (move
 `shared.ts`; the moved bodies line-diffed against the original: 0 non-plumbing lines) and 0d1dba3 (`useSectionState` in
 `shared.ts` and one `use<Section>Settings(settings)` next to each section component, returning `{ values, set, dirty }`;
 `SettingsView.tsx` 492 → 260 lines; on a worked example that fills every control of every section the
-`PUT /api/settings` body is byte-identical before and after). 12/14 are open; 12 touches only the web PR panes and can
-run as a parallel session.
+`PUT /api/settings` body is byte-identical before and after). 12 is on `main` — aa966e6 (`apps/web/src/PrThreads.tsx`, 346 lines:
+`usePrSelection(items, checks)` for the selection set, show-resolved switch, visible items, threads and sorted/failed
+checks, plus `PrChecks` and `PrThreads`; `FollowedPrDetail` 971 → 814 lines, `PullRequests.tsx` 837 → 609; JSX moved
+verbatim — the moved blocks line-diffed against both originals: 0 non-plumbing lines; the action menus, the "all failed"
+selector, the addressed-state labels and the select-all / self-author titles travel as props). jscpd
+`apps/web/src --min-lines 10`: 273 → 151 duplicated lines, 17 → 12 clones; the four `Prs.tsx` ↔ `PullRequests.tsx`
+clones left are the breadcrumb/toolbar header, not the PR blocks. 14 is open.
 
 Deliberately not recommended: replacing `HttpError` in the domain classes with a domain error type
 and one HTTP mapping. It is the textbook fix for "error handling mixed with logic", but every

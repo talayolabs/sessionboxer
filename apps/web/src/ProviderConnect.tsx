@@ -265,6 +265,8 @@ function credentialField(provider: Provider): {
   label: string;
   multiline: boolean;
   file: boolean;
+  /** What the import button names when it is not `auth.json`. */
+  fileName?: string;
   placeholder: string;
 } {
   switch (provider) {
@@ -311,7 +313,7 @@ function credentialField(provider: Provider): {
         placeholder: '{ "anthropic": { "type": "oauth", … } } or sk-…',
       };
     case "kimi":
-      return { label: "Kimi CLI login (kimi-code.json)", multiline: true, file: true, placeholder: '{ "access_token": …, "refresh_token": … }' };
+      return { label: "Kimi CLI login (kimi-code.json)", multiline: true, file: true, fileName: "kimi-code.json", placeholder: '{ "access_token": …, "refresh_token": … }' };
     case "fx":
       return {
         label: "fx login (contents of ~/.fx/auth.json, or an AI Gateway API key)",
@@ -324,6 +326,7 @@ function credentialField(provider: Provider): {
         label: "GitHub Copilot login (contents of ~/.copilot/config.json, or a GitHub token)",
         multiline: true,
         file: true,
+        fileName: "config.json",
         placeholder: "{ … } or github_pat_…",
       };
     case "vibe":
@@ -547,7 +550,7 @@ export function ProviderConnectDialog({
                 disabled={busy}
                 onClick={() => fileRef.current?.click()}
               >
-                Import auth.json…
+                Import {field.fileName ?? "auth.json"}…
               </button>
             )}
             <button

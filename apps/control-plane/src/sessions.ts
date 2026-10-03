@@ -1095,6 +1095,8 @@ export class SessionManager {
     }
   }
 
+  // --- Lifecycle: boot, create, fork, provision --------------------------------
+
   async boot(): Promise<void> {
     this.log(`sandbox reach: ${await this.docker.detectReach()}`);
     await this.docker.ensureNetwork();
@@ -1629,6 +1631,8 @@ export class SessionManager {
     }
   }
 
+  // --- Prompts and turns -------------------------------------------------------
+
   /**
    * A prompt from a scheduled task (ADR-0047): sent right away when the Session is idle, put at
    * the end of its queue (resuming it if paused) when a turn is running, held until the
@@ -2156,6 +2160,8 @@ export class SessionManager {
     return this.snapshotPolicy.deleteAll(id);
   }
 
+  // --- Stop, resume, delete, edit -----------------------------------------------
+
   async stop(id: string): Promise<Session> {
     const s = this.get(id);
     if (!s.containerId) throw new HttpError(409, "Session has no Sandbox.");
@@ -2288,6 +2294,8 @@ export class SessionManager {
       ? this.get(id)
       : s;
   }
+
+  // --- Pushing Settings to the Daemons -----------------------------------------
 
   /**
    * Tells the Session's Daemon whether the Agent's model API calls go through the inspector; the
@@ -2561,6 +2569,8 @@ export class SessionManager {
   async setUtilitiesEnabled(id: string, ids: string[]): Promise<Session> {
     return this.edit(id, { settings: { utilitiesEnabled: ids } });
   }
+
+  // --- Daemon connection and events ---------------------------------------------
 
   private async connect(id: string, containerId: string): Promise<void> {
     this.disconnect(id);

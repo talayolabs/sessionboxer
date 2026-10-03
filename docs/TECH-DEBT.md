@@ -96,10 +96,11 @@ is a separate decision (would be the first React test; worth it only once `App.t
 
 ## Prioritised fixes
 
-**Status (2026-10-03):** 1–5 are on `main` — e63d067 (provider registry: `apps/control-plane/src/provider-auth.ts`,
+**Status (2026-10-03):** 1–6 are on `main` — e63d067 (provider registry: `apps/control-plane/src/provider-auth.ts`,
 `npm run test:provider-auth`), 02fa4f8 (`npm run test:schema`), 7258657 (App.tsx split; move-only),
-9f284e0 (lint gate, `npm run lint`), 77dc012 (protocol split by domain; move-only, acyclic barrel).
-6–7 are open; 7 still wants the SessionManager harness.
+9f284e0 (lint gate, `npm run lint`), 77dc012 (protocol split by domain; move-only, acyclic barrel),
+fbd8c9b (`DaemonError` + `DAEMON_ERROR_CODES`, ADR-0080, `npm run test:daemon-errors`). 7 is open and still wants the
+SessionManager harness.
 
 Ordered by risk-reduction per hour. Each is a behaviour-preserving commit on its own; none depends on
 the one after it.

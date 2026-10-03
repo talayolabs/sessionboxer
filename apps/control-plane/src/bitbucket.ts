@@ -22,11 +22,6 @@ export function normalizeBitbucketHost(input: string): string {
   return s;
 }
 
-/** Where a user creates an HTTP access token on Data Center 8.x/9.x (works without the username). */
-export function bitbucketTokenPageUrl(host: string): string {
-  return `https://${host}/plugins/servlet/access-tokens/`;
-}
-
 export interface BitbucketUser {
   /** Login name (`j.perelli`), what git and the REST API take as the user. */
   name: string;

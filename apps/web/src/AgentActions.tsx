@@ -1,4 +1,3 @@
-import type { UiHint } from "@sessionboxer/protocol";
 
 /** What the Agent did through the `sessionboxer` MCP (ADR-0062): a compact transcript marker. */
 export interface AgentActionItem {
@@ -60,7 +59,3 @@ export function userIsTyping(): boolean {
   return false;
 }
 
-/** Whether a `ui_hint` applies to the page: the same Session is on screen and nothing is being typed. */
-export function uiHintApplies(hint: UiHint, selectedSessionId: string | null): boolean {
-  return hint.sessionId === selectedSessionId && !userIsTyping();
-}

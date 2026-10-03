@@ -114,12 +114,6 @@ export function splitFileRefs(text: string, base = ""): TextPart[] {
   return parts;
 }
 
-/** First file a tool call touched, from its title (`Wrote ./a.ts`, `Read src/b.ts`). */
-export function firstFileRef(text: string): FileRef | null {
-  for (const part of splitFileRefs(text)) if (typeof part !== "string") return part.ref;
-  return null;
-}
-
 /** hast properties carrying a FileRef; the Markdown components turn them into a FileLink. */
 export function refProperties(ref: FileRef): Element["properties"] {
   const props: Element["properties"] = { dataFile: ref.path };

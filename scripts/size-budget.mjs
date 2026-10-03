@@ -21,7 +21,7 @@ const BUDGET = {
   "packages/sandbox-daemon/src/index.ts": 1040,
   "packages/sandbox-daemon/src/guest.ts": 1030,
   "packages/protocol/src/themes.ts": 1000,
-  "apps/web/src/SessionSettingsForm.tsx": 920,
+  "apps/web/src/SessionSettingsForm.tsx": 810,
   "apps/web/src/Transcript.tsx": 880,
   "apps/control-plane/src/macos.ts": 830,
   "apps/control-plane/src/github-pr.ts": 820,

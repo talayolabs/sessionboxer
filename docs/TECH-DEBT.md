@@ -484,3 +484,14 @@ adds props, not depth) or `Devices` (one page, nine polling effects — a `usePa
 be the move, when it next changes); replacing the `Pick<SessionViewProps>` typing with a context
 (changes re-render timing); the daemon `AgentManager` harness and `HttpError` out of the domain
 classes (rounds 2–3's reasoning stands); unifying `host-sync`/`workspace-sync`.
+
+### Status
+
+21 is on `main` — 418643b (three dead exports gone), 4790422 (`useSectionState` at `apps/web/src/useSectionState.ts`,
+`settings/shared.ts` re-exports), 27063e7 (`useBaseDiskAction()` for `WindowsBase`/`MacosBase`, 30 lines → 4 + the hook)
+and fc11ec7 (`session-settings-model.ts`: the five converters out of `SessionSettingsForm.tsx` verbatim, `draftFromInput`
+moved in from `form-model.ts` and no longer takes `draftFromDefaults`, `buildAction` no longer takes `draftToInput`;
+`scripts/session-settings.test.mjs`, 6 pins, `npm run test:session-settings` in CI). One side effect to know:
+`apps/web/tsconfig.json` gained `allowImportingTsExtensions` so `form-model.ts` can import the model with its `.ts`
+extension — that is what lets `node --test` load a model that depends on another model without a build.
+`SessionSettingsForm.tsx` 916 → 808 (budget 920 → 810), jscpd 16 → 15 clones (0.34 %), tests 277 → 283. 22–26 are open.

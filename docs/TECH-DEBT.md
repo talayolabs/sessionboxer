@@ -135,3 +135,87 @@ the one after it.
 Not recommended: replacing `provider === "x"` branches in the daemon with polymorphism (the branches
 *are* the knowledge), introducing a state-management library in the web app, or splitting
 `@sessionboxer/protocol` into several npm packages.
+
+---
+
+# Round 2 (2026-10-03, after fixes 1–7)
+
+Same five skills, same diagnostics, run against `main` at 7315c4c. Baseline now: `npm run lint`,
+`typecheck`, `build`, 8 test suites (88 tests, 1,616 lines) in CI; jscpd (≥70 tokens, ≥8 lines) finds
+38 clone pairs = 0.9 % of tokens.
+
+## The shape of the codebase, now
+
+| File | Lines | Round 1 | What changed |
+|---|---|---|---|
+| `apps/control-plane/src/sessions.ts` | 2,894 | 3,208 | `SessionQueue`, `SnapshotPolicy`, provider auth out; 147 methods remain, 92 `HttpError` throws |
+| `apps/web/src/SettingsView.tsx` | 1,732 | (in App.tsx) | 64 `useState`, one 1,400-line component — the biggest React file |
+| `apps/web/src/App.tsx` | 1,322 | 4,475 | still 50 `useState`: routing, WebSocket, notifications, onboarding, dialogs |
+| `apps/control-plane/src/agent-tools.ts` | 1,176 | — | one 44-case `switch (tool)` dispatch (fine: table-shaped) |
+| `apps/control-plane/src/index.ts` | 1,149 | 1,212 | 166 routes, all thin except `/fs/raw`, `/fs/app`, `/ws` (27–45 lines) |
+| `packages/sandbox-daemon/src/agent.ts` | 1,147 | — | unchanged |
+| `packages/protocol/src/index.ts` | 36 | 5,286 | barrel over 34 domain files |
+
+## Scores
+
+| Skill | Round 1 | Round 2 | Rows still failing |
+|---|---|---|---|
+| Pragmatic Programmer | 4/10 | 8/10 | DRY (partly: the clone pairs below); broken windows (partly: see § housekeeping) |
+| Clean Code | 4/10 | 6/10 | functions under 20 lines (`fork` 120, `createClaimed` 87, `prompt` 50); error handling separate from logic (partly: domain classes throw `HttpError` with statuses — 92 in `SessionManager`, 14 `Automations`, 15 `PullRequests`, 19 `FollowedPrs`); SRP (partly); test per public method (no: `Automations`, `PullRequests`, `FollowedPrs`, routes, all of `apps/web`) |
+| Refactoring Patterns | — | 7/10 | Long Method; Duplicated Code (pairs, no triples left); polymorphism where apt (partly: `WindowsVms`/`MacosVms` both implement `GuestVms` yet copy ~100 lines instead of sharing a base) |
+| Philosophy of Software Design | 5/10 | 7/10 | one-sentence module (`SessionManager` still no); each module hides a decision (partly: `Prs.tsx` and `PullRequests.tsx` both own "how a PR's threads and checks render"); newcomer boundaries (partly: route ↔ `SessionManager` ↔ deps-object classes is now a visible pattern but unwritten) |
+| Working with Legacy Code | — | 7/10 | every fix in round 1 landed with pins first; the untested classes above are the next change points |
+
+## Duplicated knowledge (jscpd pairs that matter)
+
+| Pair | Lines | What it is | Verdict |
+|---|---|---|---|
+| `Prs.tsx` `FollowedPrDetail` ↔ `PullRequests.tsx` `PrPane` | 160 (60 differ) | checks list + "Comments & reviews" thread list with select-all / show-resolved | Extract Component `PrThreads` (identical part); the differences are real (followed PRs have no "addressed" state, no "all failed" selection) and stay in the callers as props |
+| `windows.ts` `WindowsVms` ↔ `macos.ts` `MacosVms` | ~100 across 6 clones | `start/stop/state/remove/diskUsage`, create-volume-then-cleanup, install log follower, "N Sessions still use the base disk" | Pull Up Method into an abstract `QemuVms` in `vm-host.ts`; the guest-specific parts (`guestEnv`, OpenCore files, SSH provisioning) stay in the subclasses |
+| `McpServersEditor.tsx` ↔ `UtilitiesEditor.tsx` `KeyValueList` | 45 | the same name/value/secret row editor | one component in `ui.tsx`, `placeholder` and `allowSecret` as props |
+| `code-proxy.ts` ↔ `desktop-proxy.ts` | 22 | WebSocket bridge: buffer-until-open, close-both | Extract Function `bridgeSockets(client, upstream)`; the websockify 1005 workaround is a parameter |
+| daemon `bb-credentials.ts` ↔ `gh-credentials.ts` | 22 | `unquote`/`yamlKey`/`yamlString` for the `gh`/Bitbucket hosts files | move to `yaml-lite.ts` |
+| `followed-prs.ts` ×13, `PullRequests.tsx` ×9 `provider === "github"` | — | mostly genuinely different API paths (keep); ~8 are display facts ("GitHub"/"Bitbucket", ` on ${host}`) | a `PR_HOST` table next to `PR_PROVIDER_LABEL` for the display facts only |
+
+Not duplication worth touching: `host-sync.ts`/`workspace-sync.ts` (a 12-line `sha256` helper on
+different sides of the wire), `settings.ts`/`session-settings.ts` schema shapes (the per-session
+override mirrors the global on purpose), `agent.ts` 523/548 (two symmetric branches).
+
+## Housekeeping (broken windows)
+
+- `sessions.ts`: `boot`, `create`, `createClaimed`, `fork`, `provision`, `startSandbox`, `prompt` sit
+  under the `// --- Terminals` header (lines 1098–1716); the lifecycle header was never written. Add
+  `// --- Lifecycle` and `// --- Prompting` headers; move nothing.
+- `fork()` is 120 lines doing five things (validate, pick settings, snapshot or reuse image, create
+  the row, hand off). Extract Method ×4 after pinning it in the harness.
+- Two `TODO`s, four `eslint-disable`/`@ts-expect-error` in 66 k lines: fine.
+
+## Safety-net map, round 2
+
+| Change point | Seam | Characterization test to write |
+|---|---|---|
+| `Automations` (706 lines, 0 tests; a wrong tick creates Sessions at the wrong time) | `AutomationDeps` object; `parseCron`/`scheduleOf`/`fillPlaceholders`/`preview` are pure | pure functions: cron → next 3 occurrences in a timezone, DST day; placeholders; `create`/`update` 400s; `tick()` with a fake `sessions` and a fixed `Date` → which runs start |
+| `fork()` / `createClaimed()` | the existing `makeManager()` harness | fork from snapshot vs live, cross-provider refusal (400), `conversation: "continue"` rules, handoff cap |
+| `WindowsVms`/`MacosVms` pull-up | `VmHost` is a class the ctor receives | fake `VmHost` recording calls: `create` cleans the volume on failure, `removeBase` refuses with N Sessions |
+| `PrThreads`, `KeyValueList`, `SettingsView` sections | none (no React runner) | `tsc` + `npm run build`; move-only extractions verified by line-diff as in fix 3 |
+
+## Prioritised fixes, round 2
+
+Ordered by risk-reduction per hour; each a behaviour-preserving commit with its pins first.
+
+8. **`KeyValueList` → `ui.tsx`; daemon `yaml-lite.ts`; `bridgeSockets()`.** Three mechanical
+   de-duplications, ~90 lines removed, `tsc` is the test.
+9. **`Automations` characterization tests** (`npm run test:automations`). The one untested class
+   that acts on a timer.
+10. **`sessions.ts` housekeeping**: section headers; pin `fork()` in the harness, then Extract Method.
+11. **`SettingsView` split by section** — `EnvironmentSettings`, `AgentSettings`, `McpSettings`,
+    `AutoQaSettings`, `DebugSettings` as files, move-only like fix 3; then the state hook per section.
+12. **`PrThreads` component** shared by `FollowedPrDetail` and `PrPane` (the 100 identical lines).
+13. **`QemuVms` base class** for `WindowsVms`/`MacosVms`, with the fake-`VmHost` pins first.
+14. **`PR_HOST` display table**; `RepoSync` out of `SessionManager` (next cluster, same harness).
+
+Deliberately not recommended: replacing `HttpError` in the domain classes with a domain error type
+and one HTTP mapping. It is the textbook fix for "error handling mixed with logic", but every
+message is already user-facing and status-correct, nothing switches on the strings, and the change
+would touch ~150 throws for no behaviour gain. Revisit only if a second transport (CLI, MCP) starts
+needing different mappings.

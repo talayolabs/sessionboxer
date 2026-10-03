@@ -141,7 +141,7 @@ interface LegacyRunRow {
 }
 
 const DAY_MS = 24 * 60 * 60_000;
-const SELECT = `SELECT a.*, (SELECT COUNT(*) FROM automation_runs r WHERE r.automation_id = a.id AND r.queued_at >= ?) AS runs_today FROM automations a`;
+const SELECT = `SELECT a.*, (SELECT COUNT(*) FROM automation_runs r WHERE r.automation_id = a.id AND r.queued_at >= ? AND r.status <> 'skipped') AS runs_today FROM automations a`;
 
 function rowToAutomation(r: AutomationRow): Automation {
   return {

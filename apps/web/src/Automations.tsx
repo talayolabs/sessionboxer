@@ -176,7 +176,7 @@ export function Automations({
       <p className="muted">
         {forSession
           ? "Prompts the Control Plane sends to this Session on a schedule (cron syntax, in the time zone of your choice); every automation is under Automations in the sidebar."
-          : "A trigger, an action and limits, run by the Control Plane while it is up: on a schedule, or when a followed pull request opens, gets commits, comments or a failing check. An automation prompts a Session, starts one from a template, reviews or QA-tests a PR, or just notifies you."}
+          : "A trigger, an action and limits, run by the Control Plane while it is up: on a schedule, when a followed pull request opens, gets commits, comments or a failing check, or when an MCP server reports an event. An automation prompts a Session, starts one from a template, reviews or QA-tests a PR, or just notifies you."}
       </p>
       {automations.length === 0 && <p className="placeholder-inline muted">{forSession ? "Nothing prompts this Session yet." : "No automations yet."}</p>}
       <ul className="schedule-list">

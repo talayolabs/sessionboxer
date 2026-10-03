@@ -1,9 +1,18 @@
-import { DEFAULT_CLAUDE_MODELS, DEFAULT_HTML_APP_CDNS, DEFAULT_INSTRUCTIONS } from "@sessionboxer/protocol";
+import { DEFAULT_CLAUDE_MODELS, DEFAULT_HTML_APP_CDNS, DEFAULT_INSTRUCTIONS, type PublicSettings } from "@sessionboxer/protocol";
 import { deliveryNote } from "../SessionSettingsForm";
 import { Caption } from "../ui";
-import { parseOriginList, type Setter } from "./shared";
+import { parseOriginList, useSectionState, type Setter } from "./shared";
 
 /** Global settings → Agent: model aliases, the system prompt and the HTML app CDN allowlist. */
+/** Form state of the Agent section; `SettingsView` spreads `values` and `set` into `<AgentSettings>`. */
+export function useAgentSettings(settings: PublicSettings) {
+  return useSectionState({
+    claudeModels: settings.claudeModels.join(", "),
+    instructions: settings.instructions,
+    htmlAppCdns: settings.htmlAppCdns.join("\n"),
+  });
+}
+
 export function AgentSettings({
   claudeModels,
   setClaudeModels,

@@ -4,7 +4,7 @@ import { api } from "../api";
 import { formatMb } from "../format";
 import { ThemeFieldset } from "../ThemePicker";
 import { Caption, Select } from "../ui";
-import type { Setter } from "./shared";
+import { useSectionState, type Setter } from "./shared";
 
 /** What is on disk for dictation (whisper-cli and models), with a download-now button and per-model removal. */
 function SpeechAssets({ selected, saved }: { selected: SpeechModel; saved: SpeechModel }) {
@@ -87,6 +87,14 @@ function SpeechAssets({ selected, saved }: { selected: SpeechModel; saved: Speec
 }
 
 /** Global settings → Interface: the theme of this browser and dictation. */
+/** Form state of the Interface section; `SettingsView` spreads `values` and `set` into `<InterfaceSettings>`. */
+export function useInterfaceSettings(settings: PublicSettings) {
+  return useSectionState({
+    speechModel: settings.speech.model,
+    speechLanguage: settings.speech.language,
+  });
+}
+
 export function InterfaceSettings({
   settings,
   speechModel,

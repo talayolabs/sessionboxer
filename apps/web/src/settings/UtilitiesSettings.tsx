@@ -1,11 +1,20 @@
-import type { PublicUtilityDef, ProcedureDef, UtilityEnvironment } from "@sessionboxer/protocol";
+import type { PublicUtilityDef, ProcedureDef, UtilityEnvironment, PublicSettings } from "@sessionboxer/protocol";
 import { UtilitiesEditor } from "../UtilitiesEditor";
 import { Caption } from "../ui";
-import type { Setter } from "./shared";
+import { useSectionState, type Setter } from "./shared";
 
 const UTILITIES_DOCS = "https://sessionboxer.talayolabs.com/guide/#utilities";
 
 /** Global settings → Utilities: the Utilities, their Environments and procedures. */
+/** Form state of the Utilities section; `SettingsView` spreads `values` and `set` into `<UtilitiesSettings>`. */
+export function useUtilitiesSettings(settings: PublicSettings) {
+  return useSectionState({
+    utilities: settings.utilities,
+    utilityEnvironments: settings.utilityEnvironments,
+    procedures: settings.procedures,
+  });
+}
+
 export function UtilitiesSettings({
   utilities,
   setUtilities,

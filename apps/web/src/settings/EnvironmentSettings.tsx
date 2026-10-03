@@ -15,7 +15,7 @@ import { formatMb } from "../format";
 import { MacosBase } from "../MacosBase";
 import { DockerModeNote } from "../SessionSettingsForm";
 import { Caption, Select } from "../ui";
-import type { Setter } from "./shared";
+import { useSectionState, type Setter } from "./shared";
 
 /** The shared Windows base disk (ADR-0057): its state and the Install / Cancel / Delete buttons. */
 function WindowsBase({
@@ -108,6 +108,28 @@ const DOCKER_POOL_SUGGESTIONS = [
 ];
 
 /** Global settings → Machine: Sandbox limits, Docker, snapshots, the Windows and macOS bases and TLS certificates. */
+/** Form state of the Machine section; `SettingsView` spreads `values` and `set` into `<EnvironmentSettings>`. */
+export function useEnvironmentSettings(settings: PublicSettings) {
+  return useSectionState({
+    cpus: String(settings.sandboxCpus),
+    memory: String(settings.sandboxMemoryGb),
+    docker: settings.dockerInSandbox,
+    dockerPool: settings.sandboxDockerAddressPool,
+    windowsVersion: settings.windows.version,
+    windowsRam: String(settings.windows.ramGb),
+    windowsCpus: String(settings.windows.cpus),
+    windowsDisk: String(settings.windows.diskGb),
+    macosVersion: settings.macos.version,
+    macosRam: String(settings.macos.ramGb),
+    macosCpus: String(settings.macos.cpus),
+    macosDisk: String(settings.macos.diskGb),
+    autoSnapshot: settings.autoSnapshot,
+    snapshotKeep: String(settings.snapshotKeep),
+    trustHostCaCerts: settings.trustHostCaCerts,
+    extraCaCerts: settings.extraCaCerts,
+  });
+}
+
 export function EnvironmentSettings({
   settings,
   cpus,

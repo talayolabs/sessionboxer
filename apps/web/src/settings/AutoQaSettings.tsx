@@ -1,7 +1,15 @@
+import type { PublicSettings } from "@sessionboxer/protocol";
 import { Caption } from "../ui";
-import type { Setter } from "./shared";
+import { useSectionState, type Setter } from "./shared";
 
 /** Global settings → Auto QA: the end-to-end verification default. */
+/** Form state of the Auto QA section; `SettingsView` spreads `values` and `set` into `<AutoQaSettings>`. */
+export function useAutoQaSettings(settings: PublicSettings) {
+  return useSectionState({
+    e2eVerify: settings.e2eVerify,
+  });
+}
+
 export function AutoQaSettings({
   e2eVerify,
   setE2eVerify,

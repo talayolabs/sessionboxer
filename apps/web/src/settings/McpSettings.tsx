@@ -11,9 +11,27 @@ import { GitAccounts } from "../GitAccounts";
 import { McpServersEditor } from "../McpServersEditor";
 import { DESKTOP_MCP_DOCS, SESSIONBOXER_MCP_DOCS } from "../SessionSettingsForm";
 import { Caption, Select } from "../ui";
-import type { Setter } from "./shared";
+import { useSectionState, type Setter } from "./shared";
 
 /** Global settings → MCP & connectors: the built-in MCPs' options, Git accounts and identity, the GitHub App and the registered MCP servers. */
+/** Form state of the MCP & connectors section; `SettingsView` spreads `values` and `set` into `<McpSettings>`. */
+export function useMcpSettings(settings: PublicSettings) {
+  return useSectionState({
+    gitUserName: settings.gitUserName,
+    gitUserEmail: settings.gitUserEmail,
+    agentTools: settings.agentTools,
+    approveCreate: settings.approveCreate,
+    agentChildrenCap: String(settings.agentChildrenCap),
+    narrationMode: settings.recordingNarration.mode,
+    narrationAskAbove: String(settings.recordingNarration.askAboveSeconds),
+    mcpServers: settings.mcpServers,
+    githubClientId: settings.connectors.github.clientId,
+    githubClientSecret: "",
+    forgetGithubSecret: false,
+    githubAppOpen: settings.connectors.github.clientId.trim() !== "" || settings.connectors.github.clientSecretSet,
+  });
+}
+
 export function McpSettings({
   settings,
   onStored,

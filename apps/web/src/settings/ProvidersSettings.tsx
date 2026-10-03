@@ -3,7 +3,7 @@ import { ANTHROPIC_DEFAULT_BASE_URL, type CodexLogin, type CursorLogin, type Ope
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
 import { Caption } from "../ui";
-import type { Setter } from "./shared";
+import { useSectionState, type Setter } from "./shared";
 
 /** One line about the stored Codex login, from the metadata the Control Plane exposes (never the tokens). */
 function describeCodexLogin(login: CodexLogin): string {
@@ -31,6 +31,32 @@ function describeFxLogin(login: FxLogin): string {
 }
 
 /** Global settings → Providers: the stored Provider logins and the Claude API base URL / proxy credentials. */
+/** Form state of the Providers section; `SettingsView` spreads `values` and `set` into `<ProvidersSettings>`. */
+export function useProvidersSettings(settings: PublicSettings) {
+  return useSectionState({
+    token: "",
+    devinToken: "",
+    codexAuth: "",
+    forgetCodexAuth: false,
+    cursorLogin: "",
+    forgetCursorLogin: false,
+    piAuth: "",
+    forgetPiAuth: false,
+    piApiKeys: "",
+    forgetPiApiKeys: false,
+    opencodeAuth: "",
+    forgetOpenCodeAuth: false,
+    fxLogin: "",
+    forgetFxLogin: false,
+    claudeBaseUrl: settings.claudeApi.baseUrl,
+    claudeAuthToken: "",
+    claudeApiKey: "",
+    forgetClaudeAuthToken: false,
+    forgetClaudeApiKey: false,
+    guided: false,
+  });
+}
+
 export function ProvidersSettings({
   settings,
   onStored,
@@ -55,7 +81,7 @@ export function ProvidersSettings({
   forgetPiApiKeys,
   setForgetPiApiKeys,
   opencodeAuth,
-  setOpenCodeAuth,
+  setOpencodeAuth,
   forgetOpenCodeAuth,
   setForgetOpenCodeAuth,
   fxLogin,
@@ -99,7 +125,7 @@ export function ProvidersSettings({
   forgetPiApiKeys: boolean;
   setForgetPiApiKeys: Setter<boolean>;
   opencodeAuth: string;
-  setOpenCodeAuth: Setter<string>;
+  setOpencodeAuth: Setter<string>;
   forgetOpenCodeAuth: boolean;
   setForgetOpenCodeAuth: Setter<boolean>;
   fxLogin: string;
@@ -155,7 +181,7 @@ export function ProvidersSettings({
   const importOpenCodeAuth = (file: File | undefined) => {
     if (!file) return;
     void file.text().then((text) => {
-      setOpenCodeAuth(text);
+      setOpencodeAuth(text);
       setForgetOpenCodeAuth(false);
     });
   };
@@ -493,7 +519,7 @@ export function ProvidersSettings({
           autoComplete="off"
           value={opencodeAuth}
           onChange={(e) => {
-            setOpenCodeAuth(e.target.value);
+            setOpencodeAuth(e.target.value);
             if (e.target.value.trim()) setForgetOpenCodeAuth(false);
           }}
           placeholder={opencodeAuthSet ? "Leave empty to keep the current login" : "Paste the contents of OpenCode's auth.json, or an OpenCode Zen API key"}
@@ -520,7 +546,7 @@ export function ProvidersSettings({
               checked={forgetOpenCodeAuth}
               onChange={(e) => {
                 setForgetOpenCodeAuth(e.target.checked);
-                if (e.target.checked) setOpenCodeAuth("");
+                if (e.target.checked) setOpencodeAuth("");
               }}
             />{" "}
             Forget the stored login

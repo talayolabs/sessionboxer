@@ -1,5 +1,5 @@
 import type { AutomationLimits } from "@sessionboxer/protocol";
-import type { Setter } from "../settings/shared";
+import type { Setter } from "../useSectionState";
 import { clamp } from "./form-model";
 
 export function LimitsStep({ limits, setLimits, enabled, setEnabled, isPr }: {

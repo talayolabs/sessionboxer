@@ -2,9 +2,10 @@ import { useState } from "react";
 import { AUTOMATION_ACTION_LABELS, PROVIDERS, PROVIDER_LABELS, type AutomationAction, type Provider, type ProviderModels, type ProviderOptions, type PublicSettings, type ReviewVerdict, type Session } from "@sessionboxer/protocol";
 import type { Step } from "../Automations";
 import { RepoEditor, githubAccounts, specsToDrafts } from "../Repos";
-import { SessionSettingsForm, draftFromDefaults } from "../SessionSettingsForm";
-import { useSectionState, type SectionSetters, type Setter } from "../settings/shared";
-import { draftFromInput, type ActionValues } from "./form-model";
+import { SessionSettingsForm } from "../SessionSettingsForm";
+import { draftFromDefaults, draftFromInput } from "../session-settings-model";
+import { useSectionState, type SectionSetters, type Setter } from "../useSectionState";
+import type { ActionValues } from "./form-model";
 import { VERDICT_LABELS } from "./display";
 
 export function useActionState(a: AutomationAction | undefined, sessions: Session[], settings: PublicSettings, forSession?: Session) {
@@ -18,7 +19,7 @@ export function useActionState(a: AutomationAction | undefined, sessions: Sessio
     text: promptAction?.text ?? "",
     provider: newAction?.provider ?? reviewAction?.provider ?? qaAction?.provider ?? "claude-code",
     repos: specsToDrafts(newAction?.repos ?? []),
-    draft: newAction ? { ...draftFromInput(newAction.settings, settings, draftFromDefaults), snapshotId: newAction.snapshotId ?? null } : draftFromDefaults(settings),
+    draft: newAction ? { ...draftFromInput(newAction.settings, settings), snapshotId: newAction.snapshotId ?? null } : draftFromDefaults(settings),
     title: newAction?.title ?? "",
     prompt: newAction?.prompt ?? "",
     stopAfter: newAction?.stopAfter ?? reviewAction?.stopAfter ?? qaAction?.stopAfter ?? true,

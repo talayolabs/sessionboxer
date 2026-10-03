@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { FollowOption, Step } from "../Automations";
 import { FollowRepoInline } from "../FollowRepo";
 import { LoginList } from "../LoginList";
-import { useSectionState, type SectionSetters, type Setter } from "../settings/shared";
+import { useSectionState, type SectionSetters, type Setter } from "../useSectionState";
 import type { TriggerValues, SchedulePreview } from "./form-model";
 import { describeCron, formatAt } from "./display";
 

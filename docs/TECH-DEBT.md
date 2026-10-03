@@ -247,3 +247,118 @@ and one HTTP mapping. It is the textbook fix for "error handling mixed with logi
 message is already user-facing and status-correct, nothing switches on the strings, and the change
 would touch ~150 throws for no behaviour gain. Revisit only if a second transport (CLI, MCP) starts
 needing different mappings.
+
+---
+
+# Round 3 (2026-10-03, after fixes 8–13, `33dab0a`)
+
+Same five skills, same method. Round 2's list is done except item 14. The gate is lint + typecheck +
+build + 10 node suites (151 tests) + the Python audit test, in CI.
+
+## The shape of the codebase, now
+
+| File | Lines | Round 2 | What changed |
+|---|---|---|---|
+| `apps/control-plane/src/sessions.ts` | 2,952 | 2,894 | `fork()` split (+pins, +headers); 151 methods; still the file with the most 90-day churn in the Control Plane (89 commits) |
+| `apps/web/src/App.tsx` | 1,322 | 1,322 | untouched: 50 `useState`, a 175-line WebSocket effect switching on 27 message types, a 219-line `sessionEntry` closure; 126 commits in 90 days — the most-changed file in the repo |
+| `apps/control-plane/src/agent-tools.ts` | 1,176 | 1,176 | table-shaped dispatch (fine) |
+| `apps/control-plane/src/index.ts` | 1,149 | 1,149 | 161 routes in one file: 65 `/sessions`, 21 `/prs`, 9 `/auth`, 8 `/schedules`, 8 `/automations`… |
+| `packages/sandbox-daemon/src/agent.ts` | 1,147 | 1,147 | `AgentManager.start` 146 lines; 0 tests |
+| `apps/web/src/Automations.tsx` | 1,067 | 1,067 | `AutomationForm` 615 lines, 31 `useState` |
+| `apps/control-plane/src/followed-prs.ts` / `pull-requests.ts` | 1,052 / 1,047 | — | poll on timers; 0 tests; `PullRequests.poll` 126 lines |
+| `apps/web/src/SessionView.tsx` | 1,017 | 1,017 | `SessionView` 651 lines, 27 `useState` |
+| `apps/web/src/SettingsView.tsx` | 260 | 1,732 | eight section files under `settings/`, one state hook each |
+| `apps/web/src/Prs.tsx` / `PullRequests.tsx` | 814 / 609 | 971 / 837 | `PrThreads.tsx` (346) holds the shared part |
+| `apps/control-plane/src/windows.ts` / `macos.ts` | 305 / 822 | 368 / 884 | `qemu-vms.ts` (149) holds the shared part |
+
+Function sizes (TypeScript AST over `apps/*/src`, `packages/*/src`; 2,596 functions): 80 % are under
+20 lines, 141 are 50 or more, 24 are 200 or more. Of those 24, 22 are React components or closures
+inside them; the other two are `vscodeColors` (a 308-line theme table) and the daemon's `handle()`
+(197 lines, 49 `case`s — a dispatch table). The Control Plane's longest non-table methods are
+`Connectors.start` (141), `provisionScript` (137), `PullRequests.poll` (126). The long-function
+problem is now a web-app problem.
+
+Duplication (`jscpd --min-lines 10 --min-tokens 70` over `apps`, `packages`, `scripts`; 272 files,
+70,219 lines): 19 clones, 289 lines, 0.41 % — about half of round 2's, and no clone is over 33 lines.
+
+## Scores
+
+| Skill | Round 1 | Round 2 | Round 3 | Rows still failing |
+|---|---|---|---|---|
+| Pragmatic Programmer | 4/10 | 8/10 | 8/10 | DRY (partly: the five pairs below, two of them knowledge rather than text); broken windows (partly: three schemas filed under `speech.ts`; nothing watches file sizes, so the next 1,700-line file will arrive the way `SettingsView` did) |
+| Clean Code | 4/10 | 6/10 | 7/10 | functions under 20 lines (no: 24 over 200, all but two in `apps/web`); test per public method (no: `PullRequests`, `FollowedPrs`, `Connectors`, `AgentManager`, every web component); error handling separate from logic (unchanged, see "not recommended") |
+| Refactoring Patterns | — | 7/10 | 8/10 | Long Method (React); Duplicated Code is pairs under 35 lines |
+| Philosophy of Software Design | 5/10 | 7/10 | 8/10 | `App.tsx` is still "everything the shell does" with no one-sentence description; `speech.ts` hides nothing it says it does; newcomer boundaries still unwritten (`DESIGN.md` stops at the container picture; the route → class → deps-object pattern lives only in the code) |
+| Working with Legacy Code | — | 7/10 | 8/10 | every round-2 fix landed pins first and the pins passed unchanged across the moves; the untested change points left are PR sync (two timer-driven classes) and the web app |
+
+Round 2's moves held up: `useSectionState` is 17 lines and a plain `useState` in disguise;
+`PrChecks`/`PrThreads` take 5 and 7 props and the callers' differences are visible in the prop
+names; `QemuVms` is a real pull-up (one odd corner: `protected abstract readonly installing: object | null`
+exists only so the base can ask "is an install running" — a `protected abstract installing(): boolean`
+would say that).
+
+## Duplicated knowledge, round 3
+
+| Pair | Lines | What it is | Verdict |
+|---|---|---|---|
+| `packages/computer-use-mcp/src/utilities.ts` `totp()` ↔ `packages/protocol/src/utilities.ts` `totpCode()` | 24 | RFC 6238: HMAC-SHA1 over the counter, dynamic truncation, base32 decoding — once sync over `Buffer`, once async over WebCrypto | the same knowledge in two packages, and `computer-use-mcp` already depends on `protocol`. Keep one: the MCP's `fillUtilityPlaceholders` becomes async (its callers already are) and calls `totpCode` |
+| `apps/control-plane/src/docker-engine.ts` ↔ `apps/desktop/src/docker.ts` | 33 | where the Docker socket may be: the same eight candidate paths | imposed duplication (the Electron shell packs no workspace packages, by design). Board it up: a test that both `dockerSocketCandidates()` lists are equal, so they cannot drift silently |
+| `sessions.ts` `createClaimed` ↔ `forkedSession` | 16 | the 25 default fields of a new `Session` row (`containerId: null`, `queueRunning`, `usage`, `usb`, `pinned`…) | Extract Function `newSessionRow(...)`; the fork's two differences (`queueRunning`, `folderId`) stay at the call site. Adding a Session field today means two edits and no error if you miss one |
+| `UtilitiesEditor.tsx` `CredentialList` ↔ `KeyValueList.tsx` | 15 | fix 8 unified two of the three name/value/secret editors; the Utility credentials one still has its own copy | `KeyValueList` with `nameList` (the datalist), `valuePlaceholder(kv)` and `multiline(kv)` props; the `ssh_key` textarea and the `totp` hint are the real differences |
+| `settings/EnvironmentSettings.tsx` `WindowsBase` ↔ `MacosBase.tsx` | 12 + 13 | `act()` (working/error/confirm-delete around a base-disk call) and the "Checking the base disk…" / started-at line | a `useBaseDiskAction()` hook; the two status shapes stay different |
+
+Not worth touching: `docker-engine`'s probe order itself, `host-sync.ts`/`workspace-sync.ts`
+(different sides of the wire), `session-settings.ts` (the override schema mirrors the global on
+purpose), `mcp-config.ts` 76/120 (tmpfs-and-symlink for two agents' config files — 10 lines, two
+different file names and shapes), `sessionboxer-mcp` 457/491 (a create and an update tool whose
+schemas differ in descriptions and defaults), `DockerIcon`/`EnvironmentIcon` (SVG).
+
+## Housekeeping (broken windows)
+
+- `packages/protocol/src/speech.ts` holds `SandboxImageStatus`, `WindowsBaseStatus` and
+  `MacosBaseStatus` (lines 37–113) between the Whisper model list and `SpeechStatus`; `events.ts`
+  imports the VM statuses from `./speech.js`. Fix 5's split filed them with their neighbours in the
+  old barrel. Move them to `sandbox-image.ts` and `vm-bases.ts` (move-only; the barrel re-exports).
+- `QemuVms.installing` as above.
+- Nothing watches sizes. `SettingsView` reached 1,732 lines over 40 commits without anyone deciding
+  it should. A size budget in CI (`scripts/size-budget.mjs`: the current line count of every file over
+  600 lines, rounded up; fails when one grows past its number; lowering a number is a one-line edit)
+  is the "boiled frog" monitor the Pragmatic Programmer asks for. Same for jscpd: `--threshold 0.5`.
+- `DESIGN.md` has the container picture and the MVP decisions; it does not say how the Control Plane
+  is put together (route handlers are thin and `throw HttpError`; each domain is a class behind a
+  `*Deps` object constructed once in `index.ts`; every class with a timer has a harness under
+  `scripts/`). Twenty lines there would save every newcomer — and every child session — a reading.
+
+## Safety-net map, round 3
+
+| Change point | Seam | Characterization test to write |
+|---|---|---|
+| `FollowedPrs` (1,052 lines, 0 tests, polls GitHub/Bitbucket on a 10 s tick, creates Automation runs) | `FollowedPrDeps`; `GhTransport`/`BbTransport` are one-method interfaces | fake transports replaying recorded JSON: `fetchThreads`/`fetchChecks`/`fetchBbActivities`/`fetchBbBuilds` → the `PrItem`/`PrCheckItem` lists (hand-written expectations from the fixtures); `tick()` with a changed list → which events, which runs, dedupe on head SHA, debounce; `filterReason`; `describeFollow` |
+| `PullRequests` (1,047 lines, 0 tests) | `PullRequestDeps` (`daemonGhApi`, `prompt`, `enqueue` are functions) | `attach` 400s, `poll()` → `pr_activity` once idle, `action` → `buildPrompt` text for each action, Bitbucket vs GitHub paths |
+| `App.tsx` WebSocket effect (27 message types → 14 `set*` calls) | none yet; the switch body is a pure `(state, msg) → state` waiting to be named | after extraction, a `feedReducer` test: each message type → the state change, in `node:test` without React |
+| `Connectors.start` (141 lines), `AgentManager.start` (146 lines) | `GhCli`/`fetch` in `Connectors`; `AgentTransport` in `AgentManager` | later: the ACP handshake needs a scripted fake agent; not this round |
+
+## Prioritised fixes, round 3
+
+Ordered by risk-reduction per hour; each a behaviour-preserving commit with its pins first.
+
+15. **Housekeeping batch** (tsc is the test): `speech.ts` → `sandbox-image.ts` + `vm-bases.ts`;
+    `newSessionRow()`; `totp` once; `KeyValueList` for Utility credentials; the docker-engine
+    equality test; `QemuVms.installing()`. ~1 session.
+16. **PR sync characterization tests** (`npm run test:pr-sync`): `FollowedPrs` and `PullRequests`
+    through their deps objects and fake transports with recorded fixtures. The two timer-driven
+    classes without a harness; the next PR-provider change (a third host, a GitHub API version)
+    lands blind otherwise.
+17. **`App.tsx` split**: `useSessionFeed()` with a pure `feedReducer` (the WebSocket effect, pinned
+    under node:test), `Sidebar.tsx` (`sessionEntry` + the 13 sidebar states + folders drag/drop),
+    move-only like fix 3, browser-checked. 1,322 → ~600.
+18. **Routes by domain**: `apps/control-plane/src/routes/{sessions,prs,auth,automations,…}.ts`,
+    each `register(api, deps)`; `index.ts` keeps the composition root. Move-only; the test is a dump
+    of `method + path` for every route before and after (identical) plus the gate.
+19. **Size budget + jscpd threshold in CI**; the twenty lines in `DESIGN.md`.
+20. **`AutomationForm` and `SessionView`** the `SettingsView` way (sections, one state hook each) —
+    only once 17 has shown the pattern holds for a component with a live WebSocket feed.
+
+Still not recommended: `HttpError` out of the domain classes (round 2's reasoning stands); a daemon
+`AgentManager` harness (a scripted ACP agent is a project of its own; the daemon changes rarely —
+27 commits in 90 days against 126 for `App.tsx`); unifying `host-sync`/`workspace-sync`.

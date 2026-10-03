@@ -189,6 +189,7 @@ export function App() {
     void run(async () => setFeed("options", await api.options()));
     void run(async () => setFeed("automations", await api.automations()));
     void run(async () => setFeed("prFollows", await api.prFollows()));
+    void run(async () => setFeed("mcpEventSubscriptions", await api.mcpEventSubscriptions()));
     void run(async () => setFeed("followedPrs", await api.followedPrs()));
     void run(async () => setFeed("folders", await api.folders()));
   }, [reloadSessions, run]);

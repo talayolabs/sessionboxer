@@ -11,6 +11,7 @@ import { Db } from "../apps/control-plane/dist/db.js";
 import { MissingImageContentError } from "../apps/control-plane/dist/docker.js";
 import { HttpError } from "../apps/control-plane/dist/http-error.js";
 import { SessionManager } from "../apps/control-plane/dist/sessions.js";
+import { sessionRow } from "./fixtures.mjs";
 
 const MB = 1024 ** 2;
 
@@ -88,49 +89,7 @@ function makeManager(settingsInput = {}) {
     /** The Session as `createClaimed` would insert it once its Sandbox runs: idle, Claude Code, Linux Sandbox. */
     addSession(overrides = {}) {
       n++;
-      const id = overrides.id ?? `s${n}`;
-      const now = "2026-01-01T00:00:00.000Z";
-      const { settings: settingsOverride, sandbox, usage, ...rest } = overrides;
-      const session = {
-        id,
-        title: `Session ${id}`,
-        provider: "claude-code",
-        status: "idle",
-        workspaceSource: { type: "empty" },
-        repos: [],
-        settings: {
-          ...Settings.parse({}),
-          ...{ model: null, options: {}, inspectLlm: false, mcpEnabled: [], utilitiesEnabled: [], instructions: "" },
-          autoSnapshot: null,
-          snapshotKeep: null,
-          e2eVerify: null,
-          agentTools: null,
-          approveCreate: null,
-          ...settingsOverride,
-          sandbox: { environment: "docker-linux", dockerMode: "none", cpus: null, memoryGb: null, gitIdentity: { name: "", email: "" }, ...sandbox },
-        },
-        containerId: `ctr-${id}`,
-        error: null,
-        queueRunning: false,
-        diskBytes: null,
-        mcpPending: false,
-        modelPending: false,
-        optionsPending: false,
-        availableOptions: [],
-        inspectLlmPending: false,
-        snapshotBytes: 0,
-        snapshotCount: 0,
-        branches: [],
-        activeBranchId: ROOT_BRANCH_ID,
-        usage: { windows: [], updatedAt: null, limit: null, autoContinue: false, ...usage },
-        usb: null,
-        createdBy: null,
-        pinned: false,
-        folderId: null,
-        createdAt: now,
-        updatedAt: now,
-        ...rest,
-      };
+      const session = sessionRow(overrides.id ?? `s${n}`, overrides);
       db.insertSession(session);
       return session;
     },

@@ -29,6 +29,7 @@ jobs:
       - run: npm run test:schema
       - run: npm run test:daemon-errors
       - run: npm run test:session-manager
+      - run: npm run test:automations
       - run: npm run build
       - run: npm run pack
       - name: Install the package outside the repo and run its CLI

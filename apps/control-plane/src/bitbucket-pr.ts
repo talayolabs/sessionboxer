@@ -1,4 +1,4 @@
-import type { PrReviewDecision, PrRef, PrState, PrSyncError } from "@sessionboxer/protocol";
+import type { PrReviewDecision, PrRef, PrSyncError } from "@sessionboxer/protocol";
 import { prUrl } from "@sessionboxer/protocol";
 import type { GhOutcome, PrListItem, PrMeta } from "./github-pr.js";
 import type { PrCheckInput, PrItemInput } from "./pr-store.js";

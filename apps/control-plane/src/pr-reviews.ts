@@ -22,8 +22,6 @@ import type { FollowedPrs } from "./followed-prs.js";
 import { fetchPrFiles, submitReview, tokenTransport, type ReviewCommentInput } from "./github-pr.js";
 import type { TurnOutcome } from "./sessions.js";
 
-type AutoReview = Extract<Automation["action"], { type: "auto_review" }>;
-
 /** What the review Session's `pr_review_submit` gets back. */
 export interface ReviewPosted {
   url: string | null;

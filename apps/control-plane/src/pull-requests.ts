@@ -1029,7 +1029,7 @@ function checkLogHint(pr: PullRequest, c: PrCheckItem): string {
     return `it is a GitHub Actions job — \`gh run view ${job[1]} -R ${repo} --job ${job[2]} --log-failed\` (the failed steps' output), or the whole log with \`gh api repos/${repo}/actions/jobs/${job[2]}/logs\`.`;
   }
   if (c.kind === "check_run" && c.githubId !== null) {
-    return `\`gh api repos/${repo}/check-runs/${c.githubId}\` gives the check's output (\`.output.title\`, \`.output.summary\`, \`.output.text\`, \`.details_url\`); if that is not enough, open the details link${c.url ? "" : " in \`.details_url\`"} in the desktop browser.`;
+    return `\`gh api repos/${repo}/check-runs/${c.githubId}\` gives the check's output (\`.output.title\`, \`.output.summary\`, \`.output.text\`, \`.details_url\`); if that is not enough, open the details link${c.url ? "" : " in `.details_url`"} in the desktop browser.`;
   }
   return c.url
     ? "open the details link above in the desktop browser (it is an external CI); its page has the log."

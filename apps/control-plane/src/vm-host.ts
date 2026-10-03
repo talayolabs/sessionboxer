@@ -207,7 +207,6 @@ export function demux(buf: Buffer): string[] {
     text = buf.toString("utf8");
   }
   for (const raw of text.split(/\r?\n/)) {
-    // eslint-disable-next-line no-control-regex
     const line = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/^❯\s*/, "").trim();
     if (line) lines.push(line);
   }

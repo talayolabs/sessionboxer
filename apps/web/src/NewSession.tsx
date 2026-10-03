@@ -51,7 +51,7 @@ export function SandboxImageBanner() {
     if (settled) return;
     let cancelled = false;
     const poll = () => api.sandboxImage().then((s) => !cancelled && setStatus(s), () => undefined);
-    poll();
+    void poll();
     const timer = setInterval(poll, 2000);
     return () => {
       cancelled = true;

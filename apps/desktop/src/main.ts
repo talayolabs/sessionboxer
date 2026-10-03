@@ -253,7 +253,7 @@ if (!app.requestSingleInstanceLock()) {
     e.preventDefault();
     tray?.setToolTip("Sessionboxer — stopping the server…");
     win?.close();
-    server.stop().finally(() => app.exit(0));
+    void server.stop().finally(() => app.exit(0));
   });
 
   server.onChange((state) => {

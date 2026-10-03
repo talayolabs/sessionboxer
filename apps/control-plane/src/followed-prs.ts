@@ -170,7 +170,7 @@ export class FollowedPrs {
     if (f.kind === "repo" && f.owner !== null && f.repo !== null) this.deps.db.repos.rememberRef({ provider: f.provider, host: f.host, owner: f.owner, repo: f.repo }, "follow");
     this.deps.log(`following ${describeFollow(f)}`);
     this.broadcastFollows();
-    this.enqueue(accountKey(f), `follow:${f.id}`, () => this.pollFollow(f.id));
+    void this.enqueue(accountKey(f), `follow:${f.id}`, () => this.pollFollow(f.id));
     return publicFollow(f);
   }
 
@@ -224,7 +224,7 @@ export class FollowedPrs {
     const f = this.deps.db.followedPrs.setFollowEnabled(id, enabled);
     if (!f) throw new HttpError(404, `follow ${id} not found`);
     this.broadcastFollows();
-    if (enabled) this.enqueue(accountKey(f), `follow:${f.id}`, () => this.pollFollow(f.id));
+    if (enabled) void this.enqueue(accountKey(f), `follow:${f.id}`, () => this.pollFollow(f.id));
     return publicFollow(f);
   }
 

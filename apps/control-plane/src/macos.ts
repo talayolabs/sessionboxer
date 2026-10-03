@@ -597,7 +597,6 @@ export class MacosVms implements GuestVms {
           const parts = pending.split(/\r?\n/);
           pending = parts.pop() ?? "";
           for (const raw of parts) {
-            // eslint-disable-next-line no-control-regex
             const line = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim();
             if (line) onLine(line);
           }
@@ -791,7 +790,7 @@ function provisionScript(): string {
     `  touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress`,
     `  LABEL=$(softwareupdate -l 2>/dev/null | grep -o 'Command Line Tools for Xcode-[0-9.]*' | awk -F- '{ print $NF " " $0 }' | sort -n | tail -1 | cut -d' ' -f2-)`,
     `  [ -n "$LABEL" ] || { rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress; fail "softwareupdate lists no Command Line Tools (is Apple's update server reachable?)"; }`,
-    `  say "softwareupdate --install \"$LABEL\""`,
+    `  say "softwareupdate --install "$LABEL""`,
     `  sudo softwareupdate --install "$LABEL" --agree-to-license 2>&1 | grep -v '^$' | tail -5`,
     `  rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress`,
     `  xcode-select -p >/dev/null 2>&1 || sudo xcode-select --switch /Library/Developer/CommandLineTools >/dev/null 2>&1 || true`,

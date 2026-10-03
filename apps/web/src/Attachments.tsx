@@ -107,7 +107,7 @@ function Video({ src, track }: { src: string; track: string }) {
   useEffect(() => {
     let cancelled = false;
     setCues([]);
-    fetch(track)
+    void fetch(track)
       .then(async (res) => (res.ok ? parseVtt(await res.text()) : []))
       .catch(() => [])
       .then((c) => {

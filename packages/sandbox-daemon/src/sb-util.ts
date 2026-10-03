@@ -152,7 +152,7 @@ switch (command) {
     const u = load(ref);
     const secret = cred(u, "totp");
     if (!secret) fail(`"${ref}" has no totp credential.`);
-    totpCode(secret).then((code) => process.stdout.write(`${code}\n`));
+    void totpCode(secret).then((code) => process.stdout.write(`${code}\n`));
     break;
   }
   case "open": {

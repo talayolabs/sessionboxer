@@ -708,7 +708,7 @@ export class AgentManager {
       });
     const conn = app.connect(stream);
     this.conn = conn;
-    conn.closed.then(() => {
+    void conn.closed.then(() => {
       if (this.conn === conn) this.onAgentGone("ACP connection closed");
     });
 

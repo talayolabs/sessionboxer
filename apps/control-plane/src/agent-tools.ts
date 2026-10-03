@@ -909,7 +909,7 @@ export class AgentTools {
 
   /** Registers a Utility once the user allows the card; the credentials never reach the transcript (the card shows names and masks). */
   private utilitiesAdd(id: string, p: AgentUtilitiesAddArgs): unknown {
-    const s = this.session(id);
+    this.session(id);
     const settings = this.deps.settings();
     const preset = p.preset ? UTILITY_PRESETS[p.preset] : undefined;
     if (p.preset && !preset) throw new Error(`No preset "${p.preset}"; utilities_list names them.`);

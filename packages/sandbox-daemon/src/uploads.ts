@@ -107,7 +107,6 @@ class UploadError extends Error {
 /** The file's base name with path separators and control characters removed; `""` when nothing usable is left. */
 function safeName(raw: string): string {
   const base = raw.split(/[\\/]/).pop() ?? "";
-  // eslint-disable-next-line no-control-regex
   const clean = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
   return clean === "" || clean === "." || clean === ".." ? "" : clean.slice(0, 255);
 }

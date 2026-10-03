@@ -135,7 +135,6 @@ function mimeTypeOf(header: string | undefined, name: string): string {
 
 function safeName(raw: string): string {
   const base = raw.split(/[\\/]/).pop() ?? "";
-  // eslint-disable-next-line no-control-regex
   const clean = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
   return clean === "" || clean === "." || clean === ".." ? "" : clean.slice(0, 255);
 }

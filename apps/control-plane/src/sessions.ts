@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { basename } from "node:path";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
@@ -15,11 +14,6 @@ import {
   DaemonContextReportResult,
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
-  type DaemonCodexAuthParams,
-  type DaemonCursorAuthParams,
-  type DaemonPiAuthParams,
-  type DaemonOpenCodeAuthParams,
-  type DaemonFxAuthParams,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -145,14 +139,7 @@ import { countCerts, sandboxCaBundle } from "./ca-certs.js";
 import {
   PUBLIC_URL,
   VERSION,
-  codexAuthJson,
-  cursorLogin,
-  piApiKeyEnv,
-  piApiKeys,
-  piAuthJson,
-  fxLogin,
   defaultMcpEnabled,
-  opencodeAuthJson,
   knownMcpIds,
   providerEnv,
   providerReady,

@@ -206,19 +206,9 @@ function steps(provider: Provider, os: Os): Step[] {
     case "grok":
       return [
         {
-          title: "Install Grok Build (skip if you already use it)",
-          body: `In ${shell} (Node.js 20+; Grok Build runs on Linux, macOS and Windows):`,
-          commands: ["npm install -g @xai-official/grok"],
-        },
-        {
-          title: "Log in",
-          body: "Opens the browser with your xAI account (`grok login --device-auth` prints a URL and a code instead). Or skip this and paste an API key from console.x.ai below.",
-          commands: ["grok login"],
-        },
-        {
-          title: "Copy the login file it wrote and paste it below",
-          body: "The whole file, or use Import below. An xAI API key from console.x.ai → API keys works too. The Sandbox keeps it in memory only; refreshed tokens flow back here.",
-          commands: [os === "windows" ? "Get-Content $env:USERPROFILE\\.grok\\auth.json" : "cat ~/.grok/auth.json"],
+          title: "Install Grok Build, log in, and copy the login file it wrote",
+          body: `In ${shell} (Node.js 20+; skip the install if you already use it). \`grok login\` opens the browser with your xAI account (\`grok login --device-auth\` prints a URL and a code instead); paste the whole file below, or use Import. An xAI API key from console.x.ai → API keys works too. The Sandbox keeps it in memory only; refreshed tokens flow back here.`,
+          commands: ["npm install -g @xai-official/grok", "grok login", os === "windows" ? "Get-Content $env:USERPROFILE\\.grok\\auth.json" : "cat ~/.grok/auth.json"],
         },
       ];
     case "devin":
@@ -351,12 +341,7 @@ function credentialField(provider: Provider): {
     case "vibe":
       return { label: "Mistral Vibe login (a Mistral API key, or the contents of ~/.vibe/.env)", multiline: true, file: true, placeholder: "The API key, or MISTRAL_API_KEY='…'" };
     case "grok":
-      return {
-        label: "Grok Build login (contents of ~/.grok/auth.json, or an xAI API key)",
-        multiline: true,
-        file: true,
-        placeholder: '{ "key": … } or xai-…',
-      };
+      return { label: "Grok Build login (contents of ~/.grok/auth.json, or an xAI API key)", multiline: true, file: true, placeholder: '{ "key": … } or xai-…' };
   }
 }
 

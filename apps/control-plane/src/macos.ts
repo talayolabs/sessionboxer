@@ -51,7 +51,7 @@ const PROVISION_TIMEOUT_S = 60 * 60;
  * and the Sandbox image. Bump `TOOLCHAIN` when they change: bases with an older number show
  * "Reprovision" and cannot start Sessions until it ran.
  */
-const TOOLCHAIN = 3;
+const TOOLCHAIN = 4;
 const NODE_VERSION = "22.23.3";
 const UV_VERSION = "0.12.13";
 const CLAUDE_CODE_VERSION = "2.1.272";

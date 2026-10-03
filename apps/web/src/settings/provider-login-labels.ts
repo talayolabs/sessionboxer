@@ -1,4 +1,4 @@
-import type { CodexLogin, CursorLogin, OpenCodeLogin, FxLogin } from "@sessionboxer/protocol";
+import type { CodexLogin, CursorLogin, OpenCodeLogin, FxLogin, GrokLogin } from "@sessionboxer/protocol";
 
 /** One line about the stored Codex login, from the metadata the Control Plane exposes (never the tokens). */
 export function describeCodexLogin(login: CodexLogin): string {
@@ -23,4 +23,11 @@ export function describeCursorLogin(login: CursorLogin): string {
 export function describeFxLogin(login: FxLogin): string {
   const what = login.kind === "api-key" ? "AI Gateway API key" : login.kind === "vercel" ? "Vercel login" : login.kind === "codex" ? "ChatGPT login" : "Grok login";
   return login.expiresAt && login.kind !== "api-key" ? `${what}, token valid until ${new Date(login.expiresAt).toLocaleString()}` : what;
+}
+
+/** One line about the stored Grok Build login (ADR-0086), from its metadata only. */
+export function describeGrokLogin(login: GrokLogin): string {
+  if (login.kind === "api-key") return "xAI API key";
+  const what = login.email ? `xAI account ${login.email}` : "xAI account";
+  return login.expiresAt ? `${what}, token valid until ${new Date(login.expiresAt).toLocaleString()}` : what;
 }

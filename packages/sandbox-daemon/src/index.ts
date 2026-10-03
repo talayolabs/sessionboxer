@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { ACP_COMMANDS } from "./provider-commands.js";
 import { KimiAuth, KIMI_AGENT_ENV } from "./kimi-auth.js";
+import { GrokLogin, GROK_AGENT_ENV, grokGuestFiles } from "./grok-login.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -346,18 +347,8 @@ const FX_AGENT_ENV = { FX_PERMISSION_MODE: "full-access", FX_AUTO_UPGRADE: "0", 
 /** Copilot's login (ADR-0082): the token into the Agent's environment, a pasted `config.json` on tmpfs as well. */
 const copilotLogin = provider === "copilot" ? new CopilotLogin(copilotHome, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.copilotAuthChanged, { authJson })) : null;
 
-/**
- * Grok Build's login (ADR-0086): the `auth.json` a `grok login` wrote, on tmpfs behind
- * `~/.grok/auth.json` (Grok Build follows the symlink and reloads the file when it changes), or
- * an xAI API key handed over in the process environment as `XAI_API_KEY`. Grok Build refreshes the
- * session's tokens in place and the rewritten file is reported back. The rest of `~/.grok`
- * (config, rules, saved sessions) stays on disk so `session/load` finds the conversation after Stop/Resume.
- */
-const grokHome = `${env.GROK_HOME ?? `${home}/.grok`}`;
-const grokAuthPath = `${grokHome}/auth.json`;
-const grokAuth = provider === "grok" ? new AuthFile("grok", grokAuthPath, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.grokAuthChanged, { authJson })) : null;
-/** The image pins Grok Build; no update check at start (also `cli.auto_update = false` in its config, for the guests). */
-const GROK_AGENT_ENV = { GROK_DISABLE_AUTOUPDATER: "1" };
+const grokHome = env.GROK_HOME ?? `${home}/.grok`;
+const grokLogin = provider === "grok" ? new GrokLogin(grokHome, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.grokAuthChanged, { authJson })) : null;
 
 /**
  * The Provider's files that travel into the VM before each Agent start (the ones the image and this
@@ -404,11 +395,7 @@ const guestProviderFiles: GuestProviderFile[] = (
       { local: `${vibeHome}/trusted_folders.toml`, guest: ".vibe/trusted_folders.toml" },
       { local: `${vibeHome}/.env`, guest: ".vibe/.env", pullBack: true, mode: 0o600 },
     ],
-    grok: [
-      { local: `${grokHome}/config.toml`, guest: ".grok/config.toml" },
-      { local: guestBriefingFile, guest: ".grok/rules/sandbox-briefing.md" },
-      { local: grokAuthPath, guest: ".grok/auth.json", pullBack: true, mode: 0o600 },
-    ],
+    grok: grokGuestFiles(grokHome, guestBriefingFile),
     devin: [
       { local: `${home}/.config/devin/config.json`, guest: ".config/devin/config.json" },
       { local: `${home}/.config/devin/mcp_config.json`, guest: ".config/devin/mcp_config.json" },
@@ -487,16 +474,6 @@ function setFxLogin(login: string): boolean {
   if (login === "") return agent.setAgentEnv({});
   log("fx login is an API key; handed to the Agent process as AI_GATEWAY_API_KEY");
   return agent.setAgentEnv({ AI_GATEWAY_API_KEY: login });
-}
-
-/** Puts a Grok Build login in place: the login file on tmpfs, or the API key in the Agent's environment (on top of `GROK_AGENT_ENV`). */
-function setGrokLogin(login: string): boolean {
-  if (!grokAuth) throw new DaemonError("invalid_params", "this Sandbox does not run Grok Build");
-  const isFile = login.trimStart().startsWith("{");
-  grokAuth.set(isFile ? login : "");
-  if (isFile || login === "") return agent.setAgentEnv({});
-  log("Grok Build login is an API key; handed to the Agent process as XAI_API_KEY");
-  return agent.setAgentEnv({ XAI_API_KEY: login });
 }
 
 /** The Session's standing instructions, set by the Control Plane on the container. */
@@ -676,8 +653,7 @@ const agent = new AgentManager(
       : {}),
     // Copilot's ACP modes are its own `mode` config option (agent/plan/autopilot), none of them a permission mode: `--allow-all` opens the Sandbox up.
     ...(provider === "copilot" ? { fullAccessModeIds: [], mcpCommandPath: guest ? undefined : onPath } : {}),
-    // Grok Build advertises no ACP modes; `--always-approve` (above) opens the Sandbox up. The instructions go as
-    // `_meta.rules`, which it folds into the model's rules section like a project AGENTS.md.
+    // Grok Build advertises no ACP modes; `--always-approve` (above) opens the Sandbox up. Instructions go as `_meta.rules`, its AGENTS.md-like rules section.
     ...(provider === "grok" ? { fullAccessModeIds: [], systemPromptMeta: (text: string) => ({ rules: text }), mcpCommandPath: guest ? undefined : onPath } : {}),
     log,
   },
@@ -835,8 +811,10 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       if (!vibeLogin) throw new DaemonError("invalid_params", "this Sandbox does not run Mistral Vibe");
       return { applied: agent.setAgentEnv(vibeLogin.apply(DaemonVibeAuthParams.parse(params).login)) };
     }
-    case DAEMON_METHODS.grokAuthSet:
-      return { applied: setGrokLogin(DaemonGrokAuthParams.parse(params).login) };
+    case DAEMON_METHODS.grokAuthSet: {
+      if (!grokLogin) throw new DaemonError("invalid_params", "this Sandbox does not run Grok Build");
+      return { applied: agent.setAgentEnv(grokLogin.set(DaemonGrokAuthParams.parse(params).login)) };
+    }
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

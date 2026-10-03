@@ -4,7 +4,6 @@ import { KimiProviderSettings } from "./KimiProviderSettings";
 import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin, describeGrokLogin } from "./provider-login-labels";
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
-import { LoginFileField } from "./LoginFileField";
 import { Caption } from "../ui";
 import { ClaudeApiSettings } from "./ClaudeApiSettings";
 import { CopilotLoginCard } from "./CopilotSettings";
@@ -615,6 +614,32 @@ export function ProvidersSettings({
         placeholder="Paste a Mistral API key, or the contents of ~/.vibe/.env"
         accept=".env,text/plain"
         importLabel="Import .env…"
+      />
+
+      <LoginFileField
+        caption="Grok Build: login (auth.json or xAI API key)"
+        help={
+          <>
+            <p>
+              Grok Build is xAI&apos;s own coding agent (to run a Grok <em>subscription</em> behind Vercel&apos;s agent, use fx above). Log in with it
+              on your own machine and paste or import <code>~/.grok/auth.json</code>, or use Sign in with Grok Build (xAI&apos;s device flow). Or paste
+              an xAI API key from console.x.ai &rarr; API keys. The Sandbox keeps the file in memory only; refreshed tokens flow back here. Grok Build
+              runs in Linux, Windows and macOS Sandboxes.
+            </p>
+            <CopyCommand command="npm install -g @xai-official/grok" />
+            <CopyCommand command="grok login" />
+            <CopyCommand command="cat ~/.grok/auth.json" />
+          </>
+        }
+        stored={settings.providerSecretsSet.grok.GROK_LOGIN}
+        metadata={settings.grokLogin ? describeGrokLogin(settings.grokLogin) : null}
+        value={grokLogin}
+        setValue={setGrokLogin}
+        forget={forgetGrokLogin}
+        setForget={setForgetGrokLogin}
+        placeholder="Paste the contents of ~/.grok/auth.json, or an xAI API key"
+        accept=".json,application/json"
+        importLabel="Import auth.json…"
       />
 
       <CopilotLoginCard settings={settings} login={copilotLogin} setLogin={setCopilotLogin} forget={forgetCopilotLogin} setForget={setForgetCopilotLogin} />

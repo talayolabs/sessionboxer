@@ -220,8 +220,16 @@ travels as props/`BridgeOptions`), 7b6274c (`scripts/automations.test.mjs`: 28 c
 `npm run test:automations` in CI; `scripts/fixtures.mjs` holds the Session row fixture both harnesses use),
 1890e14 (section headers), 4c5f36a (four `fork()` pins in the SessionManager harness) and 9fbdea2 (`fork()` → 15 lines
 over `assertForkable`, `forkDockerMode`, `forkedSession`/`forkSettings`, `recordFork`, `launchFork`; bodies moved
-verbatim). Gate on HEAD: lint, typecheck, build, 10 suites green. 11–14 are open; 11/12/13 touch disjoint files
-(web settings / web PR panes / control-plane VMs) and can run as parallel sessions.
+verbatim). 13 is on `main` — bf99908 (`scripts/guest-vms.test.mjs`: 31 characterization tests of `WindowsVms`/`MacosVms`
+through a fake `VmHost` passed as an optional trailing constructor argument, `npm run test:guest-vms` in CI) and 45ba2ad
+(`apps/control-plane/src/qemu-vms.ts`, 149 lines: `abstract class QemuVms<Base, Status> implements GuestVms` with
+`start`/`stop`/`state`/`remove`/`diskUsage`, `vmName`/`kvmUnavailable`, the base record and `setBase`, `removeBase` with
+the "N Sessions still use the base disk" refusal as `assertBaseUnused`, and `createOnVolume` = Session volume, platform
+container, volume removed again on failure; `windows.ts` 368 → 305 lines, `macos.ts` 884 → 822; bodies moved verbatim,
+pins unchanged). Not pulled up: the two install-log followers — macOS's also flips the phase on "Booting macOS", passes
+`provisioned`/`reprovision` to `finishInstall` and clears its poll timer, so they differ in more than names. Gate on
+HEAD: lint, typecheck, build, 11 suites green. 11/12/14 are open; 11 and 12 touch disjoint web files and can run as
+parallel sessions.
 
 Deliberately not recommended: replacing `HttpError` in the domain classes with a domain error type
 and one HTTP mapping. It is the textbook fix for "error handling mixed with logic", but every

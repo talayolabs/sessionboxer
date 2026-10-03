@@ -159,11 +159,12 @@ import { PROVIDER_AUTH, isSyncedAuthProvider, providerAuthLabel, type SyncedAuth
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { E2eVerification } from "./e2e.js";
 import { extractHandoff, handoffMessage, handoffRequestPrompt, isHiddenTurn, lastAgentMessage } from "./handoff.js";
-import { fxStateVolumeName, MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
+import { fxStateVolumeName, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-dir.js";
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
 import { SessionQueue } from "./session-queue.js";
+import { SnapshotPolicy } from "./snapshots.js";
 import { daemonUtilitiesParams, defaultUtilitiesEnabled, knownUtilityIds, resolveUtilities } from "./utilities.js";
 import { PullRequests } from "./pull-requests.js";
 import { StagedUploads, type StagedFile } from "./staged-uploads.js";
@@ -195,7 +196,6 @@ const MANIFEST_TIMEOUT_MS = 300_000;
 const SEED_TIMEOUT_MS = 40 * 60_000;
 /** Snapshots the New session and automation pickers list (`GET /snapshots/recent`). */
 const RECENT_SNAPSHOTS = 20;
-const REBUILD_HINT = "This Sandbox needs a rebuild before it can be snapshotted again (Snapshots \u2192 Rebuild Sandbox)";
 
 /** One UI connection attached to a terminal. */
 export interface TerminalSink {
@@ -231,8 +231,8 @@ export class SessionManager {
   /** Auto-continue polls per Session blocked by a usage limit (ADR-0053). */
   private readonly usageTimers = new Map<string, NodeJS.Timeout>();
   private readonly listeners = new Set<(msg: SessionBroadcast) => void>();
-  /** Per-Session chain so Snapshots of one Sandbox never overlap. */
-  private readonly snapshotChains = new Map<string, Promise<unknown>>();
+  /** Snapshots of the Sandboxes: taking, pruning, deleting, the chain rebuilds share. */
+  private readonly snapshotPolicy: SnapshotPolicy;
   private readonly syncBaselines = new SyncBaselines();
   /** `<sessionId>/<repoId>` with a pull in flight (one at a time per host folder). */
   private readonly syncing = new Set<string>();
@@ -309,6 +309,17 @@ export class SessionManager {
       broadcast: (msg) => this.broadcast(msg),
       log: (msg) => this.log(msg),
     });
+    this.snapshotPolicy = new SnapshotPolicy({
+      db,
+      docker,
+      settings: () => this.settings(),
+      get: (id) => this.get(id),
+      update: (id, patch) => this.update(id, patch),
+      broadcast: (msg) => this.broadcast(msg),
+      log: (msg) => this.log(msg),
+      vms: (environment) => this.vms(environment),
+      pushSessionInfo: (id) => this.pushSessionInfo(id),
+    });
     this.agentTools = new AgentTools({
       db,
       getSession: (id) => db.getSession(id),
@@ -319,7 +330,7 @@ export class SessionManager {
       setUtilitiesEnabled: (id, ids) => this.setUtilitiesEnabled(id, ids),
       prs: this.prs,
       e2e: this.e2e,
-      snapshot: (id) => this.snapshot(id, "agent"),
+      snapshot: (id) => this.snapshotPolicy.take(id, "agent"),
       enqueue: (id, text) => this.enqueueMessage(id, text),
       savedMessages: (id) => db.listSavedMessages(id),
       listSessions: () => db.listSessions(),
@@ -1105,7 +1116,7 @@ export class SessionManager {
       },
       (error) => this.log(`docker event stream lost (${error}); retrying in 5s`),
     );
-    void this.collectSnapshotImages().catch((e: unknown) => this.log(`snapshot gc failed: ${String(e)}`));
+    void this.snapshotPolicy.collectImages().catch((e: unknown) => this.log(`snapshot gc failed: ${String(e)}`));
     for (const s of this.db.listSessions()) {
       if (!s.containerId) {
         if (s.status !== "error") this.setStatus(s.id, "error", "Sandbox was never created");
@@ -1292,7 +1303,7 @@ export class SessionManager {
     const hiddenHandoff = req.conversation === "handoff" && req.document === undefined;
     if (hiddenHandoff) this.assertCanWriteHandoff(origin);
     if (createdBy) this.assertChildAllowed(createdBy);
-    this.assertSnapshottable(origin.settings.sandbox.environment);
+    this.snapshotPolicy.assertSnapshottable(origin.settings.sandbox.environment);
     if (existing && !(await this.docker.imageExists(existing.imageId))) {
       throw new HttpError(409, `The image of snapshot ${existing.ordinal} is gone from Docker; delete the snapshot.`);
     }
@@ -1303,7 +1314,7 @@ export class SessionManager {
     if (base.sandbox.dockerMode !== "none" && wantsDocker && dockerMode !== base.sandbox.dockerMode) {
       throw new HttpError(409, `The origin ran with ${base.sandbox.dockerMode} Docker, which this host no longer offers.`);
     }
-    const snapshot = existing ?? (await this.snapshot(fromId, "manual"));
+    const snapshot = existing ?? (await this.snapshotPolicy.take(fromId, "manual"));
 
     const id = randomBytes(6).toString("hex");
     const now = new Date().toISOString();
@@ -1528,7 +1539,7 @@ export class SessionManager {
       this.setStatus(session.id, "idle");
       await this.connect(session.id, containerId);
     }
-    void this.refreshDiskUsage(session.id);
+    void this.snapshotPolicy.refreshDiskUsage(session.id);
   }
 
   /** Sends the prompt that arrived while the Sandbox was being prepared, or pumps the queue. */
@@ -1569,12 +1580,6 @@ export class SessionManager {
     if (!vms) return;
     const availability = await vms.availability();
     if (!availability.available) throw new HttpError(409, `${ENVIRONMENT_LABELS[environment]}: ${availability.reason ?? "not available on this host"}`);
-  }
-
-  /** Snapshots, forks and rebuilds need the whole Workspace in the Sandbox's image, which VM Environments do not have. */
-  private assertSnapshottable(environment: Environment): void {
-    const reason = VM_NO_SNAPSHOT[environment];
-    if (reason) throw new HttpError(409, reason);
   }
 
   /** The VMs of a VM Environment (ADR-0057/0058); null for `docker-linux`. */
@@ -1874,7 +1879,7 @@ export class SessionManager {
       throw new HttpError(409, "This is already the end of the conversation; just send the next message.");
     }
     const before = visible.filter((e) => e.seq <= seq);
-    await this.snapshotChains.get(id)?.catch(() => undefined);
+    await this.snapshotPolicy.whenIdle(id);
     const status = DaemonStatus.parse(await this.daemonCall(id, DAEMON_METHODS.status, {}));
     if (status.turnActive) throw new HttpError(409, "The Agent is still working on the previous prompt.");
     const fromBranch = s.activeBranchId;
@@ -1910,7 +1915,7 @@ export class SessionManager {
     if (!s.branches.some((b) => b.id === branchId)) throw new HttpError(404, `branch ${branchId} not found`);
     const acpSessionId = this.db.branchAcpSessionId(id, branchId);
     if (!acpSessionId) throw new HttpError(409, "This branch has no Agent session on record; it cannot be resumed.");
-    await this.snapshotChains.get(id)?.catch(() => undefined);
+    await this.snapshotPolicy.whenIdle(id);
     const status = DaemonStatus.parse(await this.daemonCall(id, DAEMON_METHODS.status, {}));
     if (status.turnActive) throw new HttpError(409, "The Agent is still working on the previous prompt.");
     if (status.acpSessionId) this.db.setBranchAcpSessionId(id, s.activeBranchId, status.acpSessionId);
@@ -2053,72 +2058,11 @@ export class SessionManager {
   // --- Snapshots -------------------------------------------------------------
 
   snapshots(id: string): Snapshot[] {
-    this.get(id);
-    return this.db.listSnapshots(id);
+    return this.snapshotPolicy.list(id);
   }
 
-  /**
-   * `docker commit` of the Sandbox as it is now. Serialized per Session; the
-   * container is paused for the few seconds the commit takes. Automatic
-   * Snapshots (`reason: "turn"`) are pruned to `Settings.snapshotKeep`.
-   */
   snapshot(id: string, reason: SnapshotReason, eventSeq?: number): Promise<Snapshot> {
-    return this.chainSnapshot(id, () => this.doSnapshot(id, reason, eventSeq));
-  }
-
-  /** Runs `op` after every Snapshot operation already queued for the Session. */
-  private chainSnapshot<T>(id: string, op: () => Promise<T>): Promise<T> {
-    const prev = this.snapshotChains.get(id) ?? Promise.resolve();
-    const run = prev.then(op, op);
-    this.snapshotChains.set(id, run);
-    const settle = (): void => {
-      if (this.snapshotChains.get(id) === run) this.snapshotChains.delete(id);
-    };
-    run.then(settle, settle);
-    return run;
-  }
-
-  private async doSnapshot(id: string, reason: SnapshotReason, eventSeq?: number): Promise<Snapshot> {
-    const s = this.get(id);
-    this.assertSnapshottable(s.settings.sandbox.environment);
-    if (!s.containerId || (s.status !== "idle" && s.status !== "running")) {
-      throw new HttpError(409, `Session is ${s.status}; Snapshots need a running Sandbox.`);
-    }
-    const snapshotId = randomBytes(6).toString("hex");
-    const ordinal = this.db.nextSnapshotOrdinal(id);
-    const tag = `${id}-${ordinal}`;
-    this.broadcast({ type: "snapshotting", sessionId: id, active: true });
-    try {
-      const started = Date.now();
-      const { imageId, sizeBytes } = await this.docker
-        .commit(s.containerId, { snapshotId, tag, stripEnv: [...PROVIDER_ENV_KEYS[s.provider]] })
-        .catch((e: unknown) => {
-          if (e instanceof MissingImageContentError) throw new HttpError(409, `${REBUILD_HINT}: ${e.message}.`);
-          throw e;
-        });
-      const snapshot: Snapshot = {
-        id: snapshotId,
-        sessionId: id,
-        ordinal,
-        reason,
-        imageTag: `${SNAPSHOT_REPO}:${tag}`,
-        imageId,
-        eventSeq: eventSeq ?? this.db.lastEventSeq(id),
-        branchId: s.activeBranchId,
-        sizeBytes,
-        queuedMessages: this.db.listSavedMessages(id).map((m) => m.text),
-        createdAt: new Date().toISOString(),
-      };
-      this.db.insertSnapshot(snapshot);
-      this.log(`snapshot ${id}#${ordinal} ${(sizeBytes / 1024 ** 2).toFixed(1)} MB in ${Date.now() - started} ms`);
-      await this.pruneSnapshots(id);
-      this.broadcastSnapshots(id);
-      await this.refreshDiskUsage(id);
-      void this.pushSessionInfo(id);
-      return snapshot;
-    } finally {
-      this.broadcast({ type: "snapshotting", sessionId: id, active: false });
-    }
+    return this.snapshotPolicy.take(id, reason, eventSeq);
   }
 
   /**
@@ -2129,12 +2073,12 @@ export class SessionManager {
    * container is removed once the new one runs, and stays as the fallback if the rebuild fails.
    */
   rebuild(id: string): Promise<Session> {
-    return this.chainSnapshot(id, () => this.doRebuild(id));
+    return this.snapshotPolicy.chain(id, () => this.doRebuild(id));
   }
 
   private async doRebuild(id: string): Promise<Session> {
     const s = this.get(id);
-    this.assertSnapshottable(s.settings.sandbox.environment);
+    this.snapshotPolicy.assertSnapshottable(s.settings.sandbox.environment);
     const old = s.containerId;
     if (!old) throw new HttpError(409, "Session has no Sandbox to rebuild.");
     if (s.status !== "idle" && s.status !== "stopped" && s.status !== "error") {
@@ -2180,7 +2124,7 @@ export class SessionManager {
         createdAt: new Date().toISOString(),
       });
       this.log(`rebuild ${id}: flattened ${old.slice(0, 12)} into snapshot #${ordinal} (${(sizeBytes / 1024 ** 2).toFixed(1)} MB) in ${Date.now() - started} ms`);
-      this.broadcastSnapshots(id);
+      this.snapshotPolicy.broadcastSnapshots(id);
       await this.docker.rename(old, `sbx-${id}-old`);
       renamed = true;
       created = await this.createSandbox(s, settings, imageId);
@@ -2189,7 +2133,7 @@ export class SessionManager {
       const next = this.setStatus(id, "idle");
       await this.connect(id, created);
       await this.docker.remove(old);
-      void this.refreshDiskUsage(id);
+      void this.snapshotPolicy.refreshDiskUsage(id);
       return next;
     } catch (e) {
       // Back to the old Sandbox, which Resume can still start.
@@ -2204,84 +2148,12 @@ export class SessionManager {
     }
   }
 
-  async deleteSnapshot(id: string, snapshotId: string): Promise<void> {
-    this.get(id);
-    const snapshot = this.db.getSnapshot(id, snapshotId);
-    if (!snapshot) throw new HttpError(404, `snapshot ${snapshotId} not found`);
-    const forks = this.db.countForksOf(snapshotId);
-    if (forks > 0) throw new HttpError(409, `Snapshot ${snapshot.ordinal} is the origin of ${forks} Session(s); delete them first.`);
-    if (this.sandboxBase(id)?.id === snapshotId) throw new HttpError(409, `Snapshot ${snapshot.ordinal} is the image the Sandbox runs on.`);
-    await this.docker.removeImage(snapshot.imageId);
-    this.db.deleteSnapshot(id, snapshotId);
-    this.broadcastSnapshots(id);
+  deleteSnapshot(id: string, snapshotId: string): Promise<void> {
+    return this.snapshotPolicy.delete(id, snapshotId);
   }
 
-  /** The `rebuild` Snapshot the Session's Sandbox was created from, if any (its image is in use). */
-  private sandboxBase(id: string): Snapshot | undefined {
-    return this.db
-      .listSnapshots(id)
-      .filter((s) => s.reason === "rebuild")
-      .at(-1);
-  }
-
-  /** Deletes every Snapshot of the Session except those a fork was started from or the Sandbox runs on. */
-  async deleteAllSnapshots(id: string): Promise<DeleteSnapshotsResult> {
-    this.get(id);
-    let deleted = 0;
-    let kept = 0;
-    const base = this.sandboxBase(id);
-    for (const snapshot of this.db.listSnapshots(id)) {
-      if (this.db.countForksOf(snapshot.id) > 0 || snapshot.id === base?.id) {
-        kept++;
-        continue;
-      }
-      await this.docker.removeImage(snapshot.imageId);
-      this.db.deleteSnapshot(id, snapshot.id);
-      deleted++;
-    }
-    this.broadcastSnapshots(id);
-    return { deleted, kept };
-  }
-
-  /** Drops the oldest automatic Snapshots beyond `snapshotKeep` (the Session's, else the global), never one a fork was started from. */
-  private async pruneSnapshots(id: string): Promise<void> {
-    const keep = resolveSessionSettings(this.get(id).settings, this.settings()).snapshotKeep;
-    if (keep <= 0) return;
-    const auto = this.db.listSnapshots(id).filter((s) => s.reason === "turn");
-    for (const old of auto.slice(0, Math.max(0, auto.length - keep))) {
-      if (this.db.countForksOf(old.id) > 0) continue;
-      await this.docker.removeImage(old.imageId);
-      this.db.deleteSnapshot(id, old.id);
-    }
-  }
-
-  /** Removes Snapshot images no Session references any more (deleted Sessions, failed prunes). */
-  private async collectSnapshotImages(): Promise<void> {
-    const known = this.db.listAllSnapshotImageIds();
-    for (const imageId of await this.docker.listSnapshotImageIds()) {
-      if (known.has(imageId)) continue;
-      if (await this.docker.removeImage(imageId)) this.log(`removed orphan snapshot image ${imageId.slice(7, 19)}`);
-    }
-  }
-
-  private broadcastSnapshots(id: string): void {
-    this.broadcast({ type: "snapshots", sessionId: id, snapshots: this.db.listSnapshots(id) });
-    const s = this.db.getSession(id);
-    if (s) this.broadcast({ type: "session", session: s });
-  }
-
-  /** Re-measures the Sandbox's writable layer; cheap for small layers, so done after every Snapshot. */
-  private async refreshDiskUsage(id: string): Promise<void> {
-    const s = this.db.getSession(id);
-    if (!s?.containerId) return;
-    try {
-      let diskBytes = await this.docker.diskUsage(s.containerId);
-      const vms = this.vms(s.settings.sandbox.environment);
-      if (diskBytes !== null && vms) diskBytes += (await vms.diskUsage(id)) ?? 0;
-      if (diskBytes !== null && diskBytes !== s.diskBytes) this.update(id, { diskBytes });
-    } catch (e) {
-      this.log(`disk usage ${id} failed: ${String(e)}`);
-    }
+  deleteAllSnapshots(id: string): Promise<DeleteSnapshotsResult> {
+    return this.snapshotPolicy.deleteAll(id);
   }
 
   async stop(id: string): Promise<Session> {
@@ -2306,7 +2178,7 @@ export class SessionManager {
       const vms = this.vms(s.settings.sandbox.environment);
       if (vms) await vms.stop(vms.vmName(id));
       const stopped = this.setStatus(id, "stopped");
-      void this.refreshDiskUsage(id);
+      void this.snapshotPolicy.refreshDiskUsage(id);
       return stopped;
     } finally {
       if (!outerStop) this.stopping.delete(id);
@@ -2818,7 +2690,7 @@ export class SessionManager {
       if (s && limitHit) this.recordUsageLimit(id, s, limitHit, turn, stored.ts);
       if (limitHit) {
         // The queue stays as it is: nothing pumps while the limit holds, and it plays on after the turn continues.
-        if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
+        if (ev.body.type === "turn_ended") void this.snapshotPolicy.auto(id, stored.seq);
         this.settled(id, "usage_limit");
       } else if (ev.body.type === "turn_ended" && ev.body.stopReason === "end_turn") {
         void this.afterTurn(id, stored.seq, isHiddenTurn(turn) || agentVerified ? [] : turn).catch((e: unknown) => this.log(`after turn ${id} failed: ${String(e)}`));
@@ -2827,7 +2699,7 @@ export class SessionManager {
           this.log(`queue ${id} paused after ${ev.body.type}`);
           this.update(id, { queueRunning: false });
         }
-        if (ev.body.type === "turn_ended") void this.autoSnapshot(id, stored.seq);
+        if (ev.body.type === "turn_ended") void this.snapshotPolicy.auto(id, stored.seq);
         this.settled(id, ev.body.type === "agent_error" ? "error" : ev.body.stopReason);
       }
       if (ev.body.type === "turn_ended") this.prs.onTurnEnded(id, turn);
@@ -2861,23 +2733,10 @@ export class SessionManager {
    * and is verified in its turn like any user prompt.
    */
   private async afterTurn(id: string, eventSeq: number, turn: SessionEvent[]): Promise<void> {
-    await this.autoSnapshot(id, eventSeq);
+    await this.snapshotPolicy.auto(id, eventSeq);
     if (turn.length > 0 && (await this.e2e.afterUserTurn(id, eventSeq, turn))) return;
     await this.queue.pump(id);
     if (this.db.getSession(id)?.status === "idle") this.settled(id, "end_turn");
-  }
-
-  private async autoSnapshot(id: string, eventSeq: number): Promise<void> {
-    const s = this.db.getSession(id);
-    if (!s || s.status !== "idle" || VM_NO_SNAPSHOT[s.settings.sandbox.environment]) return;
-    if (!resolveSessionSettings(s.settings, this.settings()).autoSnapshot) return;
-    try {
-      await this.snapshot(id, "turn", eventSeq);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      this.log(`auto snapshot ${id} failed: ${message}`);
-      this.broadcast({ type: "snapshot_failed", sessionId: id, message: `Automatic snapshot failed. ${message}` });
-    }
   }
 
   private setStatus(id: string, status: SessionStatus, error: string | null = null): Session {

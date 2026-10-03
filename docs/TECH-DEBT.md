@@ -55,7 +55,7 @@ error (§ Fix 6).
 
 | Smell | Where | Named refactoring |
 |---|---|---|
-| **Large Class** | `SessionManager` (3,208 lines, 171 methods) | Extract Class: `ProviderAuthSync`, `SessionQueue`, `SnapshotPolicy`, `RepoSync` — each already a cluster of methods that share no state with the others except `db` and `daemonCall`. |
+| **Large Class** | `SessionManager` (3,208 lines, 171 methods when written; 2,894 after fix 7) | Extract Class: `ProviderAuthSync`, `SessionQueue`, `SnapshotPolicy`, `RepoSync` — each already a cluster of methods that share no state with the others except `db` and `daemonCall`. Done: `ProviderAuthSync` (fix 1, `provider-auth.ts`), `SessionQueue` (`session-queue.ts`: the saved-messages queue and the Agent-to-Agent origins) and `SnapshotPolicy` (`snapshots.ts`: take/auto/prune/delete/collect, the per-Session chain rebuilds share), each behind an explicit deps object with one-line delegations left in `SessionManager`. Open: `RepoSync`. |
 | **Large Class / Divergent Change** | `App.tsx` components | Extract Component: move `SettingsView`, `NewSession`, `SessionView` into their own files (structure-only, zero behavior change), then Extract Hook for the state clusters inside `SettingsView`. |
 | **Duplicated Code** | 5× `*AuthRefreshed`, 5× `push*Auth(ToAll)`, 5× daemon `AuthFile` setup | Form Template Method / Replace with a provider table: one `ProviderAuth` descriptor per provider holding `secretKey`, `isNewer`, `daemonMethod`, `paramsOf`. |
 | **Shotgun Surgery** | adding a provider = 9+ files | Same fix as above; the table becomes the single change point. |
@@ -99,8 +99,11 @@ is a separate decision (would be the first React test; worth it only once `App.t
 **Status (2026-10-03):** 1–6 are on `main` — e63d067 (provider registry: `apps/control-plane/src/provider-auth.ts`,
 `npm run test:provider-auth`), 02fa4f8 (`npm run test:schema`), 7258657 (App.tsx split; move-only),
 9f284e0 (lint gate, `npm run lint`), 77dc012 (protocol split by domain; move-only, acyclic barrel),
-fbd8c9b (`DaemonError` + `DAEMON_ERROR_CODES`, ADR-0080, `npm run test:daemon-errors`). 7 is open and still wants the
-SessionManager harness.
+fbd8c9b (`DaemonError` + `DAEMON_ERROR_CODES`, ADR-0080, `npm run test:daemon-errors`). 7 is on `main` too —
+b1b575d (SessionManager harness: `scripts/session-manager.test.mjs`, 30 characterization tests through the public
+surface, `npm run test:session-manager`), 7acb654 (`SessionQueue` → `apps/control-plane/src/session-queue.ts`) and the
+commit after it (`SnapshotPolicy` → `apps/control-plane/src/snapshots.ts`); `ProviderAuthSync` had landed as the
+provider registry of fix 1. `SessionManager` is 2,894 lines; `RepoSync` is the next cluster to pull out, with the same harness.
 
 Ordered by risk-reduction per hour. Each is a behaviour-preserving commit on its own; none depends on
 the one after it.

@@ -30,6 +30,7 @@
     "test:routes": "node --test scripts/routes.test.mjs",
     "test:feed": "tsc -b && node --disable-warning=ExperimentalWarning --test scripts/feed.test.mjs",
     "test:automation-form": "tsc -b && node --disable-warning=ExperimentalWarning --test scripts/automation-form.test.mjs",
+    "test:session-settings": "tsc -b && node --disable-warning=ExperimentalWarning --test scripts/session-settings.test.mjs",
     "audit:tools": "python3 scripts/audit_tools.py",
     "clean": "tsc -b --clean",
     "build:image": "node scripts/build-image.mjs",

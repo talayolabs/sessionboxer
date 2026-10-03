@@ -5,12 +5,8 @@ import type {
   Provider,
   PublicSettings,
 } from "@sessionboxer/protocol";
-import {
-  SessionSettingsForm,
-  sessionSettingsSections,
-  type SessionSettingsDraft,
-  type SessionSettingsSection,
-} from "./SessionSettingsForm";
+import { SessionSettingsForm, sessionSettingsSections, type SessionSettingsSection } from "./SessionSettingsForm";
+import type { SessionSettingsDraft } from "./session-settings-model";
 import { Modal, Tab, TabList, TabPanel, Tabs } from "./ui";
 
 /**

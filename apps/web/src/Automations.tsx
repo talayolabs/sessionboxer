@@ -22,7 +22,6 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { formatDuration } from "./E2e";
 import { draftsError, draftsToSpecs } from "./Repos";
-import { draftToInput } from "./SessionSettingsForm";
 
 export { describeCron, formatAt } from "./automations/display";
 
@@ -412,7 +411,7 @@ function AutomationForm({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (formError) return;
-    const req: CreateAutomationRequest = { name: name.trim(), enabled, trigger: buildTrigger(trigger.values), action: buildAction(action.values, { draftsToSpecs, draftToInput }), limits };
+    const req: CreateAutomationRequest = { name: name.trim(), enabled, trigger: buildTrigger(trigger.values), action: buildAction(action.values, { draftsToSpecs }), limits };
     setBusy(true);
     void run(async () => {
       if (automation) await api.updateAutomation(automation.id, req);

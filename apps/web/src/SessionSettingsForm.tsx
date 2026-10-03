@@ -10,15 +10,12 @@ import {
   applyNote,
   instructionsDelivery,
   type AgentOption,
-  type AgentToolsPolicy,
   type ModelOption,
-  type OptionValues,
   type Provider,
   type PublicSettings,
   type Session,
-  type SessionSettings,
-  type SessionSettingsInput,
 } from "@sessionboxer/protocol";
+import { draftFromDefaults, type SessionSettingsDraft } from "./session-settings-model";
 import { summarize } from "./mcp";
 import { facetsOf, utilityLabel } from "./UtilitiesEditor";
 import { ModelSelect } from "./ModelSelect";
@@ -60,111 +57,6 @@ export function DockerModeNote({ settings, enabled }: { settings: PublicSettings
       Install Sysbox (Linux, <code>sysbox-ce</code> .deb from github.com/nestybox/sysbox), then reload this page.
     </div>
   );
-}
-
-/** Every per-Session setting as the form edits it (Docker is a yes/no here; the host picks the mode). */
-export interface SessionSettingsDraft {
-  model: string | null;
-  options: OptionValues;
-  inspectLlm: boolean;
-  mcpEnabled: string[];
-  /** Utilities on for the Session (ADR-0073), by registry id. */
-  utilitiesEnabled: string[];
-  instructions: string;
-  autoSnapshot: boolean | null;
-  snapshotKeep: number | null;
-  /** Verify each turn end to end (ADR-0044); `null` follows Settings. */
-  e2eVerify: boolean | null;
-  /** What the `sessionboxer` MCP lets the Agent do (ADR-0062); `null` follows Settings. */
-  agentTools: AgentToolsPolicy | null;
-  approveCreate: boolean | null;
-  /** Where the desktop runs (ADR-0057); fixed once the Session exists, a fork keeps the origin's. */
-  environment: Environment;
-  /** Start from this Snapshot's image instead of a fresh one (ADR-0069); `environment` is then the Snapshot's. Creation only. */
-  snapshotId: string | null;
-  docker: boolean;
-  cpus: number | null;
-  memoryGb: number | null;
-  gitName: string;
-  gitEmail: string;
-}
-
-/** The Utilities a new Session starts with: marked default, in an Environment marked default (the Control Plane applies the same rule). */
-export function defaultUtilitiesEnabled(settings: PublicSettings): string[] {
-  const envOn = new Set(settings.utilityEnvironments.filter((e) => e.enabledByDefault).map((e) => e.name));
-  return settings.utilities.filter((u) => u.enabledByDefault && envOn.has(u.environment)).map((u) => u.id);
-}
-
-/** A new Session starts from the global Settings. */
-export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraft {
-  return {
-    model: null,
-    options: {},
-    inspectLlm: true,
-    mcpEnabled: settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id),
-    utilitiesEnabled: defaultUtilitiesEnabled(settings),
-    instructions: settings.instructions,
-    autoSnapshot: null,
-    snapshotKeep: null,
-    e2eVerify: null,
-    agentTools: null,
-    approveCreate: null,
-    environment: "docker-linux",
-    snapshotId: null,
-    docker: settings.dockerInSandbox,
-    cpus: null,
-    memoryGb: null,
-    gitName: settings.gitUserName || settings.hostGitIdentity.name,
-    gitEmail: settings.gitUserEmail || settings.hostGitIdentity.email,
-  };
-}
-
-/** A fork (or the live dialog) starts from what the Session has. */
-export function draftFromSettings(s: SessionSettings): SessionSettingsDraft {
-  return {
-    model: s.model,
-    options: s.options,
-    inspectLlm: s.inspectLlm,
-    mcpEnabled: s.mcpEnabled,
-    utilitiesEnabled: s.utilitiesEnabled,
-    instructions: s.instructions,
-    autoSnapshot: s.autoSnapshot,
-    snapshotKeep: s.snapshotKeep,
-    e2eVerify: s.e2eVerify,
-    agentTools: s.agentTools,
-    approveCreate: s.approveCreate,
-    environment: s.sandbox.environment,
-    snapshotId: null,
-    docker: s.sandbox.dockerMode !== "none",
-    cpus: s.sandbox.cpus,
-    memoryGb: s.sandbox.memoryGb,
-    gitName: s.sandbox.gitIdentity.name,
-    gitEmail: s.sandbox.gitIdentity.email,
-  };
-}
-
-/** The `settings` of a create/fork request. */
-export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
-  return {
-    model: d.model,
-    options: d.options,
-    inspectLlm: d.inspectLlm,
-    mcpEnabled: d.mcpEnabled,
-    utilitiesEnabled: d.utilitiesEnabled,
-    instructions: d.instructions,
-    autoSnapshot: d.autoSnapshot,
-    snapshotKeep: d.snapshotKeep,
-    e2eVerify: d.e2eVerify,
-    agentTools: d.agentTools,
-    approveCreate: d.approveCreate,
-    sandbox: {
-      environment: d.environment,
-      docker: d.docker,
-      cpus: d.cpus,
-      memoryGb: d.memoryGb,
-      gitIdentity: { name: d.gitName.trim(), email: d.gitEmail.trim() },
-    },
-  };
 }
 
 export type SessionSettingsMode = "create" | "fork" | "live";

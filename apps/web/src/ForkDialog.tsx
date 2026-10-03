@@ -14,7 +14,8 @@ import {
 } from "@sessionboxer/protocol";
 import { formatMb, formatTime } from "./format";
 import { providerCredentialNoun, providerTokenSet } from "./providers";
-import { SessionSettingsForm, draftFromSettings, draftToInput, type SessionSettingsDraft } from "./SessionSettingsForm";
+import { SessionSettingsForm } from "./SessionSettingsForm";
+import { draftFromSettings, draftToInput, type SessionSettingsDraft } from "./session-settings-model";
 import { ProviderIcon } from "./ProviderIcon";
 import { Modal, Select } from "./ui";
 

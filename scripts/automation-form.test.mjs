@@ -1,8 +1,8 @@
-// Node strips the model's TypeScript, as in feed.test.mjs; TSX converters stay behind a seam.
+// Node strips the model's TypeScript, as in feed.test.mjs; the TSX repo converter stays behind a seam.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildTrigger, buildAction, cleanFilters, clamp, draftFromInput,
+  buildTrigger, buildAction, cleanFilters, clamp,
   getTriggerError, getActionError, getFormError,
 } from "../apps/web/src/automations/form-model.ts";
 
@@ -26,7 +26,11 @@ const action = {
 };
 const unusedConverters = {
   draftsToSpecs() { assert.fail("this action must not convert repositories"); },
-  draftToInput() { assert.fail("this action must not convert settings"); },
+};
+const draftInput = {
+  model: null, options: {}, inspectLlm: true, mcpEnabled: ["mcp"], utilitiesEnabled: ["util"],
+  instructions: "defaults", autoSnapshot: null, snapshotKeep: null, e2eVerify: null, agentTools: null, approveCreate: null,
+  sandbox: { environment: "docker-linux", docker: false, cpus: null, memoryGb: null, gitIdentity: { name: "Name", email: "email@example.com" } },
 };
 
 test("schedule: trims cron and timezone, retains missed-run policy", () => {
@@ -58,24 +62,21 @@ test("new_session: converts repos/settings and trims optional title and prompt",
       assert.equal(value, repos);
       return [{ name: "repo", source: { type: "git", url: "https://example.com/repo.git", ref: "main" } }];
     },
-    draftToInput(value) {
-      assert.equal(value, draft);
-      return { instructions: "defaults", model: null };
-    },
   }), { type: "new_session", provider: "pi",
     repos: [{ name: "repo", source: { type: "git", url: "https://example.com/repo.git", ref: "main" } }],
-    settings: { instructions: "defaults", model: null }, prompt: "First prompt.",
+    settings: draftInput, prompt: "First prompt.",
     stopAfter: true, checkoutPrHead: true, title: "Nightly" });
   assert.deepEqual(before, saved);
 });
 
 test("new_session snapshot: no repo conversion, no blank title, snapshot before settings in JSON", () => {
-  const result = buildAction({ ...action, actionType: "new_session", draft: { ...draft, snapshotId: "snap" }, title: " " }, {
-    draftsToSpecs: unusedConverters.draftsToSpecs,
-    draftToInput: () => ({ model: null }),
-  });
+  const result = buildAction({ ...action, actionType: "new_session", draft: { ...draft, snapshotId: "snap" }, title: " " }, unusedConverters);
   assert.equal(JSON.stringify(result),
-    '{"type":"new_session","provider":"pi","repos":[],"snapshotId":"snap","settings":{"model":null},"prompt":"First prompt.","stopAfter":true,"checkoutPrHead":true}');
+    '{"type":"new_session","provider":"pi","repos":[],"snapshotId":"snap","settings":'
+    + '{"model":null,"options":{},"inspectLlm":true,"mcpEnabled":["mcp"],"utilitiesEnabled":["util"],"instructions":"defaults",'
+    + '"autoSnapshot":null,"snapshotKeep":null,"e2eVerify":null,"agentTools":null,"approveCreate":null,'
+    + '"sandbox":{"environment":"docker-linux","docker":false,"cpus":null,"memoryGb":null,"gitIdentity":{"name":"Name","email":"email@example.com"}}},'
+    + '"prompt":"First prompt.","stopAfter":true,"checkoutPrHead":true}');
 });
 
 test("auto_review: retains verdict, delta, notifications, stop and trimmed instructions", () => {
@@ -145,20 +146,4 @@ test("clamp: round and bound; empty/non-finite falls back, whitespace remains nu
   assert.equal(clamp("NaN", 1, 20, 2), 2);
   assert.equal(clamp("Infinity", 1, 20, 2), 2);
   assert.equal(clamp(" ", 1, 20, 2), 1);
-});
-
-test("draftFromInput: omitted fields use defaults, null overrides retained except model/options", () => {
-  const settings = { marker: "settings" };
-  const base = { ...draft, model: "default-model", options: { effort: "high" }, autoSnapshot: true, cpus: 4 };
-  const initial = structuredClone(base);
-  const result = draftFromInput({ model: null, inspectLlm: false, mcpEnabled: [], instructions: "",
-    autoSnapshot: null, snapshotKeep: 0, e2eVerify: false, agentTools: null, approveCreate: false,
-    sandbox: { docker: true, cpus: null, memoryGb: 8, gitIdentity: { name: "", email: "other@example.com" } },
-  }, settings, (value) => { assert.equal(value, settings); return base; });
-  assert.deepEqual(result, {
-    model: "default-model", options: { effort: "high" }, inspectLlm: false, mcpEnabled: [], utilitiesEnabled: ["util"],
-    instructions: "", autoSnapshot: null, snapshotKeep: 0, e2eVerify: false, agentTools: null, approveCreate: false,
-    environment: "docker-linux", snapshotId: null, docker: true, cpus: null, memoryGb: 8, gitName: "", gitEmail: "other@example.com",
-  });
-  assert.deepEqual(base, initial);
 });

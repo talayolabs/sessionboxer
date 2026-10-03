@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { AgentOption, ModelOption, PublicSettings, Session, SessionSettingsPatch } from "@sessionboxer/protocol";
-import { SessionSettingsForm, draftFromSettings, sessionSettingsSections, type SessionSettingsDraft, type SessionSettingsSection } from "./SessionSettingsForm";
+import { SessionSettingsForm, sessionSettingsSections, type SessionSettingsSection } from "./SessionSettingsForm";
+import { draftFromSettings, type SessionSettingsDraft } from "./session-settings-model";
 import { Modal, Tab, TabList, TabPanel, Tabs } from "./ui";
 
 /** The live form's edits as a `PATCH /api/sessions/:id` body; creation-only fields never reach here (the form shows them read-only). */

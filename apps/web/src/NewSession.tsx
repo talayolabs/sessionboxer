@@ -25,11 +25,7 @@ import { providerTokenSet } from "./providers";
 import { EnvironmentIcon } from "./EnvironmentIcon";
 import { EnvironmentPicker } from "./EnvironmentPicker";
 import { Icon } from "./Icons";
-import {
-  draftFromDefaults,
-  draftToInput,
-  type SessionSettingsDraft,
-} from "./SessionSettingsForm";
+import { draftFromDefaults, draftToInput, type SessionSettingsDraft } from "./session-settings-model";
 import { RepoEditor, draftsError, draftsToSpecs, githubAccounts, type RepoDraft } from "./Repos";
 import {
   Modal,

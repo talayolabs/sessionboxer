@@ -38,6 +38,7 @@ jobs:
       - run: npm run test:routes
       - run: npm run test:feed
       - run: npm run test:automation-form
+      - run: npm run test:session-settings
       - run: npm run build
       - run: npm run pack
       - name: Install the package outside the repo and run its CLI

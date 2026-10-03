@@ -1,9 +1,10 @@
 import type {
-  AutomationAction, AutomationTrigger, PrEventFilters, PrEventType, PublicSettings,
-  Provider, RepoSpec, ReviewVerdict, ScheduleMissedPolicy, Session, SessionSettingsInput,
+  AutomationAction, AutomationTrigger, PrEventFilters, PrEventType,
+  Provider, RepoSpec, ReviewVerdict, ScheduleMissedPolicy, Session,
 } from "@sessionboxer/protocol";
 import type { RepoDraft } from "../Repos";
-import type { SessionSettingsDraft } from "../SessionSettingsForm";
+// With the extension so `node --test` loads this model and its dependency without a build (scripts/automation-form.test.mjs).
+import { draftToInput, type SessionSettingsDraft } from "../session-settings-model.ts";
 
 export type TriggerValues = {
   triggerType: AutomationTrigger["type"];
@@ -38,10 +39,9 @@ export type ActionValues = {
 
 export type SchedulePreview = { ok: true; next: string[] } | { ok: false; error: string } | null;
 
-// The converters live with their existing TSX forms; passing them keeps this model React-free.
+// The repo converter lives with its TSX editor; passing it keeps this model React-free.
 type ActionConverters = {
   draftsToSpecs: (repos: RepoDraft[]) => RepoSpec[];
-  draftToInput: (draft: SessionSettingsDraft) => SessionSettingsInput;
 };
 
 export function buildTrigger({ triggerType, cron, timezone, missedRun, prFollows, prEvents, filters }: TriggerValues): AutomationTrigger {
@@ -54,7 +54,7 @@ export function buildTrigger({ triggerType, cron, timezone, missedRun, prFollows
 
 export function buildAction({
   actionType, sessionId, text, provider, repos, draft, title, prompt, stopAfter, checkoutPrHead, notifyText, instructions, maxVerdict, deltaOnly, notifyOn, publish, commentOnSkip, maxMinutes,
-}: ActionValues, { draftsToSpecs, draftToInput }: ActionConverters): AutomationAction {
+}: ActionValues, { draftsToSpecs }: ActionConverters): AutomationAction {
   switch (actionType) {
     case "prompt":
       return { type: "prompt", sessionId, text: text.trim() };
@@ -138,30 +138,5 @@ export function cleanFilters(f: PrEventFilters): PrEventFilters {
     ...(f.baseRef?.trim() ? { baseRef: f.baseRef.trim() } : {}),
     ...(f.titleMatch?.trim() ? { titleMatch: f.titleMatch.trim() } : {}),
     ...(f.labels && f.labels.length > 0 ? { labels: f.labels } : {}),
-  };
-}
-
-/** A stored template's settings back into the form; omitted parts follow the current defaults. */
-export function draftFromInput(input: SessionSettingsInput, settings: PublicSettings, draftFromDefaults: (settings: PublicSettings) => SessionSettingsDraft): SessionSettingsDraft {
-  const base = draftFromDefaults(settings);
-  return {
-    model: input.model ?? base.model,
-    options: input.options ?? base.options,
-    inspectLlm: input.inspectLlm ?? base.inspectLlm,
-    mcpEnabled: input.mcpEnabled ?? base.mcpEnabled,
-    utilitiesEnabled: input.utilitiesEnabled ?? base.utilitiesEnabled,
-    instructions: input.instructions ?? base.instructions,
-    autoSnapshot: input.autoSnapshot === undefined ? base.autoSnapshot : input.autoSnapshot,
-    snapshotKeep: input.snapshotKeep === undefined ? base.snapshotKeep : input.snapshotKeep,
-    e2eVerify: input.e2eVerify === undefined ? base.e2eVerify : input.e2eVerify,
-    agentTools: input.agentTools === undefined ? base.agentTools : input.agentTools,
-    approveCreate: input.approveCreate === undefined ? base.approveCreate : input.approveCreate,
-    environment: input.sandbox?.environment ?? base.environment,
-    snapshotId: base.snapshotId,
-    docker: input.sandbox?.docker ?? base.docker,
-    cpus: input.sandbox?.cpus === undefined ? base.cpus : input.sandbox.cpus,
-    memoryGb: input.sandbox?.memoryGb === undefined ? base.memoryGb : input.sandbox.memoryGb,
-    gitName: input.sandbox?.gitIdentity?.name ?? base.gitName,
-    gitEmail: input.sandbox?.gitIdentity?.email ?? base.gitEmail,
   };
 }

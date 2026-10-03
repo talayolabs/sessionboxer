@@ -356,6 +356,25 @@ RUN arch="$(dpkg --print-architecture)" \
     && ln -s /opt/grok/grok /usr/local/bin/grok \
     && HOME=/tmp GROK_DISABLE_AUTOUPDATER=1 grok --version && rm -rf /tmp/.grok
 
+# Gemini CLI (`gemini --acp` is spawned by the Sandbox Daemon; `gemini` in the terminal, ADR-0087):
+# Google's npm package, fetched as the registry tarball of the pinned version and checked against its
+# sha256 before `npm install -g` unpacks it (its one bundle has no dependencies of its own; the pty
+# and keychain add-ons are optional and skipped so a Google login stays in a file). Root-owned under
+# npm's global root so a Sandbox runs the version the image was built with; no update check (the
+# settings file copied below turns auto-update and its notice off).
+ARG GEMINI_CLI_VERSION=0.62.0
+ARG GEMINI_CLI_SHA256=2276032b1c33d2b828b1cf197e52f48e74b0a395326763ff01a80d97d0fbc0c3
+RUN for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 5 --retry-all-errors -C - -o /tmp/gemini-cli.tgz \
+           "https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${GEMINI_CLI_VERSION}.tgz" && break; \
+         [ "$i" = 5 ] && exit 1; sleep 5; \
+       done \
+    && echo "${GEMINI_CLI_SHA256}  /tmp/gemini-cli.tgz" | sha256sum -c - \
+    && npm install -g --omit=optional /tmp/gemini-cli.tgz \
+    && rm /tmp/gemini-cli.tgz \
+    && npm cache clean --force \
+    && HOME=/tmp gemini --version | grep -qx "${GEMINI_CLI_VERSION}" && rm -rf /tmp/.gemini
+
 # ---- Everything above changes only when a pinned version does; everything below is
 # ---- Sessionboxer's own code and configuration, ordered from rarely to often changed, and
 # ---- dependencies are installed from package.json alone so a code change reuses them.
@@ -470,6 +489,7 @@ COPY --chown=agent:agent images/sandbox/opencode-config.json /home/agent/.config
 COPY --chown=agent:agent images/sandbox/fx-settings.json /home/agent/.fx/settings.json
 COPY --chown=agent:agent images/sandbox/copilot-settings.json /home/agent/.copilot/settings.json
 COPY --chown=agent:agent images/sandbox/grok-config.toml /home/agent/.grok/config.toml
+COPY --chown=agent:agent images/sandbox/gemini-settings.json /home/agent/.gemini/settings.json
 COPY --chown=agent:agent images/sandbox/claude-settings.json /home/agent/.claude/settings.json
 COPY --chown=agent:agent images/sandbox/mcp.json /home/agent/.sessionboxer/mcp.json
 COPY --chmod=0755 images/sandbox/entrypoint.sh /usr/local/bin/sessionboxer-entrypoint
@@ -490,6 +510,7 @@ COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.fx/AGEN
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.copilot/copilot-instructions.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.vibe/AGENTS.md
 COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.grok/rules/sandbox-briefing.md
+COPY --chown=agent:agent images/sandbox/sandbox-briefing.md /home/agent/.gemini/GEMINI.md
 COPY images/sandbox/sandbox-briefing.md /AGENTS.md
 # The briefing an Agent running inside the Windows VM gets instead (ADR-0060); the Daemon pushes it there.
 COPY --chown=agent:agent images/sandbox/windows-briefing.md /home/agent/.sessionboxer/windows-briefing.md

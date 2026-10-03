@@ -13,6 +13,7 @@ The Sandbox image changed: `npm run build:image`, then Stop → Resume existing 
 - GitHub Copilot CLI is a Provider: sign in with GitHub Copilot from Settings (the device flow), or paste a GitHub token with the Copilot Requests permission or `~/.copilot/config.json`; the token reaches the Agent as `COPILOT_GITHUB_TOKEN`, the MCP servers through its own `mcp-config.json`; Linux, macOS and Windows. ([ADR-0082](docs/adr/0082-github-copilot-cli-as-a-provider-on-a-copilot-login.md))
 - Fix: the standing instructions reached a `first-prompt` Agent (Codex, Cursor, OpenCode, Devin, pi) only on paper: the first prompt was marked sent before the prefix was built, so it went without them.
 - **Mistral Vibe** as an eighth agent, via `vibe-acp`, on a Mistral account (**Sign in with Mistral Vibe**) or a Mistral API key; Linux, macOS and Windows. (ADR-0085)
+- **Gemini CLI** as a Provider, via `gemini --acp`, on a Google login (`~/.gemini/oauth_creds.json`) or a Gemini API key. ([ADR-0087](docs/adr/0087-gemini-cli-as-a-provider-on-a-google-login-or-api-key.md))
 
 ## 1.5.0 — 2026-10-01
 

@@ -48,6 +48,8 @@ export const DAEMON_METHODS = {
   vibeAuthChanged: "_sessionboxer/vibe/auth/changed",
   grokAuthSet: "_sessionboxer/grok/auth/set",
   grokAuthChanged: "_sessionboxer/grok/auth/changed",
+  geminiAuthSet: "_sessionboxer/gemini/auth/set",
+  geminiAuthChanged: "_sessionboxer/gemini/auth/changed",
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
@@ -380,6 +382,22 @@ export const DaemonGrokAuthChangedParams = z.object({
   authJson: z.string(),
 });
 export type DaemonGrokAuthChangedParams = z.infer<typeof DaemonGrokAuthChangedParams>;
+
+/**
+ * The Gemini CLI login for the Sandbox (ADR-0087): a Google login file goes on tmpfs behind
+ * `~/.gemini/oauth_creds.json`, a Gemini API key becomes the Agent's `GEMINI_API_KEY`. Sent before
+ * the MCP set and again whenever the stored login changes. When Gemini CLI refreshes the access
+ * token in the file, the rewritten file comes back as the `geminiAuthChanged` notification.
+ */
+export const DaemonGeminiAuthParams = z.object({
+  login: z.string(),
+});
+export type DaemonGeminiAuthParams = z.infer<typeof DaemonGeminiAuthParams>;
+
+export const DaemonGeminiAuthChangedParams = z.object({
+  authJson: z.string(),
+});
+export type DaemonGeminiAuthChangedParams = z.infer<typeof DaemonGeminiAuthChangedParams>;
 
 /** Every `*AuthChanged` notification carries the rewritten login file the same way. */
 export const DaemonAuthChangedParams = z.object({

@@ -1,4 +1,4 @@
-import type { CodexLogin, CursorLogin, OpenCodeLogin, FxLogin, GrokLogin } from "@sessionboxer/protocol";
+import type { CodexLogin, CursorLogin, OpenCodeLogin, FxLogin, GrokLogin, GeminiLogin } from "@sessionboxer/protocol";
 
 /** One line about the stored Codex login, from the metadata the Control Plane exposes (never the tokens). */
 export function describeCodexLogin(login: CodexLogin): string {
@@ -30,4 +30,11 @@ export function describeGrokLogin(login: GrokLogin): string {
   if (login.kind === "api-key") return "xAI API key";
   const what = login.email ? `xAI account ${login.email}` : "xAI account";
   return login.expiresAt ? `${what}, token valid until ${new Date(login.expiresAt).toLocaleString()}` : what;
+}
+
+/** One line about the stored Gemini CLI login (ADR-0087), from its metadata only. */
+export function describeGeminiLogin(login: GeminiLogin): string {
+  if (login.kind === "api-key") return "Gemini API key";
+  const who = login.email ? `Google login (${login.email})` : "Google login";
+  return login.expiresAt ? `${who}, token valid until ${new Date(login.expiresAt).toLocaleString()}` : who;
 }

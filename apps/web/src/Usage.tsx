@@ -26,6 +26,7 @@ const NO_WINDOWS: Record<Provider, string> = {
   copilot: "GitHub Copilot counts premium requests on GitHub's side and reports no usage windows; see github.com → Settings → Copilot → Usage.",
   vibe: "Mistral Vibe reports its context and tokens per turn but no usage windows; see console.mistral.ai → Usage for your Mistral account.",
   grok: "Grok Build reports tokens per turn but no usage windows; see console.x.ai for the account's usage and credits.",
+  gemini: "Gemini CLI reports tokens per turn but no usage windows; see aistudio.google.com for an API key's quota, or run `/stats` in Gemini CLI.",
 };
 
 /** The current time, ticking every second while `live`. */

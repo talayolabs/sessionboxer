@@ -70,7 +70,10 @@ const BROWSER_OPENERS = ["xdg-open", "open", "sensible-browser", "x-www-browser"
 /**
  * One recipe per Provider whose CLI has a paste-a-code login. OpenCode has none: its logins are per
  * model provider and each is a browser OAuth that calls back to the CLI's local port, or an API
- * key typed into an interactive prompt (ADR-0076); the user pastes its `auth.json` instead.
+ * key typed into an interactive prompt (ADR-0076); the user pastes its `auth.json` instead. Nor
+ * has Gemini CLI: its Login with Google (`NO_BROWSER=1` prints the URL and asks for the code) lives
+ * only in its full-screen TUI, which does not quit on a pty once logged in, and `gemini -p` refuses
+ * to log in (ADR-0081); the user pastes its `oauth_creds.json` instead.
  */
 export const RECIPES: Partial<Record<Provider, Recipe>> = {
   kimi: kimiLoginRecipe(noBrowser),
@@ -488,7 +491,7 @@ export class ProviderLogins {
 const finished = (s: ProviderLoginFlow): boolean => s.status === "done" || s.status === "error";
 
 function label(provider: Provider): string {
-  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot", vibe: "Mistral Vibe", grok: "Grok Build" }[provider];
+  return { "claude-code": "the Claude Code CLI", devin: "the Devin CLI", codex: "the Codex CLI", cursor: "the Cursor CLI", pi: "pi", opencode: "OpenCode", fx: "fx", kimi: "Kimi CLI", copilot: "GitHub Copilot", vibe: "Mistral Vibe", grok: "Grok Build", gemini: "Gemini CLI" }[provider];
 }
 
 function describe(status: ProviderLoginFlow["status"]): string {
@@ -676,3 +679,4 @@ export function redact(text: string): string {
     .replace(/("[^"]*(?:key|token|secret)[^"]*"\s*:\s*)"[^"]*"/gi, '$1"[…]"')
     .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, "[jwt]");
 }
+

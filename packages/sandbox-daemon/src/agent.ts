@@ -480,10 +480,12 @@ export class AgentManager {
   /**
    * Sets extra environment variables for the Agent process. Same timing as `setModelAllowlist`:
    * restarts the Agent in place when it runs with another environment, after the turn when one
-   * is active. Returns whether it was applied right away.
+   * is active on a running Agent. A turn that still waits for the first start (the prompt a
+   * Session is created with arrives before the login push) takes the environment with it.
+   * Returns whether it was applied right away.
    */
   setAgentEnv(env: Record<string, string>): boolean {
-    if (this.turnActive) {
+    if (this.turnActive && (this.child || this.starting)) {
       this.agentEnvPending = env;
       this.events.onStateChange();
       return false;

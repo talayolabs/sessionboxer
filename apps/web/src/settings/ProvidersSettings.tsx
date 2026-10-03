@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { type PublicSettings, type VibeLogin } from "@sessionboxer/protocol";
 import { KimiProviderSettings } from "./KimiProviderSettings";
-import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin, describeGrokLogin } from "./provider-login-labels";
+import { describeCodexLogin, describeCursorLogin, describeOpenCodeLogin, describeFxLogin, describeGrokLogin, describeGeminiLogin } from "./provider-login-labels";
 import { CopyCommand } from "../CopyCommand";
 import { ProviderConnectDialog } from "../ProviderConnect";
 import { Caption } from "../ui";
@@ -42,6 +42,8 @@ export function useProvidersSettings(settings: PublicSettings) {
     forgetVibeLogin: false,
     grokLogin: "",
     forgetGrokLogin: false,
+    geminiLogin: "",
+    forgetGeminiLogin: false,
     claudeBaseUrl: settings.claudeApi.baseUrl,
     claudeAuthToken: "",
     claudeApiKey: "",
@@ -95,6 +97,10 @@ export function ProvidersSettings({
   setGrokLogin,
   forgetGrokLogin,
   setForgetGrokLogin,
+  geminiLogin,
+  setGeminiLogin,
+  forgetGeminiLogin,
+  setForgetGeminiLogin,
   claudeBaseUrl,
   setClaudeBaseUrl,
   claudeAuthToken,
@@ -155,6 +161,10 @@ export function ProvidersSettings({
   setGrokLogin: Setter<string>;
   forgetGrokLogin: boolean;
   setForgetGrokLogin: Setter<boolean>;
+  geminiLogin: string;
+  setGeminiLogin: Setter<string>;
+  forgetGeminiLogin: boolean;
+  setForgetGeminiLogin: Setter<boolean>;
   claudeBaseUrl: string;
   setClaudeBaseUrl: Setter<string>;
   claudeAuthToken: string;
@@ -232,7 +242,7 @@ export function ProvidersSettings({
         <button type="button" className="primary" onClick={() => setGuided(true)}>
           Connect a Provider…
         </button>
-        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe or Grok Build</span>
+        <span className="muted">Claude, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe, Grok Build or Gemini CLI</span>
       </div>
       {guided && <ProviderConnectDialog settings={settings} initial={null} onClose={() => setGuided(false)} onStored={onStored} />}
       <KimiProviderSettings settings={settings} value={kimiLogin} setValue={setKimiLogin} forget={forgetKimiLogin} setForget={setForgetKimiLogin} />
@@ -640,6 +650,31 @@ export function ProvidersSettings({
         placeholder="Paste the contents of ~/.grok/auth.json, or an xAI API key"
         accept=".json,application/json"
         importLabel="Import auth.json…"
+      />
+
+      <LoginFileField
+        caption="Gemini CLI: login (oauth_creds.json or Gemini API key)"
+        help={
+          <>
+            <p>
+              Gemini CLI (Google) runs on your Google account (Gemini Code Assist) or a Gemini API key. Log in with Gemini CLI on your own
+              machine (run <code>gemini</code>, choose Login with Google) and paste or import the file it writes,{" "}
+              <code>~/.gemini/oauth_creds.json</code> (the Sandbox keeps it in memory only; refreshed tokens flow back here). Or paste a
+              Gemini API key from aistudio.google.com &rarr; Get API key. Vertex AI credentials are not supported.
+            </p>
+            <CopyCommand command="gemini" />
+            <CopyCommand command="cat ~/.gemini/oauth_creds.json" />
+          </>
+        }
+        stored={settings.providerSecretsSet.gemini.GEMINI_LOGIN}
+        metadata={settings.geminiLogin ? describeGeminiLogin(settings.geminiLogin) : null}
+        value={geminiLogin}
+        setValue={setGeminiLogin}
+        forget={forgetGeminiLogin}
+        setForget={setForgetGeminiLogin}
+        placeholder="Paste the contents of ~/.gemini/oauth_creds.json, or a Gemini API key"
+        accept=".json,application/json"
+        importLabel="Import oauth_creds.json…"
       />
 
       <CopilotLoginCard settings={settings} login={copilotLogin} setLogin={setCopilotLogin} forget={forgetCopilotLogin} setForget={setForgetCopilotLogin} />

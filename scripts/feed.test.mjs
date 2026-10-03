@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { feedReducer } from "../apps/web/src/feed.ts";
 
-const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok"];
+const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini"];
 const emptyPerProvider = () => Object.fromEntries(PROVIDERS.map((p) => [p, []]));
 
 /** A Session row with the fields the sidebar order reads; the rest is irrelevant to the reducer. */

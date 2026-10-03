@@ -3,7 +3,7 @@ import { PROVIDER_LABELS, type Provider } from "@sessionboxer/protocol";
 // Hand-drawn approximations of the Providers' marks: Claude's orange starburst,
 // Devin's three linked hexagons, Codex's (OpenAI's) hexagonal knot, pi's π in
 // a rounded square, OpenCode's pixel terminal, fx's lowercase "fx" wordmark
-// (fx.sh), GitHub Copilot's goggled face, Mistral's blocky "M" and Grok's slanted slash mark, drawn in the current text colour.
+// (fx.sh), GitHub Copilot's goggled face, Mistral's blocky "M", Grok's slanted slash mark and Gemini's four-pointed star, drawn in the current text colour.
 
 const CLAUDE_RAYS: ReadonlyArray<[angle: number, length: number]> = [
   [0, 9.5],
@@ -202,6 +202,14 @@ export function ProviderIcon({ provider, size = 16 }: { provider: Provider; size
             <path d="M12.3 4.5 18.8 11.3" />
             <path d="M5 12.6 11.5 19.5" />
           </g>
+        </svg>
+      );
+    case "gemini":
+      // Gemini's mark: a four-pointed star with concave sides.
+      return (
+        <svg className="provider-icon" width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={label}>
+          <title>{label}</title>
+          <path d="M12 2C12 7.52 16.48 12 22 12C16.48 12 12 16.48 12 22C12 16.48 7.52 12 2 12C7.52 12 12 7.52 12 2Z" fill="currentColor" />
         </svg>
       );
   }

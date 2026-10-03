@@ -16,6 +16,8 @@ export function providerSetupHint(provider: Provider): string {
       return "No OpenCode login configured. Run `opencode auth login` on your machine and paste ~/.local/share/opencode/auth.json, or an OpenCode Zen API key, in Global settings → Providers.";
     case "fx":
       return "No fx login configured. Paste an AI Gateway API key, or run `fx login` and paste ~/.fx/auth.json, in Global settings → Providers.";
+    case "gemini":
+      return "No Gemini CLI login configured. Paste a Gemini API key, or run `gemini`, choose Login with Google, and paste ~/.gemini/oauth_creds.json, in Global settings → Providers.";
     case "kimi":
       return "No Kimi CLI login configured. Run `kimi login` and paste ~/.kimi/credentials/kimi-code.json in Global settings → Providers, or Sign in with Kimi CLI there.";
     case "copilot":

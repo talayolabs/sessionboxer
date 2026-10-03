@@ -2,7 +2,7 @@
 
 # Sessionboxer
 
-Run coding agents in boxes: each session gets its own machine with a desktop, and Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe or Grok Build works inside it while you watch and take over when you want.
+Run coding agents in boxes: each session gets its own machine with a desktop, and Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe, Grok Build or Gemini CLI works inside it while you watch and take over when you want.
 
 <br clear="left" />
 
@@ -73,7 +73,7 @@ Every feature in detail: [user guide](docs/GUIDE.md).
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Runs on your machine or your server | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
 | Your existing subscription, no new account | ✓ | ✗ | ✗ | ✗ | ✗ | API key | ✓ |
-| Agents | Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe, Grok Build | Devin | Cursor | Codex | Claude Code | own agent, any model | Claude Code, Codex, Cursor, others |
+| Agents | Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, Kimi CLI, GitHub Copilot, Mistral Vibe, Grok Build, Gemini CLI | Devin | Cursor | Codex | Claude Code | own agent, any model | Claude Code, Codex, Cursor, others |
 | Isolated sandbox per session | Docker, Windows/macOS VM | VM | VM | container | VM | Docker | ✗ (your machine) |
 | Desktop the agent drives with mouse and keyboard | ✓ | browser | ✓ | — | — | browser | ✗ |
 | Watch the screen live and take over | ✓ | ✓ | ✓ | — | — | — | ✗ |

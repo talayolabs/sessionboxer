@@ -185,6 +185,7 @@ export function SettingsView({
               : {}),
           ...(providers.values.vibeLogin.trim() ? { vibe: { VIBE_LOGIN: providers.values.vibeLogin.trim() } } : providers.values.forgetVibeLogin ? { vibe: { VIBE_LOGIN: "" } } : {}),
           ...(providers.values.grokLogin.trim() ? { grok: { GROK_LOGIN: providers.values.grokLogin.trim() } } : providers.values.forgetGrokLogin ? { grok: { GROK_LOGIN: "" } } : {}),
+          ...(providers.values.geminiLogin.trim() ? { gemini: { GEMINI_LOGIN: providers.values.geminiLogin.trim() } } : providers.values.forgetGeminiLogin ? { gemini: { GEMINI_LOGIN: "" } } : {}),
         },
         claudeApi: {
           baseUrl: providers.values.claudeBaseUrl.trim(),
@@ -210,6 +211,8 @@ export function SettingsView({
       providers.set.setForgetVibeLogin(false);
       providers.set.setGrokLogin("");
       providers.set.setForgetGrokLogin(false);
+      providers.set.setGeminiLogin("");
+      providers.set.setForgetGeminiLogin(false);
       providers.set.setClaudeAuthToken("");
       providers.set.setClaudeApiKey("");
       providers.set.setForgetClaudeAuthToken(false);

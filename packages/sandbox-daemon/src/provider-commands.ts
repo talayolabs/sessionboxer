@@ -13,6 +13,8 @@ export const ACP_COMMANDS: Record<Provider, string[]> = {
   opencode: ["opencode", "acp"],
   // fx's ACP server is built in (ADR-0077); permission mode and auto-upgrade are set in its environment (`FX_AGENT_ENV`).
   fx: ["fx", "acp"],
+  // Gemini CLI's ACP server is built in (ADR-0087); --yolo auto-approves every tool call (`GEMINI_AGENT_ENV` trusts the workspace, or it falls back to asking).
+  gemini: ["gemini", "--acp", "--yolo"],
   kimi: ["kimi", "acp"],
   // Copilot's ACP server is built in (ADR-0082); every permission is granted on the command line and the
   // pinned version runs (`--no-auto-update`); `--no-ask-user` keeps it from waiting on a question no client answers.

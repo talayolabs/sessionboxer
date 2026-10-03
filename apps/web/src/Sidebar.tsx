@@ -547,7 +547,7 @@ export function Sidebar({
                   <span className="setup-check" aria-hidden="true">{anyTokenSet ? "\u2713" : ""}</span>
                   <span className="setup-text">
                     <span className="setup-title">Connect a Provider</span>
-                    <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, GitHub Copilot, Mistral Vibe or Grok Build"}</span>
+                    <span className="muted">{anyTokenSet ? "done" : "Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, GitHub Copilot, Mistral Vibe, Grok Build or Gemini CLI"}</span>
                   </span>
                 </button>
                 <button type="button" className={`setup-item${gitConnected ? " done" : ""}`} onClick={() => setGitConnect(true)}>

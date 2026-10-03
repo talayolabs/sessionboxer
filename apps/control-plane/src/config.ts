@@ -38,6 +38,7 @@ import {
   MACOS_VERSIONS,
 } from "@sessionboxer/protocol";
 import { hostExtraCaCerts, parseExtraCaCerts } from "./ca-certs.js";
+import { describeGeminiLogin, geminiLogin, normalizeGeminiLogin } from "./gemini-login.js";
 import { HttpError } from "./http-error.js";
 import { piApiKeys, piAuthJson, normalizePiApiKeys, normalizePiAuthJson, describePiLogin } from "./pi-login.js";
 import { copilotLogin, normalizeCopilotLogin } from "./copilot-login.js";
@@ -47,6 +48,7 @@ export { copilotLogin, copilotAuthNewer, normalizeCopilotLogin } from "./copilot
 import { describeVibeLogin, normalizeVibeLogin, vibeLogin } from "./vibe-login.js";
 import { describeGrokLogin, grokLogin, normalizeGrokLogin } from "./grok-login.js";
 export { grokLogin, grokAuthNewer, normalizeGrokLogin, describeGrokLogin } from "./grok-login.js";
+import { jwtClaims } from "./jwt.js";
 import { generateVapidKeys } from "./web-push.js";
 import { mergeProcedures, mergeUtilities, mergeUtilityEnvironments, toPublicUtility } from "./utilities.js";
 
@@ -276,6 +278,9 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     if (providerSecrets.grok?.GROK_LOGIN !== undefined) {
       next.providerSecrets.grok.GROK_LOGIN = normalizeGrokLogin(providerSecrets.grok.GROK_LOGIN);
     }
+    if (providerSecrets.gemini?.GEMINI_LOGIN !== undefined) {
+      next.providerSecrets.gemini.GEMINI_LOGIN = normalizeGeminiLogin(providerSecrets.gemini.GEMINI_LOGIN);
+    }
   }
   return Settings.parse(next);
 }
@@ -320,6 +325,7 @@ export function toPublicSettings(
       copilot: { COPILOT_LOGIN: copilotLogin(settings) !== "" },
       vibe: { VIBE_LOGIN: vibeLogin(settings) !== "" },
       grok: { GROK_LOGIN: grokLogin(settings) !== "" },
+      gemini: { GEMINI_LOGIN: geminiLogin(settings) !== "" },
     },
     codexLogin: codexLogin(codexAuthJson(settings)),
     cursorLogin: describeCursorLogin(cursorLogin(settings)),
@@ -330,6 +336,7 @@ export function toPublicSettings(
     copilotLogin: describeCopilotLogin(copilotLogin(settings)),
     vibeLogin: describeVibeLogin(vibeLogin(settings)),
     grokLogin: describeGrokLogin(grokLogin(settings)),
+    geminiLogin: describeGeminiLogin(geminiLogin(settings)),
     connectors: {
       github: { clientId: connectors.github.clientId, clientSecretSet: connectors.github.clientSecret !== "" },
     },
@@ -436,17 +443,6 @@ const CodexAuthFile = z.object({
   tokens: z.object({ id_token: z.string(), access_token: z.string(), refresh_token: z.string() }).nullable().optional(),
   last_refresh: z.string().nullable().optional(),
 });
-
-function jwtClaims(token: string): Record<string, unknown> | null {
-  const payload = token.split(".")[1];
-  if (!payload) return null;
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Which of two `auth.json` is the newer one: Codex stamps `last_refresh` when it rotates the tokens.
@@ -758,6 +754,8 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
       return vibeLogin(settings) !== "";
     case "grok":
       return grokLogin(settings) !== "";
+    case "gemini":
+      return geminiLogin(settings) !== "";
   }
 }
 
@@ -765,7 +763,9 @@ export function providerReady(provider: Provider, settings: Settings): boolean {
  * Env injected into a Sandbox for the Session's Provider; other Providers' secrets stay on the host.
  * Only set values: Claude's OAuth token can be left out when a proxy credential stands in for it,
  * and `ANTHROPIC_BASE_URL` is only given when it differs from Anthropic's (the Daemon forwards
- * the Agent there, directly or through its inspector).
+ * the Agent there, directly or through its inspector). Gemini CLI's login travels over the Daemon
+ * RPC (ADR-0087); only a `GOOGLE_GEMINI_BASE_URL` set on the Control Plane (a proxy, or a mock in
+ * tests) is forwarded, for its API-key path.
  */
 export function providerEnv(provider: Provider, settings: Settings): Record<string, string> {
   switch (provider) {
@@ -793,6 +793,8 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
     case "vibe":
     case "grok":
       return {};
+    case "gemini":
+      return process.env.GOOGLE_GEMINI_BASE_URL?.trim() ? { GOOGLE_GEMINI_BASE_URL: rewriteHostUrl(process.env.GOOGLE_GEMINI_BASE_URL.trim()) } : {};
   }
 }
 

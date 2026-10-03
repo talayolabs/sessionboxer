@@ -197,6 +197,8 @@ function steps(provider: Provider, os: Os): Step[] {
           commands: ["npm install -g @xai-official/grok", "grok login", os === "windows" ? "Get-Content $env:USERPROFILE\\.grok\\auth.json" : "cat ~/.grok/auth.json"],
         },
       ];
+    case "gemini":
+      return [{ title: "Install Gemini CLI, log in with Google, and copy the login file it wrote", body: `In ${shell} (Node.js 20+; skip the install if you already use it). \`gemini\` opens its first-run dialog: pick "Login with Google" (or /auth later) and the browser opens with your Google account; paste the whole file below, or use Import. A Gemini API key from aistudio.google.com works too. The Sandbox keeps it in memory only; refreshed tokens flow back here.`, commands: ["npm install -g @google/gemini-cli", "gemini", os === "windows" ? "Get-Content $env:USERPROFILE\\.gemini\\oauth_creds.json" : "cat ~/.gemini/oauth_creds.json"] }];
     case "devin":
       return [
         {
@@ -328,6 +330,8 @@ function credentialField(provider: Provider): {
       return { label: "Mistral Vibe login (a Mistral API key, or the contents of ~/.vibe/.env)", multiline: true, file: true, placeholder: "The API key, or MISTRAL_API_KEY='…'" };
     case "grok":
       return { label: "Grok Build login (contents of ~/.grok/auth.json, or an xAI API key)", multiline: true, file: true, placeholder: '{ "key": … } or xai-…' };
+    case "gemini":
+      return { label: "Gemini CLI login (contents of ~/.gemini/oauth_creds.json, or a Gemini API key)", multiline: true, file: true, fileName: "oauth_creds.json", placeholder: '{ "access_token": … } or AIza…' };
   }
 }
 
@@ -355,6 +359,8 @@ function secretUpdate(provider: Provider, value: string) {
       return { vibe: { VIBE_LOGIN: value } };
     case "grok":
       return { grok: { GROK_LOGIN: value } };
+    case "gemini":
+      return { gemini: { GEMINI_LOGIN: value } };
   }
 }
 

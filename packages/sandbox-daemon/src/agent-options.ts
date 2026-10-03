@@ -2,14 +2,17 @@ import type { PromptResponse, SessionConfigOption } from "@agentclientprotocol/s
 import type { AgentOption, ModelOption, OptionChoice, TurnUsage } from "@sessionboxer/protocol";
 
 /**
- * The prompt response's `usage` as the event carries it, dropping ACP's `_meta`. Agents leave out
- * what they do not know (fx sends only the counts it has, under `cacheReadTokens`/`cacheWriteTokens`/
- * `reasoningTokens`, and no total; Grok Build puts its counts under the response's `_meta.usage`, with the
- * cache write as `cacheCreationTokens`), so missing counts read as 0 and the total is summed when absent.
+ * The prompt response's `usage` as the event carries it. Agents leave out what they do not know (fx
+ * sends only the counts it has, under `cacheReadTokens`/`cacheWriteTokens`/`reasoningTokens`, and no
+ * total; Grok Build puts its counts under the response's `_meta.usage`, with the cache write as
+ * `cacheCreationTokens`; Gemini CLI sends no `usage` at all, its counts are under
+ * `_meta.quota.token_count` as `input_tokens`/`output_tokens`, ADR-0087), so missing counts read as 0
+ * and the total is summed when absent.
  */
 export function turnUsage(response: Pick<PromptResponse, "usage" | "_meta">): TurnUsage | undefined {
   const meta = response._meta?.usage;
-  const usage = response.usage ?? (typeof meta === "object" && meta !== null ? meta : undefined);
+  const quota = (response._meta?.quota as { token_count?: unknown } | undefined)?.token_count;
+  const usage = response.usage ?? (typeof meta === "object" && meta !== null ? meta : undefined) ?? (typeof quota === "object" && quota !== null ? quota : undefined);
   if (!usage) return undefined;
   const raw = usage as Record<string, unknown>;
   const count = (...keys: string[]): number | null => {
@@ -19,12 +22,12 @@ export function turnUsage(response: Pick<PromptResponse, "usage" | "_meta">): Tu
     }
     return null;
   };
-  const inputTokens = count("inputTokens");
-  const outputTokens = count("outputTokens");
-  const thoughtTokens = count("thoughtTokens", "reasoningTokens");
-  const cachedReadTokens = count("cachedReadTokens", "cacheReadTokens");
+  const inputTokens = count("inputTokens", "input_tokens");
+  const outputTokens = count("outputTokens", "output_tokens");
+  const thoughtTokens = count("thoughtTokens", "reasoningTokens", "thoughts_tokens");
+  const cachedReadTokens = count("cachedReadTokens", "cacheReadTokens", "cached_tokens");
   const cachedWriteTokens = count("cachedWriteTokens", "cacheWriteTokens", "cacheCreationTokens");
-  const totalTokens = count("totalTokens");
+  const totalTokens = count("totalTokens", "total_tokens");
   if (inputTokens === null && outputTokens === null && totalTokens === null) return undefined;
   return {
     totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0) + (thoughtTokens ?? 0),

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { describeCopilotLogin, type Provider } from "@sessionboxer/protocol";
+import { describeGeminiLogin, normalizeGeminiLogin } from "./gemini-login.js";
 import { describeKimiLogin, normalizeKimiLogin } from "./kimi-login.js";
 import { describeVibeLogin, normalizeVibeLogin } from "./vibe-login.js";
 import { describeGrokLogin, normalizeGrokLogin } from "./grok-login.js";
@@ -112,6 +113,19 @@ export function readHostLogin(provider: Provider, home = homedir()): { account: 
       const what = describeGrokLogin(login);
       if (!login || !what) return null;
       return { account: what.email ?? "signed in with `grok login`", login };
+    }
+    case "gemini": {
+      const text = readFirst([join(home, ".gemini", "oauth_creds.json")]);
+      if (text === null) return null;
+      let login: string;
+      try {
+        login = normalizeGeminiLogin(text);
+      } catch {
+        return null;
+      }
+      const what = describeGeminiLogin(login);
+      if (!login || !what) return null;
+      return { account: what.email ?? "signed in with Gemini CLI's Login with Google", login };
     }
     case "vibe": {
       // Vibe keeps the key in the OS keyring when there is one; `~/.vibe/.env` is where it lands otherwise.

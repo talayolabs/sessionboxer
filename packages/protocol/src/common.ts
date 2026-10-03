@@ -4,7 +4,7 @@ export const SESSION_STATUSES = ["creating", "idle", "running", "stopped", "erro
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
-export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok"] as const;
+export const PROVIDERS = ["claude-code", "devin", "codex", "cursor", "pi", "opencode", "fx", "kimi", "copilot", "vibe", "grok", "gemini"] as const;
 export const Provider = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof Provider>;
 
@@ -20,6 +20,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   copilot: "GitHub Copilot",
   vibe: "Mistral Vibe",
   grok: "Grok Build",
+  gemini: "Gemini CLI",
 };
 
 /**
@@ -54,6 +55,8 @@ export const PROVIDER_ENV_KEYS: Record<Provider, readonly string[]> = {
   vibe: [],
   // Grok Build's login (ADR-0086) likewise: `auth.json` on tmpfs, an xAI API key into the Agent process alone.
   grok: [],
+  // Gemini CLI's too (ADR-0087): `oauth_creds.json` goes on tmpfs, a `GEMINI_API_KEY` into the Agent process alone.
+  gemini: [],
 };
 
 /** Metadata of ~/.kimi/credentials/kimi-code.json (ADR-0084); never the tokens. */
@@ -108,6 +111,19 @@ export const GrokLogin = z.object({
   expiresAt: z.string().nullable(),
 });
 export type GrokLogin = z.infer<typeof GrokLogin>;
+
+/**
+ * What the stored Gemini CLI login (ADR-0087) is: a Gemini API key (AI Studio), or the
+ * `~/.gemini/oauth_creds.json` a "Login with Google" wrote (`google`).
+ */
+export const GeminiLogin = z.object({
+  kind: z.enum(["api-key", "google"]),
+  /** When the Google login's access token expires (`expiry_date`), ISO 8601; `null` for API keys or when the file does not say. */
+  expiresAt: z.string().nullable(),
+  /** The Google account's e-mail, from the id token's claims; `null` for API keys or when the file has no id token. */
+  email: z.string().nullable(),
+});
+export type GeminiLogin = z.infer<typeof GeminiLogin>;
 
 /**
  * What a Codex `auth.json` (the file `codex login` writes, ADR-0046) says about the ChatGPT

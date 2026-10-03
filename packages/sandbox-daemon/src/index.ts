@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { ACP_COMMANDS } from "./provider-commands.js";
 import { KimiAuth, KIMI_AGENT_ENV } from "./kimi-auth.js";
-import { GrokLogin, GROK_AGENT_ENV, grokGuestFiles } from "./grok-login.js";
+import { GrokLogin, GROK_AGENT_ENV } from "./grok-login.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -33,6 +33,7 @@ import {
   DaemonCopilotAuthParams,
   DaemonVibeAuthParams,
   DaemonGrokAuthParams,
+  DaemonGeminiAuthParams,
   DaemonCompactionDetailsParams,
   type DaemonCompactionDetailsResult,
   DaemonGhApiParams,
@@ -104,6 +105,8 @@ import { LlmInspector } from "./llm-inspector.js";
 import { CopilotMcpConfig, DevinMcpConfig, PiMcpConfig, onPath, type BuiltinMcp, type McpTee } from "./mcp-config.js";
 import { COPILOT_AGENT_ENV, CopilotLogin } from "./copilot.js";
 import { VIBE_AGENT_ENV, VibeLogin } from "./vibe.js";
+import { GEMINI_AGENT_ENV, GeminiLogin } from "./gemini.js";
+import { guestProviderFiles } from "./guest-provider-files.js";
 import { McpTeeHub } from "./mcp-mirror.js";
 import { FsWatches } from "./fs-watch.js";
 import { serveRawFile } from "./raw-files.js";
@@ -124,7 +127,6 @@ import {
   sandboxAddress,
   WindowsGuest,
   type Guest,
-  type GuestProviderFile,
 } from "./guest.js";
 import { windowsBriefing, macosBriefing } from "./vm-briefings.js";
 import { WorkspaceFs } from "./workspace-fs.js";
@@ -350,84 +352,15 @@ const copilotLogin = provider === "copilot" ? new CopilotLogin(copilotHome, tmpf
 const grokHome = env.GROK_HOME ?? `${home}/.grok`;
 const grokLogin = provider === "grok" ? new GrokLogin(grokHome, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.grokAuthChanged, { authJson })) : null;
 
-/**
- * The Provider's files that travel into the VM before each Agent start (the ones the image and this
- * Daemon keep here), at the paths the Provider reads on Windows or macOS; logins come back after
- * each turn so refreshed tokens reach the Control Plane. The briefing goes where the Provider reads
- * its user-level instructions (Cursor: `AGENTS.md` at the drive root on Windows, in the home on macOS).
- */
-const guestBriefingFile = `${home}/.sessionboxer/${guest?.os === "macos" ? "macos" : "windows"}-briefing.md`;
-const guestProviderFiles: GuestProviderFile[] = (
-  {
-    "claude-code": [
-      { local: `${home}/.claude/settings.json`, guest: ".claude/settings.json" },
-      { local: guestBriefingFile, guest: ".claude/CLAUDE.md" },
-    ],
-    codex: [
-      { local: `${codexHome}/config.toml`, guest: ".codex/config.toml" },
-      { local: guestBriefingFile, guest: ".codex/AGENTS.md" },
-      { local: `${codexHome}/auth.json`, guest: ".codex/auth.json", pullBack: true },
-    ],
-    cursor: [
-      { local: `${home}/.cursor/cli-config.json`, guest: ".cursor/cli-config.json" },
-      { local: guestBriefingFile, guest: guest?.os === "macos" ? `${guest.homeDir()}/AGENTS.md` : "C:\\AGENTS.md" },
-      { local: cursorAuthPath, guest: ".cursor/auth.json", pullBack: true },
-    ],
-    pi: [
-      { local: `${piAgentDir}/settings.json`, guest: ".pi/agent/settings.json" },
-      { local: `${piAgentDir}/mcp.json`, guest: ".pi/agent/mcp.json" },
-      { local: guestBriefingFile, guest: ".pi/agent/AGENTS.md" },
-      { local: `${piAgentDir}/auth.json`, guest: ".pi/agent/auth.json", pullBack: true },
-    ],
-    kimi: [
-      { local: `${home}/.kimi/config.toml`, guest: ".kimi/config.toml" },
-      { local: guestBriefingFile, guest: "C:\\AGENTS.md" },
-      { local: `${home}/.kimi/credentials/kimi-code.json`, guest: ".kimi/credentials/kimi-code.json", pullBack: true, mode: 0o600 },
-    ],
-    fx: [
-      { local: guestBriefingFile, guest: ".fx/AGENTS.md" },
-      { local: fxAuthPaths.vercel, guest: ".fx/auth.json", pullBack: true, mode: 0o600 },
-      { local: fxAuthPaths.codex, guest: ".fx/chatgpt-auth.json", pullBack: true, mode: 0o600 },
-      { local: fxAuthPaths.grok, guest: ".fx/grok-auth.json", pullBack: true, mode: 0o600 },
-    ],
-    vibe: [
-      { local: guestBriefingFile, guest: ".vibe/AGENTS.md" },
-      { local: `${vibeHome}/trusted_folders.toml`, guest: ".vibe/trusted_folders.toml" },
-      { local: `${vibeHome}/.env`, guest: ".vibe/.env", pullBack: true, mode: 0o600 },
-    ],
-    grok: grokGuestFiles(grokHome, guestBriefingFile),
-    devin: [
-      { local: `${home}/.config/devin/config.json`, guest: ".config/devin/config.json" },
-      { local: `${home}/.config/devin/mcp_config.json`, guest: ".config/devin/mcp_config.json" },
-      // Where the Devin CLI reads its files on macOS is not pinned down (unverified on a real Mac): both places get them.
-      ...(guest?.os === "macos"
-        ? [
-            { local: `${home}/.config/devin/config.json`, guest: ".devin/config.json" },
-            { local: `${home}/.config/devin/mcp_config.json`, guest: ".devin/mcp_config.json" },
-          ]
-        : []),
-      { local: guestBriefingFile, guest: ".claude/CLAUDE.md" },
-    ],
-    // OpenCode's paths are XDG-style on every OS (`~/.config/opencode`, `~/.local/share/opencode`).
-    opencode: [
-      { local: `${home}/.config/opencode/opencode.json`, guest: ".config/opencode/opencode.json" },
-      { local: guestBriefingFile, guest: ".config/opencode/AGENTS.md" },
-      { local: opencodeAuthPath, guest: ".local/share/opencode/auth.json", pullBack: true },
-    ],
-    copilot: [
-      { local: `${copilotHome}/settings.json`, guest: ".copilot/settings.json" },
-      { local: `${copilotHome}/mcp-config.json`, guest: ".copilot/mcp-config.json" },
-      { local: guestBriefingFile, guest: ".copilot/copilot-instructions.md" },
-      { local: `${copilotHome}/config.json`, guest: ".copilot/config.json", pullBack: true },
-    ],
-  } satisfies Record<Provider, GuestProviderFile[]>
-)[provider];
+const geminiLogin = provider === "gemini" ? new GeminiLogin(`${home}/.gemini`, tmpfsDir, log, (authJson) => notify(DAEMON_METHODS.geminiAuthChanged, { authJson })) : null;
+
+const guestProviderFilesList = guestProviderFiles(provider, guest, home, { codexHome, cursorAuthPath, piAgentDir, fxAuthPaths, vibeHome, grokHome, opencodeAuthPath, copilotHome });
 /** The Provider's environment the Control Plane set on this Sandbox, for the Agent in the VM. */
 const guestProviderEnv: Record<string, string> = Object.fromEntries(
   PROVIDER_ENV_KEYS[provider].flatMap((k) => (env[k] !== undefined && env[k] !== "" ? [[k, env[k]]] : [])),
 );
 const transport = guest
-  ? new GuestAgentTransport({ guest, env: guestProviderEnv, files: guestProviderFiles, builtinMcps, log })
+  ? new GuestAgentTransport({ guest, env: guestProviderEnv, files: guestProviderFilesList, builtinMcps, log })
   : null;
 // Both services stay registered whatever the policy: only the Agent's MCP list changes.
 if (guest) registerBridgeServices(guest, [{ name: BRIDGE_SERVICE_DESKTOP, command: mcpCommand }, { name: BRIDGE_SERVICE_SESSIONBOXER, command: agentMcpCommand }], log);
@@ -613,7 +546,7 @@ const mcpTeeHub = new McpTeeHub(() => mcpServers, {
 const agent = new AgentManager(
   {
     command: acpCommand,
-    legacyModels: provider === "kimi",
+    legacyModels: provider === "kimi" || provider === "gemini",
     args: acpArgs,
     cwd: agentWorkspace,
     localWorkspace: workspace,
@@ -628,6 +561,7 @@ const agent = new AgentManager(
     // Vibe's "Auto Approve" mode runs every tool without asking (ADR-0085); permission requests are still answered.
     ...(provider === "vibe" ? { env: VIBE_AGENT_ENV, fullAccessModeIds: ["auto-approve"] } : {}),
     ...(provider === "grok" ? { env: GROK_AGENT_ENV } : {}),
+    ...(provider === "gemini" ? { env: GEMINI_AGENT_ENV, fullAccessModeIds: ["yolo"] } : {}),
     builtinMcps,
     ...(mcpTee ? { mcpTee } : {}),
     stateFile: `${home}/.sessionboxer/daemon-state.json`,
@@ -815,6 +749,9 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       if (!grokLogin) throw new DaemonError("invalid_params", "this Sandbox does not run Grok Build");
       return { applied: agent.setAgentEnv(grokLogin.set(DaemonGrokAuthParams.parse(params).login)) };
     }
+    case DAEMON_METHODS.geminiAuthSet:
+      if (!geminiLogin) throw new DaemonError("invalid_params", "this Sandbox does not run Gemini CLI");
+      return { applied: agent.setAgentEnv(geminiLogin.apply(DaemonGeminiAuthParams.parse(params).login)) };
     case DAEMON_METHODS.mcpSet: {
       const p = DaemonMcpSetParams.parse(params);
       ghCredentials.apply(p.credentials);

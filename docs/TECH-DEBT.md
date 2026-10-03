@@ -101,8 +101,8 @@ is a separate decision (would be the first React test; worth it only once `App.t
 9f284e0 (lint gate, `npm run lint`), 77dc012 (protocol split by domain; move-only, acyclic barrel),
 fbd8c9b (`DaemonError` + `DAEMON_ERROR_CODES`, ADR-0080, `npm run test:daemon-errors`). 7 is on `main` too —
 b1b575d (SessionManager harness: `scripts/session-manager.test.mjs`, 30 characterization tests through the public
-surface, `npm run test:session-manager`), 7acb654 (`SessionQueue` → `apps/control-plane/src/session-queue.ts`) and the
-commit after it (`SnapshotPolicy` → `apps/control-plane/src/snapshots.ts`); `ProviderAuthSync` had landed as the
+surface, `npm run test:session-manager`), 7acb654 (`SessionQueue` → `apps/control-plane/src/session-queue.ts`) and
+b671bbe (`SnapshotPolicy` → `apps/control-plane/src/snapshots.ts`); `ProviderAuthSync` had landed as the
 provider registry of fix 1. `SessionManager` is 2,894 lines; `RepoSync` is the next cluster to pull out, with the same harness.
 
 Ordered by risk-reduction per hour. Each is a behaviour-preserving commit on its own; none depends on

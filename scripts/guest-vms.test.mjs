@@ -17,7 +17,7 @@ process.env.SESSIONBOXER_HOME = HOME;
 const { Settings } = await import("../packages/protocol/dist/index.js");
 const { HttpError } = await import("../apps/control-plane/dist/http-error.js");
 const { WindowsVms } = await import("../apps/control-plane/dist/windows.js");
-const { MacosVms } = await import("../apps/control-plane/dist/macos.js");
+const { MacosVms, TOOLCHAIN } = await import("../apps/control-plane/dist/macos.js");
 
 const GB = 1024 ** 3;
 
@@ -126,8 +126,8 @@ const PLATFORMS = [
     baseVolume: "sbx-macos-base",
     installContainer: "sbx-macos-install",
     vm: (id) => `sbx-mac-${id}`,
-    // `toolchain: 2` is the TOOLCHAIN the base needs today; an older number means "reprovision".
-    installed: { version: "15", diskGb: 64, installedAt: "2026-01-01T00:00:00.000Z", sizeBytes: 20 * GB, productVersion: "15.6", toolchain: 2 },
+    // The TOOLCHAIN the base needs today; an older number means "reprovision".
+    installed: { version: "15", diskGb: 64, installedAt: "2026-01-01T00:00:00.000Z", sizeBytes: 20 * GB, productVersion: "15.6", toolchain: TOOLCHAIN },
     construct: (docker, deps, host) => new MacosVms({ docker, reach: "ip" }, ...deps, host),
     notInstalled: "The macOS base disk is not installed (Global settings → Environment → macOS VMs).",
     installFirst: "Install the macOS base disk first (Global settings → Environment → macOS VMs).",

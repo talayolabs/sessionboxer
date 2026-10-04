@@ -80,6 +80,7 @@ export function credentialField(provider: Provider): {
         label: "Qwen Code login (contents of oauth_creds.json, or OPENAI_* NAME=value lines)",
         multiline: true,
         file: true,
+        fileName: "oauth_creds.json",
         placeholder: '{ "access_token": … } or OPENAI_API_KEY=sk-…\nOPENAI_MODEL=qwen3-coder-plus',
       };
   }

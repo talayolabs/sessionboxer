@@ -104,17 +104,32 @@ export function buildArgs({ target, arch, image, version, baseDigest, providers,
   return [...args, "."];
 }
 
-/** Steps of a `--progress=plain` log that ran instead of hitting the cache: `[{ stage, step }]` for `#N [stage k/m] …` headers (FROM resolves aside) without a `#N CACHED` line. */
+/**
+ * Steps of a `--progress=plain` log that ran instead of hitting the cache: `[{ stage, step }]` for `#N [stage k/m] …` headers
+ * (FROM resolves aside) that neither print `#N CACHED` nor consist only of blob downloads/extractions. BuildKit reports a hit
+ * whose layers it has to fetch lazily from a registry cache as `#N sha256:… 17MB / 131MB`, `#N extracting sha256:…`, `#N DONE 3.7s`
+ * — no `CACHED` line — so a step that only fetched blobs counts as cached; one with command output (`#N 1.269 …`) or
+ * nothing but `DONE` (a COPY that ran) counts as run.
+ */
 export function uncachedSteps(log) {
   const headers = new Map();
   const cached = new Set();
+  const fetched = new Set();
+  const ran = new Set();
   for (const line of log.split("\n")) {
     const header = line.match(/^#(\d+) \[([^\] ]+)\s+(\d+\/\d+)\] (.*)$/);
-    if (header !== null && !header[4].startsWith("FROM ")) headers.set(header[1], { stage: header[2], step: `${header[3]} ${header[4].slice(0, 60)}` });
+    if (header !== null) {
+      if (!header[4].startsWith("FROM ")) headers.set(header[1], { stage: header[2], step: `${header[3]} ${header[4].slice(0, 60)}` });
+      continue;
+    }
     const hit = line.match(/^#(\d+) CACHED$/);
-    if (hit !== null) cached.add(hit[1]);
+    if (hit !== null) { cached.add(hit[1]); continue; }
+    const body = line.match(/^#(\d+) (.*)$/);
+    if (body === null || /^(\.\.\.|DONE .*)$/.test(body[2])) continue;
+    if (/^(sha256:[0-9a-f]{64} .*|extracting sha256:[0-9a-f]{64}.*)$/.test(body[2])) fetched.add(body[1]);
+    else ran.add(body[1]);
   }
-  return [...headers].filter(([n]) => !cached.has(n)).map(([, s]) => s);
+  return [...headers].filter(([n]) => !cached.has(n) && !(fetched.has(n) && !ran.has(n))).map(([, s]) => s);
 }
 
 /** The platform manifest for an architecture out of an index (or the manifest itself when there is no index). */

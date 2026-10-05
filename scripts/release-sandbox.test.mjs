@@ -103,6 +103,28 @@ test("uncachedSteps reports steps without a CACHED line, ignoring FROM resolves"
   assert.match(uncachedSteps(log)[0].step, /^1\/3 RUN curl/);
 });
 
+test("uncachedSteps treats a hit whose layers are fetched lazily from the registry cache as cached", () => {
+  const log = [
+    "#41 [agent-codex 1/3] RUN npm install -g --prefix /opt/sessionboxer/providers/codex @agentclientprotocol/codex-acp@1.1.9",
+    "#41 CACHED",
+    "#42 [agent-codex 3/3] RUN sessionboxer-payload-manifest codex 1.1.9",
+    "#42 sha256:333048d943183c562d30b363d090b50b2478a3165fdf524031488c0c8e285198 6.28kB / 6.28kB 0.1s done",
+    "#42 sha256:8ff7aa6ec92396306635930e09190abb16a6e951e45d4cb4f75a57345592ba7b 17.83MB / 131.29MB 0.3s",
+    "#42 ...",
+    "#42 [agent-codex 3/3] RUN sessionboxer-payload-manifest codex 1.1.9",
+    "#42 sha256:8ff7aa6ec92396306635930e09190abb16a6e951e45d4cb4f75a57345592ba7b 131.29MB / 131.29MB 2.3s done",
+    "#42 extracting sha256:8ff7aa6ec92396306635930e09190abb16a6e951e45d4cb4f75a57345592ba7b",
+    "#42 extracting sha256:8ff7aa6ec92396306635930e09190abb16a6e951e45d4cb4f75a57345592ba7b 1.3s done",
+    "#42 DONE 3.7s",
+    "#43 [agent-qwen 3/3] RUN sessionboxer-payload-manifest qwen 0.24.7",
+    "#43 0.312 wrote /opt/sessionboxer/providers/qwen/.sessionboxer-payload.json",
+    "#43 DONE 0.4s",
+    "#50 [all  3/14] COPY --from=agent-codex /opt/sessionboxer/providers/codex /opt/sessionboxer/providers/codex",
+    "#50 DONE 9.7s",
+  ].join("\n");
+  assert.deepEqual(uncachedSteps(log).map((s) => s.stage), ["agent-qwen", "all"]);
+});
+
 test("platformManifest picks the architecture's manifest out of an index", () => {
   const index = { mediaType: "application/vnd.oci.image.index.v1+json", manifests: [
     { digest: "sha256:1", platform: { os: "linux", architecture: "amd64" } },

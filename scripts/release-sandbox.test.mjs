@@ -11,7 +11,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   ARCHS, buildArgs, cacheRef, expectedLabels, expectedProviders, isCacheManifest, layersOnTop, manifestPlan,
-  packagePath, parseArgs, platformManifest, readDigests, sizeBudget, uncachedSteps,
+  fetchRetry, packagePath, parseArgs, platformManifest, readDigests, sizeBudget, uncachedSteps,
 } from "./release-sandbox.mjs";
 import { IMAGE_REPOSITORY, ROOT, providerIds, releaseMatrix } from "./sandbox-image-targets.mjs";
 
@@ -203,6 +203,15 @@ test("cache manifests are told apart by their BuildKit config media type", () =>
   assert.ok(isCacheManifest({ config: { mediaType: "application/vnd.buildkit.cacheconfig.v0" }, layers: [] }));
   assert.ok(!isCacheManifest({ config: { mediaType: "application/vnd.oci.image.config.v1+json" }, layers: [] }));
   assert.ok(!isCacheManifest({ manifests: [] }));
+});
+
+test("fetchRetry retries a closed connection but not an HTTP error", async () => {
+  let calls = 0;
+  const flaky = async () => (++calls < 3 ? Promise.reject(new TypeError("fetch failed")) : { ok: true, status: 200 });
+  assert.equal((await fetchRetry("u", {}, 3, flaky)).status, 200);
+  assert.equal(calls, 3);
+  await assert.rejects(fetchRetry("u", {}, 2, async () => Promise.reject(new TypeError("fetch failed"))), /fetch failed/);
+  await assert.rejects(fetchRetry("u", {}, 3, async () => Promise.reject(new Error("boom"))), /boom/);
 });
 
 test("packagePath maps the image to the GitHub packages API", () => {

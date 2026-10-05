@@ -299,6 +299,17 @@ function manifests(args) {
   summary(lines);
 }
 
+/** `fetch` that retries a failed connection: GitHub closes an idle keep-alive socket while `docker buildx imagetools inspect` runs between two API calls (undici: "fetch failed", UND_ERR_SOCKET). */
+export async function fetchRetry(url, init, attempts = 3, f = fetch) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await f(url, init);
+    } catch (err) {
+      if (!(err instanceof TypeError) || attempt >= attempts) throw err;
+    }
+  }
+}
+
 async function pruneCache(args) {
   const token = process.env.GITHUB_TOKEN;
   if (token === undefined) throw new Error("GITHUB_TOKEN is not set");
@@ -307,7 +318,7 @@ async function pruneCache(args) {
   const manual = `manual step: GitHub → packages → ${args.image.split("/").pop()} → versions: delete the untagged versions whose manifest config is ${CACHE_MEDIA_TYPE}; keep every tagged version.`;
   const versions = [];
   for (let page = 1; ; page++) {
-    const res = await fetch(`${base}/versions?per_page=100&page=${page}`, { headers });
+    const res = await fetchRetry(`${base}/versions?per_page=100&page=${page}`, { headers });
     if (res.status === 403 || res.status === 404) { console.warn(`::warning::cannot list package versions (${res.status}); ${manual}`); return; }
     if (!res.ok) throw new Error(`GET ${base}/versions: ${res.status}`);
     const batch = await res.json();
@@ -322,7 +333,7 @@ async function pruneCache(args) {
     if (!isCacheManifest(raw)) continue;
     const size = raw.layers.reduce((s, l) => s + l.size, 0);
     if (args["dry-run"] === true) { console.log(`would delete ${v.name} (${(size / 1e6).toFixed(0)} MB)`); bytes += size; continue; }
-    const res = await fetch(`${base}/versions/${v.id}`, { method: "DELETE", headers });
+    const res = await fetchRetry(`${base}/versions/${v.id}`, { method: "DELETE", headers });
     if (res.status === 403) { console.warn(`::warning::cannot delete package versions (403); ${manual}`); return; }
     if (!res.ok && res.status !== 404) throw new Error(`DELETE version ${v.id}: ${res.status}`);
     deleted++; bytes += size;

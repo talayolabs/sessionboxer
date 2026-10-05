@@ -16,7 +16,7 @@ The Sandbox image changed: `npm run build:image`, then Stop → Resume existing 
 - **Mistral Vibe** as an eighth agent, via `vibe-acp`, on a Mistral account (**Sign in with Mistral Vibe**) or a Mistral API key; Linux, macOS and Windows. (ADR-0085)
 - **Gemini CLI** as a Provider, via `gemini --acp`, on a Google login (`~/.gemini/oauth_creds.json`) or a Gemini API key. ([ADR-0087](docs/adr/0087-gemini-cli-as-a-provider-on-a-google-login-or-api-key.md))
 - **Qwen Code** as an eighth agent, via `qwen --acp`, on a Qwen OAuth login (`oauth_creds.json`) or any OpenAI-compatible endpoint (`OPENAI_API_KEY`/`OPENAI_MODEL`/`OPENAI_BASE_URL`); Linux, macOS and Windows. (ADR-0083)
-- The Sandbox Dockerfile builds one image per Provider: `toolchain` → `agent-<providerId>` payloads (`/opt/sessionboxer/providers/<id>`, with a manifest) → `base` (no Agent) → `<providerId>` finals and `all` (the default, unchanged). `npm run build:image -- --provider <id>|base|all` builds and tags one variant (`sessionboxer/sandbox:dev-<id>`, `<repo>:<version>-<id>`) without touching `:dev`; `test:sandbox-image` fails CI when a Provider lacks its variant. Step 1 of ADR-0088; the Control Plane still runs the all-Providers image.
+- The Sandbox Dockerfile builds one image per Provider: `toolchain` → `agent-<providerId>` payloads (`/opt/sessionboxer/providers/<id>`, with a manifest) → `base` (no Agent) → `<providerId>` finals and `all` (the default, unchanged). `npm run build:image -- --provider <id>|base|all` builds and tags one variant (`sessionboxer/sandbox:dev-<id>`, `<repo>:<version>-<id>`) without touching `:dev`; `test:sandbox-image` fails CI when a Provider lacks its variant. Step 1 of ADR-0088.
 
 ## 1.5.0 — 2026-10-01
 

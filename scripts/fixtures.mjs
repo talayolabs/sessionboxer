@@ -24,6 +24,7 @@ export function sessionRow(id, overrides = {}) {
       sandbox: { environment: "docker-linux", dockerMode: "none", cpus: null, memoryGb: null, gitIdentity: { name: "", email: "" }, ...sandbox },
     },
     containerId: `ctr-${id}`,
+    image: null,
     error: null,
     queueRunning: false,
     diskBytes: null,

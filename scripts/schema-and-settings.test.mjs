@@ -28,7 +28,7 @@ test("a fresh database has exactly these tables", () => {
     "pull_requests", "repositories", "saved_messages", "sessions", "snapshots",
   ]);
   assert.deepEqual(columns(db, "sessions"), [
-    "id", "title", "provider", "status", "workspace_source", "repos", "settings", "container_id", "error",
+    "id", "title", "provider", "status", "workspace_source", "repos", "settings", "container_id", "image", "error",
     "queue_running", "disk_bytes", "mcp_pending", "model_pending", "options_pending", "available_options",
     "inspect_llm_pending", "active_branch_id", "usage", "usb", "created_by", "pinned", "folder_id",
     "created_at", "updated_at",

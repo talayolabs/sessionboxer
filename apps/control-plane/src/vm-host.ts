@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import Docker from "dockerode";
-import { SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
+import { SANDBOX_NETWORK } from "./config.js";
 import { log } from "./log.js";
 
 /**
@@ -25,6 +25,8 @@ export class VmHost {
     private readonly label: string,
     /** How the guests are called in messages, e.g. `Windows VMs`. */
     private readonly guests: string,
+    /** The Sandbox base image (ADR-0088) for the KVM probe; throws when it is not here (the probe never pulls). */
+    private readonly sandboxBaseImage: () => Promise<string>,
   ) {}
 
   /**
@@ -42,10 +44,11 @@ export class VmHost {
     const desktop = /docker desktop/i.test(info.OperatingSystem ?? "");
     let container: Docker.Container | null = null;
     try {
-      // The Sandbox image is always local; the VM image is only pulled when a base gets installed.
+      // The probe runs on the Sandbox base image when it is here; the VM image is only pulled when a base gets installed.
+      const image = await this.sandboxBaseImage();
       container = await this.docker.createContainer({
         name: `sbx-kvm-probe-${Date.now().toString(36)}`,
-        Image: SANDBOX_IMAGE,
+        Image: image,
         Entrypoint: ["/bin/sh", "-c", "test -c /dev/kvm && test -w /dev/kvm"],
         Cmd: [],
         User: "0:0",

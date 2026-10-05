@@ -10,6 +10,7 @@ import { AgentOption, OptionValues, INSTRUCTIONS_MAX_CHARS } from "./models.js";
 import { Branch, ROOT_BRANCH_ID, GitIdentity } from "./branches.js";
 import { SessionUsage } from "./usage-limits.js";
 import { SessionUsb } from "./usb.js";
+import { SandboxImageInfo } from "./sandbox-image.js";
 
 export const Session = z.object({
   id: z.string(),
@@ -36,6 +37,8 @@ export const Session = z.object({
   /** The Agent is busy; the last `inspectLlm` change is applied when the current turn ends. */
   inspectLlmPending: z.boolean().default(false),
   containerId: z.string().nullable(),
+  /** The image the Sandbox was created from (ADR-0088); `null` until it is, and for Sessions created before images were recorded. */
+  image: SandboxImageInfo.nullable().default(null),
   error: z.string().nullable(),
   /** The queue is playing: the next queued message is sent whenever the Agent is idle. Off = paused by the user (or after a cancelled/failed turn). */
   queueRunning: z.boolean().default(false),

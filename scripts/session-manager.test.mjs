@@ -59,8 +59,13 @@ function fakeDocker() {
       return "host";
     },
     async ensureNetwork() {},
-    async ensureImage() {},
     async watchDeaths() {},
+    /** The Sandbox images (ADR-0088): every reference is here and legacy (no labels). */
+    async resolveImage(selector, snapshotImage) {
+      docker.calls.push(["resolveImage", selector, snapshotImage]);
+      const ref = snapshotImage ?? `ghcr.io/talayolabs/sessionboxer-sandbox:test-${selector}`;
+      return { reference: ref, id: `sha256:${ref}`, providers: null };
+    },
   };
   return docker;
 }
@@ -114,6 +119,7 @@ function makeManager(settingsInput = {}) {
         reason,
         imageTag: `sessionboxer/snapshot:${sessionId}-${ordinal}`,
         imageId: `sha256:${sessionId}-${ordinal}`,
+        providers: null,
         eventSeq: 0,
         branchId: ROOT_BRANCH_ID,
         sizeBytes: MB,

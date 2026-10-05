@@ -5,9 +5,10 @@ import { PassThrough, Readable } from "node:stream";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { pack as packStream } from "tar-stream";
-import { DAEMON_PORT, NOVNC_PORT, VSCODE_THEMES_EXTENSION, vscodeThemeExtensionFiles, type DockerMode, type SandboxImageStatus } from "@sessionboxer/protocol";
+import { DAEMON_PORT, NOVNC_PORT, VSCODE_THEMES_EXTENSION, vscodeThemeExtensionFiles, type DockerMode, type SandboxImageInfo, type SandboxImageSelector } from "@sessionboxer/protocol";
 import { SANDBOX_CA_FILE } from "./ca-certs.js";
-import { ROOT_DIR, SANDBOX_HOST_ALIAS, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
+import { ROOT_DIR, SANDBOX_HOST_ALIAS, SANDBOX_NETWORK, sandboxBaseImage, sandboxImage } from "./config.js";
+import { SandboxImages } from "./sandbox-images.js";
 import { log } from "./log.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
@@ -121,8 +122,8 @@ export interface SandboxSpec {
   cpus: number;
   memoryGb: number;
   dockerMode: DockerMode;
-  /** Image to start from; the Sandbox image unless forking a Snapshot. */
-  image?: string;
+  /** Image to start from: the Provider's or base Sandbox image (ADR-0088), or a Snapshot's image when forking. */
+  image: string;
 }
 
 export interface CommitSpec {
@@ -203,74 +204,33 @@ export class SandboxDocker {
     log(`joined the ${SANDBOX_NETWORK} network as ${self.Name.replace(/^\//, "")}`);
   }
 
-  private pulling: Promise<void> | null = null;
-  private image: SandboxImageStatus = { image: SANDBOX_IMAGE, state: "checking", received: 0, total: 0, error: null };
+  /** The Sandbox images on this host, by reference (ADR-0088): status, lazy pulls, labels. */
+  readonly images = new SandboxImages(this.docker);
 
-  /** Where the Sandbox image stands (`GET /api/sandbox-image`). */
-  imageStatus(): SandboxImageStatus {
-    return this.image;
+  /** The base image (runtime, no Agent) for the VM helpers and sidecars, pulled when it is not here; returns its reference. */
+  /** The Sandbox base image when it is here, for probes that must not start a download; throws naming it otherwise. */
+  async presentBaseImage(): Promise<string> {
+    const ref = sandboxBaseImage();
+    const status = await this.images.inspect(ref);
+    if (status.state !== "ready") throw new Error(status.error ?? `the Sandbox image ${ref} is not on this machine yet (the New Session page downloads it)`);
+    return ref;
   }
 
-  /** The Sandbox image is present, pulling it once when it is not (a pull in flight is awaited). */
-  async ensureImage(): Promise<void> {
-    try {
-      await this.docker.getImage(SANDBOX_IMAGE).inspect();
-      this.image = { ...this.image, state: "ready", error: null };
-      return;
-    } catch {
-      /* not local */
-    }
-    if (!SANDBOX_IMAGE.includes("/") || SANDBOX_IMAGE.endsWith(":dev")) {
-      const error = `sandbox image ${SANDBOX_IMAGE} not found; run \`npm run build:image\``;
-      this.image = { ...this.image, state: "error", error };
-      throw new Error(error);
-    }
-    this.pulling ??= this.pull().finally(() => {
-      this.pulling = null;
-    });
-    await this.pulling;
+  async ensureBaseImage(): Promise<string> {
+    const ref = sandboxBaseImage();
+    await this.images.ensure(ref);
+    return ref;
   }
 
-  private async pull(): Promise<void> {
-    log(`pulling ${SANDBOX_IMAGE} (a few GB; once per version, or \`npm run build:image\` builds it here)`);
-    this.image = { image: SANDBOX_IMAGE, state: "pulling", received: 0, total: 0, error: null };
-    const fail = (message: string): Error => {
-      const error = `cannot pull ${SANDBOX_IMAGE}: ${message}`;
-      this.image = { ...this.image, state: "error", error };
-      return new Error(error);
-    };
-    const started = Date.now();
-    let stream: NodeJS.ReadableStream;
-    try {
-      stream = (await this.docker.pull(SANDBOX_IMAGE)) as NodeJS.ReadableStream;
-    } catch (e) {
-      throw fail(e instanceof Error ? e.message : String(e));
-    }
-    const layers = new Map<string, { current: number; total: number }>();
-    let lastReport = 0;
-    await new Promise<void>((resolve, reject) => {
-      this.docker.modem.followProgress(
-        stream,
-        (err) => (err ? reject(fail(err.message)) : resolve()),
-        (event: { id?: string; status?: string; progressDetail?: { current?: number; total?: number } }) => {
-          if (event.id && event.progressDetail?.total) {
-            layers.set(event.id, { current: event.progressDetail.current ?? 0, total: event.progressDetail.total });
-          }
-          let current = 0;
-          let total = 0;
-          for (const l of layers.values()) {
-            current += Math.min(l.current, l.total);
-            total += l.total;
-          }
-          this.image = { ...this.image, received: current, total };
-          if (Date.now() - lastReport < 15_000) return;
-          lastReport = Date.now();
-          if (total > 0) log(`pulling ${SANDBOX_IMAGE}: ${(current / 1024 / 1024).toFixed(0)} / ${(total / 1024 / 1024).toFixed(0)} MB`);
-        },
-      );
-    });
-    this.image = { image: SANDBOX_IMAGE, state: "ready", received: 0, total: 0, error: null };
-    log(`pulled ${SANDBOX_IMAGE} in ${Math.round((Date.now() - started) / 1000)} s`);
+  /**
+   * The image a Sandbox starts from (ADR-0088): a Snapshot's when given (forks and rebuilds; never
+   * swapped for the Provider's), else the selector's — the Provider's, or `base` when the Agent runs
+   * in a VM — pulled first when it is not here. Checked to carry the Agent either way.
+   */
+  async resolveImage(selector: SandboxImageSelector, snapshotImage?: string): Promise<SandboxImageInfo> {
+    const ref = snapshotImage ?? sandboxImage(selector);
+    if (snapshotImage === undefined) await this.images.ensure(ref);
+    return this.images.resolve(ref, selector);
   }
 
   /** Whether the host Docker daemon has the Sysbox runtime registered (ADR-0008). */
@@ -283,7 +243,7 @@ export class SandboxDocker {
     const ports = [DAEMON_PORT, NOVNC_PORT].map((p) => `${p}/tcp`);
     const container = await this.docker.createContainer({
       name: `sbx-${spec.sessionId}`,
-      Image: spec.image ?? SANDBOX_IMAGE,
+      Image: spec.image,
       Hostname: `sbx-${spec.sessionId.slice(0, 12)}`,
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
       Labels: { [LABEL_SESSION]: spec.sessionId },
@@ -364,7 +324,7 @@ export class SandboxDocker {
   private async runHelper(name: string, script: string, binds: string[]): Promise<void> {
     const container = await this.docker.createContainer({
       name,
-      Image: SANDBOX_IMAGE,
+      Image: await this.ensureBaseImage(),
       Entrypoint: ["/bin/sh", "-c", script],
       Cmd: [],
       User: "0:0",
@@ -388,9 +348,9 @@ export class SandboxDocker {
    * desktop, no Session, removed by Docker when it exits. Wide enough that the CLIs do not wrap
    * what they print. For interactive CLIs Sessionboxer drives itself (Provider sign-in, ADR-0058).
    */
-  async runTty(cmd: string[], label: string, env: Record<string, string> = {}): Promise<TtyProcess> {
+  async runTty(image: string, cmd: string[], label: string, env: Record<string, string> = {}): Promise<TtyProcess> {
     const container = await this.docker.createContainer({
-      Image: SANDBOX_IMAGE,
+      Image: image,
       Entrypoint: ["tini", "--"],
       Cmd: cmd,
       User: "agent",

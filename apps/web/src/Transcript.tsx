@@ -326,7 +326,7 @@ function ToolCall({ item, agent }: { item: Extract<TranscriptItem, { kind: "tool
 
 function SnapshotMarker({ snapshot, actions }: { snapshot: Snapshot; actions: SnapshotActions }) {
   return (
-    <div className="marker marker-snapshot" title={`${snapshot.imageTag}\n${new Date(snapshot.createdAt).toLocaleString()}`}>
+    <div className="marker marker-snapshot" title={`${snapshot.imageTag}${snapshot.providers ? ` (${snapshot.providers.join(", ")})` : ""}\n${new Date(snapshot.createdAt).toLocaleString()}`}>
       <span>
         {"\u{1F4F7} "}Snapshot #{snapshot.ordinal}
         {snapshot.reason === "manual" ? " (manual)" : ""}

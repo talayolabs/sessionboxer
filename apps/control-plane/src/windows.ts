@@ -5,7 +5,7 @@ import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { WINDOWS_GUEST_USER, WINDOWS_GUEST_WORKSPACE, WINDOWS_VERSIONS, type EnvironmentAvailability, type Settings, type WindowsBaseStatus } from "@sessionboxer/protocol";
 import { DATA_DIR, ROOT_DIR } from "./config.js";
-import { LABEL_SESSION } from "./docker.js";
+import { LABEL_SESSION, type SandboxDocker } from "./docker.js";
 import { HttpError } from "./http-error.js";
 import { log } from "./log.js";
 import { type QemuPlatform, QemuVms } from "./qemu-vms.js";
@@ -70,15 +70,15 @@ export class WindowsVms extends QemuVms<BaseRecord, WindowsBaseStatus> {
   }
 
   constructor(
-    docker: Docker,
+    sandboxDocker: Pick<SandboxDocker, "docker" | "presentBaseImage">,
     settings: () => Settings,
     saveSettings: (next: Settings) => void,
     countSessions: () => number,
     onStatus: (status: WindowsBaseStatus) => void,
     /** The Docker side of the VMs; the seam `scripts/guest-vms.test.mjs` puts a fake through. */
-    host = new VmHost(docker, "win", WINDOWS_IMAGE, LABEL_WINDOWS, "Windows VMs"),
+    host = new VmHost(sandboxDocker.docker, "win", WINDOWS_IMAGE, LABEL_WINDOWS, "Windows VMs", () => sandboxDocker.presentBaseImage()),
   ) {
-    super(docker, WINDOWS, settings, saveSettings, countSessions, onStatus, host);
+    super(sandboxDocker.docker, WINDOWS, settings, saveSettings, countSessions, onStatus, host);
   }
 
   /** Re-attaches to an install left running by a previous Control Plane; drops a base record whose volume is gone. */

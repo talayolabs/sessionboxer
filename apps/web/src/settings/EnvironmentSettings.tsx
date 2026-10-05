@@ -12,6 +12,7 @@ import {
 import { api } from "../api";
 import { formatMb } from "../format";
 import { MacosBase } from "../MacosBase";
+import { SandboxImageBanner } from "../SandboxImageBanner";
 import { useBaseDiskAction } from "../useBaseDiskAction";
 import { DockerModeNote } from "../SessionSettingsForm";
 import { Caption, Select } from "../ui";
@@ -329,6 +330,7 @@ export function EnvironmentSettings({
           <input type="number" min={1} step={1} value={windowsCpus} onChange={(e) => setWindowsCpus(e.target.value)} />
         </label>
       </div>
+      <SandboxImageBanner selector="base" />
       <WindowsBase
         settings={settings}
         status={windowsBase}

@@ -111,7 +111,7 @@ const PLATFORMS = [
     installContainer: "sbx-windows-install",
     vm: (id) => `sbx-win-${id}`,
     installed: { version: "11", diskGb: 64, installedAt: "2026-01-01T00:00:00.000Z", sizeBytes: 12 * GB },
-    construct: (docker, deps, host) => new WindowsVms(docker, ...deps, host),
+    construct: (docker, deps, host) => new WindowsVms({ docker }, ...deps, host),
     notInstalled: "The Windows base disk is not installed (Global settings → Environment → Windows VMs).",
     installFirst: "Install the Windows base disk first (Global settings → Environment → Windows VMs).",
     noInstall: "No Windows base install is running.",

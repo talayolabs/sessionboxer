@@ -23,6 +23,8 @@ export const Snapshot = z.object({
   /** Docker image reference (`sessionboxer/snapshot:<sessionId>-<ordinal>`). */
   imageTag: z.string(),
   imageId: z.string(),
+  /** The Agents the Snapshot image carries, as its Session's image did (ADR-0088); `null` = a legacy image, or unknown. */
+  providers: z.array(Provider).nullable().default(null),
   /** Last Session event included in the Snapshot; the transcript marker goes right after it. */
   eventSeq: z.number().int().nonnegative(),
   /** Branch that was active when the Snapshot was taken. */

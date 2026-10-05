@@ -11,15 +11,14 @@ import {
   type ProviderOptions,
   type PublicSettings,
   type Session,
-  type SandboxImageStatus,
 } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { useStagedAttachments } from "./attachments-pending";
 import { AttachButton, AttachList, CameraButton, DictationLine, MicButton, SketchButton, droppedFiles, useDictation } from "./composer-tools";
-import { formatMb } from "./format";
 import { ModelSelect } from "./ModelSelect";
 import { ProviderIcon } from "./ProviderIcon";
 import { ProviderLogos } from "./ProviderLogos";
+import { SandboxImageBanner } from "./SandboxImageBanner";
 import { AdvancedSettingsDialog } from "./AdvancedSettingsDialog";
 import { providerTokenSet } from "./providers";
 import { EnvironmentIcon } from "./EnvironmentIcon";
@@ -38,44 +37,6 @@ import {
  */
 import type { Runner } from "./SessionView";
 import { mobileQuery } from "./SettingsView";
-
-export function SandboxImageBanner() {
-  const [status, setStatus] = useState<SandboxImageStatus | null>(null);
-  const [retrying, setRetrying] = useState(false);
-  const settled = status?.state === "ready";
-  useEffect(() => {
-    if (settled) return;
-    let cancelled = false;
-    const poll = () => api.sandboxImage().then((s) => !cancelled && setStatus(s), () => undefined);
-    void poll();
-    const timer = setInterval(poll, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [settled]);
-  if (!status || status.state === "ready" || status.state === "checking") return null;
-  if (status.state === "pulling") {
-    const progress = status.total > 0 ? ` ${formatMb(status.received)} of ${formatMb(status.total)}` : "";
-    return (
-      <div className="banner banner-warn">
-        Downloading the Sandbox image <code>{status.image}</code>{progress}. Happens once per version (a few GB); Sessions start once it is here.
-      </div>
-    );
-  }
-  const retry = () => {
-    setRetrying(true);
-    api.sandboxImagePull().then(setStatus, () => undefined).finally(() => setRetrying(false));
-  };
-  return (
-    <div className="banner banner-error">
-      The Sandbox image could not be downloaded: {status.error}{" "}
-      <button type="button" className="link" onClick={retry} disabled={retrying}>
-        {retrying ? "Retrying…" : "Retry"}
-      </button>
-    </div>
-  );
-}
 
 export function gitIdentityNote(session: Session): string {
   const { name, email } = session.settings.sandbox.gitIdentity;
@@ -330,6 +291,7 @@ export function NewSession({
     <div className="start" hidden={hidden}>
       <div className="start-inner">
         <h2 className="start-title">{firstTime ? "What should the Agent work on?" : "New session"}</h2>
+        <SandboxImageBanner selector={draft.environment === "docker-linux" ? provider : "base"} />
         {connectedProviders.length === 0 && (
           <div className="start-connect">
             <p className="muted">

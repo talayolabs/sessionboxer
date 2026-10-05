@@ -27,7 +27,7 @@ import { PrsPage, followLabel } from "./Prs";
 import { buildTranscript, llmCallsOf } from "./transcript-model";
 
 import { EMPTY_BRANCHES, EMPTY_E2E_RUNS, EMPTY_MODELS, EMPTY_OPTIONS, EMPTY_PRS, SessionView } from "./SessionView";
-import { NewSession, SandboxImageBanner } from "./NewSession";
+import { NewSession } from "./NewSession";
 import { SettingsView } from "./SettingsView";
 import { Sidebar, statusTitle } from "./Sidebar";
 import { useSessionFeed } from "./useSessionFeed";
@@ -394,7 +394,6 @@ export function App() {
             {error}
           </div>
         )}
-        <SandboxImageBanner />
         {!anyTokenSet && route.view !== "settings" && route.view !== "new" && !(route.view === "session" && !selected) && (
           <div className="banner banner-warn" onClick={() => setProviderConnect({ provider: null })}>
             No Provider connected yet: Sessions need a Claude Code, Codex, Cursor, OpenCode, Devin, pi, fx, GitHub Copilot, Mistral Vibe, Grok Build, Gemini CLI or Qwen Code login. Click to connect one.

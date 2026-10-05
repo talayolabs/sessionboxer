@@ -303,7 +303,7 @@ export interface LoginProcess extends TtyProcess {
 
 /** Where a sign-in's CLI runs. */
 export interface LoginRunner {
-  spawn(recipe: Recipe, id: string): Promise<LoginProcess>;
+  spawn(recipe: Recipe, id: string, provider: Provider): Promise<LoginProcess>;
 }
 
 interface Flow {
@@ -421,7 +421,7 @@ export class ProviderLogins {
     this.arm(flow, URL_WAIT_MS, `${name} did not show a sign-in link in time.`);
     let proc: LoginProcess;
     try {
-      proc = await this.runner.spawn(recipe, flow.state.id);
+      proc = await this.runner.spawn(recipe, flow.state.id, flow.state.provider);
     } catch (e) {
       this.fail(flow, `Could not start ${name}: ${e instanceof Error ? e.message : String(e)}`);
       return;
@@ -525,16 +525,16 @@ function describe(status: ProviderLoginFlow["status"]): string {
 
 /**
  * The CLI installed on this machine when there is one, else a throwaway container from the
- * Sandbox image (which ships all four). Either way the CLI gets a scratch home of its own.
+ * Provider's Sandbox image (pulled first when it is not here). Either way the CLI gets a scratch home of its own.
  */
 export class HostOrSandboxRunner implements LoginRunner {
   constructor(private readonly docker: SandboxDocker) {}
 
-  async spawn(recipe: Recipe, id: string): Promise<LoginProcess> {
+  async spawn(recipe: Recipe, id: string, provider: Provider): Promise<LoginProcess> {
     const bin = recipe.bin.map(findOnPath).find((b) => b !== null);
     if (bin) return spawnHost(bin, recipe, id);
-    await this.docker.ensureImage();
-    return spawnInSandbox(this.docker, recipe, id);
+    const image = await this.docker.resolveImage(provider);
+    return spawnInSandbox(this.docker, image.reference, recipe, id);
   }
 }
 
@@ -617,7 +617,7 @@ export function spawnHost(bin: string, recipe: Recipe, id: string): LoginProcess
 
 
 /** Runs the CLI in a throwaway container; it prints the login file after a marker on the way out. */
-export async function spawnInSandbox(docker: SandboxDocker, recipe: Recipe, id: string): Promise<LoginProcess> {
+export async function spawnInSandbox(docker: SandboxDocker, image: string, recipe: Recipe, id: string): Promise<LoginProcess> {
   const quote = (text: string): string => `"${text.replace(/(["$`\\])/g, "\\$1")}"`;
   const files = recipe.files.map((f) => quote(`$HOME/${f}`)).join(" ");
   const seeds = Object.entries(recipe.seed ?? {})
@@ -626,7 +626,7 @@ export async function spawnInSandbox(docker: SandboxDocker, recipe: Recipe, id: 
   // A driven CLI (ACP over stdin, which must not be the terminal) gets its input from a pipe that closes once the login file exists.
   const run = recipe.drive ? `{ printf '%s' "$SBX_DRIVE"; until for f in ${files}; do [ -f "$f" ] && break; done; do sleep 1; done; sleep 1; } | "$@"` : `"$@"`;
   const script = `${seeds}${run} || exit $?; printf '\\n%s\\n' "$MARK"; for f in ${files}; do if [ -f "$f" ]; then cat "$f"; break; fi; done; exit 0`;
-  const proc = await docker.runTty(["sh", "-c", script, "login", recipe.bin[0]!, ...recipe.args], `login-${id}`, { ...recipe.env, MARK: CREDENTIALS_MARK, ...(recipe.drive ? { SBX_DRIVE: recipe.drive.input } : {}) });
+  const proc = await docker.runTty(image, ["sh", "-c", script, "login", recipe.bin[0]!, ...recipe.args], `login-${id}`, { ...recipe.env, MARK: CREDENTIALS_MARK, ...(recipe.drive ? { SBX_DRIVE: recipe.drive.input } : {}) });
   let output = "";
   proc.onData((chunk) => {
     output = (output + chunk).slice(-OUTPUT_CAP);

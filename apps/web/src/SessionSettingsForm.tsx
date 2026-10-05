@@ -183,6 +183,7 @@ export function SessionSettingsForm({
       {show("environment") && (
         <section className="ss-section">
           <h3>Machine</h3>
+          {session?.image && <p className="muted">Sandbox image <code>{session.image.reference}</code>{session.image.providers ? ` · ${session.image.providers.join(", ")}` : " · legacy image (all Providers)"}</p>}
           {environmentFixed ? (
             <p className="muted ss-fixed">
               Machine: {ENVIRONMENT_LABELS[environment]} <span className="ss-lock">(fixed for the Session{mode === "fork" ? " and its forks" : ""})</span>

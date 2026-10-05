@@ -225,6 +225,7 @@ type NewSessionDefaults = Pick<
   | "createdBy"
   | "pinned"
   | "folderId"
+  | "image"
   | "createdAt"
   | "updatedAt"
 >;
@@ -233,6 +234,7 @@ type NewSessionDefaults = Pick<
 function newSessionDefaults(now: string, createdBy: string | null | undefined): NewSessionDefaults {
   return {
     containerId: null,
+    image: null,
     error: null,
     queueRunning: false,
     diskBytes: null,
@@ -1151,7 +1153,6 @@ export class SessionManager {
     this.log(`sandbox reach: ${await this.docker.detectReach()}`);
     await this.docker.ensureNetwork();
     this.usb.start();
-    void this.docker.ensureImage().catch((e: unknown) => this.log(e instanceof Error ? e.message : String(e)));
     await this.docker.watchDeaths(
       (containerId, sessionId, exitCode, name) => {
         if (this.stopping.has(sessionId)) return;
@@ -1216,7 +1217,6 @@ export class SessionManager {
     const utilitiesEnabled = input.utilitiesEnabled ? knownUtilityIds(settings, input.utilitiesEnabled) : defaultUtilitiesEnabled(settings);
     const repos = await this.normalizeRepos(specs, [], resolveBoxCredentials(settings, mcpEnabled));
     const workspaceSource: WorkspaceSource = { type: "empty" };
-    await this.docker.ensureImage();
     const environment = input.sandbox?.environment ?? "docker-linux";
     this.assertProviderRunsIn(req.provider, environment);
     await this.assertEnvironmentAvailable(environment);
@@ -1549,7 +1549,7 @@ export class SessionManager {
     return env;
   }
 
-  private createSandbox(session: Session, settings: Settings, image?: string, newConversation = false): Promise<string> {
+  private createSandbox(session: Session, settings: Settings, image: string, newConversation = false): Promise<string> {
     const effective = resolveSessionSettings(session.settings, settings);
     const env = this.sandboxEnv(session, settings);
     if (newConversation) env.SESSIONBOXER_NEW_CONVERSATION = "1";
@@ -1581,7 +1581,9 @@ export class SessionManager {
       await vms.create(session.id);
       await this.startVm(session.id);
     }
-    const containerId = await this.createSandbox(session, settings, image, newConversation);
+    const resolved = await this.docker.resolveImage(this.agentInGuest(session) ? "base" : session.provider, image);
+    this.update(session.id, { image: resolved });
+    const containerId = await this.createSandbox(session, settings, resolved.reference, newConversation);
     this.update(session.id, { containerId });
     await this.startSandbox(containerId, settings);
     // A fork's Workspace comes with its Snapshot image; only fresh Sessions seed theirs.
@@ -2183,6 +2185,7 @@ export class SessionManager {
         reason: "rebuild",
         imageTag: `${SNAPSHOT_REPO}:${tag}`,
         imageId,
+        providers: s.image?.providers ?? null,
         eventSeq: this.db.lastEventSeq(id),
         branchId: s.activeBranchId,
         sizeBytes,
@@ -2193,8 +2196,9 @@ export class SessionManager {
       this.snapshotPolicy.broadcastSnapshots(id);
       await this.docker.rename(old, `sbx-${id}-old`);
       renamed = true;
+      const image = await this.docker.resolveImage(s.provider, imageId);
       created = await this.createSandbox(s, settings, imageId);
-      this.update(id, { containerId: created });
+      this.update(id, { containerId: created, image });
       await this.startSandbox(created, settings);
       const next = this.setStatus(id, "idle");
       await this.connect(id, created);

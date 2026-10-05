@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
 import { MACOS_GUEST_USER, MACOS_GUEST_WORKSPACE, MACOS_VERSIONS, type EnvironmentAvailability, type MacosBaseStatus, type Settings } from "@sessionboxer/protocol";
-import { DATA_DIR, SANDBOX_IMAGE, SANDBOX_NETWORK } from "./config.js";
+import { DATA_DIR, SANDBOX_NETWORK } from "./config.js";
 import { LABEL_SESSION, type SandboxDocker } from "./docker.js";
 import { HttpError } from "./http-error.js";
 import { log } from "./log.js";
@@ -128,7 +128,7 @@ export class MacosVms extends QemuVms<BaseRecord, MacosBaseStatus> {
     countSessions: () => number,
     onStatus: (status: MacosBaseStatus) => void,
     /** The Docker side of the VMs; the seam `scripts/guest-vms.test.mjs` puts a fake through. */
-    host = new VmHost(sandboxDocker.docker, "mac", MACOS_IMAGE, LABEL_MACOS, "macOS VMs"),
+    host = new VmHost(sandboxDocker.docker, "mac", MACOS_IMAGE, LABEL_MACOS, "macOS VMs", () => sandboxDocker.presentBaseImage()),
   ) {
     super(sandboxDocker.docker, MACOS, settings, saveSettings, countSessions, onStatus, host);
   }
@@ -559,7 +559,7 @@ export class MacosVms extends QemuVms<BaseRecord, MacosBaseStatus> {
   private async sandboxRun(script: string, env: string[], timeoutSeconds: number, arg = "", onLine?: (line: string) => void): Promise<string> {
     const container = await this.docker.createContainer({
       name: `sbx-mac-ssh-${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`,
-      Image: SANDBOX_IMAGE,
+      Image: await this.sandboxDocker.ensureBaseImage(),
       Entrypoint: ["/bin/sh", "-c", script, arg],
       Cmd: [],
       Env: env,

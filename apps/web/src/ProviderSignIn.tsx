@@ -8,6 +8,7 @@ import {
 } from "@sessionboxer/protocol";
 import { api } from "./api";
 import { ProviderIcon } from "./ProviderIcon";
+import { SandboxImageBanner } from "./SandboxImageBanner";
 import { providerSignsInFromBrowser } from "./providers";
 
 const POLL_MS = 1000;
@@ -157,7 +158,12 @@ export function ProviderSignIn({
           )}
         </div>
       )}
-      {flow?.status === "starting" && <p className="muted">Starting {label}&apos;s CLI…</p>}
+      {flow?.status === "starting" && (
+        <>
+          <p className="muted">Starting {label}&apos;s CLI…</p>
+          <SandboxImageBanner selector={provider} />
+        </>
+      )}
       {flow?.status === "awaiting_code" && flow.url && (
         <div className="connector-device">
           <p>

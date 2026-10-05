@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- One Sandbox image per Provider: a Linux Session runs on `ghcr.io/talayolabs/sessionboxer-sandbox:<version>-<providerId>`, the Windows/macOS helpers on `<version>-base`; each is pulled the first time a Session, a sign-in or a VM helper needs it (nothing at boot), the New Session page shows and retries the selected one, Sessions and Snapshots record theirs. `SESSIONBOXER_IMAGE` stays an exact override; images without the `io.sessionboxer.*` labels serve every Provider whose executable they carry. `GET/POST /api/sandbox-image?provider=<id>|base`. ([ADR-0088](docs/adr/0088-one-sandbox-image-per-provider.md))
 - Add Kimi CLI 1.52.0 as a Provider with Kimi Code OAuth paste/import and browser device sign-in, tmpfs token refresh sync, MCP tools and its ACP model picker; API-key-only ACP and QEMU · macOS are unavailable. ([ADR-0084](docs/adr/0084-kimi-cli-as-a-provider-on-a-kimi-login-or-api-key.md))
 
 The Sandbox image changed: `npm run build:image`, then Stop → Resume existing sessions.

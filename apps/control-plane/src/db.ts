@@ -7,6 +7,7 @@ import {
   PROVIDERS,
   Provider,
   ROOT_BRANCH_ID,
+  SandboxImageInfo,
   Session,
   SessionFolder,
   SessionRepo,
@@ -30,6 +31,7 @@ import {
   type SessionStatus,
   type Snapshot,
 } from "@sessionboxer/protocol";
+import { MIGRATIONS } from "./db-migrations.js";
 import { PrStore } from "./pr-store.js";
 import { FollowedPrStore } from "./followed-pr-store.js";
 import { AutomationStore } from "./automation-store.js";
@@ -57,6 +59,7 @@ interface SessionRow {
   /** JSON `SessionSettings`. */
   settings: string;
   container_id: string | null;
+  image: string | null;
   error: string | null;
   queue_running: number;
   disk_bytes: number | null;
@@ -112,6 +115,7 @@ interface SnapshotRow {
   reason: string;
   image_tag: string;
   image_id: string;
+  providers: string | null;
   event_seq: number;
   branch_id: string;
   size_bytes: number;
@@ -189,6 +193,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   repos TEXT NOT NULL DEFAULT '[]',
   settings TEXT,
   container_id TEXT,
+  image TEXT,
   error TEXT,
   queue_running INTEGER NOT NULL DEFAULT 0,
   disk_bytes INTEGER,
@@ -218,6 +223,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   reason TEXT NOT NULL,
   image_tag TEXT NOT NULL,
   image_id TEXT NOT NULL,
+  providers TEXT,
   event_seq INTEGER NOT NULL,
   branch_id TEXT NOT NULL DEFAULT 'root',
   size_bytes INTEGER NOT NULL,
@@ -297,32 +303,6 @@ CREATE TABLE IF NOT EXISTS e2e_cases (
 );
 CREATE INDEX IF NOT EXISTS e2e_cases_run ON e2e_cases(run_id, idx, cycle);
 `;
-
-/**
- * Columns added after the first release, applied to databases created before them. The per-setting
- * columns of old databases (docker_mode, auto_snapshot, mcp_enabled, model, options, instructions,
- * inspect_llm, git_user_name, git_user_email) are left in place and folded into `settings` once.
- */
-const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
-  { table: "sessions", column: "queue_running", ddl: "ALTER TABLE sessions ADD COLUMN queue_running INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "disk_bytes", ddl: "ALTER TABLE sessions ADD COLUMN disk_bytes INTEGER" },
-  { table: "sessions", column: "mcp_pending", ddl: "ALTER TABLE sessions ADD COLUMN mcp_pending INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "model_pending", ddl: "ALTER TABLE sessions ADD COLUMN model_pending INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "options_pending", ddl: "ALTER TABLE sessions ADD COLUMN options_pending INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "available_options", ddl: "ALTER TABLE sessions ADD COLUMN available_options TEXT NOT NULL DEFAULT '[]'" },
-  { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
-  { table: "sessions", column: "inspect_llm_pending", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm_pending INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "usage", ddl: "ALTER TABLE sessions ADD COLUMN usage TEXT NOT NULL DEFAULT '{}'" },
-  { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
-  { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },
-  { table: "sessions", column: "usb", ddl: "ALTER TABLE sessions ADD COLUMN usb TEXT" },
-  { table: "sessions", column: "created_by", ddl: "ALTER TABLE sessions ADD COLUMN created_by TEXT" },
-  { table: "sessions", column: "pinned", ddl: "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0" },
-  { table: "sessions", column: "folder_id", ddl: "ALTER TABLE sessions ADD COLUMN folder_id TEXT" },
-  { table: "e2e_runs", column: "brief", ddl: "ALTER TABLE e2e_runs ADD COLUMN brief TEXT" },
-  { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
-  { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
-];
 
 const SESSION_SELECT = `
   SELECT s.*,
@@ -468,8 +448,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_by, pinned, folder_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_by, @pinned, @folder_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, image, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_by, pinned, folder_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @image, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_by, @pinned, @folder_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -480,7 +460,7 @@ export class Db {
     const next: Session = { ...current, ...patch, updatedAt: new Date().toISOString() };
     this.db
       .prepare(
-        `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, error=@error,
+        `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, image=@image, error=@error,
            queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
            options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
            active_branch_id=@active_branch_id, usage=@usage, usb=@usb, pinned=@pinned, folder_id=@folder_id, updated_at=@updated_at
@@ -631,8 +611,8 @@ export class Db {
   insertSnapshot(snapshot: Snapshot): void {
     this.db
       .prepare(
-        `INSERT INTO snapshots (id, session_id, ordinal, reason, image_tag, image_id, event_seq, branch_id, size_bytes, queued_messages, created_at)
-         VALUES (@id, @session_id, @ordinal, @reason, @image_tag, @image_id, @event_seq, @branch_id, @size_bytes, @queued_messages, @created_at)`,
+        `INSERT INTO snapshots (id, session_id, ordinal, reason, image_tag, image_id, providers, event_seq, branch_id, size_bytes, queued_messages, created_at)
+         VALUES (@id, @session_id, @ordinal, @reason, @image_tag, @image_id, @providers, @event_seq, @branch_id, @size_bytes, @queued_messages, @created_at)`,
       )
       .run({
         id: snapshot.id,
@@ -641,6 +621,7 @@ export class Db {
         reason: snapshot.reason,
         image_tag: snapshot.imageTag,
         image_id: snapshot.imageId,
+        providers: snapshot.providers === null ? null : JSON.stringify(snapshot.providers),
         event_seq: snapshot.eventSeq,
         branch_id: snapshot.branchId,
         size_bytes: snapshot.sizeBytes,
@@ -972,6 +953,7 @@ export type SessionPatch = Partial<
     | "status"
     | "repos"
     | "containerId"
+    | "image"
     | "error"
     | "queueRunning"
     | "settings"
@@ -1041,6 +1023,7 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     repos: SessionRepo.array().parse(JSON.parse(row.repos)),
     settings: SessionSettings.parse(JSON.parse(row.settings)),
     containerId: row.container_id,
+    image: row.image === null ? null : SandboxImageInfo.parse(JSON.parse(row.image)),
     error: row.error,
     queueRunning: row.queue_running === 1,
     diskBytes: row.disk_bytes,
@@ -1071,6 +1054,7 @@ function rowToSnapshot(row: SnapshotRow): Snapshot {
     reason: SnapshotReason.parse(row.reason),
     imageTag: row.image_tag,
     imageId: row.image_id,
+    providers: row.providers === null ? null : Provider.array().parse(JSON.parse(row.providers)),
     eventSeq: row.event_seq,
     branchId: row.branch_id,
     sizeBytes: row.size_bytes,
@@ -1093,6 +1077,7 @@ function sessionToRow(s: Session): SessionRow {
     repos: JSON.stringify(s.repos),
     settings: JSON.stringify(s.settings),
     container_id: s.containerId,
+    image: s.image === null ? null : JSON.stringify(s.image),
     error: s.error,
     queue_running: s.queueRunning ? 1 : 0,
     disk_bytes: s.diskBytes,

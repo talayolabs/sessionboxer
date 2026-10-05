@@ -78,6 +78,7 @@ import type {
   SessionBroadcast,
   SessionFolder,
   SessionEvent,
+  SandboxImageSelector,
   SandboxImageStatus,
   Snapshot,
   RecentSnapshot,
@@ -175,8 +176,9 @@ export const api = {
   options: () => request<ProviderOptions>("/options"),
   updateSettings: (update: UpdateSettingsRequest) =>
     request<PublicSettings>("/settings", { method: "PUT", body: JSON.stringify(update) }),
-  sandboxImage: () => request<SandboxImageStatus>("/sandbox-image"),
-  sandboxImagePull: () => request<SandboxImageStatus>("/sandbox-image/pull", { method: "POST" }),
+  /** `selector`: a Provider id or `base` (ADR-0088); GET only looks, POST starts or retries that image's pull. */
+  sandboxImage: (selector: SandboxImageSelector) => request<SandboxImageStatus>(`/sandbox-image?provider=${encodeURIComponent(selector)}`),
+  sandboxImagePull: (selector: SandboxImageSelector) => request<SandboxImageStatus>(`/sandbox-image/pull?provider=${encodeURIComponent(selector)}`, { method: "POST" }),
   /** The shared Windows base disk of `qemu-windows` Sessions (ADR-0057). */
   windowsBase: () => request<WindowsBaseStatus>("/windows"),
   windowsInstall: () => request<WindowsBaseStatus>("/windows/install", { method: "POST" }),

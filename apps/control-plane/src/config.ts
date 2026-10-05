@@ -32,6 +32,7 @@ import {
   type PublicMcpServerDef,
   type PublicSettings,
   type RemoteAccess,
+  type SandboxImageSelector,
   type TunnelStatuses,
   type UpdateSettingsRequest,
   WINDOWS_VERSIONS,
@@ -75,12 +76,28 @@ export const DB_FILE = join(DATA_DIR, "db.sqlite");
 export const HOST = process.env.SESSIONBOXER_HOST ?? "127.0.0.1";
 export const PORT = Number(process.env.SESSIONBOXER_PORT ?? 4000);
 /**
- * The Sandbox image, pinned to this version: published by the release workflow for amd64 and
- * arm64, pulled on first use when it is not on this machine; `npm run build:image` builds it
- * locally under the same name. `SESSIONBOXER_IMAGE` overrides it.
+ * The Sandbox images, pinned to this version (ADR-0088): one per Provider (`<version>-<providerId>`,
+ * the runtime plus that Agent) and `<version>-base` (the runtime alone, for the VM helper
+ * containers and the Linux side of a Windows/macOS Session), published by the release workflow
+ * for amd64 and arm64 and pulled the first time something needs them; `npm run build:image
+ * -- --provider <id>` builds one locally under the same name. `SESSIONBOXER_IMAGE` is an exact
+ * reference both resolvers return verbatim (a custom or all-Providers image; no suffix is appended).
  */
 export const SANDBOX_IMAGE_REPO = "ghcr.io/talayolabs/sessionboxer-sandbox";
-export const SANDBOX_IMAGE = process.env.SESSIONBOXER_IMAGE?.trim() || `${SANDBOX_IMAGE_REPO}:${VERSION}`;
+/** The tag before the `-<selector>` suffix: the Control Plane's own version. */
+export const SANDBOX_IMAGE_VERSION = VERSION;
+export function sandboxImageOverride(): string | null {
+  return process.env.SESSIONBOXER_IMAGE?.trim() || null;
+}
+export function sandboxImage(selector: SandboxImageSelector): string {
+  return sandboxImageOverride() ?? `${SANDBOX_IMAGE_REPO}:${SANDBOX_IMAGE_VERSION}-${selector}`;
+}
+export function sandboxImageFor(provider: Provider): string {
+  return sandboxImage(provider);
+}
+export function sandboxBaseImage(): string {
+  return sandboxImage("base");
+}
 export const SANDBOX_NETWORK = process.env.SESSIONBOXER_NETWORK ?? "sessionboxer";
 /** Name a Sandbox resolves to the host machine (`--add-host ...:host-gateway`), for MCP servers running on it. */
 export const SANDBOX_HOST_ALIAS = "host.docker.internal";

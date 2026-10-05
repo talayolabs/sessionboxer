@@ -112,7 +112,7 @@ const push = new PushNotifier(
   log,
 );
 const windows = new WindowsVms(
-  docker.docker,
+  docker,
   () => settings,
   (next) => {
     settings = next;

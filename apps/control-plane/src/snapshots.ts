@@ -109,6 +109,7 @@ export class SnapshotPolicy {
         reason,
         imageTag: `${SNAPSHOT_REPO}:${tag}`,
         imageId,
+        providers: s.image?.providers ?? null,
         eventSeq: eventSeq ?? this.deps.db.lastEventSeq(id),
         branchId: s.activeBranchId,
         sizeBytes,

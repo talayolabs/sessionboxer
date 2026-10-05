@@ -1,15 +1,19 @@
 #!/usr/bin/env node
-// `npm run build:image`: builds the Sandbox image, handing the Dockerfile the CA certificates
-// this machine trusts beyond the public ones (Cloudflare WARP, a corporate proxy…) as the
-// `extra-ca` build secret, plus whatever is pasted under Settings → TLS certificates. Without
-// them every download in the build fails with "self-signed certificate in certificate chain"
-// on a machine whose proxy re-signs TLS. Extra arguments are passed to `docker build`.
+// `npm run build:image [-- --provider <providerId>|base|all]`: builds the Sandbox image, handing
+// the Dockerfile the CA certificates this machine trusts beyond the public ones (Cloudflare WARP, a
+// corporate proxy…) as the `extra-ca` build secret, plus whatever is pasted under Settings → TLS
+// certificates. Without them every download in the build fails with "self-signed certificate in
+// certificate chain" on a machine whose proxy re-signs TLS. Other arguments are passed to `docker build`.
 //
-// The image gets the name the Control Plane of this checkout looks for,
-// ghcr.io/talayolabs/sessionboxer-sandbox:<version> (so it is used instead of the published one;
-// `SESSIONBOXER_IMAGE` overrides both), plus sessionboxer/sandbox:dev.
+// Without --provider the image has every Provider's Agent and gets the name the Control Plane of
+// this checkout looks for, ghcr.io/talayolabs/sessionboxer-sandbox:<version> (so it is used instead
+// of the published one), plus sessionboxer/sandbox:dev. `--provider <id>` builds the Dockerfile
+// target of that one Provider (ADR-0088) as <repo>:<version>-<id> plus sessionboxer/sandbox:dev-<id>;
+// `base` (no Agent) and `all` likewise, with their suffix; none of them touches the plain tags.
+// `SESSIONBOXER_IMAGE`, when set, is one more tag, exactly as written.
 //
-// Plain Node (no dependencies) so it runs before anything is compiled; the detection mirrors
+// Plain Node (no dependencies) so it runs before anything is compiled: the Provider ids come from
+// the protocol source (scripts/sandbox-image-targets.mjs); the CA detection mirrors
 // apps/control-plane/src/ca-certs.ts.
 import { spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
@@ -17,9 +21,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
-import { fileURLToPath } from "node:url";
+import { ROOT, imageTarget, parseArgs } from "./sandbox-image-targets.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_DIR = process.env.SESSIONBOXER_HOME ?? path.join(homedir(), ".sessionboxer");
 const PEM_BLOCK = /-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g;
 
@@ -76,6 +79,16 @@ function extraCaCerts() {
     });
 }
 
+let selection;
+try {
+  const parsed = parseArgs(process.argv.slice(2));
+  selection = imageTarget(parsed.provider, JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version);
+  selection.forwarded = parsed.forwarded;
+} catch (err) {
+  console.error(`build:image: ${err.message}`);
+  process.exit(2);
+}
+
 const certs = extraCaCerts();
 const bundle = certs.length === 0 ? "" : `${certs.join("\n")}\n`;
 mkdirSync(DATA_DIR, { recursive: true });
@@ -91,22 +104,24 @@ if (certs.length > 0) {
 }
 
 const version = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-const tag = process.env.SESSIONBOXER_IMAGE?.trim() || `ghcr.io/talayolabs/sessionboxer-sandbox:${version}`;
-console.log(`build:image: building ${tag}`);
+const override = process.env.SESSIONBOXER_IMAGE?.trim();
+const tags = override ? [...selection.tags, override] : selection.tags;
+console.log(`build:image: building target ${selection.target} as ${tags.join(", ")}`);
 
 const args = [
   "build",
   "-f",
   "images/sandbox/Dockerfile",
-  "-t",
-  tag,
-  "-t",
-  "sessionboxer/sandbox:dev",
+  "--target",
+  selection.target,
+  ...tags.flatMap((tag) => ["-t", tag]),
   "--secret",
   `id=extra-ca,src=${bundleFile}`,
   "--build-arg",
   `EXTRA_CA_FINGERPRINT=${digest}`,
-  ...process.argv.slice(2),
+  "--build-arg",
+  `SESSIONBOXER_VERSION=${version}`,
+  ...selection.forwarded,
   ".",
 ];
 const res = spawnSync("docker", args, { cwd: ROOT, stdio: "inherit", env: { ...process.env, DOCKER_BUILDKIT: "1" } });

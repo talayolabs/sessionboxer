@@ -26,6 +26,7 @@
     "test:automations": "tsc -b && node --test scripts/automations.test.mjs",
     "test:mcp-events": "tsc -b && node --test scripts/mcp-events.test.mjs",
     "test:guest-vms": "tsc -b && node --test scripts/guest-vms.test.mjs",
+    "test:sandbox-image": "tsc -b && node --test scripts/sandbox-image.test.mjs",
     "test:cross-package": "tsc -b && node --test scripts/cross-package.test.mjs",
     "test:pr-sync": "tsc -b && node --test scripts/pr-sync.test.mjs",
     "test:routes": "node --test scripts/routes.test.mjs",

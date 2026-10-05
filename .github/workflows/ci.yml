@@ -34,6 +34,7 @@ jobs:
       - run: npm run test:automations
       - run: npm run test:mcp-events
       - run: npm run test:guest-vms
+      - run: npm run test:sandbox-image
       - run: npm run test:cross-package
       - run: npm run test:pr-sync
       - run: npm run test:routes

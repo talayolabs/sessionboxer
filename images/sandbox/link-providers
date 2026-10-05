@@ -1,0 +1,11 @@
+#!/bin/sh
+# sessionboxer-link-providers: symlinks every launcher of every payload under
+# /opt/sessionboxer/providers/<providerId>/bin into /usr/local/bin, where the Daemon's
+# provider-commands.ts finds the commands by name, and checks each one resolves.
+set -eu
+for launcher in /opt/sessionboxer/providers/*/bin/*; do
+  [ -e "$launcher" ] || continue
+  name="${launcher##*/}"
+  ln -sfn "$launcher" "/usr/local/bin/$name"
+  test -e "/usr/local/bin/$name" || { echo "launcher does not resolve: $launcher" >&2; exit 1; }
+done

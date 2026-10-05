@@ -1,0 +1,26 @@
+#!/bin/sh
+# sessionboxer-payload-manifest <providerId> <agentVersion>: the last step of an agent-<providerId>
+# stage. Checks that the payload under /opt/sessionboxer/providers/<providerId> is self-contained
+# (no symlink leaves it: a launcher that pointed into the builder's /usr or /home/agent would break
+# once copied into a final image) and writes its manifest.json (payloadFormat 1): the Provider, the
+# Agent version and every file and symlink, relative to the payload.
+set -eu
+provider="$1"
+version="$2"
+dir="/opt/sessionboxer/providers/$provider"
+test -d "$dir/bin" || { echo "payload $provider has no bin/ (launchers)" >&2; exit 1; }
+find "$dir" -type l | while read -r link; do
+  target="$(readlink -f "$link")" || { echo "dangling symlink in payload $provider: $link" >&2; exit 1; }
+  case "$target" in
+    "$dir"/*) ;;
+    *) echo "symlink leaves payload $provider: $link -> $target" >&2; exit 1 ;;
+  esac
+done
+find "$dir" -mindepth 1 \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort | node -e '
+  const fs = require("node:fs");
+  const [provider, version, dir] = process.argv.slice(1);
+  const files = fs.readFileSync(0, "utf8").split("\n").filter(Boolean);
+  const manifest = { provider, version, payloadFormat: 1, files };
+  fs.writeFileSync(`${dir}/manifest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`payload ${provider} ${version}: ${files.length} files`);
+' "$provider" "$version" "$dir"

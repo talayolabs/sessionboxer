@@ -1,6 +1,6 @@
 import type Docker from "dockerode";
 import { PROVIDERS, PROVIDER_LABELS, SandboxImageSelector, type Provider, type SandboxImageInfo, type SandboxImageStatus } from "@sessionboxer/protocol";
-import { SANDBOX_IMAGE_REPO, SANDBOX_IMAGE_VERSION, sandboxImageFor } from "./config.js";
+import { SANDBOX_IMAGE_REPO, SANDBOX_IMAGE_VERSION, sandboxImageFor, sandboxImageOverride } from "./config.js";
 import { HttpError } from "./http-error.js";
 import { log as defaultLog } from "./log.js";
 import { isStatus } from "./vm-host.js";
@@ -94,6 +94,14 @@ function missingLocal(ref: string): string {
 
 type PullEvent = { id?: string; status?: string; progressDetail?: { current?: number; total?: number } };
 
+/** What a refused Provider image should have been: the Provider's own image, or — under `SESSIONBOXER_IMAGE`, which names one image for everything — one that carries the Agent. */
+function needs(provider: Provider): string {
+  const label = PROVIDER_LABELS[provider];
+  return sandboxImageOverride() === null
+    ? `${label} Sessions need ${sandboxImageFor(provider)}`
+    : `SESSIONBOXER_IMAGE must name an image that carries ${label} (or be unset)`;
+}
+
 export class SandboxImages {
   private readonly statuses = new Map<string, SandboxImageStatus>();
   private readonly pulls = new Map<string, Promise<void>>();
@@ -168,8 +176,8 @@ export class SandboxImages {
     if (selector !== "base") {
       const label = PROVIDER_LABELS[selector];
       if (providers !== null) {
-        if (providers.length === 0) throw new Error(`Sandbox image ${ref} is a base image without an Agent; ${label} Sessions need ${sandboxImageFor(selector)}`);
-        if (!providers.includes(selector)) throw new Error(`Sandbox image ${ref} carries ${providers.map((p) => PROVIDER_LABELS[p]).join(", ")}, not ${label}; ${label} Sessions need ${sandboxImageFor(selector)}`);
+        if (providers.length === 0) throw new Error(`Sandbox image ${ref} is a base image without an Agent; ${needs(selector)}`);
+        if (!providers.includes(selector)) throw new Error(`Sandbox image ${ref} carries ${providers.map((p) => PROVIDER_LABELS[p]).join(", ")}, not ${label}; ${needs(selector)}`);
       } else if (!(await this.hasExecutable(ref, info.Id, PROVIDER_EXECUTABLES[selector]))) {
         throw new Error(`Sandbox image ${ref} has no ${label}: \`${PROVIDER_EXECUTABLES[selector]}\` is not on its PATH`);
       }

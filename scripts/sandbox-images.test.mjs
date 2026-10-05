@@ -296,6 +296,14 @@ test("resolve trusts the labels: the named Provider passes, another fails clearl
   await assert.rejects(images.resolve(future, "codex"), /payload format 2; this Control Plane .* reads format 1/);
   await assert.rejects(images.resolve(codex, "claude-code"), /carries Codex, not Claude Code; Claude Code Sessions need .*-claude-code/);
   await assert.rejects(images.resolve(base, "codex"), /base image without an Agent; Codex Sessions need .*-codex/);
+  const before = process.env.SESSIONBOXER_IMAGE;
+  try {
+    process.env.SESSIONBOXER_IMAGE = codex;
+    await assert.rejects(images.resolve(codex, "claude-code"), /carries Codex, not Claude Code; SESSIONBOXER_IMAGE must name an image that carries Claude Code \(or be unset\)/);
+  } finally {
+    if (before === undefined) delete process.env.SESSIONBOXER_IMAGE;
+    else process.env.SESSIONBOXER_IMAGE = before;
+  }
   assert.deepEqual(await images.resolve(base, "base"), { reference: base, id: `sha256:${base}`, providers: [], runtime: null, payloads: [] });
   assert.deepEqual(await images.resolve(codex, "base"), { reference: codex, id: `sha256:${codex}`, providers: ["codex"], runtime: null, payloads: [] });
   assert.deepEqual(docker.probes, []);

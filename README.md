@@ -36,6 +36,8 @@ Or the [desktop app](https://github.com/talayolabs/sessionboxer/releases) for Li
 
 More: [user guide → Install](docs/GUIDE.md#install).
 
+Nothing is downloaded at start: the first Session pulls the Sandbox image of its agent, `ghcr.io/talayolabs/sessionboxer-sandbox:<version>-<providerId>` (1.2–1.4 GB; plain `<version>` has every agent, for offline preloading), and `SESSIONBOXER_IMAGE` makes one image of your own serve everything — see [Sandbox images](docs/GUIDE.md#sandbox-images).
+
 ## What it does
 
 - **One box per session**, with its own copy of one or many repositories.

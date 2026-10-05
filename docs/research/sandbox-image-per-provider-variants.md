@@ -1,17 +1,39 @@
 # Research: one Sandbox image per Provider
 
 Question (2026-10-04): can Sessionboxer stop making every user download all 13 Agents, without moving
-installation into Session boot? This is a design for the owner and implementation sessions, not a shipped
-feature. [ADR-0088](../adr/0088-one-sandbox-image-per-provider.md) is **Proposed**; implementation waits for approval.
+installation into Session boot? This document is the design the implementation followed;
+[ADR-0088](../adr/0088-one-sandbox-image-per-provider.md) is **Accepted** and records what shipped. The
+sections below keep the 2026-10-04 measurements and projections as they were; the outcome comes first.
 
-Short answer: **publish `<version>-<providerId>` variants, with one shared runtime and one Agent payload.**
-The amd64 image built from `31b82ce` measures **2.319 GB compressed + 6.027 GB unpacked = 8.346 GB** in this
-machine's containerd image store. The shared portion is **1.212 GB compressed / 3.084 GB unpacked**. Most
-single-Provider images project to **1.217–1.394 GB compressed / 3.097–3.459 GB unpacked**; Claude Code and
-Codex share a 900 MB install layer that must be split before measuring them independently. Keep the plain
-version tag as the all-Providers compatibility image, add an explicit `-base` for VM helpers, and pull only
-the variant needed by a Session or sign-in flow. Preserve cross-Provider snapshot forks: their whole-filesystem
-semantics are the main complication, not the tag suffix. Do not silently replace them with a fresh Workspace.
+## Outcome (2026-10-05)
+
+The five steps of §12 landed (27f106b, b6c0c17, 0e984c8, c695b51, and this document's step 5). Measured on
+the amd64 images built from `main` (unpacked = sum of `docker history` layer sizes; compressed = sum of the
+OCI layer descriptors; §12 budgets in parentheses):
+
+| Image | Unpacked | Compressed |
+| --- | ---: | ---: |
+| `base` | 3.155 GB (≤ 3.20) | 1.223 GB (≤ 1.27) |
+| `fx` | 3.167 GB (≤ 3.25) | 1.228 GB (≤ 1.29) |
+| `copilot` | 3.528 GB (≤ 3.60) | 1.404 GB (≤ 1.47) |
+| `codex` | 3.537 GB (≤ 4.10) | 1.362 GB (≤ 1.65) |
+| `claude-code` | 3.671 GB (≤ 4.10) | 1.432 GB (≤ 1.65) |
+| `all` | 6.025 GB (≤ 6.30) | 2.318 GB (≤ 2.45) |
+
+A Linux Session therefore downloads 1.2–1.4 GB instead of the monolith's 2.3 GB (38–47% less; §3 projected
+40–48% from the monolith's layers, and §12 asked for ≥ 35%). Claude Code and Codex are separate payloads
+and measured separately, within the ordinary Provider budget rather than the provisional 4.10 / 1.65 GB.
+The distinct amd64 blobs of the whole set (`base`, 13 Providers, `all`) are **2.46 GB**: about one
+monolith, as §7 predicted, not one base per tag. Local warm builds take 3m07s for `base` and 2–30 s for a
+Provider on top of it. Injecting the Claude Code payload into a Codex fork moved 470 MB in 4.5 s.
+
+Found in step 4 (§9): Docker's `getArchive` emits files that share an inode as tar hard links, with
+linknames relative to the archive, while `payload-manifest` lists them as plain files. The verifier in
+`apps/control-plane/src/provider-payload.ts` accepts a hard link only when it points at a file of the payload;
+every other entry must be a listed regular file or a symlink that stays inside the payload.
+
+Still unmeasured: the arm64 sizes (the release enforces amd64 budgets + 15% there until measured), the §7 CI
+minutes (no release workflow run yet), and a published donor pull during a fork.
 
 ## 1. What was measured
 

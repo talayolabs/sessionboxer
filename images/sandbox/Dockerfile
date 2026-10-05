@@ -18,7 +18,9 @@
 #   all                base + every payload: the default target, what plain `docker build` and
 #                      <version> / <version>-all are
 # A source-only edit rebuilds base and the final copies, never an agent-* stage; a pin bump rebuilds
-# that one payload. scripts/sandbox-image.test.mjs checks every Provider has both stages.
+# that one payload. scripts/sandbox-image.test.mjs checks every Provider has both stages. The release
+# (scripts/release-sandbox.mjs) builds the finals against the pushed base by digest,
+# `--build-context base=docker-image://<repo>@<digest>`, so every variant shares its layers exactly.
 #
 # Payload layout, /opt/sessionboxer/providers/<providerId>/ (payloadFormat 1):
 #   bin/<launcher>     every command the Daemon's provider-commands.ts spawns (and the terminal

@@ -536,6 +536,12 @@ function Item({
           Repository {item.action}: <code>/workspace/{item.name}</code> ({item.origin})
         </div>
       );
+    case "payload_injected":
+      return (
+        <div className="marker" title={`${formatMb(item.bytes)} from ${item.from}`}>
+          {PROVIDER_LABELS[item.provider]} {item.version} added to this Sandbox (the snapshot's image did not have it)
+        </div>
+      );
     case "usb_changed":
       return (
         <div className="marker">

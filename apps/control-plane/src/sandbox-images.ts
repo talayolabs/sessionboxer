@@ -14,11 +14,15 @@ import { isStatus } from "./vm-host.js";
  */
 
 /** Most Sandbox images downloading at once (each is a few GB); the rest wait their turn. */
+/** Label value of the probe containers; a Control Plane sweeps leftovers at boot. */
+export const PREFLIGHT_HELPER = "preflight";
+
 export const MAX_CONCURRENT_PULLS = 2;
 
 /** Labels the release workflow puts on every published image; images without them are legacy monoliths or custom images. */
 export const LABEL_PROVIDERS = "io.sessionboxer.providers";
 export const LABEL_PAYLOAD_FORMAT = "io.sessionboxer.payload-format";
+export const LABEL_RUNTIME = "io.sessionboxer.runtime";
 /** The Agent payload layout this Control Plane knows (`/opt/sessionboxer/providers/<id>/manifest.json`). */
 export const PAYLOAD_FORMAT = "1";
 
@@ -170,7 +174,7 @@ export class SandboxImages {
         throw new Error(`Sandbox image ${ref} has no ${label}: \`${PROVIDER_EXECUTABLES[selector]}\` is not on its PATH`);
       }
     }
-    return { reference: ref, id: info.Id, providers };
+    return { reference: ref, id: info.Id, providers, runtime: info.Config?.Labels?.[LABEL_RUNTIME] ?? null, payloads: [] };
   }
 
   private set(ref: string, status: Omit<SandboxImageStatus, "image">): SandboxImageStatus {
@@ -197,7 +201,7 @@ export class SandboxImages {
   }
 
   /** Whether `bin` is on the image's PATH, by running `command -v` in a throwaway container (once per image id and executable). */
-  private hasExecutable(ref: string, imageId: string, bin: string): Promise<boolean> {
+  hasExecutable(ref: string, imageId: string, bin: string): Promise<boolean> {
     const key = `${imageId}\0${bin}`;
     let found = this.preflights.get(key);
     if (!found) {
@@ -216,7 +220,7 @@ export class SandboxImages {
       Image: ref,
       Entrypoint: ["/bin/sh", "-c", 'command -v -- "$1"', "sh", bin],
       Cmd: [],
-      Labels: { "sessionboxer.helper": "preflight" },
+      Labels: { "sessionboxer.helper": PREFLIGHT_HELPER },
       HostConfig: { NetworkMode: "none", CapDrop: ["ALL"] },
     });
     try {

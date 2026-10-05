@@ -594,5 +594,5 @@ export interface DaemonEvent {
   epoch: string;
   seq: number;
   ts: string;
-  body: Exclude<SessionEventBody, { type: "status" } | { type: "forked" } | { type: "e2e_run" }>;
+  body: Exclude<SessionEventBody, { type: "status" } | { type: "forked" } | { type: "payload_injected" } | { type: "e2e_run" }>;
 }

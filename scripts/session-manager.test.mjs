@@ -60,12 +60,50 @@ function fakeDocker() {
     },
     async ensureNetwork() {},
     async watchDeaths() {},
-    /** The Sandbox images (ADR-0088): every reference is here and legacy (no labels). */
+    /** The Sandbox images (ADR-0088): every reference is here; legacy (no labels) unless `imageProviders` names its Agents. */
+    imageProviders: new Map(),
     async resolveImage(selector, snapshotImage) {
       docker.calls.push(["resolveImage", selector, snapshotImage]);
       const ref = snapshotImage ?? `ghcr.io/talayolabs/sessionboxer-sandbox:test-${selector}`;
-      return { reference: ref, id: `sha256:${ref}`, providers: null };
+      return { reference: ref, id: `sha256:${ref}`, providers: docker.imageProviders.get(ref) ?? null, runtime: null, payloads: [] };
     },
+    async containerImage(containerId) {
+      return `image-of-${containerId}`;
+    },
+    async removeHelpers() {
+      docker.calls.push(["removeHelpers"]);
+      return 0;
+    },
+    /** The Agent payloads of cross-Provider forks (ADR-0088 §9): `needImpl` says whether one is needed (null = the Agent is there) or throws. */
+    payloads: {
+      needImpl: async () => null,
+      prepareImpl: async (need) => ({ ...need, env: { AGENT_HOME: "/opt/agent" } }),
+      async need(provider, image, known) {
+        docker.calls.push(["payload.need", provider, image, known]);
+        return docker.payloads.needImpl(provider, image, known);
+      },
+      async prepare(need) {
+        docker.calls.push(["payload.prepare", need.donor]);
+        return docker.payloads.prepareImpl(need);
+      },
+      async inject(containerId, plan) {
+        docker.calls.push(["payload.inject", containerId, plan.provider]);
+        return { provider: plan.provider, version: "1.1.9", digest: "sha256:abc", bytes: 7 * MB, from: plan.donor };
+      },
+    },
+    // Provisioning up to the Daemon connection, which fails against this fake (no endpoint).
+    async create(spec) {
+      docker.calls.push(["create", spec]);
+      return `ctr-new-${spec.sessionId}`;
+    },
+    async start(containerId) {
+      docker.calls.push(["start", containerId]);
+    },
+    async syncDaemon() {
+      return [];
+    },
+    async stageCaCerts() {},
+    async activateCaCerts() {},
   };
   return docker;
 }
@@ -120,6 +158,7 @@ function makeManager(settingsInput = {}) {
         imageTag: `sessionboxer/snapshot:${sessionId}-${ordinal}`,
         imageId: `sha256:${sessionId}-${ordinal}`,
         providers: null,
+        payloads: [],
         eventSeq: 0,
         branchId: ROOT_BRANCH_ID,
         sizeBytes: MB,
@@ -403,7 +442,7 @@ test("snapshot: commits the Sandbox with the Provider's secrets stripped and rec
   h.db.appendEvent(id, { type: "turn_ended", stopReason: "end_turn" });
   h.db.insertSavedMessage(id, "queued one");
   const snapshot = await h.manager.snapshot(id, "manual");
-  assert.deepEqual(h.commits(), [["commit", `ctr-${id}`, { snapshotId: snapshot.id, tag: `${id}-1`, stripEnv: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] }]]);
+  assert.deepEqual(h.commits(), [["commit", `ctr-${id}`, { snapshotId: snapshot.id, tag: `${id}-1`, stripEnv: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "WINDSURF_API_KEY"], providers: null }]], "a legacy image carries every Agent: all their credentials are blanked");
   assert.match(snapshot.id, /^[0-9a-f]{12}$/);
   assert.equal(snapshot.sessionId, id);
   assert.equal(snapshot.ordinal, 1);
@@ -733,3 +772,93 @@ test("fork: from an existing Snapshot with a written handoff — no new Snapshot
   assert.ok(pending.text.includes("finish it"));
 });
 
+
+// --- fork(): the target Agent's payload (ADR-0088 §9) --------------------------------------------
+
+const payloadCalls = (h) => h.docker.calls.filter((c) => c[0].startsWith("payload."));
+
+test("fork: the same Agent, or one the Snapshot's image carries, stages nothing — the payload code is not even asked", async () => {
+  const h = makeManager(READY);
+  const origin = h.addSession({ image: { reference: "img", id: "sha256:img", providers: ["claude-code", "codex"], runtime: "1.5.0", payloads: [] } });
+  await h.manager.fork(origin.id, forkReq({}));
+  await settle();
+  assert.deepEqual(payloadCalls(h).map((c) => c[0]), ["payload.need"], "provisioning asks once for a Snapshot image (the answer is no)");
+  h.docker.calls.length = 0;
+  const snapshot = h.manager.snapshots(origin.id)[0];
+  h.docker.images.add(snapshot.imageId);
+  await h.manager.fork(origin.id, forkReq({ snapshotId: snapshot.id, provider: "codex", conversation: "new" }));
+  await settle();
+  assert.deepEqual(payloadCalls(h), [["payload.need", "codex", snapshot.imageId, ["claude-code", "codex"]], ["payload.need", "codex", snapshot.imageId, ["claude-code", "codex"]]], "the request check and provisioning both go by the Snapshot's recorded Agents");
+  assert.deepEqual(h.docker.calls.filter((c) => c[0] === "create").map((c) => c[1].env.AGENT_HOME), [undefined], "nothing from a donor in the container's environment");
+});
+
+test("fork: another Agent the Snapshot lacks — its payload is staged into the stopped Sandbox before it starts, and the Session's image, transcript and next Snapshot say so", async () => {
+  const h = makeManager(READY);
+  const origin = h.addSession();
+  const snapshot = h.addSnapshot(origin.id, 1, "manual", { providers: ["claude-code"] });
+  h.docker.images.add(snapshot.imageId);
+  h.docker.imageProviders.set(snapshot.imageId, ["claude-code"]);
+  h.docker.payloads.needImpl = async (provider, image, known) => (known.includes(provider) ? null : { provider, donor: `ghcr.io/talayolabs/sessionboxer-sandbox:test-${provider}`, imageEnv: [] });
+  const fork = await h.manager.fork(origin.id, forkReq({ snapshotId: snapshot.id, provider: "codex", conversation: "new" }));
+  await settle();
+  const order = h.docker.calls.map((c) => c[0]).filter((c) => ["payload.prepare", "resolveImage", "create", "payload.inject", "start"].includes(c));
+  assert.deepEqual(order, ["payload.prepare", "resolveImage", "create", "payload.inject", "start"], "donor ready → image → container → payload → start");
+  assert.deepEqual(h.docker.calls.find((c) => c[0] === "resolveImage").slice(1), ["base", snapshot.imageId], "the Snapshot's image is resolved as a runtime; the Agent comes with the payload");
+  const create = h.docker.calls.find((c) => c[0] === "create")[1];
+  assert.equal(create.env.AGENT_HOME, "/opt/agent", "what the donor image sets beyond the Snapshot's goes into the container's environment");
+  assert.equal(create.env.SESSIONBOXER_PROVIDER, "codex");
+  assert.deepEqual(h.docker.calls.find((c) => c[0] === "payload.inject").slice(1), [`ctr-new-${fork.id}`, "codex"]);
+  const payload = { provider: "codex", version: "1.1.9", digest: "sha256:abc", bytes: 7 * MB, from: "ghcr.io/talayolabs/sessionboxer-sandbox:test-codex" };
+  const after = h.db.getSession(fork.id);
+  assert.deepEqual(after.image, { reference: snapshot.imageId, id: `sha256:${snapshot.imageId}`, providers: ["claude-code", "codex"], runtime: null, payloads: [payload] });
+  assert.deepEqual(bodies(h.manager.events(fork.id)).map((b) => b.type), ["forked", "payload_injected"]);
+  assert.deepEqual(bodies(h.manager.events(fork.id))[1], { type: "payload_injected", provider: "codex", version: "1.1.9", bytes: 7 * MB, from: payload.from });
+
+  h.manager.setStatus(fork.id, "idle");
+  h.docker.calls.length = 0;
+  const next = await h.manager.snapshot(fork.id, "manual");
+  assert.deepEqual(h.commits()[0][2], { snapshotId: next.id, tag: `${fork.id}-1`, stripEnv: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"], providers: ["claude-code", "codex"] }, "the commit labels both Agents and blanks the origin Agent's credentials too");
+  assert.deepEqual([next.providers, next.payloads], [["claude-code", "codex"], [payload]]);
+  assert.deepEqual([h.db.getSnapshot(fork.id, next.id).providers, h.db.getSnapshot(fork.id, next.id).payloads], [["claude-code", "codex"], [payload]], "as stored");
+});
+
+test("fork: no payload to be had — the request is refused with the reason and leaves no fork; a donor that fails later puts the fork in error with it", async () => {
+  const h = makeManager(READY);
+  const origin = h.addSession();
+  const snapshot = h.addSnapshot(origin.id, 1, "manual", { providers: ["claude-code"] });
+  h.docker.images.add(snapshot.imageId);
+  h.docker.payloads.needImpl = async () => {
+    throw new HttpError(409, "Codex cannot be added to the fork: its Sandbox image x is not on this machine; pull it, or build it with `npm run build:image -- --provider codex`");
+  };
+  await rejectsHttp(h.manager.fork(origin.id, forkReq({ snapshotId: snapshot.id, provider: "codex", conversation: "new" })), 409, "Codex cannot be added to the fork: its Sandbox image x is not on this machine; pull it, or build it with `npm run build:image -- --provider codex`");
+  assert.equal(h.manager.list().length, 1);
+  assert.deepEqual(payloadCalls(h), [["payload.need", "codex", snapshot.imageId, ["claude-code"]]]);
+  await rejectsHttp(h.manager.fork(origin.id, forkReq({ provider: "codex", conversation: "new" })), 409, "Codex cannot be added to the fork: its Sandbox image x is not on this machine; pull it, or build it with `npm run build:image -- --provider codex`");
+  assert.deepEqual(payloadCalls(h).at(-1), ["payload.need", "codex", `image-of-${origin.containerId}`, null], "a fork from now goes by the origin's container image");
+  assert.equal(h.manager.snapshots(origin.id).length, 1, "no Snapshot is taken for a fork that cannot get its Agent");
+
+  h.docker.payloads.needImpl = async (provider) => ({ provider, donor: "ghcr.io/talayolabs/sessionboxer-sandbox:test-codex", imageEnv: [] });
+  h.docker.payloads.prepareImpl = async () => {
+    throw new Error("Codex cannot be added to the fork: pull of ghcr.io/talayolabs/sessionboxer-sandbox:test-codex failed: no route to host");
+  };
+  const fork = await h.manager.fork(origin.id, forkReq({ snapshotId: snapshot.id, provider: "codex", conversation: "new" }));
+  await settle();
+  const after = h.db.getSession(fork.id);
+  assert.deepEqual([after.status, after.error], ["error", "Codex cannot be added to the fork: pull of ghcr.io/talayolabs/sessionboxer-sandbox:test-codex failed: no route to host"]);
+  assert.equal(h.docker.calls.some((c) => c[0] === "create"), false, "no Sandbox without its Agent");
+});
+
+test("commitSpecFor: every Agent the Sandbox carries has its credentials blanked; a legacy image (all Agents) blanks them all", async () => {
+  const { commitSpecFor } = await import("../apps/control-plane/dist/snapshots.js");
+  const legacy = sessionRow("l", { provider: "codex" });
+  assert.deepEqual(commitSpecFor(legacy, "id", "tag"), { snapshotId: "id", tag: "tag", stripEnv: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "WINDSURF_API_KEY"], providers: null });
+  const codexOnly = sessionRow("c", { provider: "codex", image: { reference: "r", id: "i", providers: ["codex"], runtime: "1.5.0", payloads: [] } });
+  assert.deepEqual(commitSpecFor(codexOnly, "id", "tag"), { snapshotId: "id", tag: "tag", stripEnv: [], providers: ["codex"] });
+});
+
+test("boot: sweeps the payload donor containers a previous Control Plane left behind", async () => {
+  const h = makeManager();
+  h.docker.containerState = "stopped";
+  await h.manager.boot();
+  assert.deepEqual(h.docker.calls.filter((c) => c[0] === "removeHelpers"), [["removeHelpers"]]);
+});

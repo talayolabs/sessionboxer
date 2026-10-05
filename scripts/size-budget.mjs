@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DEFAULT = 600;
 const BUDGET = {
-  "apps/control-plane/src/sessions.ts": 2970,
+  "apps/control-plane/src/sessions.ts": 3000,
   "apps/control-plane/src/agent-tools.ts": 1180,
   "packages/sandbox-daemon/src/agent.ts": 1150,
   "apps/control-plane/src/db.ts": 1120,

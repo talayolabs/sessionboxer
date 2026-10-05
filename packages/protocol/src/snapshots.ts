@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { ROOT_BRANCH_ID } from "./branches.js";
 import { Provider, Environment } from "./common.js";
+import { ProviderPayload } from "./sandbox-image.js";
 import { SessionSettingsInput } from "./session-settings.js";
 
 /** `rebuild`: a full image of the Sandbox's filesystem the Sandbox was moved onto (see `POST /sessions/:id/rebuild`). */
@@ -25,6 +26,8 @@ export const Snapshot = z.object({
   imageId: z.string(),
   /** The Agents the Snapshot image carries, as its Session's image did (ADR-0088); `null` = a legacy image, or unknown. */
   providers: z.array(Provider).nullable().default(null),
+  /** Agent payloads staged into the Sandbox since its image (a cross-Provider fork's target Agent), with their digests. */
+  payloads: z.array(ProviderPayload).default([]),
   /** Last Session event included in the Snapshot; the transcript marker goes right after it. */
   eventSeq: z.number().int().nonnegative(),
   /** Branch that was active when the Snapshot was taken. */

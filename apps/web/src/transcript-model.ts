@@ -84,6 +84,8 @@ export type TranscriptItem =
   | { kind: "option_changed"; key: string; option: string; value: string; valueName: string }
   | { kind: "repo_changed"; key: string; action: "added" | "removed"; name: string; origin: string }
   | { kind: "usb_changed"; key: string; action: "connected" | "disconnected"; name: string; node: string | null }
+  /** The fork's Agent was staged into its Sandbox (the Snapshot's image lacked it). */
+  | { kind: "payload_injected"; key: string; provider: Provider; version: string; bytes: number; from: string }
   /** The Control Plane's hidden verification prompt: a marker, not the user's words. */
   | { kind: "e2e_prompt"; key: string }
   /** The Control Plane's hidden request for a handoff (a fork is waiting for the Agent's reply). */
@@ -244,6 +246,9 @@ export function buildTranscript(events: SessionEvent[], snapshots: Snapshot[] = 
         break;
       case "usb_changed":
         items.push({ kind: "usb_changed", key, action: body.action, name: body.name, node: body.node });
+        break;
+      case "payload_injected":
+        items.push({ kind: "payload_injected", key, provider: body.provider, version: body.version, bytes: body.bytes, from: body.from });
         break;
       case "e2e_run":
         items.push({ kind: "e2e_run", key, run: body.run });

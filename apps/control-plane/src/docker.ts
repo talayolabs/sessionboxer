@@ -5,10 +5,11 @@ import { PassThrough, Readable } from "node:stream";
 import Docker from "dockerode";
 import { pack } from "tar-fs";
 import { pack as packStream } from "tar-stream";
-import { DAEMON_PORT, NOVNC_PORT, VSCODE_THEMES_EXTENSION, vscodeThemeExtensionFiles, type DockerMode, type SandboxImageInfo, type SandboxImageSelector } from "@sessionboxer/protocol";
+import { DAEMON_PORT, NOVNC_PORT, VSCODE_THEMES_EXTENSION, vscodeThemeExtensionFiles, type DockerMode, type Provider, type SandboxImageInfo, type SandboxImageSelector } from "@sessionboxer/protocol";
 import { SANDBOX_CA_FILE } from "./ca-certs.js";
 import { ROOT_DIR, SANDBOX_HOST_ALIAS, SANDBOX_NETWORK, sandboxBaseImage, sandboxImage } from "./config.js";
-import { SandboxImages } from "./sandbox-images.js";
+import { PAYLOAD_DONOR_HELPER, ProviderPayloads } from "./provider-payload.js";
+import { LABEL_PROVIDERS, PREFLIGHT_HELPER, SandboxImages } from "./sandbox-images.js";
 import { log } from "./log.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
@@ -131,6 +132,8 @@ export interface CommitSpec {
   tag: string;
   /** Env vars to blank in the image config (`docker commit` would otherwise persist the container's secrets). */
   stripEnv: string[];
+  /** The Agents the Sandbox carries, for the image's `io.sessionboxer.providers` label (an Agent staged in after creation included); `null` keeps the image's. */
+  providers?: Provider[] | null;
 }
 
 export type ContainerState = "running" | "stopped" | "missing";
@@ -206,6 +209,21 @@ export class SandboxDocker {
 
   /** The Sandbox images on this host, by reference (ADR-0088): status, lazy pulls, labels. */
   readonly images = new SandboxImages(this.docker);
+  /** The Agent payloads a fork into another Provider gets staged in (ADR-0088 §9). */
+  readonly payloads = new ProviderPayloads(this.docker, this.images);
+
+  /** Removes the helper containers (payload donors, preflight probes) a previous Control Plane left behind; their count. */
+  async removeHelpers(): Promise<number> {
+    const labels = [PAYLOAD_DONOR_HELPER, PREFLIGHT_HELPER].map((h) => `sessionboxer.helper=${h}`);
+    const helpers = await this.docker.listContainers({ all: true, filters: { label: labels } });
+    for (const h of helpers) await this.docker.getContainer(h.Id).remove({ force: true }).catch(() => undefined);
+    return helpers.length;
+  }
+
+  /** The id of the image a container was created from. */
+  async containerImage(containerId: string): Promise<string> {
+    return (await this.docker.getContainer(containerId).inspect()).Image;
+  }
 
   /** The base image (runtime, no Agent) for the VM helpers and sidecars, pulled when it is not here; returns its reference. */
   /** The Sandbox base image when it is here, for probes that must not start a download; throws naming it otherwise. */
@@ -511,7 +529,7 @@ export class SandboxDocker {
    * Returns the image id and the size of the committed layer.
    */
   async commit(containerId: string, spec: CommitSpec): Promise<{ imageId: string; sizeBytes: number }> {
-    const changes = [`LABEL ${LABEL_SNAPSHOT}=${spec.snapshotId}`, ...spec.stripEnv.map((k) => `ENV ${k}=`)];
+    const changes = [`LABEL ${LABEL_SNAPSHOT}=${spec.snapshotId}`, ...providersLabel(spec), ...spec.stripEnv.map((k) => `ENV ${k}=`)];
     let res: { Id: string };
     try {
       res = (await this.docker.getContainer(containerId).commit({
@@ -535,15 +553,7 @@ export class SandboxDocker {
   async flatten(containerId: string, spec: CommitSpec & { keepEnv: string[] }): Promise<{ imageId: string; sizeBytes: number }> {
     const container = this.docker.getContainer(containerId);
     const { Config: config } = await container.inspect();
-    const skip = new Set([...spec.stripEnv, ...spec.keepEnv]);
-    const changes = [
-      `LABEL ${LABEL_SNAPSHOT}=${spec.snapshotId}`,
-      ...config.Env.filter((kv) => !skip.has(kv.slice(0, kv.indexOf("=")))).map(envChange),
-      ...(config.User ? [`USER ${config.User}`] : []),
-      ...(config.WorkingDir ? [`WORKDIR ${config.WorkingDir}`] : []),
-      ...(config.Entrypoint ? [`ENTRYPOINT ${JSON.stringify(config.Entrypoint)}`] : []),
-      ...(config.Cmd ? [`CMD ${JSON.stringify(config.Cmd)}`] : []),
-    ];
+    const changes = flattenChanges(config, spec);
     const tar = await container.export();
     const progress = await this.docker.importImage(tar, { repo: SNAPSHOT_REPO, tag: spec.tag, changes });
     await new Promise<void>((resolve, reject) => {
@@ -682,6 +692,31 @@ export class SandboxDocker {
       }
     });
   }
+}
+
+/**
+ * The Dockerfile lines `docker import` rebuilds the image config from: the Snapshot label, the
+ * `io.sessionboxer.*` labels (an import keeps none), the image's own environment and its user,
+ * working directory, entrypoint and command.
+ */
+export function flattenChanges(config: Pick<Docker.ContainerInspectInfo["Config"], "Env" | "Labels" | "User" | "WorkingDir" | "Entrypoint" | "Cmd">, spec: CommitSpec & { keepEnv: string[] }): string[] {
+  const skip = new Set([...spec.stripEnv, ...spec.keepEnv]);
+  const labels = Object.entries(config.Labels ?? {}).filter(([k]) => k.startsWith("io.sessionboxer.") && (k !== LABEL_PROVIDERS || spec.providers == null));
+  return [
+    `LABEL ${LABEL_SNAPSHOT}=${spec.snapshotId}`,
+    ...labels.map(([k, v]) => `LABEL ${k}=${JSON.stringify(v)}`),
+    ...providersLabel(spec),
+    ...config.Env.filter((kv) => !skip.has(kv.slice(0, kv.indexOf("=")))).map(envChange),
+    ...(config.User ? [`USER ${config.User}`] : []),
+    ...(config.WorkingDir ? [`WORKDIR ${config.WorkingDir}`] : []),
+    ...(config.Entrypoint ? [`ENTRYPOINT ${JSON.stringify(config.Entrypoint)}`] : []),
+    ...(config.Cmd ? [`CMD ${JSON.stringify(config.Cmd)}`] : []),
+  ];
+}
+
+/** The `io.sessionboxer.providers` line of a commit, when the spec names the Agents. */
+function providersLabel(spec: CommitSpec): string[] {
+  return spec.providers == null ? [] : [`LABEL ${LABEL_PROVIDERS}=${JSON.stringify(spec.providers.join(","))}`];
 }
 
 /** Dockerfile `ENV` for one `KEY=value` entry of a container config. */

@@ -23,5 +23,6 @@ export const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: "e2e_runs", column: "brief", ddl: "ALTER TABLE e2e_runs ADD COLUMN brief TEXT" },
   { table: "snapshots", column: "branch_id", ddl: "ALTER TABLE snapshots ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "snapshots", column: "providers", ddl: "ALTER TABLE snapshots ADD COLUMN providers TEXT" },
+  { table: "snapshots", column: "payloads", ddl: "ALTER TABLE snapshots ADD COLUMN payloads TEXT" },
   { table: "events", column: "branch_id", ddl: "ALTER TABLE events ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'root'" },
 ];

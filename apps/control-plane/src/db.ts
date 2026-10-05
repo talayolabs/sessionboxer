@@ -7,6 +7,7 @@ import {
   PROVIDERS,
   Provider,
   ROOT_BRANCH_ID,
+  ProviderPayload,
   SandboxImageInfo,
   Session,
   SessionFolder,
@@ -116,6 +117,7 @@ interface SnapshotRow {
   image_tag: string;
   image_id: string;
   providers: string | null;
+  payloads: string | null;
   event_seq: number;
   branch_id: string;
   size_bytes: number;
@@ -224,6 +226,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   image_tag TEXT NOT NULL,
   image_id TEXT NOT NULL,
   providers TEXT,
+  payloads TEXT,
   event_seq INTEGER NOT NULL,
   branch_id TEXT NOT NULL DEFAULT 'root',
   size_bytes INTEGER NOT NULL,
@@ -611,8 +614,8 @@ export class Db {
   insertSnapshot(snapshot: Snapshot): void {
     this.db
       .prepare(
-        `INSERT INTO snapshots (id, session_id, ordinal, reason, image_tag, image_id, providers, event_seq, branch_id, size_bytes, queued_messages, created_at)
-         VALUES (@id, @session_id, @ordinal, @reason, @image_tag, @image_id, @providers, @event_seq, @branch_id, @size_bytes, @queued_messages, @created_at)`,
+        `INSERT INTO snapshots (id, session_id, ordinal, reason, image_tag, image_id, providers, payloads, event_seq, branch_id, size_bytes, queued_messages, created_at)
+         VALUES (@id, @session_id, @ordinal, @reason, @image_tag, @image_id, @providers, @payloads, @event_seq, @branch_id, @size_bytes, @queued_messages, @created_at)`,
       )
       .run({
         id: snapshot.id,
@@ -622,6 +625,7 @@ export class Db {
         image_tag: snapshot.imageTag,
         image_id: snapshot.imageId,
         providers: snapshot.providers === null ? null : JSON.stringify(snapshot.providers),
+        payloads: snapshot.payloads.length === 0 ? null : JSON.stringify(snapshot.payloads),
         event_seq: snapshot.eventSeq,
         branch_id: snapshot.branchId,
         size_bytes: snapshot.sizeBytes,
@@ -1055,6 +1059,7 @@ function rowToSnapshot(row: SnapshotRow): Snapshot {
     imageTag: row.image_tag,
     imageId: row.image_id,
     providers: row.providers === null ? null : Provider.array().parse(JSON.parse(row.providers)),
+    payloads: row.payloads === null ? [] : ProviderPayload.array().parse(JSON.parse(row.payloads)),
     eventSeq: row.event_seq,
     branchId: row.branch_id,
     sizeBytes: row.size_bytes,

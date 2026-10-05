@@ -26,6 +26,19 @@ export const SandboxImageStatus = z.object({
 });
 export type SandboxImageStatus = z.infer<typeof SandboxImageStatus>;
 
+/** An Agent payload staged into a Sandbox after its creation (a cross-Provider fork, ADR-0088 §9): what, from where, and the content digest of what went in. */
+export const ProviderPayload = z.object({
+  provider: Provider,
+  /** The Agent's version, from the payload's `manifest.json`. */
+  version: z.string(),
+  /** `sha256:…` over the payload's entries (names, modes, link targets, contents), the same wherever the payload sits. */
+  digest: z.string(),
+  bytes: z.number().int().nonnegative(),
+  /** The image the payload was taken from. */
+  from: z.string(),
+});
+export type ProviderPayload = z.infer<typeof ProviderPayload>;
+
 /** The image a Sandbox was created from, as resolved and inspected then (Session and Snapshot diagnostics). */
 export const SandboxImageInfo = z.object({
   /** The reference it was created from: the resolved tag, `SESSIONBOXER_IMAGE`, or a Snapshot's image id. */
@@ -34,5 +47,9 @@ export const SandboxImageInfo = z.object({
   id: z.string(),
   /** The Agents the image carries by its `io.sessionboxer.providers` label; `null` for a legacy image without labels (taken as all of them). */
   providers: z.array(Provider).nullable(),
+  /** The Sessionboxer release the image's runtime belongs to (`io.sessionboxer.runtime`); `null` for a legacy image. */
+  runtime: z.string().nullable().default(null),
+  /** Agent payloads staged into the Sandbox after its creation, newest last. */
+  payloads: z.array(ProviderPayload).default([]),
 });
 export type SandboxImageInfo = z.infer<typeof SandboxImageInfo>;

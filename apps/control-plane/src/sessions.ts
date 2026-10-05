@@ -119,6 +119,7 @@ import {
   type SessionSettings,
   type SessionStatus,
   type Settings,
+  type SandboxImageInfo,
   type Snapshot,
   type RecentSnapshot,
   createRequestSettings,
@@ -129,7 +130,6 @@ import {
   updateRequestSettings,
   type WorkspaceSource,
   USAGE_AUTO_CONTINUE_INTERVAL_MS,
-  PROVIDER_ENV_KEYS,
   USAGE_CONTINUE_TEXT,
   type UsageLimit,
   classifyUsageLimit,
@@ -156,6 +156,7 @@ import { parseContextReport } from "./context-report.js";
 import { cloneFailureHint, planClone } from "./git-clone.js";
 import { DaemonClient, DaemonRpcError } from "./daemon-client.js";
 import { PROVIDER_AUTH, isSyncedAuthProvider, providerAuthLabel, type SyncedAuthProvider } from "./provider-auth.js";
+import type { PayloadPlan } from "./provider-payload.js";
 import { branchTitle, type Db, type SessionPatch } from "./db.js";
 import { E2eVerification } from "./e2e.js";
 import { extractHandoff, handoffMessage, handoffRequestPrompt, isHiddenTurn, lastAgentMessage } from "./handoff.js";
@@ -164,7 +165,7 @@ import { HostDirError, packHostDir, planHostDir, resolveHostDir } from "./host-d
 import { SyncBaselines, applySync, hostManifest, nextBaseline, planSync, selectEntries } from "./host-sync.js";
 import { HttpError } from "./http-error.js";
 import { SessionQueue } from "./session-queue.js";
-import { SnapshotPolicy } from "./snapshots.js";
+import { commitSpecFor, SnapshotPolicy } from "./snapshots.js";
 import { daemonUtilitiesParams, defaultUtilitiesEnabled, knownUtilityIds, resolveUtilities } from "./utilities.js";
 import { PullRequests } from "./pull-requests.js";
 import { StagedUploads, type StagedFile } from "./staged-uploads.js";
@@ -1152,6 +1153,8 @@ export class SessionManager {
   async boot(): Promise<void> {
     this.log(`sandbox reach: ${await this.docker.detectReach()}`);
     await this.docker.ensureNetwork();
+    const helpers = await this.docker.removeHelpers().catch((e: unknown) => (this.log(`helper sweep failed: ${String(e)}`), 0));
+    if (helpers > 0) this.log(`removed ${helpers} leftover helper container(s)`);
     this.usb.start();
     await this.docker.watchDeaths(
       (containerId, sessionId, exitCode, name) => {
@@ -1324,6 +1327,7 @@ export class SessionManager {
     // A document supplied with the request (the origin's Agent wrote it itself) needs no hidden turn.
     const hiddenHandoff = req.conversation === "handoff" && req.document === undefined;
     const existing = await this.assertForkable(origin, req, provider, settings, hiddenHandoff, createdBy);
+    await this.assertForkAgent(provider, origin, existing);
     const dockerMode = await this.forkDockerMode(origin.settings, req.settings);
     const snapshot = existing ?? (await this.snapshotPolicy.take(fromId, "manual"));
 
@@ -1363,6 +1367,13 @@ export class SessionManager {
       throw new HttpError(409, `The image of snapshot ${existing.ordinal} is gone from Docker; delete the snapshot.`);
     }
     return existing ?? undefined;
+  }
+
+  /** A fork into another Provider: its Agent is in the Snapshot's image, or can be staged in from an image here (ADR-0088 §9); a 409 saying why not otherwise. */
+  private async assertForkAgent(provider: Provider, origin: Session, existing: Snapshot | undefined): Promise<void> {
+    if (provider === origin.provider) return;
+    const image = existing?.imageId ?? (origin.containerId ? await this.docker.containerImage(origin.containerId) : null);
+    if (image !== null) await this.docker.payloads.need(provider, image, existing?.providers ?? origin.image?.providers ?? null);
   }
 
   /** The fork's Docker-in-Docker mode: the origin's unless the request changes it, and only what this host offers. */
@@ -1549,9 +1560,10 @@ export class SessionManager {
     return env;
   }
 
-  private createSandbox(session: Session, settings: Settings, image: string, newConversation = false): Promise<string> {
+  /** `imageEnv`: what a staged Agent's image sets beyond the Snapshot's (the fork's image config is the Snapshot's). */
+  private createSandbox(session: Session, settings: Settings, image: string, newConversation = false, imageEnv: Record<string, string> = {}): Promise<string> {
     const effective = resolveSessionSettings(session.settings, settings);
-    const env = this.sandboxEnv(session, settings);
+    const env = { ...imageEnv, ...this.sandboxEnv(session, settings) };
     if (newConversation) env.SESSIONBOXER_NEW_CONVERSATION = "1";
     return this.docker.create({
       sessionId: session.id,
@@ -1581,10 +1593,14 @@ export class SessionManager {
       await vms.create(session.id);
       await this.startVm(session.id);
     }
-    const resolved = await this.docker.resolveImage(this.agentInGuest(session) ? "base" : session.provider, image);
+    const need = image !== undefined && !this.agentInGuest(session) ? await this.docker.payloads.need(session.provider, image, this.snapshotProviders(session)) : null;
+    const plan = need ? await this.docker.payloads.prepare(need) : null;
+    // With a payload to stage, the Snapshot's image is a runtime only: the Agent comes after the container.
+    const resolved = await this.docker.resolveImage(plan || this.agentInGuest(session) ? "base" : session.provider, image);
     this.update(session.id, { image: resolved });
-    const containerId = await this.createSandbox(session, settings, resolved.reference, newConversation);
+    const containerId = await this.createSandbox(session, settings, resolved.reference, newConversation, plan?.env);
     this.update(session.id, { containerId });
+    if (plan) await this.injectAgent(session, containerId, plan, resolved);
     await this.startSandbox(containerId, settings);
     // A fork's Workspace comes with its Snapshot image; only fresh Sessions seed theirs.
     const pending = session.workspaceSource.type !== "fork" ? session.repos.filter((r) => r.status === "pending") : [];
@@ -1606,6 +1622,19 @@ export class SessionManager {
       await this.connect(session.id, containerId);
     }
     void this.snapshotPolicy.refreshDiskUsage(session.id);
+  }
+
+  /** The Agents the Snapshot a fork starts from recorded (the richer source than its image's labels: an Agent staged into the origin is in it). */
+  private snapshotProviders(session: Session): Provider[] | null {
+    const from = session.workspaceSource;
+    return from.type === "fork" ? (this.db.getSnapshot(from.sessionId, from.snapshotId)?.providers ?? null) : null;
+  }
+
+  /** Stages the fork's Agent into its stopped Sandbox and records it: the image's Agents grow by one, its Snapshots keep the payload's digest, the transcript says what came in. */
+  private async injectAgent(session: Session, containerId: string, plan: PayloadPlan, image: SandboxImageInfo): Promise<void> {
+    const payload = await this.docker.payloads.inject(containerId, plan);
+    this.update(session.id, { image: { ...image, providers: [...(image.providers ?? []), session.provider], payloads: [...image.payloads, payload] } });
+    this.appendEvent(session.id, { type: "payload_injected", provider: payload.provider, version: payload.version, bytes: payload.bytes, from: payload.from });
   }
 
   /** Sends the prompt that arrived while the Sandbox was being prepared, or pumps the queue. */
@@ -2171,12 +2200,7 @@ export class SessionManager {
     let created: string | null = null;
     try {
       const started = Date.now();
-      const { imageId, sizeBytes } = await this.docker.flatten(old, {
-        snapshotId,
-        tag,
-        stripEnv: [...PROVIDER_ENV_KEYS[s.provider]],
-        keepEnv: Object.keys(this.sandboxEnv(s, settings)),
-      });
+      const { imageId, sizeBytes } = await this.docker.flatten(old, { ...commitSpecFor(s, snapshotId, tag), keepEnv: Object.keys(this.sandboxEnv(s, settings)) });
       this.stopping.delete(id);
       this.db.insertSnapshot({
         id: snapshotId,
@@ -2186,6 +2210,7 @@ export class SessionManager {
         imageTag: `${SNAPSHOT_REPO}:${tag}`,
         imageId,
         providers: s.image?.providers ?? null,
+        payloads: s.image?.payloads ?? [],
         eventSeq: this.db.lastEventSeq(id),
         branchId: s.activeBranchId,
         sizeBytes,
@@ -2196,7 +2221,7 @@ export class SessionManager {
       this.snapshotPolicy.broadcastSnapshots(id);
       await this.docker.rename(old, `sbx-${id}-old`);
       renamed = true;
-      const image = await this.docker.resolveImage(s.provider, imageId);
+      const image = { ...(await this.docker.resolveImage(s.provider, imageId)), payloads: s.image?.payloads ?? [] };
       created = await this.createSandbox(s, settings, imageId);
       this.update(id, { containerId: created, image });
       await this.startSandbox(created, settings);

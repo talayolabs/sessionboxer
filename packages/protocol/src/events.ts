@@ -173,6 +173,8 @@ export type SessionEventBody =
       /** The origin's Agent, when the fork runs another one. */
       fromProvider?: Provider;
     }
+  /** A fork's target Agent was staged into its Sandbox before the Daemon started (the Snapshot's image lacked it, ADR-0088). */
+  | { type: "payload_injected"; provider: Provider; version: string; bytes: number; from: string }
   /** The Daemon restarted the Agent with a new MCP server set (names, `desktop` excluded). */
   | { type: "mcp_changed"; servers: string[] }
   /** The Session's enabled Utilities changed (a switch, `utilities_enable`, the registry): the names now on. */

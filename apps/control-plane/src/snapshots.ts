@@ -3,6 +3,7 @@ import {
   type DeleteSnapshotsResult,
   type Environment,
   PROVIDER_ENV_KEYS,
+  PROVIDERS,
   resolveSessionSettings,
   type Session,
   type SessionBroadcast,
@@ -12,9 +13,20 @@ import {
   VM_NO_SNAPSHOT,
 } from "@sessionboxer/protocol";
 import type { Db, SessionPatch } from "./db.js";
-import { MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
+import { type CommitSpec, MissingImageContentError, SNAPSHOT_REPO, type SandboxDocker } from "./docker.js";
 import { HttpError } from "./http-error.js";
 import type { GuestVms } from "./vm-host.js";
+
+/**
+ * What a Snapshot of `s` is committed with: the Agents its Sandbox carries (an Agent staged into a
+ * fork included) as the image's label, and every one of their credential variables blanked, not
+ * only the selected Agent's — a fork's origin Agent is still in there. A legacy image carries them all.
+ */
+export function commitSpecFor(s: Session, snapshotId: string, tag: string): CommitSpec {
+  const providers = s.image?.providers ?? null;
+  const stripEnv = [...new Set([s.provider, ...(providers ?? PROVIDERS)].flatMap((p) => PROVIDER_ENV_KEYS[p]))];
+  return { snapshotId, tag, stripEnv, providers };
+}
 
 const REBUILD_HINT = "This Sandbox needs a rebuild before it can be snapshotted again (Snapshots \u2192 Rebuild Sandbox)";
 
@@ -97,7 +109,7 @@ export class SnapshotPolicy {
     try {
       const started = Date.now();
       const { imageId, sizeBytes } = await this.deps.docker
-        .commit(s.containerId, { snapshotId, tag, stripEnv: [...PROVIDER_ENV_KEYS[s.provider]] })
+        .commit(s.containerId, commitSpecFor(s, snapshotId, tag))
         .catch((e: unknown) => {
           if (e instanceof MissingImageContentError) throw new HttpError(409, `${REBUILD_HINT}: ${e.message}.`);
           throw e;
@@ -110,6 +122,7 @@ export class SnapshotPolicy {
         imageTag: `${SNAPSHOT_REPO}:${tag}`,
         imageId,
         providers: s.image?.providers ?? null,
+        payloads: s.image?.payloads ?? [],
         eventSeq: eventSeq ?? this.deps.db.lastEventSeq(id),
         branchId: s.activeBranchId,
         sizeBytes,

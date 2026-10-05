@@ -226,7 +226,7 @@ export class McpEvents {
   }
 
   private async connect(def: McpServerDef, label: string): Promise<Client> {
-    const client = new Client({ name: "sessionboxer", version: "1.5.0" }, { capabilities: {} });
+    const client = new Client({ name: "sessionboxer", version: "1.6.0" }, { capabilities: {} });
     const transport = mcpClientTransport(def);
     await client.connect(transport);
     if (transport instanceof StdioClientTransport && transport.stderr) {

@@ -351,7 +351,8 @@ if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLTo
     if (missing.length > 0) throw new Error(`${command} needs --${missing.join(", --")}`);
     await COMMANDS[command](args);
   } catch (err) {
-    console.error(`release-sandbox ${command}: ${err.message}`);
+    const cause = err.cause instanceof Error ? ` (${[err.cause.code, err.cause.message].filter(Boolean).join(": ")})` : "";
+    console.error(`release-sandbox ${command}: ${err.message}${cause}`);
     process.exit(1);
   }
 }

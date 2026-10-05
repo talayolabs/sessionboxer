@@ -1,6 +1,19 @@
 # Release on a version tag (`git tag v0.1.0 && git push origin v0.1.0`):
 #   1. typecheck + build + assemble the npm package (build/sessionboxer-<version>.tgz)
-#   2. Sandbox image        ghcr.io/talayolabs/sessionboxer-sandbox:<version>  (amd64 + arm64, native runners)
+#   2. Sandbox images (ADR-0088) ghcr.io/talayolabs/sessionboxer-sandbox, amd64 + arm64 on native runners:
+#        <version>-<providerId>  one per id in PROVIDERS (packages/protocol/src/common.ts): the runtime + that Agent
+#        <version>-base          the runtime without an Agent
+#        <version>-all = <version>  every Agent (what Control Planes ≤ 1.5.0 expect)
+#        latest-<providerId> / latest-base / latest-all / latest  aliases, created last
+#      sandbox-matrix derives the Provider list from the Dockerfile (`scripts/sandbox-image-targets.mjs --json`);
+#      sandbox-base builds `base` per architecture; sandbox-provider (13 × 2, 6 at a time) and sandbox-all build on
+#      base's exact digest and prove it (layer prefix, labels, size budget, smoke: `--version` + ACP initialize);
+#      everything is pushed by digest and `scripts/release-sandbox.mjs manifests` publishes the tags only once every
+#      job passed. Build caches live in the same package as `buildcache-<target>-<arch>` tags, one writer each,
+#      with no local CA material (release builds never pass the extra-CA secret scripts/build-image.mjs uses);
+#      sandbox-cache-prune deletes the superseded, untagged cache manifests (never a release tag) and only warns
+#      when GITHUB_TOKEN may not: then delete them by hand under the package's versions page.
+#      Dry run of the same scripts against a local registry: scripts/release-sandbox.mjs header.
 #   3. Control Plane image  ghcr.io/talayolabs/sessionboxer:<version>          (amd64 + arm64)
 #   4. Desktop app installers (apps/desktop, electron-builder): Linux AppImage + deb (x64, arm64),
 #      macOS dmg + zip (arm64, x64), Windows NSIS + zip (x64). Unsigned unless the signing secrets
@@ -64,23 +77,54 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  sandbox-image:
+  sandbox-matrix:
     needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      providers: ${{ steps.matrix.outputs.providers }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:sandbox-image
+      - run: npm run test:release-sandbox
+      - name: Provider matrix from the Dockerfile targets (fails when they differ from PROVIDERS)
+        id: matrix
+        run: |
+          set -eu
+          matrix="$(node scripts/sandbox-image-targets.mjs --json)"
+          echo "$matrix"
+          echo "providers=$(echo "$matrix" | jq -c .providers)" >> "$GITHUB_OUTPUT"
+
+  sandbox-base:
+    needs: [package, sandbox-matrix]
     strategy:
       fail-fast: true
       matrix:
         include:
-          - platform: linux/amd64
+          - arch: amd64
             runner: ubuntu-24.04
-          - platform: linux/arm64
+          - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
+    env:
+      VERSION: ${{ needs.package.outputs.version }}
+      SOURCE: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Free disk space for a 5 GB image
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - name: Free disk space for a 3 GB image plus its build
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -88,26 +132,132 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: images/sandbox/Dockerfile
-          platforms: ${{ matrix.platform }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ needs.package.outputs.version }}
-            org.opencontainers.image.licenses=MIT
-          outputs: type=image,name=${{ env.SANDBOX_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-      - name: Export digest
-        run: |
-          mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+      - name: Build target base, push by digest, export buildcache-base-${{ matrix.arch }}
+        run: >
+          node scripts/release-sandbox.mjs build --target base --arch "${{ matrix.arch }}"
+          --image "$SANDBOX_IMAGE" --version "$VERSION" --source "$SOURCE"
+          --digest-out "$RUNNER_TEMP/digests/base-${{ matrix.arch }}"
+      - name: Verify labels, size budget and the empty payload directory
+        run: >
+          node scripts/release-sandbox.mjs verify --target base --arch "${{ matrix.arch }}"
+          --image "$SANDBOX_IMAGE" --version "$VERSION"
+          --digest "$(cat "$RUNNER_TEMP/digests/base-${{ matrix.arch }}")"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sandbox-digest-${{ matrix.runner }}
+          name: sandbox-digest-base-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # One job per Provider and architecture. fail-fast is off on purpose: a failing Provider must stop the publish
+  # (the join needs every job) but not cancel its siblings, whose finished builds and caches make the re-run warm.
+  sandbox-provider:
+    needs: [package, sandbox-matrix, sandbox-base]
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        provider: ${{ fromJSON(needs.sandbox-matrix.outputs.providers) }}
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.package.outputs.version }}
+      SOURCE: ${{ github.server_url }}/${{ github.repository }}
+      TARGET: ${{ matrix.provider }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - name: Free disk space for a 4 GB image plus its build
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: sandbox-digest-base-${{ matrix.arch }}
+          path: ${{ runner.temp }}/base
+      - name: Build target ${{ matrix.provider }} on base's digest, push by digest, export buildcache-${{ matrix.provider }}-${{ matrix.arch }}
+        run: >
+          node scripts/release-sandbox.mjs build --target "$TARGET" --arch "${{ matrix.arch }}"
+          --image "$SANDBOX_IMAGE" --version "$VERSION" --source "$SOURCE"
+          --base-digest "$(cat "$RUNNER_TEMP/base/base-${{ matrix.arch }}")"
+          --digest-out "$RUNNER_TEMP/digests/$TARGET-${{ matrix.arch }}"
+      - name: Verify the shared base layers, labels, size budget and smoke (--version, ACP initialize)
+        run: >
+          node scripts/release-sandbox.mjs verify --target "$TARGET" --arch "${{ matrix.arch }}"
+          --image "$SANDBOX_IMAGE" --version "$VERSION"
+          --base-digest "$(cat "$RUNNER_TEMP/base/base-${{ matrix.arch }}")"
+          --digest "$(cat "$RUNNER_TEMP/digests/$TARGET-${{ matrix.arch }}")"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sandbox-digest-${{ matrix.provider }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # `all` after the Providers: every agent-* stage must come from their caches (the build fails if one is rebuilt).
+  sandbox-all:
+    needs: [package, sandbox-matrix, sandbox-base, sandbox-provider]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.package.outputs.version }}
+      SOURCE: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - name: Free disk space for a 6 GB image plus its build
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: sandbox-digest-base-${{ matrix.arch }}
+          path: ${{ runner.temp }}/base
+      - name: Build target all from the Provider caches, push by digest
+        run: >
+          node scripts/release-sandbox.mjs build --target all --arch "${{ matrix.arch }}"
+          --image "$SANDBOX_IMAGE" --version "$VERSION" --source "$SOURCE"
+          --base-digest "$(cat "$RUNNER_TEMP/base/base-${{ matrix.arch }}")"
+          --digest-out "$RUNNER_TEMP/digests/all-${{ matrix.arch }}"
+      - name: Verify the shared base layers, labels, size budget and smoke every Provider
+        run: >
+          node scripts/release-sandbox.mjs verify --target all --arch "${{ matrix.arch }}"
+          --image "$SANDBOX_IMAGE" --version "$VERSION"
+          --base-digest "$(cat "$RUNNER_TEMP/base/base-${{ matrix.arch }}")"
+          --digest "$(cat "$RUNNER_TEMP/digests/all-${{ matrix.arch }}")"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sandbox-digest-all-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -163,11 +313,16 @@ jobs:
           retention-days: 1
 
   manifests:
-    needs: [package, sandbox-image, control-plane-image]
+    needs: [package, sandbox-base, sandbox-provider, sandbox-all, control-plane-image]
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
       packages: write
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           pattern: sandbox-digest-*
@@ -184,7 +339,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Tag the multi-arch manifest lists (<version> and latest)
+      - name: Sandbox manifest lists (<version>-<id>, -base, -all = <version>; then the latest-* aliases)
+        run: >
+          node scripts/release-sandbox.mjs manifests --image "$SANDBOX_IMAGE"
+          --version "${{ needs.package.outputs.version }}" --digests "$RUNNER_TEMP/sandbox"
+      - name: Tag the Control Plane manifest list (<version> and latest)
         run: |
           set -eu
           version="${{ needs.package.outputs.version }}"
@@ -195,8 +354,31 @@ jobs:
             docker buildx imagetools create -t "$image:$version" -t "$image:latest" "$@"
             docker buildx imagetools inspect "$image:$version"
           }
-          tag_manifest "$SANDBOX_IMAGE" "$RUNNER_TEMP/sandbox"
           tag_manifest "$CONTROL_PLANE_IMAGE" "$RUNNER_TEMP/control-plane"
+
+  # Superseded `buildcache-*` exports are untagged package versions; deleting them keeps the cache at one export per
+  # target and architecture. Advisory: a 403 from the packages API only warns (the manual step is in the log).
+  sandbox-cache-prune:
+    needs: manifests
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: node scripts/release-sandbox.mjs prune-cache --image "$SANDBOX_IMAGE"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   desktop:
     needs: package

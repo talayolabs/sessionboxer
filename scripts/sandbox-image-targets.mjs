@@ -1,6 +1,9 @@
 // The Sandbox image's Provider variants (ADR-0088): which ids exist, which Dockerfile targets they
 // map to and which tags a local build gets. Shared by scripts/build-image.mjs, which runs before
-// anything is compiled, so PROVIDERS is read from the protocol source, and by its test.
+// anything is compiled, so PROVIDERS is read from the protocol source, by its test, and by the
+// release workflow: `node scripts/sandbox-image-targets.mjs --json` prints the build matrix
+// (`{ providers, targets }`) and fails when the Dockerfile's stages do not match PROVIDERS, so a
+// Provider without its image variant stops the release before anything is built.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +24,22 @@ export function providerIds(root = ROOT) {
 export function dockerfileStages(root = ROOT) {
   const dockerfile = readFileSync(path.join(root, "images/sandbox/Dockerfile"), "utf8");
   return [...dockerfile.matchAll(/^FROM\s+(\S+)\s+AS\s+(\S+)\s*$/gim)].map((m) => ({ name: m[2], parent: m[1] }));
+}
+
+/**
+ * The release matrix: the Provider ids and every image target (`<id>`, `base`, `all`). Throws when
+ * the Dockerfile lacks an `agent-<id>` payload stage or a `<id>` final for an id, or has one for
+ * an id outside PROVIDERS.
+ */
+export function releaseMatrix(root = ROOT) {
+  const ids = providerIds(root);
+  const stages = dockerfileStages(root);
+  const payloads = stages.filter((s) => s.name.startsWith("agent-")).map((s) => s.name.slice("agent-".length));
+  const finals = stages.filter((s) => s.parent === "base").map((s) => s.name);
+  const same = (a, b) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
+  if (!same(payloads, ids)) throw new Error(`Dockerfile agent-* stages [${payloads}] differ from PROVIDERS [${ids}]`);
+  if (!same(finals, [...ids, "all"])) throw new Error(`Dockerfile final targets [${finals}] differ from PROVIDERS + all [${[...ids, "all"]}]`);
+  return { providers: ids, targets: [...ids, "base", "all"] };
 }
 
 /**
@@ -54,4 +73,17 @@ export function parseArgs(argv) {
     }
   }
   return { provider, forwarded };
+}
+
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv[2] !== "--json") {
+    console.error("usage: node scripts/sandbox-image-targets.mjs --json");
+    process.exit(2);
+  }
+  try {
+    console.log(JSON.stringify(releaseMatrix()));
+  } catch (err) {
+    console.error(`sandbox-image-targets: ${err.message}`);
+    process.exit(1);
+  }
 }

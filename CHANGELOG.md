@@ -17,6 +17,7 @@ The Sandbox image changed: `npm run build:image`, then Stop → Resume existing 
 - **Gemini CLI** as a Provider, via `gemini --acp`, on a Google login (`~/.gemini/oauth_creds.json`) or a Gemini API key. ([ADR-0087](docs/adr/0087-gemini-cli-as-a-provider-on-a-google-login-or-api-key.md))
 - **Qwen Code** as an eighth agent, via `qwen --acp`, on a Qwen OAuth login (`oauth_creds.json`) or any OpenAI-compatible endpoint (`OPENAI_API_KEY`/`OPENAI_MODEL`/`OPENAI_BASE_URL`); Linux, macOS and Windows. (ADR-0083)
 - The Sandbox Dockerfile builds one image per Provider: `toolchain` → `agent-<providerId>` payloads (`/opt/sessionboxer/providers/<id>`, with a manifest) → `base` (no Agent) → `<providerId>` finals and `all` (the default, unchanged). `npm run build:image -- --provider <id>|base|all` builds and tags one variant (`sessionboxer/sandbox:dev-<id>`, `<repo>:<version>-<id>`) without touching `:dev`; `test:sandbox-image` fails CI when a Provider lacks its variant. Step 1 of ADR-0088.
+- The release workflow publishes the Sandbox variants: `ghcr.io/talayolabs/sessionboxer-sandbox:<version>-<providerId>` for every Provider, `<version>-base`, `<version>-all` (= plain `<version>`) and their `latest-*` aliases, each linux/amd64 + linux/arm64 on one shared base digest per architecture, proven in-job (layer prefix, labels, size budget, `--version` + ACP initialize smoke) before any tag moves; `scripts/release-sandbox.mjs` holds the build/verify/join logic, `test:release-sandbox` its tests. Step 2 of ADR-0088.
 
 ## 1.5.0 — 2026-10-01
 

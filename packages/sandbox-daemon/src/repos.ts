@@ -204,6 +204,11 @@ export class Repos {
     return { results };
   }
 
+  /** Directory names of the repositories under the Workspace, in the manifest's order. */
+  names(): string[] {
+    return this.manifest?.repos.map((r) => r.name) ?? [];
+  }
+
   private readManifest(): ReposManifest | null {
     try {
       return ReposManifest.parse(JSON.parse(readFileSync(join(this.localWorkspace, REPOS_MANIFEST_PATH), "utf8")));

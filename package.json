@@ -22,6 +22,7 @@
     "test:provider-auth": "tsc -b && node --test scripts/provider-auth.test.mjs scripts/kimi-provider.test.mjs",
     "test:schema": "tsc -b && node --test scripts/schema-and-settings.test.mjs",
     "test:daemon-errors": "tsc -b && node --test scripts/daemon-errors.test.mjs",
+    "test:code-open": "tsc -b && node --test scripts/code-open.test.mjs",
     "test:session-manager": "tsc -b && node --test scripts/session-manager.test.mjs",
     "test:automations": "tsc -b && node --test scripts/automations.test.mjs",
     "test:mcp-events": "tsc -b && node --test scripts/mcp-events.test.mjs",

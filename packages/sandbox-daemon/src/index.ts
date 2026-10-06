@@ -675,7 +675,7 @@ const terminals = new Terminals(
   guest?.terminalCommand(),
 );
 
-const codeServer = new CodeServer(workspace, log, env.SESSIONBOXER_SESSION_ID ?? "");
+const codeServer = new CodeServer(workspace, log, env.SESSIONBOXER_SESSION_ID ?? "", () => repos.names());
 const uploads = new Uploads(workspace, log, guest ? (rel, abs) => guest.putFile(abs, guest.guestPath(rel)) : undefined);
 const ghApi = new GhApi(log);
 const docs = new Docs(env.SESSIONBOXER_GUIDE_PATH ?? GUIDE_PATH, log);

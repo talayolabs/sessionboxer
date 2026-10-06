@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect } from "node:net";
@@ -111,6 +111,8 @@ export class CodeServer {
     private readonly workspace: string,
     private readonly log: (msg: string) => void,
     private readonly sessionId: string = "",
+    /** Directory names of the Session's repositories under the Workspace, in order. */
+    private readonly repoNames: () => readonly string[] = () => [],
   ) {}
 
   status(): CodeServerStatus {
@@ -165,7 +167,7 @@ export class CodeServer {
    * extension host to appear (the Code pane may be loading right now).
    */
   async open(params: CodeOpenParams): Promise<void> {
-    const path = this.resolvePath(params.path);
+    const path = locateFile(this.workspace, params.path, this.repoNames());
     const status = await this.start();
     if (status.state !== "running") throw new Error(status.error ?? "VS Code is not running in this Sandbox.");
     const root = serverRoot();
@@ -229,13 +231,6 @@ export class CodeServer {
   }
 
   /** Absolute path inside the Workspace, whatever form the chat used. */
-  private resolvePath(path: string): string {
-    const abs = resolve(isAbsolute(path) ? path : join(this.workspace, path));
-    const rel = relative(this.workspace, abs);
-    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`${path} is outside the Workspace`);
-    return abs;
-  }
-
   private async launch(): Promise<CodeServerStatus> {
     this.state = "starting";
     this.error = null;
@@ -393,6 +388,32 @@ export class CodeServer {
         return "VS Code is not running in this Sandbox.";
     }
   }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The file a path in the chat means. The Agent names files relative to the repository it works
+ * in (`src/a.ts` for `/workspace/<repo>/src/a.ts`) as often as relative to the Workspace, so when
+ * nothing is at the path under the Workspace root, each repository directory is tried in turn.
+ */
+export function locateFile(workspace: string, path: string, repoNames: readonly string[], exists: (abs: string) => boolean = isFile): string {
+  const abs = resolve(isAbsolute(path) ? path : join(workspace, path));
+  const rel = relative(workspace, abs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`${path} is outside the Workspace`);
+  if (exists(abs)) return abs;
+  for (const name of repoNames) {
+    const candidate = join(workspace, name, rel);
+    if (exists(candidate)) return candidate;
+  }
+  const repos = repoNames.length ? ` or in ${repoNames.map((n) => `${n}/`).join(", ")}` : "";
+  throw new Error(`no ${rel} in the Workspace${repos}`);
 }
 
 type OpenResult = { ok: true } | { ok: false; status: number | null; error: string };

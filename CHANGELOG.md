@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix: a file path in the chat that is not under `/workspace` itself (the agent named it relative to a repository, `src/App.tsx` for `/workspace/<repo>/src/App.tsx`) now opens by looking in each of the session's repositories in turn instead of failing.
+
 ## 1.6.0 — 2026-10-05
 
 Install: `npx sessionboxer@1.6.0 serve`, the installers on the release, `docker compose up`, or

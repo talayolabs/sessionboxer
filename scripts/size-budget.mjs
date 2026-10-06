@@ -38,7 +38,6 @@ const BUDGET = {
   "apps/web/src/settings/ProvidersSettings.tsx": 700,
   "apps/web/src/Sidebar.tsx": 650,
   "packages/sandbox-daemon/src/mcp-mirror.ts": 640,
-  "apps/web/src/PullRequests.tsx": 610,
 };
 
 function* sourceFiles(dir) {

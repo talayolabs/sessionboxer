@@ -1,8 +1,8 @@
 import { MERGE_METHODS, PR_PROVIDER_LABEL, type MergeMethod, type PrAction, type PrCheckItem, type PrItem, type PullRequest, type Session } from "@sessionboxer/protocol";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { ConnectorIcon } from "./ConnectorIcon";
-import { PrChecks, PrThreads, ago, checksSummary, usePrSelection } from "./PrThreads";
+import { PrChecks, PrThreads, ago, usePrSelection } from "./PrThreads";
 import { cx, Menu, MenuItem, Popover, Tip } from "./ui";
 
 type Runner = (fn: () => Promise<unknown>) => Promise<void>;
@@ -18,7 +18,7 @@ const DECISION_LABEL: Record<NonNullable<PullRequest["reviewDecision"]>, string>
 const ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Address", address_reply: "Address & reply" };
 /** The same actions on a failed check: there is nobody to reply to, the push makes the checks run again. */
 const CHECK_ACTION_LABEL: Record<PrAction, string> = { prompt: "To prompt", address: "Fix", address_reply: "Fix & push" };
-const METHOD_LABEL: Record<MergeMethod, string> = { merge: "merge commit", squash: "squash", rebase: "rebase" };
+export const METHOD_LABEL: Record<MergeMethod, string> = { merge: "merge commit", squash: "squash", rebase: "rebase" };
 
 /** One line on why the watcher is not delivering, for the sync column / header. */
 export function syncNote(pr: PullRequest): { text: string; level: "ok" | "warn" | "error" } {
@@ -108,17 +108,12 @@ function checkActionTitle(action: PrAction, pr: PullRequest, n: number): string 
 const ACTIONS = ["prompt", "address", "address_reply"] as const;
 export const DECISION_GLYPH: Record<NonNullable<PullRequest["reviewDecision"]>, string> = { approved: "\u2713", changes_requested: "\u2717", review_required: "\u25CC" };
 
-function prRef(pr: PullRequest): string {
+export function prRef(pr: PullRequest): string {
   return `${pr.owner}/${pr.repo}#${pr.number}`;
 }
 
-function finished(pr: PullRequest): boolean {
+export function finished(pr: PullRequest): boolean {
   return pr.state === "merged" || pr.state === "closed";
-}
-
-/** Something new to look at: unread comments, or a check that failed. Those rows sort first and carry the dot. */
-function needsAttention(pr: PullRequest): boolean {
-  return pr.unread > 0 || pr.checksFailed > 0;
 }
 
 /** State and review decision in one chip: the label is the state, the review folds in as colour and glyph. */
@@ -144,208 +139,16 @@ export function moreButton(label: string) {
   );
 }
 
-function confirmDetach(pr: PullRequest): boolean {
+export function confirmDetach(pr: PullRequest): boolean {
   return confirm(`Detach ${prRef(pr)} from this Session? Its comments are forgotten here (nothing changes on ${PR_PROVIDER_LABEL[pr.provider]}).`);
 }
 
-function confirmAutoMerge(pr: PullRequest): boolean {
+export function confirmAutoMerge(pr: PullRequest): boolean {
   return confirm(`Merge ${prRef(pr)} into ${pr.baseRef || "its base branch"} (${METHOD_LABEL[pr.mergeMethod]}) as soon as GitHub allows it? The Control Plane checks every 10 seconds while this is on.`);
 }
 
-function externalTitle(pr: PullRequest): string {
+export function externalTitle(pr: PullRequest): string {
   return `Open on ${PR_PROVIDER_LABEL[pr.provider]}${pr.provider === "bitbucket" ? ` (${pr.host})` : ""}, in a new tab (leaves Sessionboxer)`;
-}
-
-// --- Overview pane -------------------------------------------------------------------------
-
-export function PrsPane({
-  session,
-  prs,
-  run,
-  onOpen,
-}: {
-  session: Session;
-  prs: PullRequest[];
-  run: Runner;
-  onOpen: (prId: string) => void;
-}) {
-  const [ref, setRef] = useState("");
-  const [attaching, setAttaching] = useState(false);
-  const [attachOpen, setAttachOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationPermission | "unsupported">(() =>
-    typeof Notification === "undefined" ? "unsupported" : Notification.permission,
-  );
-  const attach = () => {
-    const r = ref.trim();
-    if (!r || attaching) return;
-    setAttaching(true);
-    void run(async () => {
-      await api.attachPr(session.id, r);
-      setRef("");
-      setAttachOpen(false);
-    }).finally(() => setAttaching(false));
-  };
-  // Needs-attention first, then the most recent activity.
-  const sorted = useMemo(
-    () =>
-      [...prs].sort(
-        (a, b) =>
-          Number(needsAttention(b)) - Number(needsAttention(a)) ||
-          (b.lastActivityAt ? Date.parse(b.lastActivityAt) : 0) - (a.lastActivityAt ? Date.parse(a.lastActivityAt) : 0) ||
-          Date.parse(b.attachedAt) - Date.parse(a.attachedAt),
-      ),
-    [prs],
-  );
-  const showAttach = attachOpen || prs.length === 0;
-  return (
-    <div className="pane prs-pane">
-      <nav className="pr-crumbs" aria-label="Pull requests">
-        <span aria-current="page">Pull requests{prs.length > 0 && <span className="muted"> ({prs.length})</span>}</span>
-        <span className="spacer" />
-        {notifications === "default" && (
-          <button className="small" title="Also show a browser notification when feedback arrives while the Agent is idle" onClick={() => void Notification.requestPermission().then(setNotifications)}>
-            Notifications
-          </button>
-        )}
-        {prs.length > 0 && (
-          <button className="small" aria-expanded={showAttach} onClick={() => setAttachOpen((v) => !v)} title="Attach a pull request by URL or owner/repo#123">
-            {showAttach ? "Close" : "+ Attach"}
-          </button>
-        )}
-      </nav>
-      {showAttach && (
-        <div className="pane-toolbar prs-toolbar">
-          <input
-            placeholder="PR URL (GitHub or Bitbucket Data Center), owner/repo#123, or #123"
-            value={ref}
-            autoFocus={prs.length > 0}
-            onChange={(e) => setRef(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") attach();
-            }}
-          />
-          <button onClick={attach} disabled={!ref.trim() || attaching}>
-            {attaching ? "Attaching\u2026" : "Attach"}
-          </button>
-        </div>
-      )}
-      {prs.length === 0 ? (
-        <p className="muted prs-empty">
-          No pull requests attached. Paste a PR URL in a prompt, ask the Agent to open one, or attach one above; new comments and reviews then show up
-          here and as a notification when the Agent is idle.
-        </p>
-      ) : (
-        <ul className="pr-list">
-          {sorted.map((pr) => (
-            <PrRow key={pr.id} session={session} pr={pr} run={run} onOpen={() => onOpen(pr.id)} />
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function PrRow({ session, pr, run, onOpen }: { session: Session; pr: PullRequest; run: Runner; onOpen: () => void }) {
-  const note = syncNote(pr);
-  const merge = mergeNote(pr);
-  const done = finished(pr);
-  const attn = needsAttention(pr);
-  const facts: ReactNode[] = [];
-  if (pr.unread > 0) facts.push(<span key="unread" className="pr-fact pr-fact-unread">{pr.unread} unread</span>);
-  if (pr.openThreads > 0) facts.push(<span key="threads" className="pr-fact">{pr.openThreads} open {pr.openThreads === 1 ? "thread" : "threads"}</span>);
-  for (const c of checksSummary(pr)) if (c.level !== "ok") facts.push(<span key={c.level} className={cx("pr-fact", c.level)}>{c.text}</span>);
-  if (pr.autoMerge && !done)
-    facts.push(
-      <Tip key="am" text={merge.text}>
-        <span className={cx("pr-fact", merge.level === "muted" ? "" : merge.level)}>auto-merge</span>
-      </Tip>,
-    );
-  if (note.level !== "ok")
-    facts.push(
-      <span key="sync" className={cx("pr-fact", note.level)}>
-        {note.text}
-      </span>,
-    );
-  if (!pr.local) facts.push(<span key="local" className="pr-fact">not this Workspace's repository</span>);
-  return (
-    <li
-      className={cx("pr-row", attn && "attn", done && "done")}
-      title="Open this PR's comments, reviews and checks here"
-      onClick={(e) => {
-        if (e.target instanceof Element && e.target.closest("a, button, input, label, [role='menu'], [role='menuitem'], .popover, .tooltip")) return;
-        onOpen();
-      }}
-    >
-      <div className="pr-row-main">
-        <span className="pr-row-icon" aria-hidden="true">
-          <ConnectorIcon kind={pr.provider} size={14} />
-          {attn && <span className="pr-dot" />}
-        </span>
-        <span className="pr-row-ref muted" title={prRef(pr)}>{prRef(pr)}</span>
-        {pr.title ? (
-          <Tip text={pr.title}>
-            <button className="link pr-row-title" onClick={onOpen}>
-              {pr.title}
-            </button>
-          </Tip>
-        ) : (
-          <span className="pr-row-title muted">{"(loading\u2026)"}</span>
-        )}
-        <StateChip pr={pr} />
-        <PrRowMenu session={session} pr={pr} run={run} onOpen={onOpen} />
-      </div>
-      <div className="pr-row-sub muted small-text">
-        {facts}
-        <span className="spacer" />
-        <span title={pr.lastActivityAt ?? undefined}>{ago(pr.lastActivityAt)}</span>
-      </div>
-    </li>
-  );
-}
-
-function PrRowMenu({ session, pr, run, onOpen }: { session: Session; pr: PullRequest; run: Runner; onOpen: () => void }) {
-  const label = PR_PROVIDER_LABEL[pr.provider];
-  return (
-    <Menu align="end" className="pr-menu" trigger={moreButton(`Actions for ${prRef(pr)}`)}>
-      <MenuItem onSelect={onOpen} title="Open this PR here: comments, reviews, checks">
-        Open
-      </MenuItem>
-      <MenuItem onSelect={() => window.open(pr.url, "_blank", "noopener,noreferrer")} title={externalTitle(pr)}>
-        Open on {label} {"\u2197"}
-      </MenuItem>
-      <MenuItem onSelect={() => void run(() => api.refreshPr(session.id, pr.id))} title={`Poll ${label} now`}>
-        Refresh
-      </MenuItem>
-      <MenuItem disabled={pr.unread === 0} onSelect={() => void run(() => api.prSeen(session.id, pr.id))} title="Mark every comment and failed check of this PR as read">
-        Mark seen
-      </MenuItem>
-      <MenuItem
-        onSelect={() => void run(() => api.updatePr(session.id, pr.id, { watch: !pr.watch }))}
-        title={`Poll ${label} for new comments, reviews and ${pr.provider === "bitbucket" ? "build" : "check"} results`}
-      >
-        {pr.watch ? "Stop watching" : "Watch"}
-      </MenuItem>
-      {pr.provider === "github" && !finished(pr) && (
-        <MenuItem
-          onSelect={() => {
-            if (!pr.autoMerge && !confirmAutoMerge(pr)) return;
-            void run(() => api.updatePr(session.id, pr.id, { autoMerge: !pr.autoMerge }));
-          }}
-          title={pr.autoMerge ? mergeNote(pr).text : `Merge it (${METHOD_LABEL[pr.mergeMethod]}) as soon as every check passed and nothing else blocks it`}
-        >
-          {pr.autoMerge ? "Auto-merge off" : "Auto-merge on"}
-        </MenuItem>
-      )}
-      <MenuItem
-        className="danger"
-        onSelect={() => {
-          if (confirmDetach(pr)) void run(() => api.detachPr(session.id, pr.id));
-        }}
-      >
-        Detach
-      </MenuItem>
-    </Menu>
-  );
 }
 
 // --- One PR ---------------------------------------------------------------------------------

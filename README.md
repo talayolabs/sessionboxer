@@ -52,7 +52,7 @@ Nothing is downloaded at start: the first Session pulls the Sandbox image of its
 - **Folders and pins**: group sessions by project in the sidebar, pin the ones you are on to the top.
 - **Revert and branches**: go back to an earlier turn and try another way.
 - **Hand off** a session to another agent, with the context written by the origin's agent.
-- **Pull requests** on GitHub or Bitbucket Data Center: comments and checks in the chat, address them, auto-merge.
+- **Pull requests** on GitHub or Bitbucket Data Center: comments and checks in the chat, address them, auto-merge, select and detach several PRs at once.
 - **Context gauge**: how full the agent's memory is, what each turn cost, every byte sent to the model.
 - **Usage limits**: session and weekly bars, auto-continue when the limit resets.
 - **Model and options** per session, changed mid-conversation.

@@ -40,6 +40,7 @@ jobs:
       - run: npm run test:release-sandbox
       - run: npm run test:cross-package
       - run: npm run test:pr-sync
+      - run: npm run test:pr-list-actions
       - run: npm run test:routes
       - run: npm run test:feed
       - run: npm run test:automation-form

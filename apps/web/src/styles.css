@@ -847,6 +847,13 @@ span.pr-more { flex: none; width: 22px; }
 .pr-list { list-style: none; margin: 0; padding: 0; }
 .pr-row { display: flex; flex-direction: column; gap: 3px; padding: 8px 12px 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; border-left: 2px solid transparent; }
 .pr-row:hover { background: var(--hover); }
+.pr-row.selected { background: var(--hover); }
+.pr-row-select { flex: none; width: 16px; height: 16px; margin: 0; cursor: pointer; }
+.pr-row-selectable .pr-row-sub { padding-left: 44px; }
+.pr-bulk-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.pr-bulk-toolbar label.check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; font-size: var(--fs-sm); }
+.pr-bulk-toolbar label.check input { flex: none; width: 16px; height: 16px; margin: 0; }
+.pr-bulk-toolbar p { flex-basis: 100%; margin: 0; }
 .pr-row.attn { border-left-color: var(--accent); }
 .pr-row.done .pr-row-title, .pr-row.done .pr-row-ref { color: var(--muted); }
 .pr-row-main { display: flex; align-items: center; gap: 6px; min-width: 0; }

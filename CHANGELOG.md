@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Bulk detach in a Session's PRs list**: select individual PRs or **Select all**, then **Detach selected** once, without a confirmation dialog. Failed detaches stay selected for retry; nothing changes on GitHub or Bitbucket.
 - Fix: a file path in the chat that is not under `/workspace` itself (the agent named it relative to a repository, `src/App.tsx` for `/workspace/<repo>/src/App.tsx`) now opens by looking in each of the session's repositories in turn instead of failing.
 
 ## 1.6.0 — 2026-10-05

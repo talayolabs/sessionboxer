@@ -6,7 +6,8 @@ import { ContextPane } from "../Context";
 import { Desktop } from "../Desktop";
 import { E2ePane } from "../E2e";
 import { AppPane } from "../HtmlArtifact";
-import { PrPane, PrsPane } from "../PullRequests";
+import { PrPane } from "../PullRequests";
+import { PrsPane } from "../PrList";
 import { TerminalPane } from "../Terminal";
 import type { Pane, SessionViewProps } from "../SessionView";
 import type { useSessionDialogs } from "./SessionDialogs";
@@ -38,7 +39,7 @@ export function SessionPane({
       {shown === "app" && <AppPane session={session} path={appTarget} change={fsChange} />}
       {shown === "terminal" && <TerminalPane session={session} focus={terminalFocus} />}
       {shown === "context" && <ContextPane session={session} context={context} llmCalls={llmCalls} onInspectLlmCall={setInspectingCall} run={run} />}
-      {shown === "prs" && <PrsPane session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
+      {shown === "prs" && <PrsPane key={session.id} session={session} prs={prs} run={run} onOpen={(id) => setPane(`pr:${id}`)} />}
       {shown === "schedules" && <div className="pane schedules-pane">{schedulesPane}</div>}
       {shown === "e2e" && (
         <E2ePane

@@ -326,8 +326,10 @@ async function pruneCache(args) {
     if (batch.length < 100) break;
   }
   const untagged = versions.filter((v) => (v.metadata?.container?.tags ?? []).length === 0);
+  console.error(`prune-cache: ${versions.length} package versions, ${untagged.length} untagged; inspecting each untagged manifest (docker buildx imagetools inspect, a few seconds apiece)…`);
   let deleted = 0, bytes = 0;
-  for (const v of untagged) {
+  for (const [i, v] of untagged.entries()) {
+    if (i % 10 === 0) console.error(`prune-cache: inspected ${i}/${untagged.length}`);
     let raw;
     try { raw = inspectRaw(`${args.image}@${v.name}`); } catch { continue; }
     if (!isCacheManifest(raw)) continue;

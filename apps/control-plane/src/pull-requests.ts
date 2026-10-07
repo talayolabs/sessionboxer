@@ -46,6 +46,7 @@ import {
 } from "./github-pr.js";
 import { HttpError } from "./http-error.js";
 import { itemId, type PrEtags, type PrItemInput, type StoredPr } from "./pr-store.js";
+import { prUrlsProducedIn } from "./pr-turn-urls.js";
 
 /** How often a watched PR is read while the Session is idle (or stopped, with fallback access). */
 const IDLE_POLL_MS = 60_000;
@@ -267,15 +268,14 @@ export class PullRequests {
   }
 
   /**
-   * After a turn: PR URLs the Agent produced (e.g. from `gh pr create`) attach the PR, and
-   * feedback that arrived while it was working is announced now.
+   * After a turn: PR URLs the Agent produced (wrote in a reply, or `gh pr create` printed) attach
+   * the PR — not the ones it merely read — and feedback that arrived while it was working is
+   * announced now.
    */
   onTurnEnded(sessionId: string, turnEvents: SessionEvent[]): void {
     const s = this.deps.getSession(sessionId);
     if (!s) return;
-    const text: string[] = [];
-    for (const ev of turnEvents) if (ev.body.type === "update") collectStrings(ev.body.update, text);
-    for (const u of findPrUrls(text.join("\n"))) {
+    for (const u of prUrlsProducedIn(turnEvents)) {
       const pr = this.attachParsed(s, u, "agent");
       void this.pollNow(pr.id);
     }
@@ -906,13 +906,6 @@ function prRefOf(pr: PullRequest): PrRef {
 }
 
 /** Every string inside an ACP update (message chunks, tool titles, raw input/output, content). */
-function collectStrings(v: unknown, out: string[], depth = 0): void {
-  if (depth > 8) return;
-  if (typeof v === "string") out.push(v);
-  else if (Array.isArray(v)) for (const x of v) collectStrings(x, out, depth + 1);
-  else if (v && typeof v === "object") for (const x of Object.values(v)) collectStrings(x, out, depth + 1);
-}
-
 // --- Prompt text ---------------------------------------------------------------------------------
 
 const KIND_LABEL: Record<PrItem["kind"], string> = { issue_comment: "Comment", review_comment: "Review comment", review: "Review" };

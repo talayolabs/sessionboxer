@@ -1541,6 +1541,27 @@ test("poll while the Agent runs: feedback is held until the turn ends; a PR URL 
   assert.equal(h.activity().filter((a) => a.prs.some((p) => p.number === 42)).length, 1);
 });
 
+test("turn ended: PR URLs the Agent only read (`gh pr list`, a changelog, a thought) do not attach; the one `gh pr create` printed and the ones it wrote do", async () => {
+  const h = makePullRequests({ gh: { ...ghPrRoutes(43, { title: "Follow-up" }), ...ghPrRoutes(44, { title: "Superseded" }) } });
+  h.widgetsSession("s1");
+  let n = 0;
+  const upd = (update) => ({ id: `e${++n}`, body: { type: "update", update } });
+  const text = (t) => ({ type: "content", content: { type: "text", text: t } });
+  h.prs.onTurnEnded("s1", [
+    upd({ sessionUpdate: "tool_call", toolCallId: "t1", title: "gh pr list --state all", kind: "execute", status: "in_progress", rawInput: { command: "gh pr list --state all --json url" } }),
+    upd({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed", content: [text(`${GH_REPO_URL}/pull/1\n${GH_REPO_URL}/pull/2\n${GH_REPO_URL}/pull/3\n`)] }),
+    upd({ sessionUpdate: "tool_call", toolCallId: "t2", title: "Read CHANGELOG.md", kind: "read", status: "completed", content: [text(`- Fix ([#4](${GH_REPO_URL}/pull/4))`)] }),
+    upd({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: `${GH_REPO_URL}/pull/5 looks related.` } }),
+    upd({ sessionUpdate: "tool_call", toolCallId: "t3", title: "gh pr create --title Follow-up", kind: "execute", status: "in_progress", rawInput: { command: "gh pr create --title Follow-up --body ..." } }),
+    upd({ sessionUpdate: "tool_call_update", toolCallId: "t3", status: "completed", rawOutput: { stdout: `${GH_REPO_URL}/pull/43\n` } }),
+    upd({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: `Opened #43; it supersedes ${GH_REPO_URL}/pull/44.` } }),
+  ]);
+  await h.prs.chain;
+  await flush();
+  assert.deepEqual(h.prs.list("s1").map((p) => [p.number, p.attachedBy, p.title]).sort(), [[43, "agent", "Follow-up"], [44, "agent", "Superseded"]]);
+  assert.equal(h.log.filter((l) => l.includes("poll failed")).length, 0);
+});
+
 test("action: `prompt` only marks items; `address` goes to prompt() when idle, enqueue() when running; stopped is a 409; a foreign PR a 400", async () => {
   const h = makePullRequests({ gh: ghPrRoutes(42) });
   h.widgetsSession();

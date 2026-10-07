@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Bulk detach in a Session's PRs list**: select individual PRs or **Select all**, then **Detach selected** once, without a confirmation dialog. Failed detaches stay selected for retry; nothing changes on GitHub or Bitbucket.
+- Fix: PR URLs the agent only read during a turn (`gh pr list` output, a changelog, an issue page) no longer attach to the Session — one such listing attached every PR of the repository to the PRs tab. The URLs the agent writes in its replies and the one `gh pr create` / `bb pr create` (or a `create_pull_request` tool) prints still do.
 - Fix: a file path in the chat that is not under `/workspace` itself (the agent named it relative to a repository, `src/App.tsx` for `/workspace/<repo>/src/App.tsx`) now opens by looking in each of the session's repositories in turn instead of failing.
 
 ## 1.6.0 — 2026-10-05

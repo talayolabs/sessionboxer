@@ -46,7 +46,7 @@ import { type RouteDeps } from "./deps.js";
 export function registerSessionRoutes(api: Hono<AuthEnv>, deps: RouteDeps): void {
   const { sessions, settings, upgradeWebSocket } = deps;
   // Files attached on the New session screen, before a Sandbox exists to put them in (see StagedUploads).
-  api.put("/uploads", async (c) => c.json(await sessions.staged.store(c.req.raw.body, c.req.query("name") ?? "", c.req.header("content-type"), c.req.header("content-length")), 201));
+  api.put("/uploads", async (c) => c.json(await sessions.staged.store(c.req.raw.body, c.req.query("name") ?? "", c.req.header("content-type")), 201));
   api.delete("/uploads/:id", async (c) => {
     await sessions.staged.remove(c.req.param("id"));
     return c.body(null, 204);

@@ -3,7 +3,7 @@ import { createWriteStream, promises as fs } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { FS_UPLOAD_PATH, MAX_UPLOAD_BYTES, UPLOADS_DIR, contentTypeFor, type PromptAttachment } from "@sessionboxer/protocol";
+import { FS_UPLOAD_PATH, UPLOADS_DIR, contentTypeFor, type PromptAttachment } from "@sessionboxer/protocol";
 
 /** Keeps `/.sessionboxer/` out of `git status` (and so out of commits and of Pull-to-folder) without touching tracked files. */
 const GIT_EXCLUDE_LINE = "/.sessionboxer/";
@@ -44,8 +44,6 @@ export class Uploads {
   private async store(req: IncomingMessage, rawName: string): Promise<PromptAttachment> {
     const name = safeName(rawName);
     if (!name) throw new UploadError(400, "the upload needs a file name (?name=)");
-    const declared = Number(req.headers["content-length"] ?? "0");
-    if (declared > MAX_UPLOAD_BYTES) throw new UploadError(413, `files over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB cannot be attached`);
 
     const rel = join(UPLOADS_DIR, randomBytes(4).toString("hex"), name);
     const abs = join(this.workspace, rel);
@@ -56,7 +54,6 @@ export class Uploads {
     const counter = async function* (source: AsyncIterable<Buffer>) {
       for await (const chunk of source) {
         size += chunk.length;
-        if (size > MAX_UPLOAD_BYTES) throw new UploadError(413, `files over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB cannot be attached`);
         yield chunk;
       }
     };

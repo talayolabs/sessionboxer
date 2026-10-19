@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MAX_PROMPT_ATTACHMENTS, MAX_UPLOAD_BYTES, type PromptAttachment, type StagedUpload } from "@sessionboxer/protocol";
+import { MAX_PROMPT_ATTACHMENTS, type PromptAttachment, type StagedUpload } from "@sessionboxer/protocol";
 import { api } from "./api";
 
 /** A file picked for the next prompt: uploading, stored (as `A`: in the Sandbox, or staged on the Control Plane), or failed. */
@@ -68,14 +68,11 @@ function usePendingUploads<A>(key: string, live: boolean, onError: (message: str
     setItems((cur) => cur.map((a) => (a.id === id ? { ...a, state } : a)));
   }, []);
 
-  /** The item for a file, its upload started (unless the file is too large). */
+  /** The item for a file, its upload started. */
   const start = useCallback(
     (id: string, file: File): PendingAttachment<A> => {
       const mimeType = file.type || "application/octet-stream";
       const url = URL.createObjectURL(file);
-      if (file.size > MAX_UPLOAD_BYTES) {
-        return { id, name: file.name, size: file.size, mimeType, url, state: { kind: "error", message: `over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` } };
-      }
       const controller = new AbortController();
       controllers.current.set(id, controller);
       upload(file, (progress) => patch(id, { kind: "uploading", progress }), controller.signal)

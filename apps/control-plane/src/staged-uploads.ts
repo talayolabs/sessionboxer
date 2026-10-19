@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
-import { FS_UPLOAD_PATH, MAX_UPLOAD_BYTES, PromptAttachment, contentTypeFor, type StagedUpload } from "@sessionboxer/protocol";
+import { FS_UPLOAD_PATH, PromptAttachment, contentTypeFor, type StagedUpload } from "@sessionboxer/protocol";
 import { DATA_DIR } from "./config.js";
 import { HttpError } from "./http-error.js";
 
@@ -30,11 +30,10 @@ const CLAIMED = ".claimed";
 export class StagedUploads {
   constructor(private readonly log: (msg: string) => void) {}
 
-  async store(body: ReadableStream<Uint8Array> | null, rawName: string, contentType: string | undefined, declaredLength: string | undefined): Promise<StagedUpload> {
+  async store(body: ReadableStream<Uint8Array> | null, rawName: string, contentType: string | undefined): Promise<StagedUpload> {
     const name = safeName(rawName);
     if (!name) throw new HttpError(400, "the upload needs a file name (?name=)");
     if (!body) throw new HttpError(400, "the upload has no body");
-    if (Number(declaredLength ?? "0") > MAX_UPLOAD_BYTES) throw new HttpError(413, `files over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB cannot be attached`);
     const id = randomBytes(8).toString("hex");
     const dir = join(STAGING_DIR, id);
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -42,7 +41,6 @@ export class StagedUploads {
     const counter = async function* (source: AsyncIterable<Buffer>) {
       for await (const chunk of source) {
         size += chunk.length;
-        if (size > MAX_UPLOAD_BYTES) throw new HttpError(413, `files over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB cannot be attached`);
         yield chunk;
       }
     };

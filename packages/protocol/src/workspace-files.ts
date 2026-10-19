@@ -37,7 +37,7 @@ export function htmlAppCsp(cdns: readonly string[]): string {
 }
 /**
  * `PUT /fs/upload?name=<file name>` with the bytes as the body (and their `Content-Type`) stores a
- * prompt attachment under `UPLOADS_DIR` and answers with the `PromptAttachment`.
+ * prompt attachment under `UPLOADS_DIR` and answers with the `PromptAttachment`. There is no size
+ * cap: only the free disk space of the Sandbox bounds a file.
  */
 export const FS_UPLOAD_PATH = "/fs/upload";
-export const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;

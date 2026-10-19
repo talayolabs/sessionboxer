@@ -1,12 +1,17 @@
+import { useState } from "react";
 import { ANTHROPIC_DEFAULT_BASE_URL, type PublicSettings } from "@sessionboxer/protocol";
+import { api } from "../api";
 import { Caption } from "../ui";
 import type { Setter } from "./shared";
 
 /** Global settings → Providers → Claude API: the base URL Claude Code calls and the proxy credentials for it. */
 export function ClaudeApiSettings({
   settings,
+  onStored,
   claudeBaseUrl,
   setClaudeBaseUrl,
+  claudeCredentialCommand,
+  setClaudeCredentialCommand,
   claudeAuthToken,
   setClaudeAuthToken,
   claudeApiKey,
@@ -17,8 +22,11 @@ export function ClaudeApiSettings({
   setForgetClaudeApiKey,
 }: {
   settings: PublicSettings;
+  onStored: (s: PublicSettings) => void;
   claudeBaseUrl: string;
   setClaudeBaseUrl: Setter<string>;
+  claudeCredentialCommand: string;
+  setClaudeCredentialCommand: Setter<string>;
   claudeAuthToken: string;
   setClaudeAuthToken: Setter<string>;
   claudeApiKey: string;
@@ -30,6 +38,23 @@ export function ClaudeApiSettings({
 }) {
   const claudeAuthTokenSet = settings.claudeApi.authTokenSet && !forgetClaudeAuthToken;
   const claudeApiKeySet = settings.claudeApi.apiKeySet && !forgetClaudeApiKey;
+  const host = settings.claudeApi.host;
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importHost = async () => {
+    setImporting(true);
+    setImportError(null);
+    try {
+      const next = await api.claudeApiImportHost();
+      onStored(next);
+      setClaudeBaseUrl(next.claudeApi.baseUrl);
+      setClaudeCredentialCommand(next.claudeApi.credentialCommand);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
   return (
     <>
       <h4 className="ss-sub" id="settings-claude-api">
@@ -65,6 +90,46 @@ export function ClaudeApiSettings({
           spellCheck={false}
         />
       </label>
+      <label>
+        <span className="label-row">
+          <Caption
+            help={
+              <p>
+                Claude Code&apos;s <code>apiKeyHelper</code>: a command the Control Plane runs on this machine whose output is the credential for
+                that URL (a company gateway&apos;s token helper, for instance). Sessionboxer re-runs it and hands the fresh value to every running
+                Claude Sandbox, where Claude Code picks it up within five minutes, so rotating tokens need no restart. While set, the proxy auth
+                token and API key below are not used. Not available to Sessions in a Windows or macOS VM.
+              </p>
+            }
+          >
+            Credential command (apiKeyHelper)
+          </Caption>
+        </span>
+        <input
+          value={claudeCredentialCommand}
+          onChange={(e) => setClaudeCredentialCommand(e.target.value)}
+          placeholder="e.g. /home/me/.local/bin/my-gateway token"
+          spellCheck={false}
+        />
+      </label>
+      {host && (
+        <p className="muted">
+          This machine&apos;s <code>~/.claude/settings.json</code> configures{" "}
+          {[
+            host.baseUrl ? `the base URL ${host.baseUrl}` : null,
+            host.credentialCommand ? `the credential command ${host.credentialCommand}` : null,
+            host.authTokenSet ? "an auth token" : null,
+            host.apiKeySet ? "an API key" : null,
+          ]
+            .filter((x) => x !== null)
+            .join(", ")}
+          .{" "}
+          <button type="button" className="link" disabled={importing} onClick={() => void importHost()}>
+            {importing ? "Importing…" : "Use this machine's Claude settings"}
+          </button>
+          {importError && <span className="error"> {importError}</span>}
+        </p>
+      )}
       <div className="row">
         <label>
           <span className="label-row">

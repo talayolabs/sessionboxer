@@ -55,6 +55,7 @@ export const DAEMON_METHODS = {
   modelSet: "_sessionboxer/model/set",
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
+  claudeApiCredentialSet: "_sessionboxer/claude-api-credential/set",
   recordingPrefsSet: "_sessionboxer/recording-prefs/set",
   sessionFork: "_sessionboxer/session/fork",
   sessionSwitch: "_sessionboxer/session/switch",
@@ -456,6 +457,11 @@ export type DaemonOptionSetResult = z.infer<typeof DaemonOptionSetResult>;
  */
 export const DaemonClaudeModelsSetParams = z.object({ models: z.array(z.string().min(1)) });
 export type DaemonClaudeModelsSetParams = z.infer<typeof DaemonClaudeModelsSetParams>;
+/** The Claude API credential minted on the host, served to Claude Code through `apiKeyHelper` (ADR-0090); "" removes it, `applied: false` = guest VM. */
+export const DaemonClaudeApiCredentialSetParams = z.object({ credential: z.string() });
+export type DaemonClaudeApiCredentialSetParams = z.infer<typeof DaemonClaudeApiCredentialSetParams>;
+export const DaemonClaudeApiCredentialSetResult = z.object({ applied: z.boolean() });
+export type DaemonClaudeApiCredentialSetResult = z.infer<typeof DaemonClaudeApiCredentialSetResult>;
 
 export const DaemonClaudeModelsSetResult = z.object({ applied: z.boolean() });
 export type DaemonClaudeModelsSetResult = z.infer<typeof DaemonClaudeModelsSetResult>;

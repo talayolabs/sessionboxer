@@ -197,6 +197,7 @@ export function SettingsView({
         },
         claudeApi: {
           baseUrl: providers.values.claudeBaseUrl.trim(),
+          credentialCommand: providers.values.claudeCredentialCommand.trim(),
           ...(providers.values.claudeAuthToken.trim() ? { authToken: providers.values.claudeAuthToken.trim() } : providers.values.forgetClaudeAuthToken ? { authToken: "" } : {}),
           ...(providers.values.claudeApiKey.trim() ? { apiKey: providers.values.claudeApiKey.trim() } : providers.values.forgetClaudeApiKey ? { apiKey: "" } : {}),
         },

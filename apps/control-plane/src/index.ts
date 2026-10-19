@@ -49,6 +49,7 @@ import { McpEvents } from "./mcp-events.js";
 import { PrReviews } from "./pr-reviews.js";
 import { PrQa } from "./pr-qa.js";
 import { HttpError, SessionManager } from "./sessions.js";
+import { CLAUDE_CREDENTIAL_MAX_AGE_MS, ClaudeApiCredential } from "./claude-api-credential.js";
 import { WindowsVms } from "./windows.js";
 import { MacosVms } from "./macos.js";
 import { Speech } from "./speech.js";
@@ -132,6 +133,7 @@ const macos = new MacosVms(
   (status) => sessions.notify({ type: "macos_base", status }),
 );
 const sessions = new SessionManager(db, docker, windows, macos, () => settings, log, (msg) => push.send(msg));
+const claudeApiCredential = new ClaudeApiCredential(() => settings, log);
 // Codex, Cursor, pi, OpenCode, fx, GitHub Copilot and Grok Build rotate their tokens inside the Sandbox; the rewritten login file
 // replaces the stored one (unless it is older than what another Sandbox already sent, or the stored
 // login is an API key) and reaches the other Sessions of that Agent.
@@ -271,11 +273,20 @@ async function applySettingsRequest(update: UpdateSettingsRequest): Promise<void
   }
   if (update.utilities || update.utilityEnvironments || update.procedures) void sessions.pushUtilitiesToAll();
   if (update.claudeModels) void sessions.pushClaudeModelsToAll();
+  if (update.claudeApi?.credentialCommand !== undefined) {
+    claudeApiCredential.invalidate();
+    void sessions.pushClaudeApiCredentialToAll();
+  }
   for (const provider of providersAuthChangedBy(update)) void sessions.pushProviderAuthToAll(provider);
   if (update.recordingNarration) void sessions.pushRecordingPrefsToAll();
   if (update.tunnels) await tunnels.apply(settings.tunnels);
 }
 sessions.applySettings = applySettingsRequest;
+// The Claude API credential command runs here, on the host; its output reaches each Claude Sandbox before the Agent starts and every few minutes after (ADR-0090).
+sessions.claudeApiCredential = () => claudeApiCredential.current();
+setInterval(() => {
+  if (claudeApiCredential.configured()) void sessions.pushClaudeApiCredentialToAll();
+}, CLAUDE_CREDENTIAL_MAX_AGE_MS + 60 * 1000).unref();
 
 const speech = new Speech(log);
 sessions.transcribeMedia = (wav, language) => speech.transcribeTimed(wav, settings.speech, language);

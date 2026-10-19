@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DEFAULT = 600;
 const BUDGET = {
-  "apps/control-plane/src/sessions.ts": 3000,
+  "apps/control-plane/src/sessions.ts": 3030,
   "apps/control-plane/src/agent-tools.ts": 1180,
   "packages/sandbox-daemon/src/agent.ts": 1150,
   "apps/control-plane/src/db.ts": 1120,
@@ -19,6 +19,7 @@ const BUDGET = {
   "apps/control-plane/src/followed-prs.ts": 1060,
   "apps/control-plane/src/config.ts": 1050,
   "packages/sandbox-daemon/src/index.ts": 1040,
+  "packages/protocol/src/daemon-rpc.ts": 610,
   "packages/sandbox-daemon/src/guest.ts": 1030,
   "packages/protocol/src/themes.ts": 1000,
   "apps/web/src/SessionSettingsForm.tsx": 810,

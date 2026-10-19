@@ -15,6 +15,7 @@ import {
   DaemonContextReportResult,
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
+  DaemonClaudeApiCredentialSetResult,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -2552,6 +2553,32 @@ export class SessionManager {
   /** Stores a Settings change the way `PUT /settings` does; the server wires it (the Agent's `utilities_*` / `procedure_save` use it). */
   applySettings: (update: UpdateSettingsRequest) => Promise<void> = () => Promise.reject(new Error("Settings are not available yet."));
 
+  /** The Claude API credential minted on this machine (ADR-0090); "" when no credential command is configured. Set by index.ts. */
+  claudeApiCredential: () => Promise<string> = () => Promise.resolve("");
+
+  /** Sends the credential to a Claude Sandbox, where `apiKeyHelper` serves it to Claude Code; before the Agent starts, then every few minutes. */
+  async pushClaudeApiCredential(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "claude-code" || !client?.connected) return;
+    const credential = await this.claudeApiCredential();
+    try {
+      const r = DaemonClaudeApiCredentialSetResult.parse(await client.request(DAEMON_METHODS.claudeApiCredentialSet, { credential }));
+      if (!r.applied && credential !== "") this.log(`session ${id} runs Claude in a guest VM, which cannot use the credential command`);
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) return;
+      throw e;
+    }
+  }
+
+  /** Refreshes the credential of every live Claude Session (the timer, and the credential command changing). */
+  async pushClaudeApiCredentialToAll(): Promise<void> {
+    for (const s of this.list()) {
+      if (s.provider !== "claude-code" || (s.status !== "idle" && s.status !== "running")) continue;
+      await this.pushClaudeApiCredential(s.id).catch((e: unknown) => this.log(`claude api credential push ${s.id} failed: ${String(e)}`));
+    }
+  }
+
   /** Hands `Settings.recordingNarration` to a Session's Daemon (tmpfs, read at `stop_recording`). Older Daemons ignore it. */
   async pushRecordingPrefs(id: string): Promise<void> {
     const client = this.clients.get(id);
@@ -2704,6 +2731,7 @@ export class SessionManager {
     // A Session whose repositories are being put into its VM holds the list and the MCP set until they are there.
     const seeded = this.seeding.get(id)?.catch(() => undefined) ?? Promise.resolve();
     this.pushClaudeModels(id)
+      .then(() => this.pushClaudeApiCredential(id))
       .then(() => this.pushLlmInspect(id))
       .then(() => seeded)
       .then(() => this.pushSessionInfo(id))

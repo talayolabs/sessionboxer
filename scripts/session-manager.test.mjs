@@ -6,7 +6,8 @@
 // the ones observed today, not recomputed from the code. Run after `tsc -b`.
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { ForkSessionRequest, MACOS_NO_SNAPSHOT, ROOT_BRANCH_ID, Settings, WINDOWS_NO_SNAPSHOT } from "../packages/protocol/dist/index.js";
+import { DAEMON_ERROR_CODES, DAEMON_METHODS, ForkSessionRequest, MACOS_NO_SNAPSHOT, ROOT_BRANCH_ID, Settings, WINDOWS_NO_SNAPSHOT } from "../packages/protocol/dist/index.js";
+import { DaemonRpcError } from "../apps/control-plane/dist/daemon-client.js";
 import { Db } from "../apps/control-plane/dist/db.js";
 import { MissingImageContentError } from "../apps/control-plane/dist/docker.js";
 import { HttpError } from "../apps/control-plane/dist/http-error.js";
@@ -861,4 +862,43 @@ test("boot: sweeps the payload donor containers a previous Control Plane left be
   h.docker.containerState = "stopped";
   await h.manager.boot();
   assert.deepEqual(h.docker.calls.filter((c) => c[0] === "removeHelpers"), [["removeHelpers"]]);
+});
+
+test("Claude API credential (ADR-0090): pushed to connected Claude Sessions only, guest VMs reported, Daemons without the method tolerated", async () => {
+  const h = makeManager({ claudeApi: { credentialCommand: "gw token" } });
+  const claude = h.addSession({ id: "claude" });
+  const codex = h.addSession({ id: "codex", provider: "codex" });
+  const guest = h.addSession({ id: "guest" });
+  const old = h.addSession({ id: "old" });
+  h.addSession({ id: "offline" });
+  const calls = [];
+  const client = (id, result) => ({
+    connected: true,
+    close() {},
+    async request(method, params) {
+      calls.push([id, method, params]);
+      if (result instanceof Error) throw result;
+      return result;
+    },
+  });
+  h.manager.clients.set(claude.id, client(claude.id, { applied: true }));
+  h.manager.clients.set(codex.id, client(codex.id, { applied: true }));
+  h.manager.clients.set(guest.id, client(guest.id, { applied: false }));
+  h.manager.clients.set(old.id, client(old.id, new DaemonRpcError(DAEMON_ERROR_CODES.method_not_found, "no such method")));
+  let minted = 0;
+  h.manager.claudeApiCredential = async () => `tok-${++minted}`;
+  await h.manager.pushClaudeApiCredentialToAll();
+  assert.deepEqual(calls, [
+    ["claude", DAEMON_METHODS.claudeApiCredentialSet, { credential: "tok-1" }],
+    ["guest", DAEMON_METHODS.claudeApiCredentialSet, { credential: "tok-2" }],
+    ["old", DAEMON_METHODS.claudeApiCredentialSet, { credential: "tok-3" }],
+  ]);
+  assert.ok(h.log.some((l) => l.includes("guest") && l.includes("guest VM")), h.log.join("\n"));
+  assert.ok(!h.log.some((l) => l.includes("tok-")), "the credential never reaches the log");
+  h.manager.claudeApiCredential = async () => {
+    throw new Error("gateway helper exited 1");
+  };
+  await h.manager.pushClaudeApiCredentialToAll();
+  assert.equal(calls.length, 3, "a failing command pushes nothing");
+  assert.ok(h.log.some((l) => l.includes("claude api credential push claude failed") && l.includes("gateway helper exited 1")));
 });

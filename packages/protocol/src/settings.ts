@@ -186,6 +186,8 @@ export const Settings = z.object({
       baseUrl: z.string().default(""),
       authToken: z.string().default(""),
       apiKey: z.string().default(""),
+      /** A command run on the Control Plane's machine whose output is the credential (Claude Code's `apiKeyHelper`, ADR-0090). */
+      credentialCommand: z.string().default(""),
     })
     .default({}),
   providerSecrets: z
@@ -233,6 +235,15 @@ export const Settings = z.object({
 export type Settings = z.infer<typeof Settings>;
 
 /** Settings as returned to the UI: secrets replaced by a boolean "is set". */
+/** The Claude API configuration found in `~/.claude/settings.json` on the Control Plane's machine (ADR-0090). */
+export const ClaudeHostSettings = z.object({
+  baseUrl: z.string().nullable(),
+  credentialCommand: z.string().nullable(),
+  authTokenSet: z.boolean(),
+  apiKeySet: z.boolean(),
+});
+export type ClaudeHostSettings = z.infer<typeof ClaudeHostSettings>;
+
 export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers: true, utilities: true, connectors: true, claudeApi: true, accessToken: true, vapid: true, tunnels: true, windows: true, macos: true }).extend({
   mcpServers: z.array(PublicMcpServerDef),
   utilities: z.array(PublicUtilityDef),
@@ -249,9 +260,12 @@ export const PublicSettings = Settings.omit({ providerSecrets: true, mcpServers:
     baseUrl: z.string(),
     authTokenSet: z.boolean(),
     apiKeySet: z.boolean(),
+    credentialCommand: z.string(),
     /** What a Sandbox created now gets as `ANTHROPIC_BASE_URL`, and where it comes from. */
     effectiveBaseUrl: z.string(),
     effectiveBaseUrlSource: z.enum(["settings", "env", "default"]),
+    /** What `~/.claude/settings.json` on the Control Plane's machine configures, offered for import; null when nothing relevant. */
+    host: ClaudeHostSettings.nullable(),
   }),
   providerSecretsSet: z.object({
     "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.boolean() }),
@@ -315,7 +329,7 @@ export const UpdateSettingsRequest = Settings.omit({ mcpServers: true, utilities
   macos: MacosSettings.omit({ password: true, sshKey: true, sshPublicKey: true }).partial().optional(),
   tunnels: TunnelSettingsUpdate.optional(),
   /** Omitted secret fields keep what is stored; `""` forgets it. */
-  claudeApi: z.object({ baseUrl: z.string(), authToken: z.string(), apiKey: z.string() }).partial().optional(),
+  claudeApi: z.object({ baseUrl: z.string(), authToken: z.string(), apiKey: z.string(), credentialCommand: z.string() }).partial().optional(),
   providerSecrets: z
     .object({
       "claude-code": z.object({ CLAUDE_CODE_OAUTH_TOKEN: z.string() }).partial(),

@@ -24,6 +24,8 @@ import {
   type DaemonLlmInspectSetResult,
   DaemonAskParams,
   DaemonClaudeModelsSetParams,
+  DaemonClaudeApiCredentialSetParams,
+  type DaemonClaudeApiCredentialSetResult,
   DaemonCodexAuthParams,
   DaemonCursorAuthParams,
   DaemonPiAuthParams,
@@ -817,6 +819,13 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
     case DAEMON_METHODS.claudeModelsSet: {
       const p = DaemonClaudeModelsSetParams.parse(params);
       return { applied: agent.setModelAllowlist(p.models) };
+    }
+    case DAEMON_METHODS.claudeApiCredentialSet: {
+      const p = DaemonClaudeApiCredentialSetParams.parse(params);
+      // A guest VM runs Claude Code on its own filesystem, where neither the tmpfs file nor `cat` exist (Windows).
+      if (!claudeSettings || guest) return { applied: false } satisfies DaemonClaudeApiCredentialSetResult;
+      claudeSettings.setApiKeyHelperCredential(`${tmpfsDir}/claude-api-credential`, p.credential);
+      return { applied: true } satisfies DaemonClaudeApiCredentialSetResult;
     }
     case DAEMON_METHODS.llmInspectSet: {
       const p = DaemonLlmInspectSetParams.parse(params);

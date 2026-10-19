@@ -208,6 +208,7 @@ export const api = {
   connectorDisconnect: (serverId: string) =>
     request<PublicSettings>(`/connectors/servers/${serverId}/disconnect`, { method: "POST" }),
   providerHostLogin: (provider: Provider) => request<ProviderHostLogin>(`/providers/${provider}/host-login`),
+  claudeApiImportHost: () => request<PublicSettings>("/claude-api/import-host", { method: "POST" }),
   providerImportHostLogin: (provider: Provider) =>
     request<PublicSettings>(`/providers/${provider}/host-login/import`, { method: "POST" }),
   providerLoginStart: (provider: Provider) => request<ProviderLoginFlow>(`/providers/${provider}/login`, { method: "POST" }),

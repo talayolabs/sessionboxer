@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { readClaudeHostSettings } from "./claude-api-credential.js";
 import { describeKimiLogin, kimiLogin, normalizeKimiLogin } from "./kimi-login.js";
 import {
   PROVIDERS,
@@ -243,6 +244,7 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     next.claudeApi.baseUrl = next.claudeApi.baseUrl.trim();
     next.claudeApi.authToken = next.claudeApi.authToken.trim();
     next.claudeApi.apiKey = next.claudeApi.apiKey.trim();
+    next.claudeApi.credentialCommand = next.claudeApi.credentialCommand.trim();
     if (next.claudeApi.baseUrl !== "" && !/^https?:\/\//.test(next.claudeApi.baseUrl)) {
       throw new HttpError(400, "The Claude API base URL must start with http:// or https://.");
     }
@@ -334,8 +336,10 @@ export function toPublicSettings(
       baseUrl: claudeApi.baseUrl,
       authTokenSet: claudeAuthToken(settings) !== "",
       apiKeySet: claudeApiKey(settings) !== "",
+      credentialCommand: claudeApi.credentialCommand,
       effectiveBaseUrl: base.url,
       effectiveBaseUrlSource: base.source,
+      host: readClaudeHostSettings(),
     },
     providerSecretsSet: {
       "claude-code": { CLAUDE_CODE_OAUTH_TOKEN: claudeToken(settings) !== "" },
@@ -759,7 +763,7 @@ export function claudeBaseUrl(settings: Settings): { url: string; source: Claude
 export function providerReady(provider: Provider, settings: Settings): boolean {
   switch (provider) {
     case "claude-code":
-      return claudeToken(settings) !== "" || claudeAuthToken(settings) !== "" || claudeApiKey(settings) !== "";
+      return claudeToken(settings) !== "" || claudeAuthToken(settings) !== "" || claudeApiKey(settings) !== "" || settings.claudeApi.credentialCommand !== "";
     case "devin":
       return devinToken(settings) !== "";
     case "codex":
@@ -803,6 +807,8 @@ export function providerEnv(provider: Provider, settings: Settings): Record<stri
       if (token !== "") env.CLAUDE_CODE_OAUTH_TOKEN = token;
       const base = claudeBaseUrl(settings);
       if (base.source !== "default") env.ANTHROPIC_BASE_URL = rewriteHostUrl(base.url);
+      // Claude Code prefers these variables over `apiKeyHelper`; with a credential command they would pin a stale value (ADR-0090).
+      if (settings.claudeApi.credentialCommand !== "") return env;
       const authToken = claudeAuthToken(settings);
       if (authToken !== "") env.ANTHROPIC_AUTH_TOKEN = authToken;
       const apiKey = claudeApiKey(settings);

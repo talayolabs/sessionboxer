@@ -1,4 +1,4 @@
-# 173 routes, in registration order
+# 174 routes, in registration order
 GET /api/health
 GET /api/sandbox-image
 POST /api/sandbox-image/pull
@@ -35,6 +35,7 @@ POST /api/speech/transcribe
 DELETE /api/speech/models/:name
 GET /api/tunnels/sessionboxer/server
 GET /api/tunnels/sessionboxer/names/:name
+POST /api/claude-api/import-host
 GET /api/providers/:provider/host-login
 POST /api/providers/:provider/host-login/import
 POST /api/providers/:provider/login

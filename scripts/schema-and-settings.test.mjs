@@ -130,6 +130,8 @@ test("applySettingsUpdate rejects what the UI must not store, as HTTP 400", () =
   ]) {
     assert.throws(() => applySettingsUpdate(base, bad), (e) => e instanceof HttpError && e.status === 400, JSON.stringify(bad));
   }
+  const claude = applySettingsUpdate(base, { claudeApi: { baseUrl: " https://gw.example.net ", credentialCommand: " gw token " } });
+  assert.deepEqual(claude.claudeApi, { baseUrl: "https://gw.example.net", authToken: "", apiKey: "", credentialCommand: "gw token" });
   const trimmed = applySettingsUpdate(base, { tunnels: { sessionboxer: { server: " https://tunnel.example.com// ", name: "My-Box" } } });
   assert.equal(trimmed.tunnels.sessionboxer.server, "https://tunnel.example.com");
   assert.equal(trimmed.tunnels.sessionboxer.name, "my-box");

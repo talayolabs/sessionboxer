@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
@@ -21,9 +21,38 @@ export class ClaudeSettings {
     else delete settings.availableModels;
     const after = JSON.stringify(settings.availableModels ?? null);
     if (before === after) return;
+    this.write(settings);
+    this.log(`claude availableModels: ${models.length > 0 ? models.join(", ") : "(built-in)"}`);
+  }
+
+  /**
+   * Serves a credential minted on the Control Plane's machine through Claude Code's `apiKeyHelper`
+   * (ADR-0090): the value lands in `file` (tmpfs, owner-only), the helper is `cat` of that file, which
+   * Claude Code re-runs every five minutes. An empty credential removes both.
+   */
+  setApiKeyHelperCredential(file: string, credential: string): void {
+    const settings = this.read();
+    const helper = `cat ${file}`;
+    if (credential === "") {
+      rmSync(file, { force: true });
+      if (settings.apiKeyHelper !== helper) return;
+      delete settings.apiKeyHelper;
+      this.write(settings);
+      this.log("claude apiKeyHelper: removed");
+      return;
+    }
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, credential, { mode: 0o600 });
+    chmodSync(file, 0o600);
+    if (settings.apiKeyHelper === helper) return;
+    settings.apiKeyHelper = helper;
+    this.write(settings);
+    this.log(`claude apiKeyHelper: ${helper}`);
+  }
+
+  private write(settings: Record<string, unknown>): void {
     mkdirSync(dirname(this.file), { recursive: true });
     writeFileSync(this.file, JSON.stringify(settings, null, 2) + "\n");
-    this.log(`claude availableModels: ${models.length > 0 ? models.join(", ") : "(built-in)"}`);
   }
 
   private read(): Record<string, unknown> {

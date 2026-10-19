@@ -4,7 +4,7 @@ import type { Provider, PublicSettings } from "@sessionboxer/protocol";
 export function providerTokenSet(settings: PublicSettings, provider: Provider): boolean {
   switch (provider) {
     case "claude-code":
-      return settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.claudeApi.authTokenSet || settings.claudeApi.apiKeySet;
+      return settings.providerSecretsSet["claude-code"].CLAUDE_CODE_OAUTH_TOKEN || settings.claudeApi.authTokenSet || settings.claudeApi.apiKeySet || settings.claudeApi.credentialCommand !== "";
     case "devin":
       return settings.providerSecretsSet.devin.WINDSURF_API_KEY;
     case "codex":

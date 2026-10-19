@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Company Claude gateways with rotating tokens** (ADR-0090): Global settings → Providers → Claude API gains a **Credential command (apiKeyHelper)**, and **Use this machine's Claude settings** copies the gateway URL and command from your `~/.claude/settings.json`. The Control Plane runs the command on your machine and refreshes the credential in every running Claude Sandbox, where Claude Code picks it up without a restart; Inspect LLM keeps recording through the gateway. Sandbox image changed: Stop → Resume existing Claude sessions.
 - No size cap on prompt attachments: the 512 MB limit on a file attached to a prompt (or on the New session screen) is gone; only free disk space bounds a file.
 - **Bulk detach in a Session's PRs list**: select individual PRs or **Select all**, then **Detach selected** once, without a confirmation dialog. Failed detaches stay selected for retry; nothing changes on GitHub or Bitbucket.
 - Fix: PR URLs the agent only read during a turn (`gh pr list` output, a changelog, an issue page) no longer attach to the Session — one such listing attached every PR of the repository to the PRs tab. The URLs the agent writes in its replies and the one `gh pr create` / `bb pr create` (or a `create_pull_request` tool) prints still do.

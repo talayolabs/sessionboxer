@@ -10,6 +10,7 @@ import { SANDBOX_CA_FILE } from "./ca-certs.js";
 import { ROOT_DIR, SANDBOX_HOST_ALIAS, SANDBOX_NETWORK, sandboxBaseImage, sandboxImage } from "./config.js";
 import { PAYLOAD_DONOR_HELPER, ProviderPayloads } from "./provider-payload.js";
 import { LABEL_PROVIDERS, PREFLIGHT_HELPER, SandboxImages } from "./sandbox-images.js";
+import { HttpError } from "./http-error.js";
 import { log } from "./log.js";
 
 export const LABEL_SESSION = "sessionboxer.session";
@@ -597,15 +598,21 @@ export class SandboxDocker {
 
   /** Where the Control Plane can dial `containerPort` of a running Sandbox. */
   async endpoint(containerId: string, containerPort: number): Promise<Endpoint> {
-    const info = await this.docker.getContainer(containerId).inspect();
+    const info = await this.docker.getContainer(containerId).inspect().catch((e: unknown) => {
+      if (isStatus(e, 404)) throw new HttpError(409, `container ${containerId} is gone; the Sandbox is not running`);
+      throw e;
+    });
+    // A container that just stopped or crashed keeps its network entry but loses its address;
+    // callers race that window (the Session's status catches up a moment later).
+    if (!info.State.Running) throw new HttpError(409, `container ${containerId} is not running; the Sandbox is stopped or restarting`);
     if (this.reach === "localhost") {
       const binding = info.NetworkSettings.Ports[`${containerPort}/tcp`]?.[0];
       const port = Number(binding?.HostPort);
-      if (!port) throw new Error(`container ${containerId} has no published host port for ${containerPort}/tcp`);
+      if (!port) throw new HttpError(503, `container ${containerId} has no published host port for ${containerPort}/tcp`);
       return { host: LOOPBACK, port };
     }
     const net = info.NetworkSettings.Networks[SANDBOX_NETWORK];
-    if (!net?.IPAddress) throw new Error(`container ${containerId} has no address on ${SANDBOX_NETWORK}`);
+    if (!net?.IPAddress) throw new HttpError(503, `container ${containerId} has no address on ${SANDBOX_NETWORK}; retry in a moment`);
     return { host: net.IPAddress, port: containerPort };
   }
 

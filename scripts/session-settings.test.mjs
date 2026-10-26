@@ -17,18 +17,18 @@ const settings = {
   ],
 };
 const defaults = {
-  model: null, options: {}, inspectLlm: true, mcpEnabled: ["github"], utilitiesEnabled: ["eslint"],
+  model: null, options: {}, inspectLlm: true, claudeGateway: true, mcpEnabled: ["github"], utilitiesEnabled: ["eslint"],
   instructions: "Be brief.", autoSnapshot: null, snapshotKeep: null, e2eVerify: null, agentTools: null, approveCreate: null,
   environment: "docker-linux", snapshotId: null, docker: true, cpus: null, memoryGb: null,
   gitName: "Host User", gitEmail: "me@example.com",
 };
 const sessionSettings = {
-  model: "claude-3", options: { effort: "high" }, inspectLlm: false, mcpEnabled: ["slack"], utilitiesEnabled: [],
+  model: "claude-3", options: { effort: "high" }, inspectLlm: false, claudeGateway: false, mcpEnabled: ["slack"], utilitiesEnabled: [],
   instructions: "", autoSnapshot: true, snapshotKeep: 3, e2eVerify: false, agentTools: "all", approveCreate: true,
   sandbox: { environment: "qemu-windows", dockerMode: "none", cpus: 2, memoryGb: 4, gitIdentity: { name: "Dev", email: "dev@example.com" } },
 };
 const sessionDraft = {
-  model: "claude-3", options: { effort: "high" }, inspectLlm: false, mcpEnabled: ["slack"], utilitiesEnabled: [],
+  model: "claude-3", options: { effort: "high" }, inspectLlm: false, claudeGateway: false, mcpEnabled: ["slack"], utilitiesEnabled: [],
   instructions: "", autoSnapshot: true, snapshotKeep: 3, e2eVerify: false, agentTools: "all", approveCreate: true,
   environment: "qemu-windows", snapshotId: null, docker: false, cpus: 2, memoryGb: 4, gitName: "Dev", gitEmail: "dev@example.com",
 };
@@ -51,7 +51,7 @@ test("draftFromSettings: Docker is a yes/no (any mode but none), snapshotId is n
 test("draftToInput: trims the git identity and leaves snapshotId out of the request", () => {
   const input = draftToInput({ ...sessionDraft, snapshotId: "snap", gitName: " Dev ", gitEmail: "dev@example.com " });
   assert.deepEqual(input, {
-    model: "claude-3", options: { effort: "high" }, inspectLlm: false, mcpEnabled: ["slack"], utilitiesEnabled: [],
+    model: "claude-3", options: { effort: "high" }, inspectLlm: false, claudeGateway: false, mcpEnabled: ["slack"], utilitiesEnabled: [],
     instructions: "", autoSnapshot: true, snapshotKeep: 3, e2eVerify: false, agentTools: "all", approveCreate: true,
     sandbox: { environment: "qemu-windows", docker: false, cpus: 2, memoryGb: 4, gitIdentity: { name: "Dev", email: "dev@example.com" } },
   });
@@ -66,7 +66,7 @@ test("draftFromInput: omitted fields follow the defaults; explicit null, false, 
   };
   const saved = structuredClone(input);
   assert.deepEqual(draftFromInput(input, settings), {
-    model: null, options: {}, inspectLlm: false, mcpEnabled: [], utilitiesEnabled: ["eslint"],
+    model: null, options: {}, inspectLlm: false, claudeGateway: true, mcpEnabled: [], utilitiesEnabled: ["eslint"],
     instructions: "", autoSnapshot: null, snapshotKeep: 0, e2eVerify: false, agentTools: null, approveCreate: false,
     environment: "docker-linux", snapshotId: null, docker: false, cpus: null, memoryGb: 8, gitName: "", gitEmail: "other@example.com",
   });

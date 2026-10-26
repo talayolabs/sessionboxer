@@ -56,6 +56,7 @@ export const DAEMON_METHODS = {
   optionSet: "_sessionboxer/option/set",
   claudeModelsSet: "_sessionboxer/claude-models/set",
   claudeApiCredentialSet: "_sessionboxer/claude-api-credential/set",
+  claudeGatewaySet: "_sessionboxer/claude-gateway/set",
   recordingPrefsSet: "_sessionboxer/recording-prefs/set",
   sessionFork: "_sessionboxer/session/fork",
   sessionSwitch: "_sessionboxer/session/switch",
@@ -184,6 +185,8 @@ export const DaemonStatus = z.object({
   llmInspect: z.boolean().default(false),
   /** An `llm/inspect/set` is waiting for the current turn to end. */
   llmInspectPending: z.boolean().default(false),
+  /** The running Agent goes through the Claude API gateway the Sandbox was given (`false`: straight to Anthropic). */
+  claudeGateway: z.boolean().default(true),
   /** The Provider's usage meters as last seen by the Daemon; `null` when it reported none yet. */
   usage: z.object({ windows: z.array(UsageWindow), updatedAt: z.string() }).nullable().default(null),
 });
@@ -462,6 +465,11 @@ export const DaemonClaudeApiCredentialSetParams = z.object({ credential: z.strin
 export type DaemonClaudeApiCredentialSetParams = z.infer<typeof DaemonClaudeApiCredentialSetParams>;
 export const DaemonClaudeApiCredentialSetResult = z.object({ applied: z.boolean() });
 export type DaemonClaudeApiCredentialSetResult = z.infer<typeof DaemonClaudeApiCredentialSetResult>;
+/** Whether Claude Code goes through the gateway (`ANTHROPIC_BASE_URL` + credential) or straight to Anthropic; the Agent restarts in place, after the turn when one is active. */
+export const DaemonClaudeGatewaySetParams = z.object({ enabled: z.boolean() });
+export type DaemonClaudeGatewaySetParams = z.infer<typeof DaemonClaudeGatewaySetParams>;
+export const DaemonClaudeGatewaySetResult = z.object({ applied: z.boolean() });
+export type DaemonClaudeGatewaySetResult = z.infer<typeof DaemonClaudeGatewaySetResult>;
 
 export const DaemonClaudeModelsSetResult = z.object({ applied: z.boolean() });
 export type DaemonClaudeModelsSetResult = z.infer<typeof DaemonClaudeModelsSetResult>;

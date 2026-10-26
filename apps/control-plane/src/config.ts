@@ -245,6 +245,7 @@ export function applySettingsUpdate(current: Settings, update: UpdateSettingsReq
     next.claudeApi.authToken = next.claudeApi.authToken.trim();
     next.claudeApi.apiKey = next.claudeApi.apiKey.trim();
     next.claudeApi.credentialCommand = next.claudeApi.credentialCommand.trim();
+    next.claudeApi.loginCommand = next.claudeApi.loginCommand.trim();
     if (next.claudeApi.baseUrl !== "" && !/^https?:\/\//.test(next.claudeApi.baseUrl)) {
       throw new HttpError(400, "The Claude API base URL must start with http:// or https://.");
     }
@@ -337,6 +338,7 @@ export function toPublicSettings(
       authTokenSet: claudeAuthToken(settings) !== "",
       apiKeySet: claudeApiKey(settings) !== "",
       credentialCommand: claudeApi.credentialCommand,
+      loginCommand: claudeApi.loginCommand,
       effectiveBaseUrl: base.url,
       effectiveBaseUrlSource: base.source,
       host: readClaudeHostSettings(),

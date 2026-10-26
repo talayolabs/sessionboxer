@@ -14,6 +14,7 @@ function toPatch(patch: Partial<SessionSettingsDraft>): SessionSettingsPatch {
     ...(patch.model !== undefined && patch.model !== null ? { model: patch.model } : {}),
     ...(patch.options !== undefined ? { options: patch.options } : {}),
     ...(patch.inspectLlm !== undefined ? { inspectLlm: patch.inspectLlm } : {}),
+    ...(patch.claudeGateway !== undefined ? { claudeGateway: patch.claudeGateway } : {}),
     ...(patch.mcpEnabled !== undefined ? { mcpEnabled: patch.mcpEnabled } : {}),
     ...(patch.utilitiesEnabled !== undefined ? { utilitiesEnabled: patch.utilitiesEnabled } : {}),
     ...(patch.autoSnapshot !== undefined ? { autoSnapshot: patch.autoSnapshot } : {}),

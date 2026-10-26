@@ -16,6 +16,8 @@ import {
   DAEMON_PORT,
   DaemonClaudeModelsSetResult,
   DaemonClaudeApiCredentialSetResult,
+  type DaemonClaudeGatewaySetParams,
+  DaemonClaudeGatewaySetResult,
   DaemonRecordingPrefsSetResult,
   type DaemonRecordingPrefsSetParams,
   DaemonLlmInspectSetResult,
@@ -177,6 +179,9 @@ import type { MacosVms } from "./macos.js";
 
 export { HttpError };
 
+/** What a Claude API gateway says when the credential behind `apiKeyHelper` is no longer good (ADR-0090). */
+const CLAUDE_GATEWAY_AUTH_ERROR = /\b401\b|authenticat|token is (?:invalid|expired)|invalid or expired/i;
+
 /** How a turn ended: ACP's stop reason, `error` for an `agent_error`, `usage_limit` when the Provider refused for lack of credit. */
 export type TurnOutcome = StopReason | "error" | "usage_limit";
 
@@ -218,6 +223,8 @@ type NewSessionDefaults = Pick<
   | "optionsPending"
   | "availableOptions"
   | "inspectLlmPending"
+  | "claudeGatewayPending"
+  | "claudeAuthFailed"
   | "snapshotBytes"
   | "snapshotCount"
   | "branches"
@@ -245,6 +252,8 @@ function newSessionDefaults(now: string, createdBy: string | null | undefined): 
     optionsPending: false,
     availableOptions: [],
     inspectLlmPending: false,
+    claudeGatewayPending: false,
+    claudeAuthFailed: false,
     snapshotBytes: 0,
     snapshotCount: 0,
     branches: [],
@@ -1240,6 +1249,7 @@ export class SessionManager {
         model: input.model ?? null,
         options: input.options ?? {},
         inspectLlm: req.provider === "claude-code" && (input.inspectLlm ?? true),
+        claudeGateway: input.claudeGateway ?? true,
         mcpEnabled,
         utilitiesEnabled,
         instructions: (input.instructions ?? settings.instructions).trim(),
@@ -1396,6 +1406,7 @@ export class SessionManager {
       model: input.model !== undefined ? input.model : sameAgent ? base.model : null,
       options: input.options ?? (sameAgent ? base.options : {}),
       inspectLlm: provider === "claude-code" && (input.inspectLlm ?? (sameAgent ? base.inspectLlm : true)),
+      claudeGateway: input.claudeGateway ?? (sameAgent ? base.claudeGateway : true),
       mcpEnabled: knownMcpIds(settings, input.mcpEnabled ?? base.mcpEnabled),
       utilitiesEnabled: knownUtilityIds(settings, input.utilitiesEnabled ?? base.utilitiesEnabled),
       instructions: (input.instructions ?? base.instructions).trim(),
@@ -1549,6 +1560,7 @@ export class SessionManager {
       if (settings.sandboxDockerAddressPool) env.SESSIONBOXER_DOCKER_POOL = settings.sandboxDockerAddressPool;
     }
     if (session.settings.inspectLlm) env.SESSIONBOXER_INSPECT_LLM = "1";
+    if (!session.settings.claudeGateway) env.SESSIONBOXER_CLAUDE_GATEWAY = "0";
     Object.assign(env, this.vms(session.settings.sandbox.environment)?.sandboxEnv(session.id) ?? {});
     if (gitIdentity.name) {
       env.GIT_AUTHOR_NAME = gitIdentity.name;
@@ -2264,8 +2276,8 @@ export class SessionManager {
       // The queue survives a stop of an idle Sandbox (it plays on resume); stopping mid-turn
       // cancels that turn, and like any cancelled turn it pauses the queue.
       const queueRunning = s.queueRunning && s.status !== "running";
-      if (queueRunning !== s.queueRunning || s.mcpPending || s.modelPending || s.optionsPending || s.inspectLlmPending) {
-        this.update(id, { queueRunning, mcpPending: false, modelPending: false, optionsPending: false, inspectLlmPending: false });
+      if (queueRunning !== s.queueRunning || s.mcpPending || s.modelPending || s.optionsPending || s.inspectLlmPending || s.claudeGatewayPending) {
+        this.update(id, { queueRunning, mcpPending: false, modelPending: false, optionsPending: false, inspectLlmPending: false, claudeGatewayPending: false });
       }
       if (s.status === "running") await this.cancelAndWait(id);
       this.e2e.abortActive(id, "The Sandbox was stopped during the verification.");
@@ -2355,6 +2367,7 @@ export class SessionManager {
       ...(patch.model !== undefined ? { model: patch.model } : {}),
       ...(patch.options !== undefined ? { options: { ...current.settings.options, ...patch.options } } : {}),
       ...(patch.inspectLlm !== undefined ? { inspectLlm: patch.inspectLlm && current.provider === "claude-code" } : {}),
+      ...(patch.claudeGateway !== undefined ? { claudeGateway: patch.claudeGateway } : {}),
       ...(patch.autoSnapshot !== undefined ? { autoSnapshot: patch.autoSnapshot } : {}),
       ...(patch.snapshotKeep !== undefined ? { snapshotKeep: patch.snapshotKeep } : {}),
       ...(patch.e2eVerify !== undefined ? { e2eVerify: patch.e2eVerify } : {}),
@@ -2382,7 +2395,8 @@ export class SessionManager {
     if (patch.model !== undefined) await this.pushModel(id);
     if (patch.options !== undefined) await this.pushOptions(id, patch.options);
     if (patch.inspectLlm !== undefined) await this.pushLlmInspect(id);
-    return patch.mcpEnabled !== undefined || patch.utilitiesEnabled !== undefined || policyChanged || patch.model !== undefined || patch.options !== undefined || patch.inspectLlm !== undefined
+    if (patch.claudeGateway !== undefined) await this.pushClaudeGateway(id);
+    return patch.mcpEnabled !== undefined || patch.utilitiesEnabled !== undefined || policyChanged || patch.model !== undefined || patch.options !== undefined || patch.inspectLlm !== undefined || patch.claudeGateway !== undefined
       ? this.get(id)
       : s;
   }
@@ -2571,6 +2585,60 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Tells the Session's Daemon whether Claude Code goes through the configured gateway or straight
+   * to Anthropic (ADR-0090); same in-place Agent restart as `pushLlmInspect`. Leaving the gateway
+   * also clears its login notice. Older Daemons only know the gateway.
+   */
+  async pushClaudeGateway(id: string): Promise<void> {
+    const s = this.get(id);
+    const client = this.clients.get(id);
+    if (s.provider !== "claude-code" || !client?.connected) return;
+    if (!s.settings.claudeGateway && s.claudeAuthFailed) this.update(id, { claudeAuthFailed: false });
+    try {
+      const params: DaemonClaudeGatewaySetParams = { enabled: s.settings.claudeGateway };
+      const result = DaemonClaudeGatewaySetResult.parse(await client.request(DAEMON_METHODS.claudeGatewaySet, params));
+      this.update(id, { claudeGatewayPending: !result.applied });
+    } catch (e) {
+      if (e instanceof DaemonRpcError && e.code === DAEMON_ERROR_CODES.method_not_found) {
+        if (!s.settings.claudeGateway) throw new HttpError(502, "The Sandbox runs an older Daemon that cannot leave the Claude gateway; Stop and Resume the session to refresh it.");
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /** The gateway accepted a credential again (the login command ran): the notice goes on every Session. */
+  clearClaudeAuthFailed(): void {
+    for (const s of this.list()) if (s.claudeAuthFailed) this.update(s.id, { claudeAuthFailed: false });
+  }
+
+  /**
+   * A gateway that refuses the credential (the login behind the credential command expired, ADR-0090)
+   * ends the turn with its 401; the flag drives the Session's login notice until a turn succeeds.
+   */
+  /**
+   * `claudeAuthFailed` (ADR-0090): set when the gateway answers 401 to a Messages call (seen as an
+   * `llm_call` with Inspect LLM on, side calls included — they are the first to carry a renewed
+   * credential) or when a turn fails with an error that reads like it; cleared by a Messages call
+   * that gets through, or by the agent's next reply (Inspect LLM off).
+   */
+  private trackClaudeAuth(id: string, s: Session, body: DaemonEvent["body"]): void {
+    let failed: boolean;
+    if (body.type === "llm_call") {
+      if (!body.call.path.startsWith("/v1/messages") || body.call.status === null) return;
+      if (body.call.status === 401) failed = true;
+      else if (body.call.status < 400) failed = false;
+      else return;
+    } else if (body.type === "agent_error") {
+      if (!CLAUDE_GATEWAY_AUTH_ERROR.test(body.message)) return;
+      failed = true;
+    } else if (body.type === "update" && body.update.sessionUpdate === "agent_message_chunk") failed = false;
+    else return;
+    if (failed && (!s.settings.claudeGateway || this.settings().claudeApi.credentialCommand === "")) return;
+    if (failed !== s.claudeAuthFailed) this.update(id, { claudeAuthFailed: failed });
+  }
+
   /** Refreshes the credential of every live Claude Session (the timer, and the credential command changing). */
   async pushClaudeApiCredentialToAll(): Promise<void> {
     for (const s of this.list()) {
@@ -2732,6 +2800,7 @@ export class SessionManager {
     const seeded = this.seeding.get(id)?.catch(() => undefined) ?? Promise.resolve();
     this.pushClaudeModels(id)
       .then(() => this.pushClaudeApiCredential(id))
+      .then(() => this.pushClaudeGateway(id))
       .then(() => this.pushLlmInspect(id))
       .then(() => seeded)
       .then(() => this.pushSessionInfo(id))
@@ -2759,6 +2828,8 @@ export class SessionManager {
       this.update(id, { usage: { ...current.usage, windows: mergeUsageWindows(current.usage.windows, status.usage.windows), updatedAt: status.usage.updatedAt } });
     }
     if (status.llmInspectPending !== s.inspectLlmPending) this.update(id, { inspectLlmPending: status.llmInspectPending });
+    const claudeGatewayPending = status.llmInspectPending && status.claudeGateway !== s.settings.claudeGateway;
+    if (claudeGatewayPending !== s.claudeGatewayPending) this.update(id, { claudeGatewayPending });
     if (status.models && this.db.setProviderModels(s.provider, status.models)) {
       this.broadcast({ type: "models", provider: s.provider, models: status.models });
     }
@@ -2799,6 +2870,10 @@ export class SessionManager {
       this.db.renameBranch(id, stored.branchId, branchTitle(ev.body.text));
       const s = this.db.getSession(id);
       if (s) this.broadcast({ type: "session", session: s });
+    }
+    if (ev.body.type === "llm_call" || ev.body.type === "agent_error" || (ev.body.type === "update" && ev.body.update.sessionUpdate === "agent_message_chunk")) {
+      const s = this.db.getSession(id);
+      if (s?.provider === "claude-code") this.trackClaudeAuth(id, s, ev.body);
     }
     if (ev.body.type === "turn_ended" || ev.body.type === "agent_error") {
       this.turnEnds.set(id, (this.turnEnds.get(id) ?? 0) + 1);

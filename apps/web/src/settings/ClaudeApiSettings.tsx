@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ANTHROPIC_DEFAULT_BASE_URL, type PublicSettings } from "@sessionboxer/protocol";
+import { ClaudeApiLoginOutput, useClaudeApiLogin } from "./ClaudeApiLogin";
 import { api } from "../api";
 import { Caption } from "../ui";
 import type { Setter } from "./shared";
@@ -12,6 +13,8 @@ export function ClaudeApiSettings({
   setClaudeBaseUrl,
   claudeCredentialCommand,
   setClaudeCredentialCommand,
+  claudeLoginCommand,
+  setClaudeLoginCommand,
   claudeAuthToken,
   setClaudeAuthToken,
   claudeApiKey,
@@ -27,6 +30,8 @@ export function ClaudeApiSettings({
   setClaudeBaseUrl: Setter<string>;
   claudeCredentialCommand: string;
   setClaudeCredentialCommand: Setter<string>;
+  claudeLoginCommand: string;
+  setClaudeLoginCommand: Setter<string>;
   claudeAuthToken: string;
   setClaudeAuthToken: Setter<string>;
   claudeApiKey: string;
@@ -40,6 +45,8 @@ export function ClaudeApiSettings({
   const claudeApiKeySet = settings.claudeApi.apiKeySet && !forgetClaudeApiKey;
   const host = settings.claudeApi.host;
   const [importing, setImporting] = useState(false);
+  const login = useClaudeApiLogin();
+  const loggingIn = login.state?.running === true;
   const [importError, setImportError] = useState<string | null>(null);
   const importHost = async () => {
     setImporting(true);
@@ -111,6 +118,31 @@ export function ClaudeApiSettings({
           placeholder="e.g. /home/me/.local/bin/my-gateway token"
           spellCheck={false}
         />
+      </label>
+      <label>
+        <span className="label-row">
+          <Caption
+            help={
+              <p>
+                The command that renews the login behind the credential command (the gateway&apos;s SSO), run on this machine when the gateway
+                rejects the credential: from the button here, or from the notice a Session shows when that happens. Its output is shown as it
+                runs (a device code and a URL to open — click it; the browser has the SSO session); a command that waits for the browser has
+                five minutes.
+              </p>
+            }
+          >
+            Login command
+          </Caption>
+        </span>
+        <input value={claudeLoginCommand} onChange={(e) => setClaudeLoginCommand(e.target.value)} placeholder="e.g. /home/me/.local/bin/my-gateway login" spellCheck={false} />
+        {settings.claudeApi.loginCommand !== "" && (
+          <p className="muted">
+            <button type="button" className="link" disabled={loggingIn} onClick={() => void login.start()}>
+              {loggingIn ? "Running login command…" : "Run the login command now"}
+            </button>
+          </p>
+        )}
+        <ClaudeApiLoginOutput login={login} />
       </label>
       {host && (
         <p className="muted">

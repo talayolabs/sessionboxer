@@ -26,6 +26,8 @@ import {
   DaemonClaudeModelsSetParams,
   DaemonClaudeApiCredentialSetParams,
   type DaemonClaudeApiCredentialSetResult,
+  DaemonClaudeGatewaySetParams,
+  type DaemonClaudeGatewaySetResult,
   DaemonCodexAuthParams,
   DaemonCursorAuthParams,
   DaemonPiAuthParams,
@@ -179,6 +181,7 @@ const builtinMcps = (): BuiltinMcp[] => [
   ...(sessionboxerTools ? [{ name: BRIDGE_SERVICE_SESSIONBOXER, command: agentMcpCommand }] : []),
 ];
 const tmpfsDir = env.SESSIONBOXER_TMPFS ?? "/dev/shm/sessionboxer";
+const CLAUDE_API_CREDENTIAL_FILE = `${tmpfsDir}/claude-api-credential`;
 /**
  * A `qemu-windows` (ADR-0057, ADR-0060) or `qemu-macos` (ADR-0059, ADR-0061) Session: the Agent, its
  * MCP servers, the repositories and the Terminal run inside the VM next to this Sandbox, reached over
@@ -444,10 +447,16 @@ const instructions = env.SESSIONBOXER_INSTRUCTIONS ?? "";
 
 /**
  * Claude Code's model API calls can go through a loopback proxy that keeps the exact bodies
- * (ADR-0032). Its upstream is the `ANTHROPIC_BASE_URL` the Sandbox was given (a company proxy) or
+ * (ADR-0032). Its upstream is the `ANTHROPIC_BASE_URL` the Sandbox was given (a company gateway) or
  * Anthropic; the Daemon's own environment keeps that value, only the Agent process sees the loopback.
+ * The Session can leave the gateway for Anthropic directly (`claudeGatewaySet`, ADR-0090): then the
+ * Agent gets Anthropic's URL, no gateway credential, and the inspector forwards there.
  */
-const llmUpstream = env.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_DEFAULT_BASE_URL;
+const claudeGatewayUrl = env.ANTHROPIC_BASE_URL?.trim() || "";
+let claudeGateway = claudeGatewayUrl !== "" && env.SESSIONBOXER_CLAUDE_GATEWAY !== "0";
+/** The last gateway credential the Control Plane pushed; served again when the Session returns to the gateway. */
+let claudeGatewayCredential = "";
+const claudeUpstream = (): string => (claudeGateway && claudeGatewayUrl !== "" ? claudeGatewayUrl : ANTHROPIC_DEFAULT_BASE_URL);
 
 /**
  * The Provider's usage meters (ADR-0053): Anthropic's `anthropic-ratelimit-unified-*` response
@@ -480,7 +489,7 @@ const llmInspector =
     ? new LlmInspector({
         port: LLM_INSPECTOR_PORT,
         ...(guest ? { host: "0.0.0.0" } : {}),
-        upstream: llmUpstream,
+        upstream: claudeUpstream(),
         dir: `${tmpfsDir}/llm`,
         log,
         onCall: (call) => emit({ type: "llm_call", call }),
@@ -500,10 +509,26 @@ const llmInspector =
  * compaction at a fifth of the real window. When the loopback only forwards to Anthropic, this
  * flag tells it so.
  */
-const LLM_INSPECTOR_ENV: Record<string, string> = {
-  ANTHROPIC_BASE_URL: `http://${llmInspectorHost}:${LLM_INSPECTOR_PORT}`,
-  ...(isAnthropicApi(llmUpstream) ? { _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1" } : {}),
-};
+const LLM_INSPECTOR_BASE_URL = `http://${llmInspectorHost}:${LLM_INSPECTOR_PORT}`;
+/**
+ * The Agent's environment for the current inspection and gateway choices. Off the gateway, Anthropic's
+ * URL replaces the Sandbox's and the gateway's static token (if any) is blanked so Claude Code falls
+ * back to its own login; `SESSIONBOXER_CLAUDE_GATEWAY` marks the started Agent's choice for `status`.
+ */
+function claudeAgentEnv(): Record<string, string> {
+  const upstream = claudeUpstream();
+  const inspect = llmInspectRequested
+    ? { ANTHROPIC_BASE_URL: LLM_INSPECTOR_BASE_URL, ...(isAnthropicApi(upstream) ? { _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1" } : {}) }
+    : {};
+  if (claudeGateway || claudeGatewayUrl === "") return inspect;
+  return {
+    ANTHROPIC_BASE_URL: ANTHROPIC_DEFAULT_BASE_URL,
+    ...(env.ANTHROPIC_AUTH_TOKEN !== undefined ? { ANTHROPIC_AUTH_TOKEN: "" } : {}),
+    ...(env.ANTHROPIC_API_KEY !== undefined ? { ANTHROPIC_API_KEY: "" } : {}),
+    SESSIONBOXER_CLAUDE_GATEWAY: "0",
+    ...inspect,
+  };
+}
 
 function isAnthropicApi(url: string): boolean {
   try {
@@ -522,7 +547,15 @@ async function setLlmInspect(enabled: boolean): Promise<DaemonLlmInspectSetResul
   if (!llmInspector) return { applied: true, supported: false };
   llmInspectRequested = enabled;
   if (enabled && !llmInspector.listening) await llmInspector.start();
-  return { applied: agent.setAgentEnv(enabled ? LLM_INSPECTOR_ENV : {}), supported: true };
+  return { applied: agent.setAgentEnv(claudeAgentEnv()), supported: true };
+}
+
+/** Puts the gateway credential in place (gateway on) or takes it out (off), then re-points Agent and inspector. */
+function setClaudeGateway(enabled: boolean): DaemonClaudeGatewaySetResult {
+  claudeGateway = enabled && claudeGatewayUrl !== "";
+  if (claudeSettings && !guest) claudeSettings.setApiKeyHelperCredential(CLAUDE_API_CREDENTIAL_FILE, claudeGateway ? claudeGatewayCredential : "");
+  llmInspector?.setUpstream(claudeUpstream());
+  return { applied: agent.setAgentEnv(claudeAgentEnv()) };
 }
 
 const repos = guest ? new Repos(workspace, log, new GuestRepoHost(guest)) : new Repos(workspace, log);
@@ -704,7 +737,8 @@ function status(): DaemonStatus {
     options: agent.options,
     optionValues: agent.optionValues,
     optionsPending: agent.optionsPending,
-    llmInspect: agent.startedAgentEnv.ANTHROPIC_BASE_URL === LLM_INSPECTOR_ENV.ANTHROPIC_BASE_URL,
+    llmInspect: agent.startedAgentEnv.ANTHROPIC_BASE_URL === LLM_INSPECTOR_BASE_URL,
+    claudeGateway: agent.startedAgentEnv.SESSIONBOXER_CLAUDE_GATEWAY !== "0",
     llmInspectPending: agent.agentEnvPendingChange,
     usage,
   };
@@ -824,8 +858,13 @@ async function handle(ws: WebSocket, method: string, params: unknown): Promise<u
       const p = DaemonClaudeApiCredentialSetParams.parse(params);
       // A guest VM runs Claude Code on its own filesystem, where neither the tmpfs file nor `cat` exist (Windows).
       if (!claudeSettings || guest) return { applied: false } satisfies DaemonClaudeApiCredentialSetResult;
-      claudeSettings.setApiKeyHelperCredential(`${tmpfsDir}/claude-api-credential`, p.credential);
+      claudeGatewayCredential = p.credential;
+      if (claudeGateway) claudeSettings.setApiKeyHelperCredential(CLAUDE_API_CREDENTIAL_FILE, p.credential);
       return { applied: true } satisfies DaemonClaudeApiCredentialSetResult;
+    }
+    case DAEMON_METHODS.claudeGatewaySet: {
+      const p = DaemonClaudeGatewaySetParams.parse(params);
+      return setClaudeGateway(p.enabled);
     }
     case DAEMON_METHODS.llmInspectSet: {
       const p = DaemonLlmInspectSetParams.parse(params);
@@ -991,8 +1030,11 @@ if (llmInspectRequested) {
   // (the Agent waits for the MCP set, which the Control Plane sends after the inspection state).
   setLlmInspect(true).catch((e: unknown) => {
     log(`llm inspector start failed, the Agent talks to the upstream directly: ${String(e)}`);
-    agent.setAgentEnv({});
+    llmInspectRequested = false;
+    agent.setAgentEnv(claudeAgentEnv());
   });
+} else if (!claudeGateway && claudeGatewayUrl !== "") {
+  agent.setAgentEnv(claudeAgentEnv());
 }
 // The Control Plane sends the MCP server set right after connecting, which warms the Agent up.
 // Should it never come (older Control Plane), start without user servers so prompts still work.

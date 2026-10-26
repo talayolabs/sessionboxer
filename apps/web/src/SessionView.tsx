@@ -30,6 +30,7 @@ import { isRunOpen } from "./E2e";
 import { FORK_NOW } from "./ForkDialog";
 import { type ContextState } from "./context-model";
 import { Modal } from "./ui";
+import { ClaudeGatewayNotice } from "./session/ClaudeGatewayNotice";
 import { type TerminalFocus } from "./Terminal";
 import { type CodeTarget } from "./Code";
 import { OpenFile } from "./FileLink";
@@ -331,6 +332,7 @@ export function SessionView({
         setForkFrom={setForkFrom} setSyncOpen={dialogs.setSyncOpen} setUsbOpen={dialogs.setUsbOpen}
         setSettingsOpen={dialogs.setSettingsOpen} setReposOpen={dialogs.setReposOpen} />
       {session.error && <div className="banner banner-error">{session.error}</div>}
+      {session.claudeAuthFailed && <ClaudeGatewayNotice session={session} settings={settings} run={run} />}
       <SessionDialogs {...dialogs} session={session} sessions={sessions} settings={settings} onSettings={onSettings}
         models={models} options={options} allModels={allModels} allOptions={allOptions}
         snapshots={snapshots} saved={saved} llmCalls={llmCalls} run={run} onForked={onForked}

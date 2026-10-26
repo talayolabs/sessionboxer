@@ -52,6 +52,7 @@ export function useProvidersSettings(settings: PublicSettings) {
     forgetQwenApiKeys: false,
     claudeBaseUrl: settings.claudeApi.baseUrl,
     claudeCredentialCommand: settings.claudeApi.credentialCommand,
+    claudeLoginCommand: settings.claudeApi.loginCommand,
     claudeAuthToken: "",
     claudeApiKey: "",
     forgetClaudeAuthToken: false,
@@ -120,6 +121,8 @@ export function ProvidersSettings({
   setClaudeBaseUrl,
   claudeCredentialCommand,
   setClaudeCredentialCommand,
+  claudeLoginCommand,
+  setClaudeLoginCommand,
   claudeAuthToken,
   setClaudeAuthToken,
   claudeApiKey,
@@ -194,6 +197,8 @@ export function ProvidersSettings({
   setClaudeBaseUrl: Setter<string>;
   claudeCredentialCommand: string;
   setClaudeCredentialCommand: Setter<string>;
+  claudeLoginCommand: string;
+  setClaudeLoginCommand: Setter<string>;
   claudeAuthToken: string;
   setClaudeAuthToken: Setter<string>;
   claudeApiKey: string;
@@ -654,6 +659,8 @@ export function ProvidersSettings({
         setClaudeBaseUrl={setClaudeBaseUrl}
         claudeCredentialCommand={claudeCredentialCommand}
         setClaudeCredentialCommand={setClaudeCredentialCommand}
+        claudeLoginCommand={claudeLoginCommand}
+        setClaudeLoginCommand={setClaudeLoginCommand}
         claudeAuthToken={claudeAuthToken}
         setClaudeAuthToken={setClaudeAuthToken}
         claudeApiKey={claudeApiKey}

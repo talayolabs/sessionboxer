@@ -36,6 +36,10 @@ export const Session = z.object({
   availableOptions: z.array(AgentOption).default([]),
   /** The Agent is busy; the last `inspectLlm` change is applied when the current turn ends. */
   inspectLlmPending: z.boolean().default(false),
+  /** The Agent is busy; the last `claudeGateway` change is applied when the current turn ends. */
+  claudeGatewayPending: z.boolean().default(false),
+  /** The Claude API gateway refused the credential on the last turn (ADR-0090); cleared by the next reply. */
+  claudeAuthFailed: z.boolean().default(false),
   containerId: z.string().nullable(),
   /** The image the Sandbox was created from (ADR-0088); `null` until it is, and for Sessions created before images were recorded. */
   image: SandboxImageInfo.nullable().default(null),

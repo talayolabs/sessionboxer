@@ -100,6 +100,7 @@ import type {
   UpdateSettingsRequest,
   WindowsBaseStatus,
   MacosBaseStatus,
+  ClaudeApiLogin,
 } from "@sessionboxer/protocol";
 
 /** Fired on `window` when the Control Plane answers 401 to anything but a login attempt: the device cookie is gone or revoked. */
@@ -209,6 +210,9 @@ export const api = {
     request<PublicSettings>(`/connectors/servers/${serverId}/disconnect`, { method: "POST" }),
   providerHostLogin: (provider: Provider) => request<ProviderHostLogin>(`/providers/${provider}/host-login`),
   claudeApiImportHost: () => request<PublicSettings>("/claude-api/import-host", { method: "POST" }),
+  claudeApiLoginStart: () => request<ClaudeApiLogin>("/claude-api/login", { method: "POST" }),
+  claudeApiLogin: () => request<ClaudeApiLogin>("/claude-api/login"),
+  claudeApiLoginCancel: () => request<ClaudeApiLogin>("/claude-api/login", { method: "DELETE" }),
   providerImportHostLogin: (provider: Provider) =>
     request<PublicSettings>(`/providers/${provider}/host-login/import`, { method: "POST" }),
   providerLoginStart: (provider: Provider) => request<ProviderLoginFlow>(`/providers/${provider}/login`, { method: "POST" }),

@@ -30,7 +30,7 @@ test("a fresh database has exactly these tables", () => {
   assert.deepEqual(columns(db, "sessions"), [
     "id", "title", "provider", "status", "workspace_source", "repos", "settings", "container_id", "image", "error",
     "queue_running", "disk_bytes", "mcp_pending", "model_pending", "options_pending", "available_options",
-    "inspect_llm_pending", "active_branch_id", "usage", "usb", "created_by", "pinned", "folder_id",
+    "inspect_llm_pending", "claude_gateway_pending", "claude_auth_failed", "active_branch_id", "usage", "usb", "created_by", "pinned", "folder_id",
     "created_at", "updated_at",
   ]);
   assert.deepEqual(columns(db, "events"), ["session_id", "seq", "branch_id", "ts", "body"]);
@@ -131,7 +131,7 @@ test("applySettingsUpdate rejects what the UI must not store, as HTTP 400", () =
     assert.throws(() => applySettingsUpdate(base, bad), (e) => e instanceof HttpError && e.status === 400, JSON.stringify(bad));
   }
   const claude = applySettingsUpdate(base, { claudeApi: { baseUrl: " https://gw.example.net ", credentialCommand: " gw token " } });
-  assert.deepEqual(claude.claudeApi, { baseUrl: "https://gw.example.net", authToken: "", apiKey: "", credentialCommand: "gw token" });
+  assert.deepEqual(claude.claudeApi, { baseUrl: "https://gw.example.net", authToken: "", apiKey: "", credentialCommand: "gw token", loginCommand: "" });
   const trimmed = applySettingsUpdate(base, { tunnels: { sessionboxer: { server: " https://tunnel.example.com// ", name: "My-Box" } } });
   assert.equal(trimmed.tunnels.sessionboxer.server, "https://tunnel.example.com");
   assert.equal(trimmed.tunnels.sessionboxer.name, "my-box");

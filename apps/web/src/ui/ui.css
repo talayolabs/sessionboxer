@@ -80,6 +80,9 @@
 .banner { padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--border); }
 .banner-error { background: color-mix(in srgb, var(--error) 22%, var(--bg)); color: color-mix(in srgb, var(--error) 60%, var(--text)); }
 .banner-warn { background: color-mix(in srgb, var(--warn) 22%, var(--bg)); color: color-mix(in srgb, var(--warn) 60%, var(--text)); }
+.claude-gateway-notice .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.claude-gateway-notice .row > span { flex: 1 1 20rem; }
+.claude-gateway-notice pre { margin: 0.5rem 0 0; max-height: 12rem; overflow: auto; white-space: pre-wrap; font-size: 0.85em; }
 .banner-ok { background: color-mix(in srgb, var(--ok) 18%, var(--bg)); color: color-mix(in srgb, var(--ok) 60%, var(--text)); border-color: color-mix(in srgb, var(--ok) 55%, var(--bg)); cursor: default; }
 .dialog-banner { border: 1px solid var(--error); border-radius: var(--radius); font-size: var(--fs-md); }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: var(--z-zen); max-width: 380px; }

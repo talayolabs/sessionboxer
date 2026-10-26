@@ -687,6 +687,25 @@ export function SessionSettingsForm({
               {pending?.inspectLlmPending && <span className="warn-sign">pending</span>}
             </Caption>
           </label>
+          {claudeGatewayConfigured(settings) && (
+            <label className="check switch">
+              <input type="checkbox" checked={value.claudeGateway} disabled={disabled} onChange={(e) => onChange({ claudeGateway: e.target.checked })} />
+              <span className="slider" aria-hidden="true" />
+              <Caption
+                help={
+                  <p>
+                    Sends Claude Code&apos;s model calls through the Claude API gateway of the global settings ({settings.claudeApi.effectiveBaseUrl})
+                    with its credential. Off, this Session talks to Anthropic directly with the Claude login, the way a Session without a gateway
+                    does; a gateway policy that blocks a request does not stop the Session then. Inspect LLM calls works either way.
+                    {live ? ` ${applyNote(status, "restart")}` : ""}
+                  </p>
+                }
+              >
+                Claude API gateway
+                {pending?.claudeGatewayPending && <span className="warn-sign">pending</span>}
+              </Caption>
+            </label>
+          )}
         </section>
       )}
     </div>
@@ -694,6 +713,11 @@ export function SessionSettingsForm({
 }
 
 /** What picking an Environment means on this host, or why it cannot be picked (ADR-0057, ADR-0060, ADR-0061). */
+/** The global settings name a Claude API gateway (a base URL other than Anthropic's, or a credential command) that a Session can leave (ADR-0090). */
+function claudeGatewayConfigured(settings: PublicSettings): boolean {
+  return settings.claudeApi.effectiveBaseUrlSource !== "default" || settings.claudeApi.credentialCommand !== "";
+}
+
 function environmentNote(settings: PublicSettings, environment: Environment): ReactNode {
   const availability = settings.environments[environment];
   if (!availability.available) {

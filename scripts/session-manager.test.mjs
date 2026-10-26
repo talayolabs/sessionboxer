@@ -902,3 +902,72 @@ test("Claude API credential (ADR-0090): pushed to connected Claude Sessions only
   assert.equal(calls.length, 3, "a failing command pushes nothing");
   assert.ok(h.log.some((l) => l.includes("claude api credential push claude failed") && l.includes("gateway helper exited 1")));
 });
+
+test("Claude API gateway switch (ADR-0090): pushed to connected Claude Sessions, leaving the gateway clears the login notice, an older Daemon refuses to leave", async () => {
+  const h = makeManager({ claudeApi: { credentialCommand: "gw token", loginCommand: "gw login" } });
+  const on = h.addSession({ id: "on" });
+  const off = h.addSession({ id: "off" });
+  const old = h.addSession({ id: "old" });
+  const calls = [];
+  const client = (id, result) => ({
+    connected: true,
+    close() {},
+    async request(method, params) {
+      calls.push([id, method, params]);
+      if (result instanceof Error) throw result;
+      return result;
+    },
+  });
+  h.manager.clients.set(on.id, client(on.id, { applied: true }));
+  h.manager.clients.set(off.id, client(off.id, { applied: false }));
+  h.manager.clients.set(old.id, client(old.id, new DaemonRpcError(DAEMON_ERROR_CODES.method_not_found, "no such method")));
+  h.manager.update(off.id, { settings: { ...h.manager.get(off.id).settings, claudeGateway: false }, claudeAuthFailed: true });
+  h.manager.update(old.id, { settings: { ...h.manager.get(old.id).settings, claudeGateway: false } });
+  h.manager.update(on.id, { claudeAuthFailed: true });
+  await h.manager.pushClaudeGateway(on.id);
+  await h.manager.pushClaudeGateway(off.id);
+  await assert.rejects(() => h.manager.pushClaudeGateway(old.id), (e) => e instanceof HttpError && e.status === 502);
+  assert.deepEqual(calls, [
+    ["on", DAEMON_METHODS.claudeGatewaySet, { enabled: true }],
+    ["off", DAEMON_METHODS.claudeGatewaySet, { enabled: false }],
+    ["old", DAEMON_METHODS.claudeGatewaySet, { enabled: false }],
+  ]);
+  assert.equal(h.manager.get(on.id).claudeGatewayPending, false);
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, true, "staying on the gateway keeps the notice");
+  assert.equal(h.manager.get(off.id).claudeGatewayPending, true, "the Agent was busy: applied after the turn");
+  assert.equal(h.manager.get(off.id).claudeAuthFailed, false, "leaving the gateway clears the notice");
+  h.manager.clearClaudeAuthFailed();
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, false);
+});
+
+test("claudeAuthFailed (ADR-0090): a 401 Messages call or an auth-looking agent_error sets it on a gateway Session, a call that gets through or a reply clears it, other events leave it", () => {
+  const h = makeManager({ claudeApi: { credentialCommand: "gw token" } });
+  const on = h.addSession({ id: "on" });
+  const off = h.addSession({ id: "off" });
+  h.manager.update(off.id, { settings: { ...h.manager.get(off.id).settings, claudeGateway: false } });
+  const call = (status, path = "/v1/messages?beta=true") => ({
+    type: "llm_call",
+    call: { id: `c${status}`, ordinal: 1, kind: "side", method: "POST", path, model: "claude", status, error: null, startedAt: "2026-01-01T00:01:00.000Z", durationMs: 1, requestBytes: 1, responseBytes: 1 },
+  });
+  let seq = 0;
+  const feed = (id, body) => h.manager.onDaemonEvent(id, { epoch: "e1", seq: ++seq, ts: "2026-01-01T00:01:00.000Z", body });
+  feed(on.id, call(401, "/api/hello"));
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, false, "only Messages calls count");
+  feed(on.id, call(401));
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, true);
+  feed(on.id, { type: "status", status: "idle" });
+  feed(on.id, { type: "turn_ended", stopReason: "end_turn" });
+  feed(on.id, call(500));
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, true, "unrelated events keep the notice");
+  feed(on.id, call(200));
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, false);
+  feed(on.id, { type: "agent_error", message: "API Error: 401 Proxy token is invalid or expired" });
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, true);
+  feed(on.id, { type: "update", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } } });
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, false);
+  feed(on.id, { type: "agent_error", message: "Rate limit reached" });
+  assert.equal(h.manager.get(on.id).claudeAuthFailed, false);
+  feed(off.id, call(401));
+  feed(off.id, { type: "agent_error", message: "Authentication required" });
+  assert.equal(h.manager.get(off.id).claudeAuthFailed, false, "off the gateway the 401 is Anthropic's, not the gateway's");
+});

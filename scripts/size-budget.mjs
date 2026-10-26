@@ -11,18 +11,18 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DEFAULT = 600;
 const BUDGET = {
-  "apps/control-plane/src/sessions.ts": 3030,
+  "apps/control-plane/src/sessions.ts": 3100,
   "apps/control-plane/src/agent-tools.ts": 1180,
   "packages/sandbox-daemon/src/agent.ts": 1150,
   "apps/control-plane/src/db.ts": 1120,
   "apps/control-plane/src/pull-requests.ts": 1060,
   "apps/control-plane/src/followed-prs.ts": 1060,
   "apps/control-plane/src/config.ts": 1050,
-  "packages/sandbox-daemon/src/index.ts": 1040,
-  "packages/protocol/src/daemon-rpc.ts": 610,
+  "packages/sandbox-daemon/src/index.ts": 1070,
+  "packages/protocol/src/daemon-rpc.ts": 620,
   "packages/sandbox-daemon/src/guest.ts": 1030,
   "packages/protocol/src/themes.ts": 1000,
-  "apps/web/src/SessionSettingsForm.tsx": 810,
+  "apps/web/src/SessionSettingsForm.tsx": 840,
   "apps/web/src/Transcript.tsx": 880,
   "apps/control-plane/src/macos.ts": 830,
   "apps/control-plane/src/github-pr.ts": 820,

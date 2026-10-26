@@ -70,6 +70,8 @@ interface SessionRow {
   /** JSON array of `AgentOption`. */
   available_options: string;
   inspect_llm_pending: number;
+  claude_gateway_pending: number;
+  claude_auth_failed: number;
   active_branch_id: string;
   usage: string;
   /** JSON `SessionUsb`, or NULL. */
@@ -204,6 +206,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   options_pending INTEGER NOT NULL DEFAULT 0,
   available_options TEXT NOT NULL DEFAULT '[]',
   inspect_llm_pending INTEGER NOT NULL DEFAULT 0,
+  claude_gateway_pending INTEGER NOT NULL DEFAULT 0,
+  claude_auth_failed INTEGER NOT NULL DEFAULT 0,
   active_branch_id TEXT NOT NULL DEFAULT 'root',
   usage TEXT NOT NULL DEFAULT '{}',
   usb TEXT,
@@ -451,8 +455,8 @@ export class Db {
   insertSession(session: Session): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, image, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, active_branch_id, usage, usb, created_by, pinned, folder_id, created_at, updated_at)
-         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @image, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @active_branch_id, @usage, @usb, @created_by, @pinned, @folder_id, @created_at, @updated_at)`,
+        `INSERT INTO sessions (id, title, provider, status, workspace_source, repos, settings, container_id, image, error, queue_running, disk_bytes, mcp_pending, model_pending, options_pending, available_options, inspect_llm_pending, claude_gateway_pending, claude_auth_failed, active_branch_id, usage, usb, created_by, pinned, folder_id, created_at, updated_at)
+         VALUES (@id, @title, @provider, @status, @workspace_source, @repos, @settings, @container_id, @image, @error, @queue_running, @disk_bytes, @mcp_pending, @model_pending, @options_pending, @available_options, @inspect_llm_pending, @claude_gateway_pending, @claude_auth_failed, @active_branch_id, @usage, @usb, @created_by, @pinned, @folder_id, @created_at, @updated_at)`,
       )
       .run(sessionToRow(session));
   }
@@ -465,7 +469,7 @@ export class Db {
       .prepare(
         `UPDATE sessions SET title=@title, status=@status, repos=@repos, settings=@settings, container_id=@container_id, image=@image, error=@error,
            queue_running=@queue_running, disk_bytes=@disk_bytes, mcp_pending=@mcp_pending, model_pending=@model_pending,
-           options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending,
+           options_pending=@options_pending, available_options=@available_options, inspect_llm_pending=@inspect_llm_pending, claude_gateway_pending=@claude_gateway_pending, claude_auth_failed=@claude_auth_failed,
            active_branch_id=@active_branch_id, usage=@usage, usb=@usb, pinned=@pinned, folder_id=@folder_id, updated_at=@updated_at
          WHERE id=@id`,
       )
@@ -967,6 +971,8 @@ export type SessionPatch = Partial<
     | "optionsPending"
     | "availableOptions"
     | "inspectLlmPending"
+    | "claudeGatewayPending"
+    | "claudeAuthFailed"
     | "activeBranchId"
     | "usage"
     | "usb"
@@ -1036,6 +1042,8 @@ function rowToSession(row: SessionQueryRow, branches: Branch[]): Session {
     optionsPending: row.options_pending === 1,
     availableOptions: AgentOption.array().parse(JSON.parse(row.available_options)),
     inspectLlmPending: row.inspect_llm_pending === 1,
+    claudeGatewayPending: row.claude_gateway_pending === 1,
+    claudeAuthFailed: row.claude_auth_failed === 1,
     snapshotBytes: row.snapshot_bytes,
     snapshotCount: row.snapshot_count,
     branches,
@@ -1091,6 +1099,8 @@ function sessionToRow(s: Session): SessionRow {
     options_pending: s.optionsPending ? 1 : 0,
     available_options: JSON.stringify(s.availableOptions),
     inspect_llm_pending: s.inspectLlmPending ? 1 : 0,
+    claude_gateway_pending: s.claudeGatewayPending ? 1 : 0,
+    claude_auth_failed: s.claudeAuthFailed ? 1 : 0,
     active_branch_id: s.activeBranchId,
     usage: JSON.stringify(s.usage),
     usb: s.usb === null ? null : JSON.stringify(s.usb),

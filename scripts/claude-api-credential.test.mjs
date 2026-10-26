@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Settings } from "../packages/protocol/dist/index.js";
-import { ClaudeApiCredential, claudeHostSettingsUpdate, readClaudeHostSettings, runClaudeCredentialCommand } from "../apps/control-plane/dist/claude-api-credential.js";
+import { SessionSettings, SessionSettingsPatch, Settings } from "../packages/protocol/dist/index.js";
+import { ClaudeApiCredential, claudeHostSettingsUpdate, readClaudeHostSettings, ClaudeApiLoginRun, runClaudeCredentialCommand } from "../apps/control-plane/dist/claude-api-credential.js";
 import { providerEnv, providerReady, toPublicSettings } from "../apps/control-plane/dist/config.js";
 import { ClaudeSettings } from "../packages/sandbox-daemon/dist/claude-settings.js";
 
@@ -127,4 +127,51 @@ test("ClaudeSettings.setApiKeyHelperCredential: owner-only credential file on tm
   assert.equal("apiKeyHelper" in settings, false);
   assert.deepEqual(settings.availableModels, ["opus"]);
   assert.ok(logs.every((l) => !l.includes("tok-")), "the credential never reaches the log");
+});
+
+test("ClaudeApiLoginRun: output is served while the command runs, the exit sets ok, onDone hears it; a failure, a hung command, a cancel", async () => {
+  const verdicts = [];
+  const run = new ClaudeApiLoginRun({ timeoutMs: 400, onDone: (ok) => verdicts.push(ok) });
+  assert.deepEqual(run.current(), { running: false, output: "", ok: null, startedAt: null, finishedAt: null });
+  const started = run.start("echo 'Your code: ABCD'; echo open https://sso.example.net/device >&2; sleep 0.2; echo done");
+  assert.equal(started.running, true);
+  assert.equal(started.ok, null);
+  await new Promise((r) => setTimeout(r, 100));
+  const mid = run.current();
+  assert.equal(mid.running, true);
+  assert.match(mid.output, /Your code: ABCD\nopen https:\/\/sso\.example\.net\/device\n/);
+  assert.doesNotMatch(mid.output, /done/);
+  assert.equal(run.start("echo second").running, true, "one run at a time: a second start returns the running one");
+  const end = await run.finished();
+  assert.equal(end.running, false);
+  assert.equal(end.ok, true);
+  assert.match(end.output, /done\n$/);
+  assert.doesNotMatch(end.output, /second/);
+  assert.ok(end.startedAt && end.finishedAt);
+  assert.deepEqual(verdicts, [true]);
+
+  run.start("echo nope >&2; exit 3");
+  assert.deepEqual((await run.finished()).ok, false);
+  assert.match(run.current().output, /^nope\n/);
+
+  run.start("sleep 5");
+  const hung = await run.finished();
+  assert.equal(hung.ok, false);
+  assert.match(hung.output, /stopped after 0 s/);
+
+  run.start("sleep 5");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(run.cancel().ok, false);
+  const cancelled = await run.finished();
+  assert.equal(cancelled.running, false);
+  assert.match(cancelled.output, /login command cancelled/);
+  assert.deepEqual(verdicts, [true, false, false, false]);
+});
+
+test("Settings: loginCommand is trimmed and public; SessionSettings.claudeGateway defaults on and patches", () => {
+  const settings = Settings.parse({ claudeApi: { credentialCommand: "gw token", loginCommand: "gw login" } });
+  assert.equal(settings.claudeApi.loginCommand, "gw login");
+  assert.equal(toPublicSettings(settings).claudeApi.loginCommand, "gw login");
+  assert.equal(SessionSettings.parse({}).claudeGateway, true);
+  assert.deepEqual(SessionSettingsPatch.parse({ claudeGateway: false }), { claudeGateway: false });
 });

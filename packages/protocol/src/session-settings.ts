@@ -34,6 +34,8 @@ export const SessionSettings = z.object({
    * exact request/response bodies (Claude Code only; see `LlmCall`). On by default for new Sessions.
    */
   inspectLlm: z.boolean().default(false),
+  /** Send Claude Code through the configured Claude API gateway (`Settings.claudeApi`) rather than straight to Anthropic (ADR-0090). */
+  claudeGateway: z.boolean().default(true),
   /** Ids of the `Settings.mcpServers` entries enabled for this Session. */
   mcpEnabled: z.array(z.string()).default([]),
   /** Ids of the `Settings.utilities` entries enabled for this Session (ADR-0073). */
@@ -88,6 +90,7 @@ export const SessionSettingsPatch = z
     /** Merged into the Session's option values. */
     options: OptionValues.optional(),
     inspectLlm: z.boolean().optional(),
+    claudeGateway: z.boolean().optional(),
     mcpEnabled: z.array(z.string()).optional(),
     utilitiesEnabled: z.array(z.string()).optional(),
     /** `null` clears the override (follow `Settings.autoSnapshot`). */
@@ -117,6 +120,7 @@ export const SessionSettingsInput = z.object({
   model: z.string().min(1).nullable().optional(),
   options: OptionValues.optional(),
   inspectLlm: z.boolean().optional(),
+  claudeGateway: z.boolean().optional(),
   mcpEnabled: z.array(z.string()).optional(),
   utilitiesEnabled: z.array(z.string()).optional(),
   instructions: z.string().max(INSTRUCTIONS_MAX_CHARS).optional(),

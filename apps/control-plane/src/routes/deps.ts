@@ -1,7 +1,7 @@
 // What the route handlers close over: the services index.ts constructs once. Instances, never
 // factories — a handler must not build its own.
 import type { createNodeWebSocket } from "@hono/node-ws";
-import type { PublicSettings, Settings, UpdateSettingsRequest } from "@sessionboxer/protocol";
+import type { ClaudeApiLogin, PublicSettings, Settings, UpdateSettingsRequest } from "@sessionboxer/protocol";
 import type { Auth } from "../auth.js";
 import type { Automations } from "../automations.js";
 import type { Connectors } from "../connectors.js";
@@ -42,5 +42,7 @@ export interface RouteDeps {
   publicSettings: () => Promise<PublicSettings>;
   /** Stores a Settings change and pushes what changed to the live Sessions. */
   applySettings: (update: UpdateSettingsRequest) => Promise<void>;
+  /** Runs `Settings.claudeApi.loginCommand` on this machine, then refreshes the gateway credential of every live Claude Session (ADR-0090). */
+  claudeApiLogin: { start: () => ClaudeApiLogin; current: () => ClaudeApiLogin; cancel: () => ClaudeApiLogin };
   upgradeWebSocket: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
 }

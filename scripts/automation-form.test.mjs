@@ -12,7 +12,7 @@ const trigger = {
   prFollows: [], prEvents: ["opened", "synchronize", "ready_for_review"], filters,
 };
 const draft = {
-  model: null, options: {}, inspectLlm: true, mcpEnabled: ["mcp"], utilitiesEnabled: ["util"],
+  model: null, options: {}, inspectLlm: true, claudeGateway: true, mcpEnabled: ["mcp"], utilitiesEnabled: ["util"],
   instructions: "defaults", autoSnapshot: null, snapshotKeep: null, e2eVerify: null,
   agentTools: null, approveCreate: null, environment: "docker-linux", snapshotId: null,
   docker: false, cpus: null, memoryGb: null, gitName: "Name", gitEmail: "email@example.com",
@@ -28,7 +28,7 @@ const unusedConverters = {
   draftsToSpecs() { assert.fail("this action must not convert repositories"); },
 };
 const draftInput = {
-  model: null, options: {}, inspectLlm: true, mcpEnabled: ["mcp"], utilitiesEnabled: ["util"],
+  model: null, options: {}, inspectLlm: true, claudeGateway: true, mcpEnabled: ["mcp"], utilitiesEnabled: ["util"],
   instructions: "defaults", autoSnapshot: null, snapshotKeep: null, e2eVerify: null, agentTools: null, approveCreate: null,
   sandbox: { environment: "docker-linux", docker: false, cpus: null, memoryGb: null, gitIdentity: { name: "Name", email: "email@example.com" } },
 };
@@ -84,7 +84,7 @@ test("new_session snapshot: no repo conversion, no blank title, snapshot before 
   const result = buildAction({ ...action, actionType: "new_session", draft: { ...draft, snapshotId: "snap" }, title: " " }, unusedConverters);
   assert.equal(JSON.stringify(result),
     '{"type":"new_session","provider":"pi","repos":[],"snapshotId":"snap","settings":'
-    + '{"model":null,"options":{},"inspectLlm":true,"mcpEnabled":["mcp"],"utilitiesEnabled":["util"],"instructions":"defaults",'
+    + '{"model":null,"options":{},"inspectLlm":true,"claudeGateway":true,"mcpEnabled":["mcp"],"utilitiesEnabled":["util"],"instructions":"defaults",'
     + '"autoSnapshot":null,"snapshotKeep":null,"e2eVerify":null,"agentTools":null,"approveCreate":null,'
     + '"sandbox":{"environment":"docker-linux","docker":false,"cpus":null,"memoryGb":null,"gitIdentity":{"name":"Name","email":"email@example.com"}}},'
     + '"prompt":"First prompt.","stopAfter":true,"checkoutPrHead":true}');

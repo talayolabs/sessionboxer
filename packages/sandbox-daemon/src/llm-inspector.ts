@@ -214,7 +214,7 @@ class Capture {
  */
 export class LlmInspector {
   private server: Server | null = null;
-  private readonly upstream: URL;
+  private upstream: URL;
   private readonly calls: LlmCall[] = [];
   private readonly withBodies: string[] = [];
   private httpsAgent: HttpsAgent | null = null;
@@ -227,6 +227,14 @@ export class LlmInspector {
 
   get upstreamUrl(): string {
     return this.upstream.toString();
+  }
+
+  /** Where new calls go from now on (the Claude API gateway or Anthropic, ADR-0090); in-flight ones finish where they started. */
+  setUpstream(url: string): void {
+    const next = new URL(url);
+    if (next.toString() === this.upstream.toString()) return;
+    this.upstream = next;
+    this.opts.log(`llm inspector upstream -> ${next.origin}${next.pathname === "/" ? "" : next.pathname}`);
   }
 
   get listening(): boolean {

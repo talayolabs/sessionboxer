@@ -17,6 +17,8 @@ export interface SessionSettingsDraft {
   model: string | null;
   options: OptionValues;
   inspectLlm: boolean;
+  /** Claude Code goes through the configured Claude API gateway (ADR-0090); off: straight to Anthropic. */
+  claudeGateway: boolean;
   mcpEnabled: string[];
   /** Utilities on for the Session (ADR-0073), by registry id. */
   utilitiesEnabled: string[];
@@ -51,6 +53,7 @@ export function draftFromDefaults(settings: PublicSettings): SessionSettingsDraf
     model: null,
     options: {},
     inspectLlm: true,
+    claudeGateway: true,
     mcpEnabled: settings.mcpServers.filter((s) => s.enabledByDefault).map((s) => s.id),
     utilitiesEnabled: defaultUtilitiesEnabled(settings),
     instructions: settings.instructions,
@@ -75,6 +78,7 @@ export function draftFromSettings(s: SessionSettings): SessionSettingsDraft {
     model: s.model,
     options: s.options,
     inspectLlm: s.inspectLlm,
+    claudeGateway: s.claudeGateway,
     mcpEnabled: s.mcpEnabled,
     utilitiesEnabled: s.utilitiesEnabled,
     instructions: s.instructions,
@@ -99,6 +103,7 @@ export function draftToInput(d: SessionSettingsDraft): SessionSettingsInput {
     model: d.model,
     options: d.options,
     inspectLlm: d.inspectLlm,
+    claudeGateway: d.claudeGateway,
     mcpEnabled: d.mcpEnabled,
     utilitiesEnabled: d.utilitiesEnabled,
     instructions: d.instructions,
@@ -124,6 +129,7 @@ export function draftFromInput(input: SessionSettingsInput, settings: PublicSett
     model: input.model ?? base.model,
     options: input.options ?? base.options,
     inspectLlm: input.inspectLlm ?? base.inspectLlm,
+    claudeGateway: input.claudeGateway ?? base.claudeGateway,
     mcpEnabled: input.mcpEnabled ?? base.mcpEnabled,
     utilitiesEnabled: input.utilitiesEnabled ?? base.utilitiesEnabled,
     instructions: input.instructions ?? base.instructions,

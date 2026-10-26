@@ -129,12 +129,13 @@ export function SessionHeader({
   const noSnapshot = VM_NO_SNAPSHOT[session.settings.sandbox.environment];
   const mcpActive = (settings?.mcpServers ?? []).filter((s) => session.settings.mcpEnabled.includes(s.id));
   const utilitiesActive = (settings?.utilities ?? []).filter((u) => session.settings.utilitiesEnabled.includes(u.id));
-  const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending;
+  const settingsPending = session.mcpPending || session.modelPending || session.optionsPending || session.inspectLlmPending || session.claudeGatewayPending;
   const settingsSummary = [
     mcpActive.length === 0 ? "MCP: desktop only" : `MCP: desktop, ${mcpActive.map((s) => s.name).join(", ")}`,
     utilitiesActive.length === 0 ? "Utilities: none" : `Utilities: ${utilitiesActive.map((u) => `${utilityLabel(u)} (${u.environment})`).join(", ")}`,
     session.settings.instructions.trim() === "" ? "Instructions: none" : "Instructions: set",
     ...(session.provider === "claude-code" ? [`Inspect LLM: ${session.settings.inspectLlm ? "on" : "off"}`] : []),
+    ...(session.provider === "claude-code" && !session.settings.claudeGateway ? ["Claude API gateway: off (Anthropic directly)"] : []),
     ...(settingsPending ? ["A change applies when the current turn ends"] : []),
   ].join("\n");
   const canStop = (session.status === "idle" || session.status === "running" || session.status === "error") && session.containerId !== null;

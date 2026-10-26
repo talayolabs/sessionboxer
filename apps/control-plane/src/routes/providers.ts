@@ -6,12 +6,16 @@ import { type RouteDeps } from "./deps.js";
 import { claudeHostSettingsUpdate } from "../claude-api-credential.js";
 
 export function registerProviderRoutes(api: Hono<AuthEnv>, deps: RouteDeps): void {
-  const { sessions, providerLogins, publicSettings, applySettings } = deps;
+  const { sessions, providerLogins, publicSettings, applySettings, claudeApiLogin } = deps;
   // The Claude API configuration of this machine's ~/.claude/settings.json (gateway URL, apiKeyHelper) copied into Settings (ADR-0090).
   api.post("/claude-api/import-host", async (c) => {
     await applySettings({ claudeApi: claudeHostSettingsUpdate() });
     return c.json(await publicSettings());
   });
+  // The gateway's login command, for when its credential expired (ADR-0090): runs here, output goes back to the browser.
+  api.post("/claude-api/login", (c) => c.json(claudeApiLogin.start()));
+  api.get("/claude-api/login", (c) => c.json(claudeApiLogin.current()));
+  api.delete("/claude-api/login", (c) => c.json(claudeApiLogin.cancel()));
   // Provider sign-in (ADR-0058): the CLI on this machine or in a throwaway container, the browser here, the code passed along.
   api.get("/providers/:provider/host-login", (c) => c.json(providerLogins.hostLogin(Provider.parse(c.req.param("provider")))));
   api.post("/providers/:provider/host-login/import", async (c) => {

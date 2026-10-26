@@ -1,10 +1,10 @@
 // The Claude API credential minted by a command on this machine (Claude Code's `apiKeyHelper`, ADR-0090):
 // what `~/.claude/settings.json` here configures, and the runner that keeps the Sandboxes' copy fresh.
-import { execFile } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type ClaudeHostSettings, type Settings, type UpdateSettingsRequest } from "@sessionboxer/protocol";
+import { type ClaudeHostSettings, type Settings, type UpdateSettingsRequest, type ClaudeApiLogin } from "@sessionboxer/protocol";
 import { HttpError } from "./http-error.js";
 
 /** Claude Code re-runs its helper after five minutes; a value this old is minted again before it is pushed. */
@@ -69,6 +69,87 @@ export function runClaudeCredentialCommand(command: string, timeoutMs = COMMAND_
       else resolve(credential);
     });
   });
+}
+
+const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+const LOGIN_OUTPUT_MAX = 16 * 1024;
+
+/**
+ * The login command behind the credential command (the gateway's SSO), run the same way but in the
+ * background: a device flow prints a code and a URL, then waits for the browser, so its output is
+ * served while it runs (`current()`), and it can be cancelled. One run at a time; a command that
+ * waits has five minutes. `onDone` gets the exit verdict.
+ */
+export class ClaudeApiLoginRun {
+  private child: ChildProcess | null = null;
+  private state: ClaudeApiLogin = { running: false, output: "", ok: null, startedAt: null, finishedAt: null };
+  private settled: Promise<ClaudeApiLogin> = Promise.resolve(this.state);
+
+  constructor(private readonly opts: { timeoutMs?: number; onDone?: (ok: boolean) => void | Promise<void> } = {}) {}
+
+  current(): ClaudeApiLogin {
+    return { ...this.state };
+  }
+
+  /** Resolves when the current run (or the last one) has exited. */
+  finished(): Promise<ClaudeApiLogin> {
+    return this.settled;
+  }
+
+  start(command: string): ClaudeApiLogin {
+    if (this.child) return this.current();
+    const timeoutMs = this.opts.timeoutMs ?? LOGIN_TIMEOUT_MS;
+    const [shell, flag] = process.platform === "win32" ? ["cmd", "/c"] : ["/bin/sh", "-c"];
+    const child = spawn(shell, [flag, command], { env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+    this.child = child;
+    this.state = { running: true, output: "", ok: null, startedAt: new Date().toISOString(), finishedAt: null };
+    const append = (chunk: Buffer | string) => {
+      const output = this.state.output + chunk.toString();
+      this.state.output = output.length > LOGIN_OUTPUT_MAX ? output.slice(-LOGIN_OUTPUT_MAX) : output;
+    };
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    const timer = setTimeout(() => {
+      append(`\n(login command stopped after ${Math.round(timeoutMs / 1000)} s)\n`);
+      this.kill();
+    }, timeoutMs);
+    this.settled = new Promise((resolve) => {
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.child = null;
+        this.state = { ...this.state, running: false, ok, finishedAt: new Date().toISOString() };
+        void Promise.resolve(this.opts.onDone?.(ok)).finally(() => resolve(this.current()));
+      };
+      child.on("error", (e) => {
+        append(`${e.message}\n`);
+        finish(false);
+      });
+      child.on("close", (code) => finish(code === 0 && this.state.ok !== false));
+    });
+    return this.current();
+  }
+
+  cancel(): ClaudeApiLogin {
+    if (this.child) {
+      this.state = { ...this.state, ok: false, output: `${this.state.output}\n(login command cancelled)\n` };
+      this.kill();
+    }
+    return this.current();
+  }
+
+  private kill(): void {
+    const child = this.child;
+    if (!child?.pid) return;
+    try {
+      if (process.platform === "win32") child.kill();
+      else process.kill(-child.pid, "SIGTERM");
+    } catch {
+      child.kill();
+    }
+  }
 }
 
 /** Mints the credential on demand and caches it briefly, so the Sessions connecting together share one run. */

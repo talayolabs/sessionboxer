@@ -12,6 +12,8 @@ export const MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: "sessions", column: "available_options", ddl: "ALTER TABLE sessions ADD COLUMN available_options TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "active_branch_id", ddl: "ALTER TABLE sessions ADD COLUMN active_branch_id TEXT NOT NULL DEFAULT 'root'" },
   { table: "sessions", column: "inspect_llm_pending", ddl: "ALTER TABLE sessions ADD COLUMN inspect_llm_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "claude_gateway_pending", ddl: "ALTER TABLE sessions ADD COLUMN claude_gateway_pending INTEGER NOT NULL DEFAULT 0" },
+  { table: "sessions", column: "claude_auth_failed", ddl: "ALTER TABLE sessions ADD COLUMN claude_auth_failed INTEGER NOT NULL DEFAULT 0" },
   { table: "sessions", column: "usage", ddl: "ALTER TABLE sessions ADD COLUMN usage TEXT NOT NULL DEFAULT '{}'" },
   { table: "sessions", column: "repos", ddl: "ALTER TABLE sessions ADD COLUMN repos TEXT NOT NULL DEFAULT '[]'" },
   { table: "sessions", column: "settings", ddl: "ALTER TABLE sessions ADD COLUMN settings TEXT" },

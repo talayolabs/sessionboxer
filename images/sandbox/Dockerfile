@@ -144,7 +144,7 @@ RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; ar
 # sherpa-onnx's packaging (ADR-0029). The release tag is rolling, so the checksum pins the
 # contents; Chinese-only files are dropped (narration offers en/es/fr/it/pt/hi).
 ARG KOKORO_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2
-ARG KOKORO_SHA256=c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298
+ARG KOKORO_SHA256=60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4
 RUN curl -fsSL "${KOKORO_URL}" -o /tmp/kokoro.tar.bz2 \
     && echo "${KOKORO_SHA256}  /tmp/kokoro.tar.bz2" | sha256sum -c - \
     && mkdir -p /opt/sessionboxer/tts \

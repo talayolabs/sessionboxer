@@ -49,7 +49,7 @@ import { McpEvents } from "./mcp-events.js";
 import { PrReviews } from "./pr-reviews.js";
 import { PrQa } from "./pr-qa.js";
 import { HttpError, SessionManager } from "./sessions.js";
-import { CLAUDE_CREDENTIAL_MAX_AGE_MS, ClaudeApiCredential } from "./claude-api-credential.js";
+import { CLAUDE_CREDENTIAL_MAX_AGE_MS, ClaudeApiCredential, ClaudeApiLoginRun } from "./claude-api-credential.js";
 import { WindowsVms } from "./windows.js";
 import { MacosVms } from "./macos.js";
 import { Speech } from "./speech.js";
@@ -134,6 +134,15 @@ const macos = new MacosVms(
 );
 const sessions = new SessionManager(db, docker, windows, macos, () => settings, log, (msg) => push.send(msg));
 const claudeApiCredential = new ClaudeApiCredential(() => settings, log);
+const claudeApiLogin = new ClaudeApiLoginRun({
+  onDone: async (ok) => {
+    log(`claude api login command ${ok ? "succeeded" : "failed"}`);
+    if (!ok) return;
+    claudeApiCredential.invalidate();
+    await sessions.pushClaudeApiCredentialToAll();
+    sessions.clearClaudeAuthFailed();
+  },
+});
 // Codex, Cursor, pi, OpenCode, fx, GitHub Copilot and Grok Build rotate their tokens inside the Sandbox; the rewritten login file
 // replaces the stored one (unless it is older than what another Sandbox already sent, or the stored
 // login is an API key) and reaches the other Sessions of that Agent.
@@ -314,6 +323,16 @@ const deps: RouteDeps = {
     },
   },
   publicSettings,
+  claudeApiLogin: {
+    start: () => {
+      const command = settings.claudeApi.loginCommand;
+      if (command === "") throw new HttpError(400, "No login command is configured in the Claude API settings.");
+      if (!claudeApiLogin.current().running) log("claude api login command running");
+      return claudeApiLogin.start(command);
+    },
+    current: () => claudeApiLogin.current(),
+    cancel: () => claudeApiLogin.cancel(),
+  },
   applySettings: applySettingsRequest,
   upgradeWebSocket,
 };

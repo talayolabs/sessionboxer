@@ -140,6 +140,16 @@ RUN arch="$(dpkg --print-architecture)" && case "$arch" in amd64) arch=x64 ;; ar
     && tar -xzf /tmp/openvscode-server.tar.gz -C /opt/openvscode-server --strip-components=1 \
     && rm -f /tmp/openvscode-server.tar.gz \
     && ln -s /opt/openvscode-server/bin/openvscode-server /usr/local/bin/openvscode-server
+# Mermaid diagrams in the Markdown preview (bierner.markdown-mermaid, MIT, from Open VSX) as a
+# built-in extension, so every box has it without an Open VSX install.
+ARG MARKDOWN_MERMAID_VERSION=1.32.1
+ARG MARKDOWN_MERMAID_SHA256=91c99eee8b7299e41efa708e20bd01a6fa13206cc4e627b43253e75c0343f442
+RUN curl -fsSL "https://open-vsx.org/api/bierner/markdown-mermaid/${MARKDOWN_MERMAID_VERSION}/file/bierner.markdown-mermaid-${MARKDOWN_MERMAID_VERSION}.vsix" -o /tmp/markdown-mermaid.vsix \
+    && echo "${MARKDOWN_MERMAID_SHA256}  /tmp/markdown-mermaid.vsix" | sha256sum -c - \
+    && unzip -q /tmp/markdown-mermaid.vsix 'extension/*' -d /tmp/markdown-mermaid \
+    && mv /tmp/markdown-mermaid/extension /opt/openvscode-server/extensions/bierner.markdown-mermaid \
+    && rm -rf /tmp/markdown-mermaid /tmp/markdown-mermaid.vsix \
+    && test -f /opt/openvscode-server/extensions/bierner.markdown-mermaid/dist-preview/index.bundle.js
 # Kokoro TTS model (Apache-2.0) that the computer-use MCP speaks recording captions with, in
 # sherpa-onnx's packaging (ADR-0029). The release tag is rolling, so the checksum pins the
 # contents; Chinese-only files are dropped (narration offers en/es/fr/it/pt/hi).

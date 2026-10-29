@@ -330,13 +330,13 @@ export function SessionView({
         branching={branching} branchActions={branchActions} isLive={isLive}
         latestSnapshot={latestSnapshot} defaultForkPoint={defaultForkPoint}
         setForkFrom={setForkFrom} setSyncOpen={dialogs.setSyncOpen} setUsbOpen={dialogs.setUsbOpen}
-        setSettingsOpen={dialogs.setSettingsOpen} setReposOpen={dialogs.setReposOpen} />
+        setSettingsOpen={dialogs.setSettingsOpen} setReposOpen={dialogs.setReposOpen} setCopyOpen={dialogs.setCopyOpen} />
       {session.error && <div className="banner banner-error">{session.error}</div>}
       {session.claudeAuthFailed && <ClaudeGatewayNotice session={session} settings={settings} run={run} />}
       <SessionDialogs {...dialogs} session={session} sessions={sessions} settings={settings} onSettings={onSettings}
         models={models} options={options} allModels={allModels} allOptions={allOptions}
         snapshots={snapshots} saved={saved} llmCalls={llmCalls} run={run} onForked={onForked}
-        defaultForkPoint={defaultForkPoint} />
+        defaultForkPoint={defaultForkPoint} items={items} />
       <div
         className={`session-body${!mobile && paneFrac !== null ? " sized" : ""}`}
         ref={bodyRef}

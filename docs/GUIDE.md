@@ -203,7 +203,7 @@ Replies and your prompts render as Markdown. Fenced code with a language (```ts,
 
 ### Watch and take over the desktop
 
-The session header carries five tabs — **Desktop**, **Terminal**, **Code**, **PRs** and **Auto QA** — each opening its pane next to the chat (click again to hide it), and a **⋯** menu with the rest: **Context**, **Scheduled**, **Snapshot**, **Fork…**, **Pull to folder…** (sessions with a copied folder), **Session settings**, **Stop** and **Delete**. **Resume** shows in the header while the box is stopped.
+The session header carries five tabs — **Desktop**, **Terminal**, **Code**, **PRs** and **Auto QA** — each opening its pane next to the chat (click again to hide it), and a **⋯** menu with the rest: **Context**, **Scheduled**, **Snapshot**, **Fork…**, **Copy session…**, **Pull to folder…** (sessions with a copied folder), **Session settings**, **Stop** and **Delete**. **Copy session…** copies or downloads the conversation as Markdown, JSON or JSONL with the parts you tick: your messages, the agent's (all of them, or only the last one of each turn — its summary, the default), its thinking, the tool calls (optionally with what they returned) and timestamps. **Resume** shows in the header while the box is stopped.
 
 **Desktop** opens the box's screen next to the chat. While the agent is working the view is read-only so you don't fight over the mouse; **Take control** hands it to you until the agent's next turn. When the agent is idle the desktop is always interactive: log into a site for it, open a program, arrange windows.
 

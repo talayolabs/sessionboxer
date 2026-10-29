@@ -635,6 +635,9 @@ li.active .source-icon, li:hover .source-icon { opacity: 1; }
 
 /* USB devices dialog (ADR-0055) */
 .usb-dialog { max-height: 85vh; }
+.copy-session-dialog { max-height: 90vh; }
+.copy-session-sub { display: flex; flex-direction: column; gap: 6px; padding-left: 24px; }
+.copy-session-preview { flex: 1 1 auto; min-height: 80px; max-height: 240px; overflow: auto; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: var(--fs-sm); white-space: pre-wrap; word-break: break-word; }
 .usb-dialog .dialog-banner:not(.banner-error) { border-color: var(--border); }
 .usb-current { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: var(--radius); font-size: var(--fs-md); margin-bottom: 10px; }
 .usb-current > span { flex: 1; min-width: 0; }

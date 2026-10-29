@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { LlmCall } from "@sessionboxer/protocol";
 import { api } from "../api";
 import { CompactionDialog } from "../CompactionDialog";
+import { CopySessionDialog } from "../CopySessionDialog";
 import type { Compaction } from "../context-model";
 import { ForkDialog } from "../ForkDialog";
 import { LlmCallDialog } from "../LlmCallDialog";
@@ -24,18 +25,19 @@ export function useSessionDialogs() {
   const [syncOpen, setSyncOpen] = useState(false);
   const [reposOpen, setReposOpen] = useState(false);
   const [usbOpen, setUsbOpen] = useState(false);
-  return { forkFrom, setForkFrom, forkWithSettings, setForkWithSettings, forking, setForking, settingsOpen, setSettingsOpen, utilQuickAdd, setUtilQuickAdd, settingsBusy, setSettingsBusy, inspecting, setInspecting, inspectingCall, setInspectingCall, syncOpen, setSyncOpen, reposOpen, setReposOpen, usbOpen, setUsbOpen };
+  const [copyOpen, setCopyOpen] = useState(false);
+  return { copyOpen, setCopyOpen, forkFrom, setForkFrom, forkWithSettings, setForkWithSettings, forking, setForking, settingsOpen, setSettingsOpen, utilQuickAdd, setUtilQuickAdd, settingsBusy, setSettingsBusy, inspecting, setInspecting, inspectingCall, setInspectingCall, syncOpen, setSyncOpen, reposOpen, setReposOpen, usbOpen, setUsbOpen };
 }
 
 type Props = ReturnType<typeof useSessionDialogs> & Pick<SessionViewProps,
   "session" | "sessions" | "settings" | "onSettings" | "models" | "options" | "allModels" | "allOptions" |
-  "snapshots" | "saved" | "llmCalls" | "run" | "onForked"
+  "snapshots" | "saved" | "llmCalls" | "run" | "onForked" | "items"
 > & { defaultForkPoint: string | undefined };
 
 export function SessionDialogs({
-  forkFrom, setForkFrom, forkWithSettings, setForkWithSettings, forking, setForking, settingsOpen, setSettingsOpen, utilQuickAdd, setUtilQuickAdd, settingsBusy, setSettingsBusy, inspecting, setInspecting, inspectingCall, setInspectingCall, syncOpen, setSyncOpen, reposOpen, setReposOpen, usbOpen, setUsbOpen,
+  copyOpen, setCopyOpen, forkFrom, setForkFrom, forkWithSettings, setForkWithSettings, forking, setForking, settingsOpen, setSettingsOpen, utilQuickAdd, setUtilQuickAdd, settingsBusy, setSettingsBusy, inspecting, setInspecting, inspectingCall, setInspectingCall, syncOpen, setSyncOpen, reposOpen, setReposOpen, usbOpen, setUsbOpen,
   session, sessions, settings, onSettings, models, options, allModels, allOptions,
-  snapshots, saved, llmCalls, run, onForked, defaultForkPoint,
+  snapshots, saved, llmCalls, run, onForked, defaultForkPoint, items,
 }: Props) {
   return (
     <>
@@ -67,6 +69,7 @@ export function SessionDialogs({
       {inspectingCall && <LlmCallDialog session={session} call={inspectingCall} calls={llmCalls} onClose={() => setInspectingCall(null)} />}
       {syncOpen && <SyncDialog session={session} onClose={() => setSyncOpen(false)} />}
       {reposOpen && <ReposDialog session={session} accounts={githubAccounts(settings)} onClose={() => setReposOpen(false)} />}
+      {copyOpen && <CopySessionDialog session={session} items={items} onClose={() => setCopyOpen(false)} />}
       {usbOpen && <UsbDialog session={session} sessions={sessions} onClose={() => setUsbOpen(false)} />}
       {forkFrom && settings && (
         <ForkDialog

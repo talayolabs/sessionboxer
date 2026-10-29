@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LlmCall, LlmCallBody, Session } from "@sessionboxer/protocol";
 import { api } from "./api";
+import { downloadText } from "./clipboard";
 import { formatTokens } from "./context-model";
 import { formatTime } from "./format";
 import { LLM_KIND_LABELS, diffRequests, formatBytes, parseJson, previousCall, requestTree, responseTree, type DiffSection, type TreeNode } from "./llm-model";
@@ -37,15 +38,6 @@ function useBody(sessionId: string, callId: string | null, live: boolean): Load 
   return load;
 }
 
-function download(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: "application/octet-stream" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 function Body({ text, bytes, truncated, name }: { text: string | null; bytes: number; truncated: boolean; name: string }) {
   const [pretty, setPretty] = useState(false);
   const [all, setAll] = useState(false);
@@ -80,7 +72,7 @@ function Body({ text, bytes, truncated, name }: { text: string | null; bytes: nu
         <button type="button" className="small" onClick={copy}>
           {copied ? "Copied" : "Copy"}
         </button>
-        <button type="button" className="small" onClick={() => download(name, text)}>
+        <button type="button" className="small" onClick={() => downloadText(name, text)}>
           Download
         </button>
       </div>

@@ -83,7 +83,7 @@ function SessionMenu({ items, mobile, pending }: { items: SessionMenuItem[]; mob
     <Menu
       align="end"
       trigger={
-        <Tip text={pending ? "More (a settings change applies when the current turn ends)" : "Context, Scheduled, Snapshot, Fork, Session settings, Stop, Delete"}>
+        <Tip text={pending ? "More (a settings change applies when the current turn ends)" : "Context, Scheduled, Snapshot, Fork, Copy session, Session settings, Stop, Delete"}>
           <button type="button" className={cx("more-menu", pending && "pending")} aria-label="More">
             {"\u22ef"}
           </button>
@@ -100,7 +100,7 @@ function SessionMenu({ items, mobile, pending }: { items: SessionMenuItem[]; mob
 }
 
 type Props = Pick<SessionViewProps, "session" | "settings" | "mobile" | "run" | "snapshotting" | "sessionSchedules" | "prs">
-  & Pick<ReturnType<typeof useSessionDialogs>, "setForkFrom" | "setSyncOpen" | "setUsbOpen" | "setSettingsOpen" | "setReposOpen">
+  & Pick<ReturnType<typeof useSessionDialogs>, "setForkFrom" | "setSyncOpen" | "setUsbOpen" | "setSettingsOpen" | "setReposOpen" | "setCopyOpen">
   & {
     pane: Pane;
     setPane: Dispatch<SetStateAction<Pane>>;
@@ -119,7 +119,7 @@ type Props = Pick<SessionViewProps, "session" | "settings" | "mobile" | "run" | 
 export function SessionHeader({
   session, settings, mobile, run, snapshotting, sessionSchedules, prs, pane, setPane, togglePane,
   openPr, prUnread, e2eLive, e2eEnabled, branching, branchActions, isLive,
-  latestSnapshot, defaultForkPoint, setForkFrom, setSyncOpen, setUsbOpen, setSettingsOpen, setReposOpen,
+  latestSnapshot, defaultForkPoint, setForkFrom, setSyncOpen, setUsbOpen, setSettingsOpen, setReposOpen, setCopyOpen,
 }: Props) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(session.title);
@@ -172,6 +172,13 @@ export function SessionHeader({
             : "Start the Sandbox to fork it (there is no snapshot yet)"),
       disabled: noSnapshot !== undefined || !defaultForkPoint,
       onPick: () => defaultForkPoint && setForkFrom(defaultForkPoint),
+    },
+    {
+      key: "copy",
+      icon: "copy",
+      label: "Copy session\u2026",
+      title: "Copy or download the conversation as Markdown, JSON or JSONL: pick the user and Agent messages, tool calls and more",
+      onPick: () => setCopyOpen(true),
     },
     ...(copiedRepos.length > 0
       ? [

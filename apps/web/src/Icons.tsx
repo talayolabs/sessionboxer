@@ -22,7 +22,8 @@ export type IconName =
   | "apple"
   | "pin"
   | "folder"
-  | "folder-plus";
+  | "folder-plus"
+  | "copy";
 
 /** Feather-style outline glyphs (24-unit grid, `currentColor` strokes). */
 const GLYPHS: Record<IconName, ReactNode> = {
@@ -33,6 +34,12 @@ const GLYPHS: Record<IconName, ReactNode> = {
     </>
   ),
   code: <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />,
+  copy: (
+    <>
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </>
+  ),
   prs: (
     <>
       <circle cx="18" cy="18" r="3" />

@@ -1,34 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-
-/** Writes `text` (and, when given, its HTML rendering) to the clipboard; the copy-event route
- *  covers pages without the async API (plain http on a LAN host). */
-async function writeClipboard(text: string, html?: string): Promise<void> {
-  const clipboard = navigator.clipboard;
-  if (html && clipboard?.write && typeof ClipboardItem !== "undefined") {
-    await clipboard.write([
-      new ClipboardItem({
-        "text/plain": new Blob([text], { type: "text/plain" }),
-        "text/html": new Blob([html], { type: "text/html" }),
-      }),
-    ]);
-    return;
-  }
-  if (!html && clipboard?.writeText) {
-    await clipboard.writeText(text);
-    return;
-  }
-  const onCopy = (e: ClipboardEvent) => {
-    e.preventDefault();
-    e.clipboardData?.setData("text/plain", text);
-    if (html) e.clipboardData?.setData("text/html", html);
-  };
-  document.addEventListener("copy", onCopy);
-  try {
-    if (!document.execCommand("copy")) throw new Error("copy command failed");
-  } finally {
-    document.removeEventListener("copy", onCopy);
-  }
-}
+import { writeClipboard } from "./clipboard";
 
 const INLINE_PROPS = ["color", "background-color", "font-weight", "font-style", "text-decoration-line"] as const;
 

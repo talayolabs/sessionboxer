@@ -165,7 +165,7 @@ RUN curl -fsSL "${KOKORO_URL}" -o /tmp/kokoro.tar.bz2 \
 
 # bb, the gh-like CLI for Bitbucket Data Center and Cloud (github.com/talayolabs/bb), bundled from a pinned
 # commit into one file; `bb pr create`, `bb api` and the git credential helper below use it.
-ARG BB_REF=d297620b2286d9846d88de0ff55773acdbbba5fd
+ARG BB_REF=1f2e4d1454a54d01f25439094a83731f88dc5e0e
 RUN mkdir /tmp/bb && cd /tmp/bb \
     && git init -q && git fetch -q --depth 1 https://github.com/talayolabs/bb.git "${BB_REF}" && git checkout -q FETCH_HEAD \
     && npm ci --ignore-scripts && npm run bundle \

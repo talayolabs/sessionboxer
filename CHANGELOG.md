@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Connect Bitbucket** accepts **Bitbucket Cloud** (bitbucket.org) with your Atlassian email and an API token: private clones at session start, `git push` and `bb` as you, kept across Stop → Resume. The PRs pane and Pull requests follows stay Data Center-only.
+- Sandbox: `bb` [1f2e4d1](https://github.com/talayolabs/bb/commit/1f2e4d1). `bb auth login --with-token` typed in a terminal (nothing piped in) now asks for the token instead of crashing with `EAGAIN`.
 
 ## 1.7.0 — 2026-11-02
 

@@ -1,17 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-11-02
 
-- **Copy session…** in the session header's **⋯** menu: copy (or download) the conversation as Markdown, JSON or JSONL. Pick the messages — **User**, **Assistant** (all, or only the last message of each turn, the summary), **Thinking**, **Tool calls** (optionally with their output) — and **Timestamps**; a preview shows what you get. By default: your messages and each turn's summary, as Markdown.
-- Mermaid diagrams in the Code pane's Markdown preview: ` ```mermaid ` blocks render as diagrams (bierner.markdown-mermaid 1.32.1 built into VS Code in the box). Sandbox image changed: Stop → Resume existing sessions.
-- **Company Claude gateways with rotating tokens** (ADR-0090): Global settings → Providers → Claude API gains a **Credential command (apiKeyHelper)**, and **Use this machine's Claude settings** copies the gateway URL and command from your `~/.claude/settings.json`. The Control Plane runs the command on your machine and refreshes the credential in every running Claude Sandbox, where Claude Code picks it up without a restart; Inspect LLM keeps recording through the gateway. A **Login command** beside it renews the gateway's login: when the gateway rejects the credential, the Session shows a notice with **Run login command** (its output follows live — the device code and the SSO URL to click — with a Cancel). Per Session, the **Claude API gateway** switch (Debug section of the Session settings, New session too) takes Claude Code off the gateway and straight to Anthropic with the Claude login, Inspect LLM still recording; the Agent restarts in place, after the turn when one is running. Sandbox image changed: Stop → Resume existing Claude sessions.
-- No size cap on prompt attachments: the 512 MB limit on a file attached to a prompt (or on the New session screen) is gone; only free disk space bounds a file.
-- **Bulk detach in a Session's PRs list**: select individual PRs or **Select all**, then **Detach selected** once, without a confirmation dialog. Failed detaches stay selected for retry; nothing changes on GitHub or Bitbucket.
-- Fix: opening the Code pane, Desktop or a Workspace file in the moment a Sandbox stops or crashes answers 409 "the Sandbox is stopped or restarting" instead of a 500 and an `unhandled: … has no address on sessionboxer` line in the Control Plane log.
-- Fix: PR URLs the agent only read during a turn (`gh pr list` output, a changelog, an issue page) no longer attach to the Session — one such listing attached every PR of the repository to the PRs tab. The URLs the agent writes in its replies and the one `gh pr create` / `bb pr create` (or a `create_pull_request` tool) prints still do.
-- Fix: a file path in the chat that is not under `/workspace` itself (the agent named it relative to a repository, `src/App.tsx` for `/workspace/<repo>/src/App.tsx`) now opens by looking in each of the session's repositories in turn instead of failing.
-- `bb` in the box speaks **Bitbucket Cloud** too (talayolabs/bb d297620): `bb auth login --hostname bitbucket.org --email …` with an Atlassian API token in the Terminal, then `git clone`/`git push`, `bb pr …` and `bb pr merge` work on bitbucket.org. The Bitbucket Connector and the PRs pane still cover Data Center only. Sandbox image changed: Stop → Resume existing sessions.
-- Fix: `npm run build:image` failed on the Kokoro TTS model checksum — sherpa-onnx re-published the asset under its rolling `tts-models` tag; the Dockerfile pins the new checksum (same file list).
+Install: `npx sessionboxer@1.7.0 serve`, the installers on the release, `docker compose up`, or
+`curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox image changed:
+Stop → Resume existing sessions.
+
+- `bb` in the box works with **Bitbucket Cloud** (bitbucket.org) as well as Data Center, `bb pr merge` included; log in from the Terminal. ([cc6774a](https://github.com/talayolabs/sessionboxer/commit/cc6774a))
+- **Company Claude gateways with rotating tokens**: a credential command (apiKeyHelper), a login command and a per-Session gateway switch. ([65dda62](https://github.com/talayolabs/sessionboxer/commit/65dda62))
+- **Copy session…**: copy or download the conversation as Markdown, JSON or JSONL. ([b48b2cc](https://github.com/talayolabs/sessionboxer/commit/b48b2cc))
+- Mermaid diagrams render in the Code pane's Markdown preview. ([42fb791](https://github.com/talayolabs/sessionboxer/commit/42fb791))
+- Select several PRs in a Session's PRs list and detach them at once. ([7f26625](https://github.com/talayolabs/sessionboxer/commit/7f26625))
+- No size cap on prompt attachments. ([d21a4c5](https://github.com/talayolabs/sessionboxer/commit/d21a4c5))
+- Fix: PR URLs the agent only read no longer attach to the Session. ([3a9b3d6](https://github.com/talayolabs/sessionboxer/commit/3a9b3d6))
+- Fix: a chat path relative to a repository opens the file. ([58d210c](https://github.com/talayolabs/sessionboxer/commit/58d210c))
+- Fix: the Code pane, Desktop or a file of a stopping Sandbox answer 409 instead of 500. ([cec9a08](https://github.com/talayolabs/sessionboxer/commit/cec9a08))
 
 ## 1.6.0 — 2026-10-05
 

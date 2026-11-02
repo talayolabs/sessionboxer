@@ -1,9 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 — 2026-11-02
 
-- **Connect Bitbucket** accepts **Bitbucket Cloud** (bitbucket.org) with your Atlassian email and an API token: private clones at session start, `git push` and `bb` as you, kept across Stop → Resume. The PRs pane and Pull requests follows stay Data Center-only.
-- Sandbox: `bb` [1f2e4d1](https://github.com/talayolabs/bb/commit/1f2e4d1). `bb auth login --with-token` typed in a terminal (nothing piped in) now asks for the token instead of crashing with `EAGAIN`.
+Install: `npx sessionboxer@1.8.0 serve`, the installers on the release, `docker compose up`, or
+`curl -fsSL https://sessionboxer.talayolabs.com/install.sh | sh`. The Sandbox image changed:
+Stop → Resume existing sessions.
+
+- Connect Bitbucket accepts Bitbucket Cloud (bitbucket.org) with your Atlassian email and an API token; the PRs pane and follows stay Data Center-only. ([cee8730](https://github.com/talayolabs/sessionboxer/commit/cee8730))
+- `bb auth login --with-token` typed in a terminal asks for the token instead of crashing with `EAGAIN`. ([c702dad](https://github.com/talayolabs/sessionboxer/commit/c702dad))
 
 ## 1.7.0 — 2026-11-02
 

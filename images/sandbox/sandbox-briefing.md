@@ -21,11 +21,14 @@ empty when the Session was started without a repository.
 - Do not create repositories or files at the top of `/workspace` unless asked;
   cross-repository notes go into the repository they concern or `/workspace/docs`
   only when the user has one.
-- Pull requests: `gh` for GitHub, `bb` for Bitbucket Data Center (`bb pr create`,
-  `bb pr view --comments`, `bb pr comment`, `bb api`; `bb pr --help`). When the
-  user connected an account, `git push` and these commands already work as it;
-  `gh auth status` / `bb auth status` say which. There are no SSH keys: use
-  HTTPS remotes.
+- Pull requests: `gh` for GitHub, `bb` for Bitbucket Data Center and Bitbucket
+  Cloud (`bb pr create`, `bb pr view --comments`, `bb pr comment`, `bb api`;
+  `bb pr --help`; `bb pr merge` on bitbucket.org only). When the user connected
+  an account, `git push` and these commands already work as it;
+  `gh auth status` / `bb auth status` say which. Sessionboxer connects Bitbucket
+  Data Center hosts only; for bitbucket.org the user logs in in the box with
+  `bb auth login --hostname bitbucket.org --email <their Atlassian email>`.
+  There are no SSH keys: use HTTPS remotes.
 
 Older Sessions had a single repository checked out directly in `/workspace`; if
 `repos.json` lists a repository whose `path` is `/workspace`, that is the case.

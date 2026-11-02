@@ -10,6 +10,7 @@
 - Fix: opening the Code pane, Desktop or a Workspace file in the moment a Sandbox stops or crashes answers 409 "the Sandbox is stopped or restarting" instead of a 500 and an `unhandled: … has no address on sessionboxer` line in the Control Plane log.
 - Fix: PR URLs the agent only read during a turn (`gh pr list` output, a changelog, an issue page) no longer attach to the Session — one such listing attached every PR of the repository to the PRs tab. The URLs the agent writes in its replies and the one `gh pr create` / `bb pr create` (or a `create_pull_request` tool) prints still do.
 - Fix: a file path in the chat that is not under `/workspace` itself (the agent named it relative to a repository, `src/App.tsx` for `/workspace/<repo>/src/App.tsx`) now opens by looking in each of the session's repositories in turn instead of failing.
+- `bb` in the box speaks **Bitbucket Cloud** too (talayolabs/bb d297620): `bb auth login --hostname bitbucket.org --email …` with an Atlassian API token in the Terminal, then `git clone`/`git push`, `bb pr …` and `bb pr merge` work on bitbucket.org. The Bitbucket Connector and the PRs pane still cover Data Center only. Sandbox image changed: Stop → Resume existing sessions.
 - Fix: `npm run build:image` failed on the Kokoro TTS model checksum — sherpa-onnx re-published the asset under its rolling `tts-models` tag; the Dockerfile pins the new checksum (same file list).
 
 ## 1.6.0 — 2026-10-05

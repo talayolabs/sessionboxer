@@ -25,8 +25,9 @@ empty when the Session was started without a repository.
   Cloud (`bb pr create`, `bb pr view --comments`, `bb pr comment`, `bb api`;
   `bb pr --help`; `bb pr merge` on bitbucket.org only). When the user connected
   an account, `git push` and these commands already work as it;
-  `gh auth status` / `bb auth status` say which. Sessionboxer connects Bitbucket
-  Data Center hosts only; for bitbucket.org the user logs in in the box with
+  `gh auth status` / `bb auth status` say which. Sessionboxer connects both Bitbucket
+  Data Center hosts and bitbucket.org (an Atlassian email + API token); without
+  that, the user can log in in the box with
   `bb auth login --hostname bitbucket.org --email <their Atlassian email>`.
   There are no SSH keys: use HTTPS remotes.
 

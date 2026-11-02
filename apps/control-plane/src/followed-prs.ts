@@ -25,7 +25,7 @@ import {
   type StartPrSessionRequest,
 } from "@sessionboxer/protocol";
 import type { Automations, PrRunContext } from "./automations.js";
-import { bitbucketHttpsCloneUrl, parseBitbucketRemote } from "./bitbucket.js";
+import { bitbucketHttpsCloneUrl, isBitbucketCloud, parseBitbucketRemote } from "./bitbucket.js";
 import { fetchBbActivities, fetchBbBuilds, fetchBbDashboardPrs, fetchBbOpenPrs, fetchBbPr } from "./bitbucket-pr.js";
 import type { Db } from "./db.js";
 import type { FollowKey, StoredFollow, StoredFollowedPr, FollowedPrPatch } from "./followed-pr-store.js";
@@ -143,9 +143,12 @@ export class FollowedPrs {
     return this.deps.db.followedPrs.listFollows().map(publicFollow);
   }
 
-  /** The Connector logins a follow can be read with. */
+  /** The Connector logins a follow can be read with (not bitbucket.org: following its PRs is not supported). */
   accounts(): Array<Pick<BoxCredential, "kind" | "host" | "account">> {
-    return this.deps.credentials().map((c) => ({ kind: c.kind, host: c.host, account: c.account }));
+    return this.deps
+      .credentials()
+      .filter((c) => !(c.kind === "bitbucket" && isBitbucketCloud(c.host)))
+      .map((c) => ({ kind: c.kind, host: c.host, account: c.account }));
   }
 
   /** Every author and requested reviewer (logins, GitHub teams as `org/slug`) seen on followed PRs, for the filter inputs. */
@@ -195,6 +198,7 @@ export class FollowedPrs {
         repo = m[2]!;
       } else {
         const parsed = parseBitbucketRemote(text);
+        if (parsed && isBitbucketCloud(parsed.host)) throw new HttpError(400, "Following bitbucket.org repositories is not supported yet, only Bitbucket Data Center.");
         if (parsed) {
           host = parsed.host;
           owner = parsed.project;

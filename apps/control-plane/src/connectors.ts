@@ -9,7 +9,7 @@ import {
   type McpServerDef,
   type Settings,
 } from "@sessionboxer/protocol";
-import { normalizeBitbucketHost, verifyBitbucketToken } from "./bitbucket.js";
+import { isBitbucketCloud, normalizeBitbucketHost, verifyBitbucketCloudToken, verifyBitbucketToken } from "./bitbucket.js";
 import { toPublicMcpServer } from "./config.js";
 import { deviceLogin, ensureGh, findGh, hostLogins, hostToken, type GhCli, type GhDeviceLogin } from "./gh-cli.js";
 import { HttpError } from "./http-error.js";
@@ -80,7 +80,7 @@ export class Connectors {
 
   /** Starts a login; creates the registry entry from the preset when `serverId` is unknown. */
   async start(kind: ConnectorKind, req: ConnectorStartRequest): Promise<ConnectorFlow> {
-    if (kind === "bitbucket" && req.via !== "token") throw new HttpError(400, "Bitbucket logs in with an HTTP access token.");
+    if (kind === "bitbucket" && req.via !== "token") throw new HttpError(400, "Bitbucket logs in with a pasted token.");
     const server = this.ensureServer(kind, req);
     const { clientId, clientSecret } = this.credentials(kind);
     this.prune();
@@ -114,11 +114,19 @@ export class Connectors {
           if (token === "") throw new Error("Paste the personal access token.");
           await this.finishGithub(flow, { access_token: token });
         } else {
-          if (!req.host) throw new Error("Enter the Bitbucket host, e.g. bitbucket.example.com");
+          if (!req.host) throw new Error("Enter the Bitbucket host, e.g. bitbucket.example.com or bitbucket.org");
           const host = normalizeBitbucketHost(req.host);
-          if (token === "") throw new Error("Paste the HTTP access token.");
-          const user = await verifyBitbucketToken(host, token);
-          this.finish(flow, { access_token: token }, user.name, host);
+          if (isBitbucketCloud(host)) {
+            const email = req.email?.trim() ?? "";
+            if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw new Error("Enter the email of your Atlassian account.");
+            if (token === "") throw new Error("Paste the API token.");
+            const user = await verifyBitbucketCloudToken(email, token);
+            this.finish(flow, { access_token: token }, user.name, host, email);
+          } else {
+            if (token === "") throw new Error("Paste the HTTP access token.");
+            const user = await verifyBitbucketToken(host, token);
+            this.finish(flow, { access_token: token }, user.name, host);
+          }
         }
       } catch (e) {
         fail(flow, e instanceof Error ? e.message : String(e));
@@ -303,7 +311,7 @@ export class Connectors {
       url: preset.url,
       headers: [{ name: preset.tokenHeader, value: "", secret: true }],
       enabledByDefault: true,
-      connector: { kind, account: null, connectedAt: null, expiresAt: null, host: null },
+      connector: { kind, account: null, connectedAt: null, expiresAt: null, host: null, email: null },
       appDomains: null,
     };
     this.settings.set({ ...settings, mcpServers: [...settings.mcpServers, server] });
@@ -372,7 +380,13 @@ export class Connectors {
   }
 
   /** Stores a verified token on the flow's entry and marks the flow done. */
-  private finish(flow: Flow, token: { access_token: string; expires_in?: number | undefined }, account: string, host: string | null): void {
+  private finish(
+    flow: Flow,
+    token: { access_token: string; expires_in?: number | undefined },
+    account: string,
+    host: string | null,
+    email: string | null = null,
+  ): void {
     const settings = this.settings.get();
     const server = settings.mcpServers.find((s) => s.id === flow.serverId);
     if (!server?.connector) throw new Error("The MCP server entry was deleted meanwhile.");
@@ -388,6 +402,7 @@ export class Connectors {
         ...server.connector,
         account,
         host,
+        email,
         connectedAt: new Date().toISOString(),
         expiresAt: token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : null,
       },

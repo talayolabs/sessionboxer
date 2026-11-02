@@ -144,7 +144,7 @@ const GIT_BLURB: Record<ConnectorKind, string> = {
   github:
     "github.com: GitHub CLI, the Sessionboxer OAuth App or a personal access token",
   bitbucket:
-    "Self-hosted Bitbucket (Data Center / Server) with an HTTP access token",
+    "Bitbucket Data Center / Server (HTTP access token) or Bitbucket Cloud, bitbucket.org (Atlassian API token)",
 };
 
 /**

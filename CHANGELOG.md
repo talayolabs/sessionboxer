@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Connect Bitbucket** accepts **Bitbucket Cloud** (bitbucket.org) with your Atlassian email and an API token: private clones at session start, `git push` and `bb` as you, kept across Stop → Resume. The PRs pane and Pull requests follows stay Data Center-only.
+
 ## 1.7.0 — 2026-11-02
 
 Install: `npx sessionboxer@1.7.0 serve`, the installers on the release, `docker compose up`, or

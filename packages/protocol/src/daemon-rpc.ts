@@ -200,10 +200,12 @@ export type DaemonStatus = z.infer<typeof DaemonStatus>;
  */
 export const BoxCredential = z.object({
   kind: ConnectorKind,
-  /** `github.com`, or the Bitbucket Data Center host. */
+  /** `github.com`, the Bitbucket Data Center host, or `bitbucket.org`. */
   host: z.string().default("github.com"),
   account: z.string(),
   token: z.string(),
+  /** Bitbucket Cloud: the Atlassian email of the API token (`bb` sends `email:token` as Basic auth). */
+  email: z.string().nullable().default(null),
 });
 export type BoxCredential = z.infer<typeof BoxCredential>;
 

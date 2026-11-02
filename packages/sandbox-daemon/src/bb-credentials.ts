@@ -4,13 +4,14 @@ import type { BoxCredential } from "@sessionboxer/protocol";
 import { unquote, yamlKey, yamlString } from "./yaml-lite.js";
 
 /**
- * Bitbucket (Data Center) logins for the Sandbox itself, the twin of `GhCredentials`: `bb`
+ * Bitbucket logins (Data Center hosts, bitbucket.org) for the Sandbox itself, the twin of `GhCredentials`: `bb`
  * (github.com/talayolabs/bb) reads `$BB_CONFIG_DIR/hosts.yml` on every invocation and git is
  * configured (image) to ask `bb auth git-credential`, so writing this file is all it takes for
  * `bb pr create` and `git push` to a Bitbucket host to work as the account, with no process
  * restart. The dir is on tmpfs: Snapshots and stopped containers keep nothing. One section per
  * host; several accounts of one host are listed with the first as the active one (`bb auth
- * switch` changes it). Hosts logged in inside the box (`bb auth login` in the Terminal) are kept
+ * switch` changes it). A Cloud API token goes with its Atlassian `email` and the static git user
+ * `x-bitbucket-api-token-auth`. Hosts logged in inside the box (`bb auth login` in the Terminal) are kept
  * when the Connector set changes; only hosts this class wrote are replaced.
  */
 export class BbCredentials {
@@ -24,7 +25,7 @@ export class BbCredentials {
 
   apply(credentials: BoxCredential[]): void {
     const bitbucket = credentials.filter((c) => c.kind === "bitbucket");
-    const key = JSON.stringify(bitbucket.map((c) => [c.host, c.account, c.token]));
+    const key = JSON.stringify(bitbucket.map((c) => [c.host, c.account, c.token, c.email]));
     if (key === this.last) return;
     this.last = key;
     const hostsFile = join(this.configDir, "hosts.yml");
@@ -40,10 +41,8 @@ export class BbCredentials {
     let yaml = "";
     for (const [host, users] of byHost) {
       const active = users[0]!;
-      yaml += `${yamlKey(host)}:\n    user: ${yamlString(active.account)}\n    git_user: ${yamlString(active.account)}\n    oauth_token: ${yamlString(active.token)}\n    users:\n`;
-      for (const u of users) {
-        yaml += `        ${yamlKey(u.account)}:\n            git_user: ${yamlString(u.account)}\n            oauth_token: ${yamlString(u.token)}\n`;
-      }
+      yaml += `${yamlKey(host)}:\n    user: ${yamlString(active.account)}\n${userFields(active, "    ")}    users:\n`;
+      for (const u of users) yaml += `        ${yamlKey(u.account)}:\n${userFields(u, "            ")}`;
     }
     for (const block of manual) yaml += block.text;
     mkdirSync(this.configDir, { recursive: true, mode: 0o700 });
@@ -53,6 +52,16 @@ export class BbCredentials {
     this.log(`bitbucket: Sandbox logged in as ${names.join("; ")}`);
   }
 }
+
+/** `git_user`, `oauth_token` and (Cloud API token) `email` lines of one login. */
+function userFields(c: BoxCredential, indent: string): string {
+  const gitUser = c.email ? CLOUD_API_TOKEN_GIT_USER : c.account;
+  let out = `${indent}git_user: ${yamlString(gitUser)}\n${indent}oauth_token: ${yamlString(c.token)}\n`;
+  if (c.email) out += `${indent}email: ${yamlString(c.email)}\n`;
+  return out;
+}
+
+const CLOUD_API_TOKEN_GIT_USER = "x-bitbucket-api-token-auth";
 
 interface HostBlock {
   host: string;

@@ -893,9 +893,9 @@ export function mergeMcpServers(current: McpServerDef[], incoming: PublicMcpServ
 /** Login state is owned by the Control Plane: the form can keep or drop a Connector, not log it in. */
 function mergeConnector(incoming: McpConnector | null, prev: McpConnector | null, headers: McpKeyValue[]): McpConnector | null {
   if (!incoming) return null;
-  const kept = prev?.kind === incoming.kind ? prev : { kind: incoming.kind, account: null, connectedAt: null, expiresAt: null, host: null };
+  const kept = prev?.kind === incoming.kind ? prev : { kind: incoming.kind, account: null, connectedAt: null, expiresAt: null, host: null, email: null };
   const hasToken = headers.some((h) => h.name === CONNECTORS[incoming.kind].tokenHeader && h.value !== "");
-  return hasToken ? kept : { ...kept, account: null, connectedAt: null, expiresAt: null, host: null };
+  return hasToken ? kept : { ...kept, account: null, connectedAt: null, expiresAt: null, host: null, email: null };
 }
 
 /** Full definitions (secrets included) of the enabled ids, as the Daemon needs them; unknown ids are dropped. */
@@ -916,7 +916,7 @@ export function resolveBoxCredentials(settings: Settings, enabledIds: string[]):
     const token = s.headers.find((h) => h.name === header)?.value.replace(/^Bearer\s+/i, "") ?? "";
     if (token === "") continue;
     const host = s.connector.kind === "github" ? "github.com" : s.connector.host;
-    if (host) out.push({ kind: s.connector.kind, host, account: s.connector.account, token });
+    if (host) out.push({ kind: s.connector.kind, host, account: s.connector.account, token, email: s.connector.email ?? null });
   }
   return out;
 }

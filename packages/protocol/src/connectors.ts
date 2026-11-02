@@ -12,7 +12,8 @@ import { MCP_NAME_PATTERN, ConnectorKind, PublicMcpServerDef } from "./mcp.js";
  * - `gh-existing`: reuse a login `gh` already has on this machine (`account` picks which).
  * - `app`: the Sessionboxer OAuth App (or the one from Settings); organizations may block it.
  * - `token`: Bitbucket Data Center: an HTTP access token the user created on `host` and pasted;
- *   verified against the host's REST API, which also tells whose it is.
+ *   verified against the host's REST API, which also tells whose it is. Bitbucket Cloud
+ *   (`host` bitbucket.org): an Atlassian API token with the account's `email`.
  */
 export const ConnectorVia = z.enum(["gh", "gh-existing", "app", "token"]);
 export type ConnectorVia = z.infer<typeof ConnectorVia>;
@@ -27,6 +28,8 @@ export const ConnectorStartRequest = z.object({
   /** `token`: the pasted token (GitHub personal access token, or Bitbucket HTTP access token with the host `bitbucket.example.com` or its URL). */
   host: z.string().max(500).nullable().default(null),
   token: z.string().max(4000).nullable().default(null),
+  /** `token` on bitbucket.org: the Atlassian account email the API token belongs to. */
+  email: z.string().max(320).nullable().default(null),
 });
 export type ConnectorStartRequest = z.infer<typeof ConnectorStartRequest>;
 

@@ -9,6 +9,7 @@ import {
   type PublicMcpServerDef,
 } from "@sessionboxer/protocol";
 import { api } from "./api";
+import { BitbucketCloudFields, isBitbucketCloudHost, isEmailLike } from "./BitbucketCloudFields";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { Modal } from "./ui";
 
@@ -26,7 +27,8 @@ const GITHUB_CLASSIC_URL = "https://github.com/settings/tokens/new?scopes=repo,w
  * tab. Either way we poll the flow until `done` / `error`. A pasted token is the third way for
  * GitHub (a personal access token: the only login that can be limited to one organization) and
  * the only way for Bitbucket (Data Center has no login an app can drive without its
- * administrator): the Control Plane verifies it and answers with the account in the start call.
+ * administrator; bitbucket.org takes an Atlassian API token with its email): the Control
+ * Plane verifies it and answers with the account in the start call.
  */
 export function ConnectorDialog({
   kind,
@@ -52,6 +54,7 @@ export function ConnectorDialog({
   const [gh, setGh] = useState<GhCliStatus | null>(null);
   const [host, setHost] = useState(() => server?.connector?.host ?? "");
   const [token, setToken] = useState("");
+  const [email, setEmail] = useState(() => server?.connector?.email ?? "");
   const [patOpen, setPatOpen] = useState(false);
   const onServerRef = useRef(onServer);
   onServerRef.current = onServer;
@@ -64,6 +67,7 @@ export function ConnectorDialog({
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "");
+  const cloud = isBitbucketCloudHost(hostName);
   const hostOk = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:\d+)?$/.test(hostName);
 
   useEffect(() => {
@@ -109,6 +113,7 @@ export function ConnectorDialog({
         account,
         host: via === "token" && kind === "bitbucket" ? hostName : null,
         token: via === "token" ? token : null,
+        email: via === "token" && kind === "bitbucket" && cloud ? email.trim() : null,
       });
       if (via === "token" && f.status === "done") setToken("");
       onServerRef.current(f.server);
@@ -136,7 +141,7 @@ export function ConnectorDialog({
   const canStart = (!flow || flow.status === "error") && busy === null && nameOk;
   const title = server ? `Reconnect ${preset.label}` : `Connect ${preset.label}`;
   const tokenPage = hostOk ? `https://${hostName}/plugins/servlet/access-tokens/` : null;
-  const tokenReady = canStart && (kind === "github" || hostOk) && token.trim() !== "";
+  const tokenReady = canStart && (kind === "github" || (hostOk && (!cloud || isEmailLike(email)))) && token.trim() !== "";
   return (
     <Modal
       className="connector-dialog"
@@ -158,7 +163,7 @@ export function ConnectorDialog({
             </p>
           ) : (
             <p className="muted">
-              Logs Sessions in to a self-hosted Bitbucket (Data Center / Server): with this entry enabled, <code>git clone</code>,{" "}
+              Logs Sessions in to a self-hosted Bitbucket (Data Center / Server) or Bitbucket Cloud (bitbucket.org): with this entry enabled, <code>git clone</code>,{" "}
               <code>git push</code> and <code>bb pr create</code> / <code>bb pr view</code> work in the box as your account, and
               repositories of that host clone privately. No MCP server is added. Add it more than once, under different names, for several
               hosts or accounts.
@@ -192,28 +197,32 @@ export function ConnectorDialog({
                 <input
                   value={host}
                   autoFocus={!server}
-                  placeholder="bitbucket.example.com"
+                  placeholder="bitbucket.example.com or bitbucket.org"
                   autoComplete="off"
                   spellCheck={false}
                   onChange={(e) => setHost(e.target.value)}
                 />
               </label>
-              <p className="muted">
-                1.{" "}
-                {tokenPage ? (
-                  <a href={tokenPage} target="_blank" rel="noopener noreferrer">
-                    Open {hostName}'s HTTP access tokens page
-                  </a>
-                ) : (
-                  "Enter the host to get a link to its HTTP access tokens page"
-                )}{" "}
-                (your profile → <em>Manage account</em> → <em>HTTP access tokens</em>) and click <em>Create token</em>: permissions{" "}
-                <strong>Project → Read</strong> and <strong>Repository → Write</strong>, expiry as you like.
-                <br />
-                2. Paste it here; Sessionboxer checks it against the host and keeps it as a secret header, never shown again.
-              </p>
+              {cloud ? (
+                <BitbucketCloudFields email={email} onEmail={setEmail} />
+              ) : (
+                <p className="muted">
+                  1.{" "}
+                  {tokenPage ? (
+                    <a href={tokenPage} target="_blank" rel="noopener noreferrer">
+                      Open {hostName}'s HTTP access tokens page
+                    </a>
+                  ) : (
+                    "Enter the host to get a link to its HTTP access tokens page"
+                  )}{" "}
+                  (your profile → <em>Manage account</em> → <em>HTTP access tokens</em>) and click <em>Create token</em>: permissions{" "}
+                  <strong>Project → Read</strong> and <strong>Repository → Write</strong>, expiry as you like.
+                  <br />
+                  2. Paste it here; Sessionboxer checks it against the host and keeps it as a secret header, never shown again.
+                </p>
+              )}
               <label>
-                HTTP access token
+                {cloud ? "API token" : "HTTP access token"}
                 <input
                   type="password"
                   value={token}

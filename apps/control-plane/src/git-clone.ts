@@ -1,5 +1,5 @@
 import type { BoxCredential } from "@sessionboxer/protocol";
-import { bitbucketHttpsCloneUrl, parseBitbucketRemote } from "./bitbucket.js";
+import { bitbucketHttpsCloneUrl, CLOUD_API_TOKEN_GIT_USER, isBitbucketCloud, parseBitbucketRemote } from "./bitbucket.js";
 
 /** `git@github.com:owner/repo.git`, `ssh://git@github.com/owner/repo`. */
 const GITHUB_SSH = /^(?:ssh:\/\/)?git@github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/;
@@ -20,7 +20,8 @@ export interface ClonePlan {
  * git's credential helper for github.com in the image), so GitHub SSH URLs are cloned over
  * HTTPS as that account and HTTPS ones get the same login for private repositories. A
  * Bitbucket entry does the same for its Data Center host through `bb auth git-credential`:
- * `ssh://git@host:7999/KEY/slug.git` becomes `https://host/scm/KEY/slug.git`.
+ * `ssh://git@host:7999/KEY/slug.git` becomes `https://host/scm/KEY/slug.git`, and for
+ * bitbucket.org `git@bitbucket.org:ws/repo.git` becomes `https://bitbucket.org/ws/repo.git`.
  */
 export function planClone(url: string, credentials: BoxCredential[], account: string | null = null): ClonePlan {
   const trimmed = url.trim();
@@ -51,13 +52,17 @@ export function planClone(url: string, credentials: BoxCredential[], account: st
     env.BB_HOST = login.host;
     env.BB_TOKEN = login.token;
     env.BB_GIT_USER = login.account;
+    if (isBitbucketCloud(login.host) && login.email) {
+      env.BB_EMAIL = login.email;
+      env.BB_GIT_USER = CLOUD_API_TOKEN_GIT_USER;
+    }
     return { url: httpsUrl, env, account: login.account };
   }
   if (ANY_SSH.test(trimmed)) {
     throw new Error(
       `${url} is an SSH URL and the Sandbox has no SSH keys. ` +
         (bitbucket
-          ? `If ${bitbucket.host} is a Bitbucket (Data Center), enable an entry for it for this Session (Settings → Git accounts → Connect Bitbucket) to clone as that account; otherwise use the HTTPS URL.`
+          ? `If ${bitbucket.host} is a Bitbucket, enable an entry for it for this Session (Settings → Git accounts → Connect Bitbucket) to clone as that account; otherwise use the HTTPS URL.`
           : "Use an HTTPS URL instead."),
     );
   }

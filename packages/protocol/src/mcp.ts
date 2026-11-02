@@ -68,8 +68,10 @@ export const McpConnector = z.object({
   connectedAt: z.string().nullable().default(null),
   /** Set when the OAuth App issues expiring tokens; Sessionboxer does not refresh them. */
   expiresAt: z.string().nullable().default(null),
-  /** Bitbucket: the Data Center host the token is for (`bitbucket.example.com`); `null` for GitHub. */
+  /** Bitbucket: the host the token is for (a Data Center `bitbucket.example.com`, or `bitbucket.org`); `null` for GitHub. */
   host: z.string().nullable().default(null),
+  /** Bitbucket Cloud: the Atlassian account email that goes with the API token (Basic auth); `null` elsewhere. */
+  email: z.string().nullable().default(null),
 });
 export type McpConnector = z.infer<typeof McpConnector>;
 

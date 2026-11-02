@@ -26,7 +26,7 @@ import {
   sessionRoute,
   type UpdatePrRequest,
 } from "@sessionboxer/protocol";
-import { parseBitbucketRemote } from "./bitbucket.js";
+import { isBitbucketCloud, parseBitbucketRemote } from "./bitbucket.js";
 import { bitbucketTokenTransport, fetchBbActivities, fetchBbBuilds, fetchBbPr, type BbPrInfo, type BbTransport } from "./bitbucket-pr.js";
 import type { Db } from "./db.js";
 import {
@@ -886,12 +886,12 @@ export function parseGitHubRepo(url: string): { owner: string; repo: string } | 
 /** A repository a PR can belong to: GitHub's owner/repo, or a Data Center's project key/slug on its host. */
 export type RepoRef = Omit<PrRef, "number">;
 
-/** The repository of a clone URL, when it is on github.com or a Bitbucket Data Center. */
+/** The repository of a clone URL, when it is on github.com or a Bitbucket Data Center (bitbucket.org PRs are not watched). */
 export function parseRepoUrl(url: string): RepoRef | null {
   const gh = parseGitHubRepo(url);
   if (gh) return { provider: "github", host: "github.com", ...gh };
   const bb = parseBitbucketRemote(url);
-  if (bb) return { provider: "bitbucket", host: bb.host, owner: bb.project, repo: bb.slug };
+  if (bb && !isBitbucketCloud(bb.host)) return { provider: "bitbucket", host: bb.host, owner: bb.project, repo: bb.slug };
   return null;
 }
 
